@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { CachedResourceImage } from "@/components/cached-resource-image";
+import { isVideoHoverPreviewAllowed, useCanvasMemoryMode } from "@/lib/canvas/canvas-memory-policy";
 import { bindCanvasVideoHoverPreview } from "@/lib/canvas/canvas-video-hover-preview";
 import { cn } from "@/lib/utils";
-import { acquireCanvasVideoPreview, getCachedCanvasVideoPreviewBlob } from "@/services/canvas-video-preview";
+import { acquireCanvasVideoPreview, getCachedCanvasVideoPreviewBlob, resolveServerVideoPosterUrl } from "@/services/canvas-video-preview";
 import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
 import type { Asset } from "@/stores/use-asset-store";
 
@@ -51,17 +52,22 @@ function loadAssetPoster(storageKey: string, content: string, signal: AbortSigna
 
 function AssetVideoCover({ asset, alt, className, fallback, hoverPlayDelayMs }: AssetMediaPreviewProps & { asset: Extract<Asset, { kind: "video" }> }) {
     const target = useRef<HTMLSpanElement>(null);
-    const [failedCover, setFailedCover] = useState("");
+    const [memoryMode] = useCanvasMemoryMode();
     const storageKey = asset.data.storageKey || "";
     const content = asset.data.url || "";
     const identity = JSON.stringify([storageKey, content]);
-    const cover = asset.coverUrl && asset.coverUrl !== content && asset.coverUrl !== failedCover ? asset.coverUrl : "";
+    const [failedCovers, setFailedCovers] = useState<{ identity: string; urls: string[] }>({ identity: "", urls: [] });
+    const failedUrls = failedCovers.identity === identity ? failedCovers.urls : [];
+    const explicitCover = asset.coverUrl && asset.coverUrl !== content && !failedUrls.includes(asset.coverUrl) ? asset.coverUrl : "";
+    const serverPoster = resolveServerVideoPosterUrl({ metadata: { storageKey, content } });
+    const directServerPoster = serverPoster && !failedUrls.includes(serverPoster) ? serverPoster : "";
+    const directCover = explicitCover || directServerPoster;
     const [captured, setCaptured] = useState({ identity: "", url: "" });
     const [retryEpoch, setRetryEpoch] = useState(0);
-    const poster = cover || (captured.identity === identity ? captured.url : "");
+    const poster = directCover || (captured.identity === identity ? captured.url : "");
 
     useEffect(() => {
-        if (cover || !target.current) return;
+        if (directCover || !target.current || (!storageKey && !content)) return;
         let ownedUrl = "";
         let controller: AbortController | undefined;
         let visible = false;
@@ -99,17 +105,23 @@ function AssetVideoCover({ asset, alt, className, fallback, hoverPlayDelayMs }: 
             controller?.abort();
             if (ownedUrl) URL.revokeObjectURL(ownedUrl);
         };
-    }, [cover, content, identity, retryEpoch, storageKey]);
+    }, [directCover, content, identity, retryEpoch, storageKey]);
 
     useEffect(() => {
-        if (!target.current || hoverPlayDelayMs === undefined) return;
+        if (!target.current || hoverPlayDelayMs === undefined || (!storageKey && !content) || !isVideoHoverPreviewAllowed(memoryMode)) return;
         return bindCanvasVideoHoverPreview(target.current,
             signal => acquireCanvasVideoSource(storageKey, content, signal),
             { delayMs: hoverPlayDelayMs, className: "pointer-events-none absolute inset-0 size-full object-cover" });
-    }, [content, hoverPlayDelayMs, storageKey]);
+    }, [content, hoverPlayDelayMs, memoryMode, storageKey]);
 
-    return <span ref={target} className={cn("relative block size-full overflow-hidden", className)} onPointerEnter={() => { if (!poster) setRetryEpoch(value => value + 1); }}>
-        {poster ? <CachedResourceImage src={poster} alt={alt} className="size-full" style={{ objectFit: "inherit", maxHeight: "inherit" }} loading="lazy" decoding="async" fallback={fallback} onError={() => setFailedCover(cover)} /> : fallback}
+    return <span ref={target} className={cn("relative block size-full overflow-hidden object-cover", className)} onPointerEnter={() => { if (!poster && (storageKey || content)) setRetryEpoch(value => value + 1); }}>
+        {poster ? <CachedResourceImage key={poster} src={poster} alt={alt} className="size-full" style={{ objectFit: "inherit", maxHeight: "inherit" }} loading="lazy" decoding="async" fallback={fallback} onError={() => {
+            if (!directCover) return;
+            setFailedCovers(prev => ({
+                identity,
+                urls: prev.identity === identity ? (prev.urls.includes(directCover) ? prev.urls : [...prev.urls, directCover]) : [directCover],
+            }));
+        }} /> : fallback}
     </span>;
 }
 

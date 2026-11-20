@@ -7,15 +7,18 @@ let browser: Browser;
 let page: Page;
 let server: ReturnType<typeof Bun.serve>;
 let mediaRequests = 0;
+let posterRequests = 0;
 let activeRequests = 0;
 let peakRequests = 0;
 let stallFirst = false;
 let releaseStall: (() => void) | undefined;
 let notifyStall: (() => void) | undefined;
 let failFirstFile = false;
+let failServerPoster = false;
 
 beforeAll(async () => {
     const video = execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=orange:s=160x90:r=10:d=0.4", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov", "pipe:1"]);
+    const posterJpg = execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=orange:s=160x90:d=0.1", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]);
     const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/asset-preview-loading-harness.tsx"], target: "browser", plugins: [{ name: "source-alias", setup(builder) {
         builder.onResolve({ filter: /^@\// }, args => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
     } }], define: { "import.meta.env": '{"VITE_CANVAS_LOCAL_MODE":"false"}', "process.env.NODE_ENV": '"production"' } });
@@ -26,6 +29,11 @@ beforeAll(async () => {
         const url = new URL(request.url);
         const path = url.pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
+        if (/^\/api\/resources\/[^/]+\/asset\/poster\.jpg$/.test(path)) {
+            posterRequests++;
+            if (failServerPoster) return new Response("poster unavailable", { status: 500 });
+            return new Response(posterJpg, { headers: { "Content-Type": "image/jpeg" } });
+        }
         if (/^\/api\/resources\/[^/]+\/file$/.test(path)) {
             mediaRequests++; activeRequests++; peakRequests = Math.max(peakRequests, activeRequests);
             if (failFirstFile) {
@@ -40,7 +48,13 @@ beforeAll(async () => {
         }
         if (/^\/api\/resources\/[^/]+$/.test(path)) return Response.json({ code: 0, data: { resource: { id: path.split("/")[3], kind: "video", playbackStatus: "ready" } } });
         if (path.startsWith("/api/")) return Response.json({ code: 0, data: [] });
-        const fixture = JSON.stringify({ count: Number(url.searchParams.get("count") || 12), poster: url.searchParams.has("poster"), portrait: url.searchParams.has("portrait") });
+        const fixture = JSON.stringify({
+            count: Number(url.searchParams.get("count") || 12),
+            poster: url.searchParams.has("poster"),
+            portrait: url.searchParams.has("portrait"),
+            directPoster: url.searchParams.has("directPoster"),
+            lowMemory: url.searchParams.has("lowMemory"),
+        });
         return new Response(`<style>.preview{display:block;width:100%;height:100%;object-fit:cover}${previewCSS}</style><div id="root"></div><script>window.__fixture=${fixture}</script><script type="module" src="/harness.js"></script>`, { headers: { "Content-Type": "text/html" } });
     } });
     browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || chromium.executablePath(), headless: true });
@@ -48,8 +62,8 @@ beforeAll(async () => {
 
 beforeEach(async () => {
     await page?.close();
-    releaseStall?.(); releaseStall = undefined; notifyStall = undefined; stallFirst = false; failFirstFile = false;
-    mediaRequests = 0; activeRequests = 0; peakRequests = 0;
+    releaseStall?.(); releaseStall = undefined; notifyStall = undefined; stallFirst = false; failFirstFile = false; failServerPoster = false;
+    mediaRequests = 0; posterRequests = 0; activeRequests = 0; peakRequests = 0;
     page = await browser.newPage();
     await page.setViewportSize({ width: 900, height: 900 });
 });
@@ -134,5 +148,37 @@ test("a visible card recovers its poster after one transient source failure", as
     expect(mediaRequests).toBe(2);
     expect(await page.locator("video").count()).toBe(0);
 }, 10_000);
+
+test("desktop direct server posters load 120 cards without fetching video files or decoders", async () => {
+    await page.goto(`${server.url}?directPoster&count=120`);
+    await page.waitForFunction(() => (document.querySelector('img[alt="video-0-0"]') as HTMLImageElement)?.naturalWidth > 0, null, { timeout: 5_000 });
+    expect(await page.locator("[data-card]").count()).toBe(120);
+    await page.getByRole("button", { name: "点击响应 0", exact: true }).click();
+    await page.getByRole("button", { name: "点击响应 1", exact: true }).waitFor();
+    expect(posterRequests).toBeGreaterThan(0);
+    expect(mediaRequests).toBe(0);
+    expect(await page.locator("video").count()).toBe(0);
+    expect(await page.locator('img[alt="video-0-0"]').getAttribute("src")).toContain("/api/resources/video-0-0/asset/poster.jpg?variant=poster");
+}, 10_000);
+
+test("failed server poster falls back to bounded client frame capture without oscillating", async () => {
+    failServerPoster = true;
+    await page.goto(`${server.url}?directPoster&count=1`);
+    await page.waitForFunction(() => {
+        const img = document.querySelector('img[alt="video-0-0"]') as HTMLImageElement | null;
+        return Boolean(img && img.src.startsWith("blob:") && img.naturalWidth > 0);
+    }, null, { timeout: 10_000 });
+    expect(posterRequests).toBe(1);
+    expect(mediaRequests).toBe(1);
+    expect(await page.locator("video").count()).toBe(0);
+}, 15_000);
+
+test("low-memory mode disables hover video preview decoders", async () => {
+    await page.goto(`${server.url}?poster&lowMemory&count=2`);
+    await page.locator('[data-card="video-0-0"] .preview').hover();
+    await page.waitForTimeout(350);
+    expect(mediaRequests).toBe(0);
+    expect(await page.locator("video").count()).toBe(0);
+});
 
 afterAll(async () => { releaseStall?.(); await page?.close(); await browser?.close(); server?.stop(true); });

@@ -1,12 +1,19 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AssetMediaPreview } from "../../src/components/asset-media-preview";
+import { setCanvasMemoryMode } from "../../src/lib/canvas/canvas-memory-policy";
+import { setDirectMediaAssetsEnabled } from "../../src/services/media-asset-url";
 import type { Asset } from "../../src/stores/use-asset-store";
 
 const poster = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="orange"/></svg>')}`;
 
+type FixtureParams = { count: number; poster: boolean; portrait: boolean; directPoster: boolean; lowMemory: boolean };
+const initialParams = (window as Window & { __fixture: FixtureParams }).__fixture;
+setDirectMediaAssetsEnabled(initialParams.directPoster);
+setCanvasMemoryMode(initialParams.lowMemory ? "low-memory" : "normal");
+
 function Harness() {
-    const params = (window as Window & { __fixture: { count: number; poster: boolean; portrait: boolean } }).__fixture;
+    const params = initialParams;
     const [count, setCount] = useState(params.count);
     const [visible, setVisible] = useState(true);
     const [generation, setGeneration] = useState(0);
