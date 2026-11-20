@@ -61,16 +61,23 @@ export function markCanvasMergeOverlap(id: string, scope = getActiveUserScope())
 }
 
 export async function flushPendingCanvasOverlapWrite(id: string, scope = getActiveUserScope()) {
-    const pending = pendingOverlapJournalWrites.get(saveKey(scope, id));
-    if (pending) await pending;
+    const key = saveKey(scope, id);
+    for (;;) {
+        const pending = pendingOverlapJournalWrites.get(key);
+        if (!pending) return;
+        await pending;
+    }
 }
 
 export async function flushAllPendingCanvasOverlapWrites(scope = getActiveUserScope()) {
     const prefix = `${scope}\0`;
-    const pending = [...pendingOverlapJournalWrites.entries()]
-        .filter(([key]) => key.startsWith(prefix))
-        .map(([, promise]) => promise);
-    if (pending.length > 0) await Promise.all(pending);
+    for (;;) {
+        const pending = [...pendingOverlapJournalWrites.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([, promise]) => promise);
+        if (pending.length === 0) return;
+        await Promise.all(pending);
+    }
 }
 let projectionStoreFlush: () => Promise<void> = () => flushCanvasStorePersistence();
 

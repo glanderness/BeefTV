@@ -138,7 +138,7 @@ const {
 } = await import("@/services/local-workspace-repository");
 const { clearCanvasDocumentBase, clearCanvasExternalRevisionConflict, recordCanvasDocumentBase, useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
 const { canvasBackendSubmitPaused } = await import("@/services/canvas-revision-conflict");
-const { resetCanvasOperationJournalMemory, saveCanvasOperationJournal } = await import("@/services/canvas-operation-journal");
+const { loadCanvasOperationJournal, resetCanvasOperationJournalMemory, saveCanvasOperationJournal, setCanvasJournalStorageDelay } = await import("@/services/canvas-operation-journal");
 const { getActiveUserScope } = await import("@/lib/user-scope");
 const { projectSyncProgress, useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
 
@@ -470,6 +470,65 @@ describe("单用户版本冲突五类根因回归测试", () => {
         resetLocalCanvasBackendSaveState();
         clearCanvasDocumentBase("c1", scope);
         useCanvasStore.setState({ projects: [liveDraft] });
+
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(server.patches).toHaveLength(1);
+        expect(server.patches[0].params.forceHistorySnapshot).toBe(true);
+        expect(server.patches[0].snapshotCaptured).toBe(true);
+    });
+
+    test("flushLocalWorkspace 等待期间并发新产生的 markCanvasMergeOverlap 也会被完全 drain 落盘", async () => {
+        const baseNode = makeNode("n1", "标题", { type: "text" as never, metadata: { content: "原文本", status: "success" } });
+        const initial = makeCanvas("c1", 1, { nodes: [baseNode] });
+        server.projects.set("c1", structuredClone(initial) as unknown as Record<string, unknown>);
+        await saveCanvasOperationJournal({
+            userScope: scope,
+            canvasId: "c1",
+            confirmedRevision: 1,
+            confirmedSnapshot: structuredClone(initial),
+            inFlight: null,
+        });
+        recordCanvasDocumentBase(structuredClone(initial), scope);
+        useCanvasStore.setState({ projects: [structuredClone(initial)] });
+
+        let releaseFirstWrite!: () => void;
+        let firstWriteBlocked!: () => void;
+        const firstWriteBlockedPromise = new Promise<void>((resolve) => { firstWriteBlocked = resolve; });
+        let writeCount = 0;
+        setCanvasJournalStorageDelay({
+            beforeSet: async () => {
+                writeCount += 1;
+                if (writeCount === 1) {
+                    firstWriteBlocked();
+                    await new Promise<void>((resolve) => { releaseFirstWrite = resolve; });
+                }
+            },
+        });
+
+        try {
+            // First overlap enters storage write and pauses.
+            markCanvasMergeOverlap("c1", scope);
+            await firstWriteBlockedPromise;
+
+            // Start flush while first write is in flight, then emit a second overlap DURING flush!
+            const flushing = flushLocalWorkspace();
+            markCanvasMergeOverlap("c1", scope);
+            useCanvasStore.getState().updateProject("c1", { title: "并发 mark 后重载" });
+            releaseFirstWrite();
+            await flushing;
+        } finally {
+            setCanvasJournalStorageDelay(null);
+        }
+
+        // Simulate immediate renderer reload: epoch 2 MUST already be persisted on disk.
+        const liveDraft = structuredClone(useCanvasStore.getState().openProject("c1")!);
+        resetCanvasOperationJournalMemory();
+        resetLocalCanvasBackendSaveState();
+        clearCanvasDocumentBase("c1", scope);
+        useCanvasStore.setState({ projects: [liveDraft] });
+
+        const reloadedJournal = await loadCanvasOperationJournal("c1", scope);
+        expect(reloadedJournal.pendingForceHistorySnapshotEpoch).toBe(2);
 
         await syncLocalCanvasProjectToBackend("c1");
         expect(server.patches).toHaveLength(1);

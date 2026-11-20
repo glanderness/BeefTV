@@ -457,10 +457,11 @@ func TestPatchUserCanvasDocument_ServerDeleteUpsertConnectionsChatsAndStaleSettl
 		t.Fatalf("before_merge snapshot lost server chat session, got %+v", snapChats)
 	}
 
-	// 4. Server adds a new dangling edge attached to b1; client deletes b1 without knowing about it -> MUST capture before_merge!
+	// 4. Server adds a new dangling edge attached to b1; client deletes b1 knowing exact current b1 & edge-1 -> ONLY the unseen dangling edge triggers before_merge!
 	curRaw3, _ := svc.UserCanvasProject(owner, "patch-c2")
 	var curDoc3 map[string]any
 	_ = json.Unmarshal(curRaw3, &curDoc3)
+	exactB1 := cloneNode(findCanvasNode(curDoc3, "b1"))
 	curDoc3["connections"] = []any{
 		map[string]any{"id": "edge-1", "fromNodeId": "a1", "toNodeId": "b1", "label": "local-label"},
 		map[string]any{"id": "edge-server-new", "fromNodeId": "b1", "toNodeId": "a1", "label": "agent-edge"},
@@ -475,7 +476,7 @@ func TestPatchUserCanvasDocument_ServerDeleteUpsertConnectionsChatsAndStaleSettl
 		BaseRevision:        resEdgeChat.Summary.Revision,
 		DeleteNodeIDs:       []string{"b1"},
 		DeleteConnectionIDs: []string{"edge-1"},
-		ExpectedNodes:       map[string]map[string]any{"b1": {"id": "b1", "type": "image", "title": "旧节点", "position": map[string]any{"x": 100, "y": 100}}},
+		ExpectedNodes:       map[string]map[string]any{"b1": exactB1},
 		ExpectedConnections: map[string]map[string]any{"edge-1": {"id": "edge-1", "fromNodeId": "a1", "toNodeId": "b1", "label": "local-label"}},
 	})
 	if err != nil {
@@ -487,6 +488,20 @@ func TestPatchUserCanvasDocument_ServerDeleteUpsertConnectionsChatsAndStaleSettl
 	histDangling, _ := svc.CanvasHistory(owner, "patch-c2")
 	if len(histDangling.Snapshots) == 0 || histDangling.Snapshots[0].Reason != "before_merge" || histDangling.Snapshots[0].Revision != afterAgentEdge.Revision {
 		t.Fatalf("expected before_merge snapshot at rev %d, got %+v", afterAgentEdge.Revision, histDangling.Snapshots)
+	}
+	fullDanglingSnap, _ := svc.CanvasHistorySnapshot(owner, "patch-c2", histDangling.Snapshots[0].ID)
+	var danglingSnapDoc map[string]any
+	_ = json.Unmarshal([]byte(fullDanglingSnap.PayloadJSON), &danglingSnapDoc)
+	snapConns, _ := danglingSnapDoc["connections"].([]any)
+	foundAgentEdge := false
+	for _, rawConn := range snapConns {
+		if conn, ok := rawConn.(map[string]any); ok && nodeString(conn, "id") == "edge-server-new" {
+			foundAgentEdge = true
+			break
+		}
+	}
+	if !foundAgentEdge {
+		t.Fatalf("before_merge snapshot missing server-added dangling edge-server-new: %+v", snapConns)
 	}
 }
 
@@ -568,9 +583,49 @@ func TestPatchUserCanvasDocumentProtectsSettledMediaAgainstReplacementUploadPlac
 		t.Fatalf("expected active fileUpload overlay to be stripped when preserving settled media: %+v", meta)
 	}
 
+	// An interrupted replacement upload overlay (fileUpload="error" + interruptedFileUploadMessage)
+	// MUST also preserve settled server media rather than clobbering it with stale error overlay.
+	resInterrupted, err := svc.PatchUserCanvasDocument(owner, "patch-replace-upload", DocumentPatch{
+		BaseRevision: resPlaceholder.Summary.Revision,
+		UpsertNodes: []map[string]any{
+			{
+				"id":       "n-up",
+				"type":     "image",
+				"title":    "中断后改名",
+				"position": map[string]any{"x": 260, "y": 350},
+				"metadata": map[string]any{
+					"content":             "https://example.com/old-stale.png",
+					"storageKey":          "res-old-stale",
+					"fileUpload":          "error",
+					"errorDetails":        interruptedFileUploadMessage,
+					"fileUploadAttemptId": "up-replace-interrupted",
+					"resultOrigin":        "upload",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("interrupted replacement placeholder patch failed: %v", err)
+	}
+	if !resInterrupted.MediaPreserved {
+		t.Fatalf("expected MediaPreserved=true for interrupted replacement overlay, got %+v", resInterrupted)
+	}
+	var interruptedDoc map[string]any
+	if err := json.Unmarshal(resInterrupted.Document, &interruptedDoc); err != nil {
+		t.Fatalf("unmarshal interrupted doc: %v", err)
+	}
+	interruptedNode := findCanvasNode(interruptedDoc, "n-up")
+	interruptedMeta := nodeMetadata(interruptedNode)
+	if nodeString(interruptedNode, "title") != "中断后改名" ||
+		nodeString(interruptedMeta, "content") != "https://example.com/newer-settled.png" ||
+		interruptedMeta["fileUpload"] != nil ||
+		interruptedMeta["errorDetails"] != nil {
+		t.Fatalf("interrupted replacement overlay corrupted settled media: %+v", interruptedNode)
+	}
+
 	// Once the replacement upload settles (drops fileUpload, sets status="success" and new media), it commits cleanly.
 	resSettled, err := svc.PatchUserCanvasDocument(owner, "patch-replace-upload", DocumentPatch{
-		BaseRevision: resPlaceholder.Summary.Revision,
+		BaseRevision: resInterrupted.Summary.Revision,
 		UpsertNodes: []map[string]any{
 			{
 				"id":       "n-up",
