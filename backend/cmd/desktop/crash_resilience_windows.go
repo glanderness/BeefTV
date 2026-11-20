@@ -15,6 +15,7 @@ import (
 var (
 	isCrashWindowVisible    = startupWindowUser32.NewProc("IsWindowVisible")
 	isCrashWindowEnabled    = startupWindowUser32.NewProc("IsWindowEnabled")
+	getCrashWindowLong      = startupWindowUser32.NewProc("GetWindowLongW")
 	enumCrashWindows        = startupWindowUser32.NewProc("EnumWindows")
 	getCrashWindowOwner     = startupWindowUser32.NewProc("GetWindow")
 	getCrashWindowAncestor  = startupWindowUser32.NewProc("GetAncestor")
@@ -31,7 +32,7 @@ var (
 		if hwnd == 0 || hwnd == modalEnumMainHwnd {
 			return 1
 		}
-		if visible, _, _ := isCrashWindowVisible.Call(hwnd); visible == 0 {
+		if !isTopLevelWindowVisible(hwnd) {
 			return 1
 		}
 		if !isDialogWindowClass(hwnd) {
@@ -43,15 +44,9 @@ var (
 			modalEnumFound = true
 			return 0
 		}
-		if owner, _, _ := getCrashWindowOwner.Call(hwnd, gwOwner); owner != 0 {
-			if owner == modalEnumMainHwnd {
-				modalEnumFound = true
-				return 0
-			}
-			if root, _, _ := getCrashWindowAncestor.Call(owner, gaRoot); root == modalEnumMainHwnd {
-				modalEnumFound = true
-				return 0
-			}
+		if isWindowOwnedByMain(hwnd, modalEnumMainHwnd) {
+			modalEnumFound = true
+			return 0
 		}
 		return 1
 	})
@@ -61,6 +56,29 @@ const (
 	gwOwner = 4 // GW_OWNER
 	gaRoot  = 2 // GA_ROOT
 )
+
+func isWindowOwnedByMain(hwnd, mainHwnd uintptr) bool {
+	cur := hwnd
+	for depth := 0; depth < 8 && cur != 0; depth++ {
+		owner, _, _ := getCrashWindowOwner.Call(cur, gwOwner)
+		if owner == 0 {
+			return false
+		}
+		if owner == mainHwnd {
+			return true
+		}
+		root, _, _ := getCrashWindowAncestor.Call(owner, gaRoot)
+		if root == mainHwnd {
+			return true
+		}
+		if root != 0 && root != owner {
+			cur = root
+		} else {
+			cur = owner
+		}
+	}
+	return false
+}
 
 func findBeefTVMainWindow() uintptr {
 	className, err := windows.UTF16PtrFromString(startupWindowClassName())
@@ -75,6 +93,21 @@ func windowsCrashRecoveryMessageBoxFlags() uint32 {
 	// MB_YESNOCANCEL keeps Cancel, Esc, and the titlebar X close button enabled
 	// so users can safely continue waiting; MB_DEFBUTTON3 makes Cancel default.
 	return windows.MB_YESNOCANCEL | windows.MB_ICONWARNING | windows.MB_DEFBUTTON3 | windows.MB_SETFOREGROUND
+}
+
+func isTopLevelWindowVisible(hwnd uintptr) bool {
+	if hwnd == 0 {
+		return false
+	}
+	if visible, _, _ := isCrashWindowVisible.Call(hwnd); visible != 0 {
+		return true
+	}
+	// On non-interactive desktops (e.g. headless CI/SSH), IsWindowVisible can
+	// return 0 even when WS_VISIBLE is set on the top-level window itself.
+	const wsVisible = 0x10000000
+	gwlStyle := int32(-16)
+	style, _, _ := getCrashWindowLong.Call(hwnd, uintptr(gwlStyle))
+	return style&wsVisible != 0
 }
 
 func isDialogWindowClass(hwnd uintptr) bool {
@@ -93,7 +126,7 @@ func platformHasNativeModalDialog() bool {
 	if mainHwnd == 0 {
 		return false
 	}
-	if visible, _, _ := isCrashWindowVisible.Call(mainHwnd); visible == 0 {
+	if !isTopLevelWindowVisible(mainHwnd) {
 		return false
 	}
 	if enabled, _, _ := isCrashWindowEnabled.Call(mainHwnd); enabled == 0 {
@@ -122,10 +155,8 @@ func showCrashRecoveryDialog(_ context.Context, repeated bool) (string, error) {
 		return "", err
 	}
 	var owner windows.HWND
-	if hwnd := findBeefTVMainWindow(); hwnd != 0 {
-		if visible, _, _ := isCrashWindowVisible.Call(hwnd); visible != 0 {
-			owner = windows.HWND(hwnd)
-		}
+	if hwnd := findBeefTVMainWindow(); hwnd != 0 && isTopLevelWindowVisible(hwnd) {
+		owner = windows.HWND(hwnd)
 	}
 	button, err := windows.MessageBox(owner, message, title, windowsCrashRecoveryMessageBoxFlags())
 	if err != nil {
