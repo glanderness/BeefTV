@@ -78,8 +78,7 @@ export async function canvasContentHash(project: CanvasProject) {
  *
  * 两处刻意容忍的不对称，都不代表用户编辑过文档：
  * 1. 画布外观偏好（appearance/backgroundMode/showImageInfo）：服务端由客户端决定是否写入，
- *    外部写入产生的画布常常没有它们；套用外部 revision 时本机外观也不会被覆盖
- *    （见 canvas-external-revision.ts）。
+ *    外部写入产生的画布常常没有它们；套用远端快照时本机视口与外观也不会被覆盖。
  * 2. 一侧缺失、另一侧为空值：应用自己会给 nodes/connections/chatSessions/activeChatId
  *    这类字段补默认空值。只有「缺失 vs 非空值」才算差异，因此 folderId 从无到有、
  *    projectId/canvasTitle 被设置、节点被删除都会如实识别。

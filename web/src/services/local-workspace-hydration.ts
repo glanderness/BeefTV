@@ -1,22 +1,82 @@
-import { clearCanvasExternalRevisionConflict, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { http } from "@/services/api/request";
+import { clearCanvasDocumentBase, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { ApiError, http } from "@/services/api/request";
+import { appPathname, type AppRoutingRuntime } from "@/lib/app-routing";
 import { beginCanvasHydration, finishCanvasHydration } from "./canvas-hydration-health";
 import { restoreCanvasHistory } from "@/services/api/workspace-data";
-import { CanvasBackendSubmitPausedError, isCanvasRevisionConflict, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
-import { CanvasJournalError, loadCanvasOperationJournal, updateCanvasOperationJournal } from "@/services/canvas-operation-journal";
+import { CanvasBackendSubmitPausedError, isCanvasRevisionConflict } from "@/services/canvas-revision-conflict";
+import { CanvasJournalError, loadCanvasOperationJournal, peekCanvasOperationJournal, updateCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { normalizeCanvasProjectGraph } from "@/lib/canvas/canvas-content";
 import { applyBackendCanvasRead, replayPendingCanvasProjection } from "./local-workspace-reconcile";
 import {
     applyLiveCanvasProject,
+    canvasBackendSubmitPending,
     CanvasProjectionError,
     canvasDeleting,
+    hasUnconfirmedCanvasEdits,
     openLocalCanvasProject,
     recordServerConfirmedCanvas,
     runProjectionStoreFlush,
     saveKey,
+    serverConfirmedCanvasSnapshots,
     withCanvasProjection,
 } from "./local-workspace-state";
+
+function isNotFoundApiError(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false;
+    const candidate = error as { name?: unknown; status?: unknown };
+    return (error instanceof ApiError || candidate.name === "ApiError") && candidate.status === 404;
+}
+
+export function isCanvasOpenInEditor(id: string, runtime?: AppRoutingRuntime): boolean {
+    if (!runtime && typeof window === "undefined") return false;
+    const pathname = appPathname(runtime).replace(/\/+$/u, "");
+    const segments = pathname.split("/").filter(Boolean);
+    if (segments.length !== 2 || segments[0] !== "canvas") return false;
+    try {
+        return decodeURIComponent(segments[1]!) === id || segments[1] === id;
+    } catch {
+        return segments[1] === id;
+    }
+}
+
+/**
+ * Authoritative deletion eviction: only called after a per-ID 404 from
+ * `GET /canvas-projects/:id`. Never evicts canvases with unconfirmed edits,
+ * active/pending journal operations, or (during background hydration) the
+ * canvas currently mounted in the editor.
+ */
+async function evictDeletedCanvasIfClean(id: string, scope: string, options: { allowOpenEditor: boolean }): Promise<boolean> {
+    if (canvasDeleting.has(saveKey(scope, id))) return false;
+    if (!options.allowOpenEditor && isCanvasOpenInEditor(id)) return false;
+    return withCanvasProjection(scope, id, async () => {
+        const local = openLocalCanvasProject(id);
+        if (!local) return false;
+        if (!options.allowOpenEditor && isCanvasOpenInEditor(id)) return false;
+        let journal = peekCanvasOperationJournal(id, scope);
+        if (!journal) {
+            try {
+                journal = await loadCanvasOperationJournal(id, scope);
+            } catch {
+                return false;
+            }
+        }
+        if (
+            canvasBackendSubmitPending(id, scope)
+            || journal.inFlight
+            || journal.pendingProjection
+            || hasUnconfirmedCanvasEdits(id)
+        ) {
+            return false;
+        }
+        clearCanvasDocumentBase(id, scope);
+        serverConfirmedCanvasSnapshots.delete(saveKey(scope, id));
+        useCanvasStore.setState((state) => ({
+            projects: state.projects.filter((item) => item.id !== id),
+        }));
+        return true;
+    });
+}
 
 /**
  * Desktop local canvas documents come from SQLite (`GET /canvas-projects`).
@@ -43,12 +103,20 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
             page += 1;
         }
         if (summaries.length === 0) return false;
+        const backendIds = new Set(summaries.map((summary) => summary.id));
         const projects = (await Promise.all(summaries.map(async (summary) => {
-            const detail = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(summary.id)}`);
-            if (!detail.project) throw new Error("项目内容未返回");
-            return normalizeCanvasProjectGraph(detail.project);
+            try {
+                const detail = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(summary.id)}`);
+                if (!detail.project) throw new Error("项目内容未返回");
+                return normalizeCanvasProjectGraph(detail.project);
+            } catch (error) {
+                if (isNotFoundApiError(error)) {
+                    await evictDeletedCanvasIfClean(summary.id, scope, { allowOpenEditor: false });
+                    return null;
+                }
+                throw error;
+            }
         }))).filter((project): project is CanvasProject => Boolean(project));
-        if (projects.length === 0) return false;
         for (const [index, project] of projects.entries()) {
             // Warm journals can resolve entirely in microtasks. Give React a
             // render turn between batches so large libraries cannot exhaust
@@ -74,8 +142,33 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
                 applyLiveCanvasProject(project.id, applied, true);
             }
         }
+        // Never prune solely from a paginated list: verify each missing server-backed
+        // candidate via an authoritative per-ID read so pagination shifts keep the
+        // canvas and only an explicit 404 evicts a clean cached entry.
+        const missingCandidates = useCanvasStore.getState().projects
+            .filter((project) => previouslyLoadedIds.has(project.id)
+                && (project.revision ?? 0) > 0
+                && !backendIds.has(project.id)
+                && !canvasDeleting.has(saveKey(scope, project.id))
+                && !isCanvasOpenInEditor(project.id)
+                && !canvasBackendSubmitPending(project.id, scope))
+            .map((project) => project.id);
+        for (const candidateId of missingCandidates) {
+            if (hasUnconfirmedCanvasEdits(candidateId)) continue;
+            try {
+                const remote = await readLocalCanvasProjectFromBackend(candidateId);
+                const local = openLocalCanvasProject(candidateId);
+                if (local && !canvasDeleting.has(saveKey(scope, candidateId))) {
+                    await applyBackendCanvasRead(local, remote);
+                }
+            } catch (error) {
+                if (isNotFoundApiError(error)) {
+                    await evictDeletedCanvasIfClean(candidateId, scope, { allowOpenEditor: false });
+                }
+            }
+        }
         await flushCanvasStorePersistence();
-        return true;
+        return projects.length > 0;
     } catch (error) {
         console.error("项目列表同步失败", error);
         failure = "项目暂时无法读取，现有数据已保留。请重试或在设置中导出问题记录。";
@@ -113,7 +206,14 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
         }
         await flushCanvasStorePersistence();
         return openLocalCanvasProject(id) ?? project;
-    } catch {
+    } catch (error) {
+        if (isNotFoundApiError(error)) {
+            const evicted = await evictDeletedCanvasIfClean(id, scope, { allowOpenEditor: true });
+            if (evicted) {
+                await flushCanvasStorePersistence();
+                return null;
+            }
+        }
         return openLocalCanvasProject(id);
     }
 }
@@ -181,8 +281,6 @@ async function restoreLocalCanvasProjectFromHistoryUnlocked(
         pendingProjection: null,
     }));
     recordServerConfirmedCanvas(backendProject, scope);
-    clearCanvasExternalRevisionConflict(scope, id);
-    resumeCanvasBackendSubmit(id, scope);
     applyLiveCanvasProject(id, backendProject, true);
     await runProjectionStoreFlush();
     const live = openLocalCanvasProject(id);

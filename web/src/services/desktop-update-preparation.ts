@@ -18,8 +18,8 @@ export function assertDesktopUpdateProgressSettled(
 ) {
     const progress = Object.entries(records).filter(([key, item]) => key === canvasSyncProgressKey(item.projectId, scope)).map(([, item]) => item);
     if (progress.some(item => ["pending", "uploading", "saving"].includes(item.phase))) throw new DesktopUpdateSaveInProgressError();
-    if (!allowFailed && progress.some(item => projectIds.has(item.projectId) && (item.phase === "error" || item.phase === "conflict"))) {
-        throw new Error("有画布保存失败或存在内容冲突，请处理后重试，或选择仍然更新。");
+    if (!allowFailed && progress.some(item => projectIds.has(item.projectId) && item.phase === "error")) {
+        throw new Error("有画布保存失败，请处理后重试，或选择仍然更新。");
     }
 }
 

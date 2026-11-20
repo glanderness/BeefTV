@@ -49,7 +49,6 @@ export type CanvasProjectStageProps = {
     historyState: ReturnType<typeof useCanvasHistory>["historyState"];
     undoCanvas: () => void;
     redoCanvas: () => void;
-    reloadLatestCanvasProject: () => Promise<void>;
     openVersions: () => void;
     toggleVersions: () => void;
     nodeGraphContext: CanvasNodeGraphContextValue;
@@ -81,7 +80,6 @@ export function CanvasProjectStage(props: CanvasProjectStageProps) {
         historyState,
         undoCanvas,
         redoCanvas,
-        reloadLatestCanvasProject,
         openVersions,
         toggleVersions,
         nodeGraphContext,
@@ -402,7 +400,7 @@ export function CanvasProjectStage(props: CanvasProjectStageProps) {
 
                     {focusMode ? (
                         <CanvasFocusModeBar
-                            syncStatus={<CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onOpenVersions={openVersions} />}
+                            syncStatus={<CanvasSyncStatus projectId={projectId} onOpenVersions={openVersions} />}
                             versionsOpen={versions.open}
                             onToggleVersions={toggleVersions}
                             dockRevealed={focusDockRevealed}

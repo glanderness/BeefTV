@@ -28,7 +28,6 @@ export function readAssistantProposalSourceState(projectId: string, nodes: Canva
         canvasRevision: project?.revision ?? -1,
         modelConfigRevision: persistence.revision,
         canvasHasUnconfirmedEdits: hasUnconfirmedCanvasEdits(projectId),
-        canvasUnconfirmedReason: getUnconfirmedCanvasDiagnostic(projectId)?.reason,
         modelConfigHasUnconfirmedEdits: modelConfigHasUnconfirmedEdits({ modelConfigDirty: persistence.dirty, modelConfigStatus: persistence.status }),
         nodes,
         connections,

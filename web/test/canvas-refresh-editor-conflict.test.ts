@@ -97,10 +97,9 @@ const {
     syncLocalCanvasProjectToBackend,
 } = await import("@/services/local-workspace-repository");
 const { mergeCanvasRefreshPatch } = await import("@/lib/canvas/canvas-patch-merge");
-const { canvasExternalRevisionConflict, clearCanvasExternalRevisionConflict, useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
-const { canvasBackendSubmitPaused } = await import("@/services/canvas-revision-conflict");
+const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
 const { getActiveUserScope } = await import("@/lib/user-scope");
-const { useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
+const { projectSyncProgress, useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
 const { resetCanvasOperationJournalMemory } = await import("@/services/canvas-operation-journal");
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasNodeData } from "@/types/canvas";
@@ -158,7 +157,6 @@ beforeEach(() => {
     resetLocalCanvasBackendSaveState();
     server.posts = [];
     useSyncProgressStore.getState().clearAll();
-    clearCanvasExternalRevisionConflict(scope, "c1");
     useCanvasStore.setState({ projects: [] });
 });
 
@@ -178,8 +176,7 @@ describe("外部撤销到达编辑器", () => {
 
         expect(editor.held).toBe(0);
         expect(editor.nodes[0].metadata).toEqual(retry.metadata);
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
         useCanvasStore.getState().updateProject("c1", { nodes: editor.nodes });
         await syncLocalCanvasProjectToBackend("c1");
         expect(server.posts.at(-1)?.baseRevision).toBe(2);
@@ -196,8 +193,7 @@ describe("外部撤销到达编辑器", () => {
         expect(editor.held).toBe(0);
         expect(editor.nodes).toEqual([]);
         expect(useCanvasStore.getState().projects[0].nodes).toEqual([]);
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
     });
 
     test("编辑器与远端删除重叠：确定性保留本地改过的节点、删除未改动节点，不锁死自动保存", async () => {
@@ -209,8 +205,7 @@ describe("外部撤销到达编辑器", () => {
 
         expect(editor.held).toBe(0);
         expect(editor.nodes.map((node) => node.title)).toEqual(["用户刚改的标题"]);
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
 
         useCanvasStore.getState().updateProject("c1", { nodes: editor.nodes });
         await syncLocalCanvasProjectToBackend("c1");
@@ -241,7 +236,7 @@ test("后台刷新多个画布时保留先刷新画布刚刚写入的同版本�
     expect(store.openProject("c1")?.revision).toBe(first.revision);
     expect(store.openProject("c1")?.nodes[0]?.title).toBe("刷新期间的新标题");
     expect(store.openProject("c2")).toBeDefined();
-    expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+    expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
     await syncLocalCanvasProjectToBackend("c1");
     expect(server.posts.at(-1)?.baseRevision ?? server.posts.at(-1)?.expectedRevision).toBe(first.revision);
     expect((server.document?.nodes as CanvasNodeData[])[0]?.title).toBe("刷新期间的新标题");

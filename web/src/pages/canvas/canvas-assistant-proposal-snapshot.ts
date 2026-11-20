@@ -6,7 +6,6 @@ import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 import { normalizeCanvasMediaNodeSemanticsList } from "@/lib/canvas/canvas-node-semantics";
 import { resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
-import type { CanvasUnconfirmedReason } from "@/lib/canvas/canvas-unconfirmed-edits";
 import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
 import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { buildNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
@@ -43,8 +42,6 @@ export type ProposalSourceState = ConfirmedGenerationInputs & {
     modelConfigRevision: number;
     /** The editor has canvas changes the server has not confirmed yet (usually an autosave in flight). */
     canvasHasUnconfirmedEdits: boolean;
-    /** Why the canvas has unconfirmed edits; "blocked" means a version conflict that waiting cannot resolve. */
-    canvasUnconfirmedReason?: CanvasUnconfirmedReason;
     /** Generation settings are edited but not saved, or still saving. */
     modelConfigHasUnconfirmedEdits: boolean;
 };
@@ -52,7 +49,6 @@ export type ProposalSourceState = ConfirmedGenerationInputs & {
 export type AssistantProposalBlockedReason =
     | "invalid_source"
     | "canvas_saving"
-    | "canvas_conflict"
     | "settings_unsaved"
     | "canvas_changed"
     | "settings_changed"
@@ -62,7 +58,6 @@ export type AssistantProposalBlockedReason =
 export const ASSISTANT_PROPOSAL_BLOCKED_TEXT: Record<AssistantProposalBlockedReason, string> = {
     invalid_source: "这项方案缺少核对信息。请让助手重新提出方案。",
     canvas_saving: "画布还在保存。稍等几秒再点生成。",
-    canvas_conflict: "画布有未解决的版本冲突。请在顶部保存状态中使用最新版本，再让助手重新提出方案。",
     settings_unsaved: "生成设置还没保存。保存后再点生成。",
     canvas_changed: "画布在提出方案后改过。请让助手重新提出方案。",
     settings_changed: "生成设置在提出方案后改过。请让助手重新提出方案。",
@@ -123,7 +118,6 @@ async function readSettledCurrent(readCurrent: () => ProposalSourceState, option
     for (;;) {
         const state = structuredClone(readCurrent());
         if (state.modelConfigHasUnconfirmedEdits) throw new AssistantProposalBlockedError("settings_unsaved");
-        if (state.canvasUnconfirmedReason === "blocked") throw new AssistantProposalBlockedError("canvas_conflict");
         if (!state.canvasHasUnconfirmedEdits) return state;
         if (waited >= saveWaitMs) throw new AssistantProposalBlockedError("canvas_saving");
         await sleep(pollMs);
@@ -161,7 +155,6 @@ export async function prepareAssistantProposalSnapshot(
     const snapshotContent = proposalCanvasContent(snapshot.nodes, snapshot.connections);
     if (snapshotContent !== proposalCanvasContent(persisted.nodes, persisted.connections)) throw new AssistantProposalBlockedError("content_mismatch");
     const latest = structuredClone(readCurrent());
-    if (latest.canvasUnconfirmedReason === "blocked") throw new AssistantProposalBlockedError("canvas_conflict");
     if (snapshot.canvasId !== latest.canvasId || snapshot.canvasRevision !== latest.canvasRevision ||
         latest.canvasHasUnconfirmedEdits || snapshotContent !== proposalCanvasContent(latest.nodes, latest.connections)) {
         throw new AssistantProposalBlockedError("canvas_changed");

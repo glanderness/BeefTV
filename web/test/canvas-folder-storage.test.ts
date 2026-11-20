@@ -22,9 +22,7 @@ import { apiClient } from "@/services/api/request";
 import { peekCanvasOperationJournal, resetCanvasOperationJournalMemory } from "@/services/canvas-operation-journal";
 import { resetLocalCanvasBackendSaveState } from "@/services/local-workspace-repository";
 import {
-    canvasExternalRevisionConflict,
     clearCanvasDocumentBase,
-    clearCanvasExternalRevisionConflict,
     recordCanvasDocumentBase,
     useCanvasStore,
     type CanvasFolder,
@@ -161,8 +159,6 @@ afterEach(() => {
     resetLocalCanvasBackendSaveState();
     clearCanvasDocumentBase("c1");
     clearCanvasDocumentBase("c2");
-    clearCanvasExternalRevisionConflict(getActiveUserScope(), "c1");
-    clearCanvasExternalRevisionConflict(getActiveUserScope(), "c2");
     useCanvasStore.setState({ folders: [], projects: [] });
     memory.clear();
     pendingValues.clear();
@@ -576,7 +572,6 @@ describe("canvas folder storage", () => {
             expect(kept?.nodes.map((node) => node.id)).toEqual(["n-local", "n-remote"]);
             expect(kept?.nodes[0]).toEqual(localNodes[0]);
             expect(kept?.folderId).toBeUndefined();
-            expect(canvasExternalRevisionConflict("owner-a", "c1")).toBeUndefined();
             expect(peekCanvasOperationJournal("c1", "owner-a")?.confirmedRevision).toBe(4);
         } finally {
             restoreWindow();

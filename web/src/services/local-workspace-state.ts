@@ -1,5 +1,5 @@
-import { canvasDocumentBase, canvasDurableSnapshot, canvasExternalRevisionConflict, flushCanvasStorePersistence, recordCanvasDocumentBase, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { canvasBackendSubmitPaused, CanvasBackendSubmitPausedError, setCanvasBackendSaveProgress } from "@/services/canvas-revision-conflict";
+import { canvasDocumentBase, canvasDurableSnapshot, flushCanvasStorePersistence, recordCanvasDocumentBase, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { CanvasBackendSubmitPausedError, setCanvasBackendSaveProgress } from "@/services/canvas-revision-conflict";
 import { markCanvasJournalForceHistorySnapshot, peekCanvasOperationJournal, recordConfirmedCanvasCommit } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { canvasUnconfirmedDiagnostic, canvasUnconfirmedReason, type CanvasUnconfirmedState } from "@/lib/canvas/canvas-unconfirmed-edits";
@@ -140,11 +140,7 @@ export function canvasBackendSubmitPending(id: string, scope: string) {
     return backendSaveTails.has(key) || backendSaveTimers.has(key);
 }
 
-export function canvasSubmitBlocked(id: string, scope: string) {
-    return canvasBackendSubmitPaused(id, scope) || Boolean(canvasExternalRevisionConflict(scope, id));
-}
-
-/** 把保存链的真实状态发布到同步进度：排队、提交中、已被接受或失败。冲突暂停不被覆盖。 */
+/** 把保存链的真实状态发布到同步进度：排队、提交中、已被接受或失败。 */
 export function publishCanvasSaveProgress(id: string, scope: string, failed = false) {
     const key = saveKey(scope, id);
     if (backendSaveTails.has(key)) setCanvasBackendSaveProgress(id, scope, "saving");
@@ -155,9 +151,6 @@ export function publishCanvasSaveProgress(id: string, scope: string, failed = fa
 export function throwIfCanvasNotWritable(id: string, scope: string) {
     if (canvasDeleting.has(saveKey(scope, id))) {
         throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
-    }
-    if (canvasSubmitBlocked(id, scope)) {
-        throw new CanvasBackendSubmitPausedError();
     }
 }
 
@@ -170,7 +163,7 @@ export function openLocalCanvasProject(id: string) {
  *
  * 依次检查三个真实状态的证据，任何一项不成立都按「有未确认编辑」处理，
  * 因为这里判错的代价是覆盖用户正在编辑的内容：
- * 1. HTTP 待提交/正在提交，或上一次提交被拒；
+ * 1. HTTP 待提交/正在提交；
  * 2. 与服务端确认快照的文档内容不同；
  * 3. 没有服务端确认基线时，退回本机已落盘快照；两者都没有则保守判为有编辑。
  */
@@ -181,12 +174,10 @@ export function hasUnconfirmedCanvasEdits(id: string) {
 function readCanvasUnconfirmedState(id: string): CanvasUnconfirmedState {
     const scope = getActiveUserScope();
     const live = openLocalCanvasProject(id) ?? undefined;
-    const state: CanvasUnconfirmedState = { live, pending: false, blocked: false, inFlight: false, pendingProjection: false };
+    const state: CanvasUnconfirmedState = { live, pending: false, inFlight: false, pendingProjection: false };
     if (!live) return state;
     state.pending = canvasBackendSubmitPending(id, scope);
     if (state.pending) return state;
-    state.blocked = canvasSubmitBlocked(id, scope);
-    if (state.blocked) return state;
     const journal = peekCanvasOperationJournal(id, scope);
     state.inFlight = Boolean(journal?.inFlight);
     if (state.inFlight) return state;

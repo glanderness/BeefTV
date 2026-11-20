@@ -132,9 +132,9 @@ test("image submission waits for the target node save and shares one submission 
 });
 
 for (const [error, guidance] of [
-    [new ApiError("保存冲突", { status: 409, reason: "conflict" }), "请点击画布顶部的保存状态"],
-    [new ApiError("版本过期", { status: 409, reason: "stale_revision" }), "请点击画布顶部的保存状态"],
-    [new CanvasBackendSubmitPausedError(), "请点击画布顶部的保存状态"],
+    [new ApiError("保存冲突", { status: 409, reason: "conflict" }), "并发更新"],
+    [new ApiError("版本过期", { status: 409, reason: "stale_revision" }), "并发更新"],
+    [new CanvasBackendSubmitPausedError(), "画布正在删除"],
     [new Error("disk failure"), "画布尚未保存"],
 ] as const) {
     test(`a rejected target save creates no paid task: ${error.name}`, async () => {

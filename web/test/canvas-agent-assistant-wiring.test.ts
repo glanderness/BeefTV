@@ -86,10 +86,9 @@ describe("助手前端接线", () => {
         expect(css).toContain("var(--muted-foreground)");
     });
 
-    test("外部改动提示搬到顶栏保存状态，面板里不再重复", () => {
-        expect(syncStatus).toContain("pendingExternalCanvasRevision");
-        expect(syncStatus).toContain("acceptExternalCanvasRevision");
-        expect(sidebar).not.toContain("pendingExternalCanvasRevision");
+    test("外部改动提示在顶栏保存状态展示，面板里不再重复", () => {
+        expect(syncStatus).toContain("fetchExternalCanvasWrites");
+        expect(sidebar).not.toContain("fetchExternalCanvasWrites");
     });
 
     test("助手入口与快捷键都接上了", () => {

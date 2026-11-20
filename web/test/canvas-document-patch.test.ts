@@ -136,8 +136,7 @@ const {
     resetLocalCanvasBackendSaveState,
     syncLocalCanvasProjectToBackend,
 } = await import("@/services/local-workspace-repository");
-const { clearCanvasDocumentBase, clearCanvasExternalRevisionConflict, recordCanvasDocumentBase, useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
-const { canvasBackendSubmitPaused } = await import("@/services/canvas-revision-conflict");
+const { clearCanvasDocumentBase, recordCanvasDocumentBase, useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
 const { loadCanvasOperationJournal, resetCanvasOperationJournalMemory, saveCanvasOperationJournal, setCanvasJournalStorageDelay } = await import("@/services/canvas-operation-journal");
 const { getActiveUserScope } = await import("@/lib/user-scope");
 const { projectSyncProgress, useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
@@ -190,7 +189,6 @@ beforeEach(() => {
     resetLocalCanvasBackendSaveState();
     useSyncProgressStore.getState().clearAll();
     for (const id of ["c1", "c2", "c3", "c4"]) {
-        clearCanvasExternalRevisionConflict(scope, id);
         clearCanvasDocumentBase(id, scope);
     }
     useCanvasStore.setState({ projects: [] });
@@ -315,7 +313,6 @@ describe("单用户版本冲突五类根因回归测试", () => {
 
         expect(server.patches).toHaveLength(1);
         expect(server.patches[0].params.upsertNodes?.map((item) => item.id)).toEqual(["n-drag"]);
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
         expect(projectSyncProgress("c1", scope)?.phase).toBe("done");
         const liveNodes = useCanvasStore.getState().openProject("c1")!.nodes;
         expect(liveNodes.find((n) => n.id === "n1")?.metadata?.content).toBe("/res/1.png");
@@ -544,7 +541,7 @@ describe("单用户版本冲突五类根因回归测试", () => {
         });
         const adopted = await adoptServerConfirmedGenerationPatch(remote);
         expect(adopted?.nodes.map((n) => n.id).sort()).toEqual(["n-gen", "n-local"]);
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
     });
 
     test("多画布 hydration 在 GET 挂起期间发生并发编辑、新建与删除时，不以旧快照覆盖实时状态", async () => {

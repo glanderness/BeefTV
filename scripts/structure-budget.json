@@ -1,8 +1,8 @@
 {
-  "appLines": 8935,
+  "appLines": 8922,
   "legacyLargeFiles": [],
   "handlersUsingAppService": 0,
-  "sourceTextTests": 91,
-  "cssImportantCount": 1460,
-  "tailwindImportantCount": 167
+  "sourceTextTests": 89,
+  "cssImportantCount": 1457,
+  "tailwindImportantCount": 159
 }

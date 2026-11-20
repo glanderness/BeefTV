@@ -21,14 +21,14 @@ test("historical errors for removed projects and other accounts do not block an 
 });
 
 test("ongoing writes always block, while failed saves require an explicit override", () => {
-    for (const phase of ["pending", "uploading", "saving", "error", "conflict", "done"] as const) {
+    for (const phase of ["pending", "uploading", "saving", "error", "done"] as const) {
         const records = {[canvasSyncProgressKey("canvas", "current")]: {projectId: "canvas", phase, total: 1, completed: 0}};
         const check = (allowFailed = false) => assertDesktopUpdateProgressSettled(records, new Set(["canvas"]), "current", allowFailed);
         if (["pending", "uploading", "saving"].includes(phase)) {
             expect(() => check()).toThrow(DesktopUpdateSaveInProgressError);
             expect(() => check(true)).toThrow(DesktopUpdateSaveInProgressError);
-        } else if (phase === "error" || phase === "conflict") {
-            expect(() => check()).toThrow("保存失败或存在内容冲突");
+        } else if (phase === "error") {
+            expect(() => check()).toThrow("保存失败");
             expect(() => check(true)).not.toThrow();
         } else expect(() => check()).not.toThrow();
     }
