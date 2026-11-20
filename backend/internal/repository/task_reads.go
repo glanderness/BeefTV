@@ -12,10 +12,13 @@ import (
 const taskSummarySelectColumns = "id, user_id, route_run, recovery_outcome, beef_usage_state, beef_billing_state, beef_reconcile_deadline, image_job_id, project_id, type, status, stage, progress, prompt, operation, provider, model, input_json, result_json, error, error_code, failure_diagnostics, provider_request_id, provider_cancel_status, provider_cancel_error, provider_cancel_attempts, provider_cancel_requested_at, provider_cancelled_at, provider_cancel_next_check_at, attempts, started_at, completed_at, created_at, updated_at"
 
 func applyActiveCandidateTaskFilter(query *gorm.DB) *gorm.DB {
-	// Only exclude succeeded text tasks in SQL because ComputeOutcome projects them
-	// to ready before reading recovery evidence; failed/cancelled active membership
-	// is decided solely from computed outcome (including facts.Unreadable).
+	// Pre-filter rows that ComputeOutcome can never project to running/fetching/retrievable
+	// when outcome evidence is readable: cancelled rows, failed rows whose recovery already
+	// concluded (no_result / unrecoverable), and succeeded text tasks.
+	// Unreadable evidence is handled upstream via EvidenceReadable() bounded fallback.
 	return query.
+		Where("status <> ?", model.TaskStatusCancelled).
+		Where("status <> ? OR recovery_outcome IS NULL OR recovery_outcome NOT IN ?", model.TaskStatusFailed, []string{"no_result", "unrecoverable"}).
 		Where("status <> ? OR type NOT IN ?", model.TaskStatusSucceeded, []string{"text", "canvas_text"})
 }
 

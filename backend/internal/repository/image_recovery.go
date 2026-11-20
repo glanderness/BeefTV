@@ -22,6 +22,26 @@ type ImageRecoveryEvidence struct {
 	HasReceipt bool
 }
 
+// EvidenceReadable probes the persistence tables required to build task outcome
+// evidence. When healthy, activeOnly queries can safely exclude terminal rows
+// in SQL; when unreadable, callers fall back to a bounded fail-closed page.
+func (r *Repository) EvidenceReadable() bool {
+	if r == nil || r.db == nil {
+		return false
+	}
+	var probe int
+	if err := r.db.Model(&model.RouteAttempt{}).Select("1").Limit(1).Scan(&probe).Error; err != nil {
+		return false
+	}
+	if err := r.db.Model(&model.ImageSubmission{}).Select("1").Limit(1).Scan(&probe).Error; err != nil {
+		return false
+	}
+	if err := r.db.Model(&model.ApiCallLog{}).Select("1").Limit(1).Scan(&probe).Error; err != nil {
+		return false
+	}
+	return true
+}
+
 // 固定次数批量读取，不为列表中的每个任务逐一查库。
 func (r *Repository) ImageRecoveryEvidence(taskIDs []string) (map[string]ImageRecoveryEvidence, error) {
 	facts := make(map[string]ImageRecoveryEvidence, len(taskIDs))

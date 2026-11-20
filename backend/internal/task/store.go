@@ -87,6 +87,13 @@ func (s repoStore) ListActiveCandidatesAfter(userID string, projectID string, be
 	return s.repo.ActiveCandidateTasksAfter(userID, projectID, beforeCreatedAt, beforeID, limit)
 }
 
+func (s repoStore) EvidenceReadable() bool {
+	if s.repo == nil {
+		return false
+	}
+	return s.repo.EvidenceReadable()
+}
+
 func (s repoStore) Logs(userID, id string) ([]model.TaskLog, error) {
 	if err := s.require(); err != nil {
 		return nil, err

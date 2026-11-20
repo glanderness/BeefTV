@@ -65,6 +65,10 @@ type activeCandidateStore interface {
 	ListActiveCandidatesAfter(userID string, projectID string, beforeCreatedAt *time.Time, beforeID string, limit int) ([]model.Task, error)
 }
 
+type evidenceHealthStore interface {
+	EvidenceReadable() bool
+}
+
 type batchProviderRequestIDStore interface {
 	LatestProviderRequestIDs(taskIDs []string) (map[string]string, error)
 }
@@ -155,6 +159,20 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 	want := options.Limit
 	if want <= 0 || want > 100 {
 		want = 50
+	}
+	if health, ok := s.store.(evidenceHealthStore); ok && !health.EvidenceReadable() {
+		// Evidence tables are unreadable: fail closed on a bounded recent page
+		// so activeOnly surfaces evidence_unavailable without full-history scans.
+		tasks, err := s.store.List(userID, want, options.ProjectID, false)
+		if err != nil {
+			return nil, err
+		}
+		s.hydrateOutcomeProviderRequestIDs(tasks)
+		projected, err := presentSummaries(s.deps.Present, tasks)
+		if err != nil {
+			return nil, err
+		}
+		return filterActiveTaskSummaries(projected, want), nil
 	}
 	if pager, ok := s.store.(activeCandidateStore); ok {
 		const pageSize = 100

@@ -21,7 +21,7 @@ import {
     isCreativeInputFailureCategory,
     shouldConfirmUnchangedModerationRetry,
 } from "@/lib/generation-failure-ux";
-import { isRegenerateAllowed, isRegenerateBlocked, isRegenerateConfirm, nodeRequiresFreshSubmission, readNodeTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
+import { isRegenerateAllowed, isRegenerateBlocked, nodeRequiresFreshSubmission, nodeRequiresRegenerateConfirmation, readNodeTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
@@ -141,7 +141,7 @@ export function useCanvasGenerationRetry({
             ) => {
                 const targetOutcome = readNodeTaskOutcome(targetNode.metadata);
                 const baseline = evaluateCreativeRetryBaseline(targetNode.metadata, category, submittedPrompt, submittedRefs);
-                const needsOutcomeConfirm = isRegenerateConfirm(targetOutcome);
+                const needsOutcomeConfirm = nodeRequiresRegenerateConfirmation(targetNode.metadata, targetOutcome);
                 if (!needsOutcomeConfirm && !baseline.unchangedModeration) {
                     return { confirmed: true, prompted: false, baseline };
                 }
@@ -254,7 +254,7 @@ export function useCanvasGenerationRetry({
                     return;
                 }
                 let batchPrompted = false;
-                if (shouldConfirmUnchangedModerationRetry(batchExplanation.category) || isRegenerateConfirm(batchOutcome)) {
+                if (shouldConfirmUnchangedModerationRetry(batchExplanation.category) || nodeRequiresRegenerateConfirmation(batchTarget.metadata, batchOutcome)) {
                     let batchContextPrompt = retryPromptSource;
                     let batchRefs: ReturnType<typeof submittedReferences> = [];
                     try {

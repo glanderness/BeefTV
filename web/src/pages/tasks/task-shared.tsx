@@ -1,6 +1,6 @@
 import { explainGenerationError } from "@/lib/generation-error";
 import { operationLabelByValue } from "@/lib/generation-task-display";
-import { isTaskRegenerateBlocked, normalizeTaskOutcome, readTaskOutcome, taskOutcomeCopy, taskRequiresFreshSubmission } from "@/lib/task-outcome";
+import { canRecoverTaskOutcome, isTaskRegenerateBlocked, normalizeTaskOutcome, readTaskOutcome, taskOutcomeCopy, taskRequiresFreshSubmission } from "@/lib/task-outcome";
 import { ApiError } from "@/services/api/request";
 import { isActiveGenerationTask, type GenerationTask, type TaskStatus } from "@/services/api/task-center";
 import { modelDisplayName, type AiConfig } from "@/stores/use-config-store";
@@ -92,6 +92,15 @@ export function taskCenterRetryRequiresNewSubmission(
 
 export function canBatchRetryTaskInTaskCenter(task: GenerationTask) {
     return isTaskFailed(task) && !isTaskRegenerateBlocked(task) && !taskCenterRetryRequiresNewSubmission(task);
+}
+
+export function canQueryProviderTask(
+    task: Pick<GenerationTask, "status" | "type" | "providerRequestId" | "outcome" | "stage" | "errorCode" | "error" | "outputs">,
+) {
+    // 后端 RecoverTask 对 cancelled 状态固定返回不支持，避免对已取消的 evidence_unavailable 任务暴露必然失败的「取回结果」按钮。
+    if (task.status === "cancelled") return false;
+    if (task.outcome) return canRecoverTaskOutcome(readTaskOutcome(task));
+    return canRecoverTaskOutcome(readTaskOutcome(task)) || (task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId));
 }
 
 export type TaskCanvasAvailability = "available" | "missing" | "unreachable";
@@ -239,11 +248,11 @@ export function providerCancelStatusLabel(task: GenerationTask) {
             ? taskOutcomeCopy(outcome, undefined, { providerCancelStatus: "confirmed" }).reason
             : "上游已确认取消";
     }
-    if (outcome?.reason === "cancelled_result_unconfirmed") return taskOutcomeCopy(outcome).message;
     if (task.providerCancelStatus === "requested") return "已请求上游取消，正在等待确认";
     if (task.providerCancelStatus === "uncertain") {
         return task.providerCancelError || "上游无法确认取消，状态待确认";
     }
+    if (outcome?.reason === "cancelled_result_unconfirmed") return taskOutcomeCopy(outcome).message;
     return "任务已取消，请核对原任务的结果与扣费状态";
 }
 

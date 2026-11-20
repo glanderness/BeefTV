@@ -18,7 +18,7 @@ import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
 
 import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryGenerationTask, recoverTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
-import { canRecoverTaskOutcome, isTaskRegenerateBlocked, readTaskOutcome } from "@/lib/task-outcome";
+import { isTaskRegenerateBlocked, readTaskOutcome } from "@/lib/task-outcome";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
 import { readLocalCanvasProjectFromBackend } from "@/services/local-workspace-hydration";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -28,7 +28,7 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
-import { canBatchRetryTaskInTaskCenter, checkTaskCanvasAvailability, computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, resolveTaskCenterNewSubmissionRoute, shouldFastPollTaskCenter, taskCenterRetryRequiresNewSubmission, taskMediaKind, taskOutcomeCopyForTask } from "./task-shared";
+import { canBatchRetryTaskInTaskCenter, canQueryProviderTask, checkTaskCanvasAvailability, computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, resolveTaskCenterNewSubmissionRoute, shouldFastPollTaskCenter, taskCenterRetryRequiresNewSubmission, taskMediaKind, taskOutcomeCopyForTask } from "./task-shared";
 import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
 import { workspaceCapabilities } from "@/services/workspace-mode";
@@ -653,11 +653,6 @@ export default function TasksPage() {
             </Modal>
         </>
     );
-}
-
-function canQueryProviderTask(task: GenerationTask) {
-    if (task.outcome) return canRecoverTaskOutcome(readTaskOutcome(task));
-    return canRecoverTaskOutcome(readTaskOutcome(task)) || (task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId));
 }
 
 function TaskResultMedia({ value, taskType }: { value?: string; taskType: string }) {

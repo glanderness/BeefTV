@@ -20,6 +20,7 @@ import {
     isTaskOutcomeSubmissionUncertain,
     isTaskOutcomeWorking,
     isTaskRegenerateBlocked,
+    nodeRequiresRegenerateConfirmation,
     normalizeTaskOutcome,
     notChargedTaskOutcome,
     readNodeTaskOutcome,
@@ -29,6 +30,7 @@ import {
     runningTaskOutcome,
     submissionUnknownTaskOutcome,
     taskOutcomeCopy,
+    taskRequiresRegenerateConfirmation,
     type TaskOutcome,
     type TaskOutcomePhase,
     type TaskOutcomeRegenerate,
@@ -364,5 +366,45 @@ describe("task-outcome", () => {
         expect(isTaskOutcomeSubmissionUncertain(deliveryPendingTaskOutcome())).toBe(false);
         expect(isTaskOutcomeSubmissionUncertain({ phase: "failed", regenerate: "blocked", reason: "settlement_pending" })).toBe(true);
         expect(isTaskOutcomeSubmissionUncertain(notChargedTaskOutcome())).toBe(false);
+    });
+
+    it("suppresses reload on cancelled evidence_unavailable nodes and requires confirmation when cancel is requested or uncertain", () => {
+        const cancelledEvidenceMeta = {
+            taskId: "task-cancelled-unreadable",
+            taskStatus: "cancelled",
+            taskOutcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "evidence_unavailable" },
+        };
+        expect(canReloadCanvasNodeResource(cancelledEvidenceMeta)).toBe(false);
+        expect(isNodeRegenerateBlocked(cancelledEvidenceMeta)).toBe(true);
+        expect(
+            canReloadCanvasNodeResource({
+                ...cancelledEvidenceMeta,
+                taskStatus: "failed",
+            }),
+        ).toBe(true);
+
+        const allowedOutcome: TaskOutcome = { phase: "failed", regenerate: "allowed", reason: "task_failed" };
+        expect(taskRequiresRegenerateConfirmation({ outcome: allowedOutcome, providerCancelStatus: "requested" })).toBe(true);
+        expect(taskRequiresRegenerateConfirmation({ outcome: allowedOutcome, providerCancelStatus: "uncertain" })).toBe(true);
+        expect(taskRequiresRegenerateConfirmation({ outcome: allowedOutcome, providerCancelStatus: "confirmed" })).toBe(false);
+        expect(
+            nodeRequiresRegenerateConfirmation({
+                taskId: "task-req-1",
+                taskStatus: "cancelled",
+                taskProviderCancelStatus: "requested",
+                taskOutcome: allowedOutcome,
+            }),
+        ).toBe(true);
+
+        const requestedAllowedCopy = taskOutcomeCopy(allowedOutcome, undefined, { providerCancelStatus: "requested" });
+        expect(requestedAllowedCopy.badge).toBe("取消待确认");
+        expect(requestedAllowedCopy.confirmTitle).toContain("取消仍在确认中");
+        const uncertainConfirmCopy = taskOutcomeCopy(
+            { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" },
+            undefined,
+            { providerCancelStatus: "uncertain" },
+        );
+        expect(uncertainConfirmCopy.badge).toBe("取消待确认");
+        expect(uncertainConfirmCopy.confirmTitle).toContain("未能确认取消");
     });
 });

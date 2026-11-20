@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 func TestTaskOutcomeReadEndpointsOnlyAddPublicProjection(t *testing.T) {
@@ -409,5 +410,123 @@ func TestActiveOnlyTasksEndpointRetainsCancelledTaskWhenEvidenceUnreadable(t *te
 	wantIDs := []string{"failed-terminal-unreadable", "cancelled-terminal-unreadable", "cancelled-unreadable"}
 	if strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
 		t.Fatalf("activeOnly unreadable ids=%v, want %v", gotIDs, wantIDs)
+	}
+}
+
+func TestActiveOnlySQLPreFilterSkipsHistoricalTerminalTasks(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	noResult := "no_result"
+	unrecoverable := "unrecoverable"
+	settled := "settled"
+	completed := "completed"
+	var batch []model.Task
+	for i := 0; i < 200; i++ {
+		ts := now.Add(time.Duration(i) * time.Millisecond)
+		batch = append(batch,
+			model.Task{
+				ID:                fmt.Sprintf("hist-cancelled-%03d", i),
+				UserID:            owner.ID,
+				ProjectID:         "scale-canvas",
+				Type:              "canvas_image",
+				Status:            model.TaskStatusCancelled,
+				Stage:             "任务已取消",
+				ProviderRequestID: fmt.Sprintf("prov-cancel-%03d", i),
+				CreatedAt:         ts,
+				UpdatedAt:         ts,
+			},
+			model.Task{
+				ID:              fmt.Sprintf("hist-failed-terminal-%03d", i),
+				UserID:          owner.ID,
+				ProjectID:       "scale-canvas",
+				Type:            "canvas_video",
+				Status:          model.TaskStatusFailed,
+				Stage:           "任务失败",
+				RecoveryOutcome: &noResult,
+				CreatedAt:       ts,
+				UpdatedAt:       ts,
+			},
+			model.Task{
+				ID:               fmt.Sprintf("hist-failed-charged-%03d", i),
+				UserID:           owner.ID,
+				ProjectID:        "scale-canvas",
+				Type:             "canvas_image",
+				Status:           model.TaskStatusFailed,
+				Stage:            "任务失败",
+				RecoveryOutcome:  &unrecoverable,
+				BeefUsageState:   &completed,
+				BeefBillingState: &settled,
+				CreatedAt:        ts,
+				UpdatedAt:        ts,
+			},
+		)
+	}
+	batch = append(batch,
+		model.Task{
+			ID:                "active-failed-retrievable",
+			UserID:            owner.ID,
+			ProjectID:         "scale-canvas",
+			Type:              "canvas_video",
+			Status:            model.TaskStatusFailed,
+			Stage:             "任务失败",
+			ProviderRequestID: "prov-retrievable-1",
+			CreatedAt:         now.Add(time.Second),
+			UpdatedAt:         now.Add(time.Second),
+		},
+		model.Task{
+			ID:         "active-succeeded-delivery",
+			UserID:     owner.ID,
+			ProjectID:  "scale-canvas",
+			Type:       "canvas_image",
+			Status:     model.TaskStatusSucceeded,
+			Stage:      "生成完成",
+			ResultJSON: `{"images":[{"url":"https://example.invalid/pending.png"}]}`,
+			CreatedAt:  now.Add(2 * time.Second),
+			UpdatedAt:  now.Add(2 * time.Second),
+		},
+		model.Task{
+			ID:        "active-queued",
+			UserID:    owner.ID,
+			ProjectID: "scale-canvas",
+			Type:      "canvas_image",
+			Status:    model.TaskStatusQueued,
+			Stage:     "等待队列调度",
+			CreatedAt: now.Add(3 * time.Second),
+			UpdatedAt: now.Add(3 * time.Second),
+		},
+	)
+	if err := h.db.CreateInBatches(&batch, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := repository.New(h.db).ActiveCandidateTasksAfter(owner.ID, "scale-canvas", nil, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 3 {
+		t.Fatalf("SQL active candidates = %d, want 3 (600 historical terminal rows must be filtered in SQL)", len(candidates))
+	}
+
+	resp := h.do(t, http.MethodGet, "/api/tasks?projectId=scale-canvas&pageSize=20&activeOnly=true", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var env struct {
+		Data []model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	gotIDs := make([]string, 0, len(env.Data))
+	for _, item := range env.Data {
+		gotIDs = append(gotIDs, item.ID)
+	}
+	wantIDs := []string{"active-queued", "active-succeeded-delivery", "active-failed-retrievable"}
+	if strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
+		t.Fatalf("activeOnly ids=%v, want %v", gotIDs, wantIDs)
 	}
 }

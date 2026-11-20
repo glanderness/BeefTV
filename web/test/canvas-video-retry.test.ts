@@ -6,6 +6,7 @@ import * as canvasProjectGeneration from "../src/lib/canvas/canvas-project-gener
 import { generationInputFingerprint, generationPromptFingerprint } from "../src/lib/generation-error";
 import * as modelCapabilities from "../src/lib/model-capabilities";
 import { submittedReferences } from "../src/pages/canvas/canvas-generation-failure";
+import { partitionRetryableBatchItems } from "../src/pages/canvas/use-canvas-generation-batches";
 import { useCanvasGenerationRetry } from "../src/pages/canvas/use-canvas-generation-retry";
 import type { GenerationTask } from "../src/services/api/task-center";
 import * as canvasVideoRetry from "../src/services/canvas-video-retry";
@@ -935,6 +936,170 @@ test("allowed canvas_image and allowed submission_unknown/submission_uncertain v
         buildConfigSpy.mockRestore();
         storedRetrySpy.mockRestore();
         retryContextSpy.mockRestore();
+        consumerSpy.mockRestore();
+    }
+});
+
+test("partitionRetryableBatchItems excludes confirm and pending-cancel items, and canvas retry confirms before submitting when providerCancelStatus is requested/uncertain", async () => {
+    const confirmNode: CanvasNodeData = {
+        id: "batch-node-confirm",
+        type: CanvasNodeType.Image,
+        title: "待确认图片",
+        position: { x: 0, y: 0 },
+        width: 240,
+        height: 160,
+        metadata: {
+            status: "error",
+            taskId: "task-confirm-1",
+            taskOutcome: { phase: "failed", regenerate: "confirm", reason: "charged_result_unrecoverable" },
+        },
+    };
+    const requestedCancelNode: CanvasNodeData = {
+        id: "batch-node-cancel-requested",
+        type: CanvasNodeType.Video,
+        title: "取消待确认视频",
+        position: { x: 260, y: 0 },
+        width: 240,
+        height: 160,
+        metadata: {
+            status: "error",
+            taskId: "task-cancel-requested-1",
+            taskStatus: "cancelled",
+            taskProviderCancelStatus: "requested",
+            prompt: "海岸日出镜头",
+            taskOutcome: { phase: "failed", regenerate: "allowed", reason: "task_failed" },
+        },
+    };
+    const uncertainCancelNode: CanvasNodeData = {
+        id: "batch-node-cancel-uncertain",
+        type: CanvasNodeType.Video,
+        title: "取消不明视频",
+        position: { x: 520, y: 0 },
+        width: 240,
+        height: 160,
+        metadata: {
+            status: "error",
+            taskId: "task-cancel-uncertain-1",
+            taskStatus: "cancelled",
+            taskProviderCancelStatus: "uncertain",
+            prompt: "雪山延时镜头",
+            taskOutcome: { phase: "failed", regenerate: "allowed", reason: "task_failed" },
+        },
+    };
+    const safeAllowedNode: CanvasNodeData = {
+        id: "batch-node-safe",
+        type: CanvasNodeType.Video,
+        title: "可安全重试视频",
+        position: { x: 780, y: 0 },
+        width: 240,
+        height: 160,
+        metadata: {
+            status: "error",
+            taskId: "task-safe-1",
+            taskOutcome: { phase: "failed", regenerate: "allowed", reason: "not_charged" },
+        },
+    };
+
+    const items = [
+        { id: "i-confirm", nodeId: confirmNode.id, status: "failed" as const, retryCount: 0, prompt: "" },
+        { id: "i-req", nodeId: requestedCancelNode.id, status: "failed" as const, retryCount: 0, prompt: "" },
+        { id: "i-uncertain", nodeId: uncertainCancelNode.id, status: "failed" as const, retryCount: 0, prompt: "" },
+        { id: "i-safe", nodeId: safeAllowedNode.id, status: "failed" as const, retryCount: 0, prompt: "" },
+    ];
+    const nodeMap = new Map([confirmNode, requestedCancelNode, uncertainCancelNode, safeAllowedNode].map((n) => [n.id, n]));
+    const { blockedItems, retryableItems } = partitionRetryableBatchItems(items as never, nodeMap);
+    expect(blockedItems.map((i) => i.id)).toEqual(["i-confirm", "i-req", "i-uncertain"]);
+    expect(retryableItems.map((i) => i.id)).toEqual(["i-safe"]);
+
+    // Verify single-node canvas retry prompts confirmation with cancel-pending warning on requested & uncertain even when outcome=allowed.
+    const readyChannel = {
+        ...defaultConfig.channels[0]!,
+        id: "beeftv",
+        pinned: true,
+        baseUrl: "https://api.example.com",
+        apiKey: "test-key",
+        hasApiKey: true,
+        models: ["fixture-video-model"],
+    };
+    const buildConfigSpy = spyOn(canvasProjectGeneration, "buildGenerationConfig").mockReturnValue({
+        ...defaultConfig,
+        model: "fixture-video-model",
+        videoModel: "fixture-video-model",
+        baseUrl: "https://api.example.com",
+        apiKey: "test-key",
+        channels: [readyChannel],
+    });
+    const storedRetrySpy = spyOn(canvasVideoRetry, "retryStoredCanvasVideo").mockResolvedValue({
+        id: "should-not-replay",
+        type: "canvas_video",
+        status: "succeeded",
+    } as GenerationTask);
+    const consumerCalls: Array<Record<string, unknown>> = [];
+    const consumerSpy = spyOn(canvasProjectGeneration, "runCanvasGenerationTaskToConsumer").mockImplementation(async (input) => {
+        consumerCalls.push(input as unknown as Record<string, unknown>);
+        return { id: `fresh-cancel-${consumerCalls.length}`, type: "canvas_video", status: "succeeded" } as GenerationTask;
+    });
+    let confirmDecision: "cancel" | "ok" = "cancel";
+    const confirmDialogs: Array<{ title?: unknown; content?: unknown }> = [];
+    const useAppSpy = spyOn(App, "useApp").mockReturnValue({
+        message: { error: () => {}, warning: () => {}, info: () => {} } as unknown as ReturnType<typeof App.useApp>["message"],
+        notification: {} as ReturnType<typeof App.useApp>["notification"],
+        modal: {
+            confirm: (config: { title?: unknown; content?: unknown; onOk?: () => void; onCancel?: () => void }) => {
+                confirmDialogs.push({ title: config.title, content: config.content });
+                if (confirmDecision === "ok") config.onOk?.();
+                else config.onCancel?.();
+                return { destroy: () => {}, update: () => {} };
+            },
+        } as unknown as ReturnType<typeof App.useApp>["modal"],
+    });
+
+    const nodesRef = { current: [requestedCancelNode, uncertainCancelNode] };
+    let retry!: ReturnType<typeof useCanvasGenerationRetry>;
+    function Harness() {
+        retry = useCanvasGenerationRetry({
+            projectId: "project-cancel-confirm",
+            addedSkills: [],
+            assets: [],
+            nodesRef,
+            connectionsRef: { current: [] },
+            setNodes: (updater) => {
+                nodesRef.current = typeof updater === "function" ? updater(nodesRef.current) : updater;
+            },
+            setRunningNodeId: () => {},
+            startGenerationRequest: () => new AbortController(),
+            finishGenerationRequest: () => {},
+            bindGenerationTask: () => {},
+            applyGenerationTaskResult: async () => {},
+            regenerateImageBatch: async () => {},
+        });
+        return null;
+    }
+
+    try {
+        renderToStaticMarkup(createElement(Harness));
+
+        confirmDecision = "cancel";
+        await retry(requestedCancelNode);
+        expect(confirmDialogs).toHaveLength(1);
+        expect(String(confirmDialogs[0]?.title)).toContain("取消仍在确认中");
+        expect(String(confirmDialogs[0]?.content)).toContain("尚未收到确认");
+        expect(consumerCalls).toHaveLength(0);
+        expect(storedRetrySpy).not.toHaveBeenCalled();
+
+        confirmDecision = "ok";
+        await retry(requestedCancelNode);
+        await retry(uncertainCancelNode);
+        expect(confirmDialogs).toHaveLength(3);
+        expect(String(confirmDialogs[2]?.title)).toContain("未能确认取消");
+        expect(storedRetrySpy).not.toHaveBeenCalled();
+        expect(consumerCalls).toHaveLength(2);
+        expect(consumerCalls[0]?.retryOf).toBeUndefined();
+        expect(consumerCalls[1]?.retryOf).toBeUndefined();
+    } finally {
+        useAppSpy.mockRestore();
+        buildConfigSpy.mockRestore();
+        storedRetrySpy.mockRestore();
         consumerSpy.mockRestore();
     }
 });

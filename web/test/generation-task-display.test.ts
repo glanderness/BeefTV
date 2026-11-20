@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel } from "@/lib/generation-task-display";
-import { canBatchRetryTaskInTaskCenter, checkTaskCanvasAvailability, providerCancelStatusLabel, resolveTaskCenterNewSubmissionRoute, taskAttentionReason, taskCenterRetryRequiresNewSubmission, taskOutcomeCopyForTask } from "@/pages/tasks/task-shared";
+import { canBatchRetryTaskInTaskCenter, canQueryProviderTask, checkTaskCanvasAvailability, providerCancelStatusLabel, resolveTaskCenterNewSubmissionRoute, taskAttentionReason, taskCenterRetryRequiresNewSubmission, taskOutcomeCopyForTask } from "@/pages/tasks/task-shared";
 import { ApiError } from "@/services/api/request";
 import type { GenerationTask } from "@/services/api/task-center";
 
@@ -32,6 +32,24 @@ test("cancelled image with unconfirmed result does not claim recovery is running
     expect(confirmedModalCopy.confirmContent).not.toContain("无法确认渠道是否已执行");
     expect(providerCancelStatusLabel({ ...task, outcome: undefined, providerCancelStatus: "confirmed" })).toBe("上游已确认取消");
     expect(providerCancelStatusLabel({ ...task, outcome: undefined })).toBe("任务已取消，请核对原任务的结果与扣费状态");
+
+    // requested/uncertain providerCancelStatus must not be shadowed when outcome=cancelled_result_unconfirmed is present.
+    const requestedTask = { ...task, providerCancelStatus: "requested" as const };
+    expect(providerCancelStatusLabel(requestedTask)).toBe("已请求上游取消，正在等待确认");
+    expect(generationTaskStatusLabel(requestedTask)).toBe("取消待确认");
+    expect(generationTaskStageLabel(requestedTask)).toBe("已请求上游取消，正在等待确认");
+    const uncertainTask = { ...task, providerCancelStatus: "uncertain" as const, providerCancelError: "上游超时未返回取消结果" };
+    expect(providerCancelStatusLabel(uncertainTask)).toBe("上游超时未返回取消结果");
+    expect(generationTaskStatusLabel(uncertainTask)).toBe("取消待确认");
+
+    // Cancelled tasks with evidence_unavailable must never expose the RecoverTask button (backend rejects cancelled /recover).
+    const cancelledUnreadable = {
+        ...task,
+        status: "cancelled" as const,
+        outcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "evidence_unavailable" },
+    };
+    expect(canQueryProviderTask(cancelledUnreadable)).toBe(false);
+    expect(canQueryProviderTask({ ...cancelledUnreadable, status: "failed" as const })).toBe(true);
 
     // Task-center retry must never invoke in-place /retry for confirm, submission_unknown, or submitted image tasks.
     expect(taskCenterRetryRequiresNewSubmission(task)).toBe(true);

@@ -7,8 +7,8 @@ import {
     canReloadCanvasNodeResource,
     canvasNodeHasPendingOutcomeResult,
     isNodeRegenerateBlocked,
-    isNodeRegenerateConfirm,
     isTaskOutcomeSubmissionUncertain,
+    nodeRequiresRegenerateConfirmation,
     readNodeTaskOutcome,
     taskOutcomeCopy,
     type TaskOutcome,
@@ -99,7 +99,7 @@ class NodeFailureView implements CanvasNodeFailureView {
     }
     get explanation() { return this.read("explanation", () => canvasNodeFailureExplanation(this.node)); }
     get regenerateBlocked() { return this.read("regenerateBlocked", () => isNodeRegenerateBlocked(this.node.metadata)); }
-    get regenerateConfirm() { return this.read("regenerateConfirm", () => isNodeRegenerateConfirm(this.node.metadata)); }
+    get regenerateConfirm() { return this.read("regenerateConfirm", () => nodeRequiresRegenerateConfirmation(this.node.metadata, this.outcome)); }
     get canReload() { return this.read("canReload", () => canReloadCanvasNodeResource(this.node)); }
     get needsRecovery() { return this.read("needsRecovery", () => nodeNeedsGenerationRecovery(this.node)); }
     get depthResult() { return this.read("depthResult", () => isDepthCaptureResultNode(this.node)); }

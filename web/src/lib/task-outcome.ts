@@ -379,18 +379,41 @@ export type FreshSubmissionSource = {
 };
 
 /**
+ * 判断重新生成前是否必须弹出显式确认（画布单任务、画布批量与任务中心统一共用）：
+ * - `outcome.regenerate === "confirm"`
+ * - 上游取消仍处于等待确认或状态不明（`providerCancelStatus === "requested" | "uncertain"`），旧任务可能仍在执行
+ */
+export function taskRequiresRegenerateConfirmation(
+    source: Pick<FreshSubmissionSource, "providerCancelStatus" | "outcome">,
+    outcome: TaskOutcome | null | undefined = normalizeTaskOutcome(source.outcome),
+): boolean {
+    if (isRegenerateBlocked(outcome)) return false;
+    if (isRegenerateConfirm(outcome)) return true;
+    return source.providerCancelStatus === "requested" || source.providerCancelStatus === "uncertain";
+}
+
+export function nodeRequiresRegenerateConfirmation(
+    metadata?: CanvasNodeOutcomeMetadata | null,
+    outcome: TaskOutcome | null | undefined = readNodeTaskOutcome(metadata),
+): boolean {
+    return taskRequiresRegenerateConfirmation(
+        { providerCancelStatus: metadata?.taskProviderCancelStatus, outcome },
+        outcome,
+    );
+}
+
+/**
  * 判断重新生成是否必须按新提交处理（分配新的 `clientOperationId`、不写 `retryOf`、不调用就地 `/tasks/:id/retry`）：
- * - `outcome.regenerate === "confirm"`（如取消未确认、已扣费不可取回、审核/参数拒绝等）
- * - 阶段/错误码标明提交未确认，或上游取消请求仍在进行中（`submission_unknown`、`submission_uncertain`、`providerCancelStatus === "requested"`）
+ * - 需要显式确认（`outcome.regenerate === "confirm"` 或 `providerCancelStatus === "requested" | "uncertain"`）
+ * - 阶段/错误码标明提交未确认（`submission_unknown`、`submission_uncertain`）
  * - `canvas_image` 且缺少明确未扣费/未发送证据（避免命中后端 `ValidateImageTaskRetry` 图片幂等守门）
  */
 export function taskRequiresFreshSubmission(
     source: FreshSubmissionSource,
     outcome: TaskOutcome | null | undefined = normalizeTaskOutcome(source.outcome),
 ): boolean {
-    if (outcome?.regenerate === "confirm") return true;
+    if (taskRequiresRegenerateConfirmation(source, outcome)) return true;
     if (source.stage === "submission_unknown" || source.errorCode === "submission_uncertain") return true;
-    if (source.providerCancelStatus === "requested") return true;
     if (source.type === "canvas_image" && outcome?.reason !== "not_charged" && outcome?.reason !== "request_not_sent") {
         return true;
     }
@@ -430,6 +453,7 @@ export function canReloadCanvasNodeResource(target?: { metadata?: CanvasNodeOutc
     const metadata = extractNodeMetadata(target);
     if (!metadata || metadata.batchRootId) return false;
     if (!metadata.taskId) return false;
+    if (metadata.taskStatus === "cancelled") return false;
     const outcome = readNodeTaskOutcome(metadata);
     if (!outcome) return false;
     if (normalizeTaskOutcome(metadata.taskOutcome)) {
@@ -591,6 +615,30 @@ export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()
                             confirmContent: "上游已确认取消本次任务，但仍无法确认渠道是否已扣费，重新生成可能会再扣一次。",
                         };
                     }
+                    if (options?.providerCancelStatus === "requested") {
+                        const reason = "已请求上游取消，正在等待确认";
+                        const action = "旧任务可能仍在执行，确认后再决定是否重新生成";
+                        return {
+                            badge: "取消待确认",
+                            reason,
+                            action,
+                            message: `${reason}。${action}。`,
+                            confirmTitle: "上游取消仍在确认中，确认重新生成？",
+                            confirmContent: "已向上游发送取消请求，但尚未收到确认，旧任务可能仍在执行或扣费。重新生成可能会再扣一次。",
+                        };
+                    }
+                    if (options?.providerCancelStatus === "uncertain") {
+                        const reason = "上游无法确认取消，状态待确认";
+                        const action = "请先核对原请求状态，确认后可重新生成";
+                        return {
+                            badge: "取消待确认",
+                            reason,
+                            action,
+                            message: `${reason}。${action}。`,
+                            confirmTitle: "上游未能确认取消，确认重新生成？",
+                            confirmContent: "上游无法确认取消本次任务，旧任务可能仍在执行或已扣费。重新生成可能会再扣一次。",
+                        };
+                    }
                     const reason = "任务已取消，无法确认上游是否已生成或扣费";
                     const action = "可先到渠道后台核对原请求状态，确认后可重新生成";
                     return {
@@ -650,6 +698,30 @@ export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()
                 };
             }
             // regenerate === "allowed"
+            if (options?.providerCancelStatus === "requested") {
+                const reason = "已请求上游取消，正在等待确认";
+                const action = "旧任务可能仍在执行，确认后可创建新任务重新生成";
+                return {
+                    badge: "取消待确认",
+                    reason,
+                    action,
+                    message: `${reason}。${action}。`,
+                    confirmTitle: "上游取消仍在确认中，确认重新生成？",
+                    confirmContent: "已向上游发送取消请求，但尚未收到确认，旧任务可能仍在执行。确认后将创建新任务重新生成。",
+                };
+            }
+            if (options?.providerCancelStatus === "uncertain") {
+                const reason = "上游无法确认取消，状态待确认";
+                const action = "旧任务可能仍在执行，确认后可创建新任务重新生成";
+                return {
+                    badge: "取消待确认",
+                    reason,
+                    action,
+                    message: `${reason}。${action}。`,
+                    confirmTitle: "上游未能确认取消，确认重新生成？",
+                    confirmContent: "上游无法确认取消本次任务，旧任务可能仍在执行。确认后将创建新任务重新生成。",
+                };
+            }
             let reason = "上次生成未完成，可以直接重新生成";
             if (outcome.reason === "refunded") {
                 reason = "上次生成未完成，费用已退回，可以直接重新生成";

@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import { generationBatchStatus } from "@/lib/canvas/canvas-generation-batch";
 import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { buildGenerationConfig, createGenerationRetryContext, generationTaskMetadata, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
-import { nodeRequiresFreshSubmission } from "@/lib/task-outcome";
+import { nodeRequiresFreshSubmission, nodeRequiresRegenerateConfirmation } from "@/lib/task-outcome";
 import { listGenerationTasks } from "@/services/api/task-center";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -269,12 +269,8 @@ export function useCanvasGenerationBatches({ projectId, projectLoaded, nodes, no
             const failedItems = batch.items.filter((item) => item.status === "failed" && (!itemId || item.id === itemId));
             if (!failedItems.length) return message.info("没有需要重试的失败项");
             const nodeById = new Map(nodesRef.current.map((node) => [node.id, node]));
-            const blockedItems = failedItems.filter((item) => {
-                const node = nodeById.get(item.nodeId);
-                return item.submissionUncertain || (node ? canvasNodeFailureView(node).regenerateBlocked : false);
-            });
-            const retryableItems = failedItems.filter((item) => !blockedItems.includes(item));
-            if (blockedItems.length) message.warning(`${blockedItems.length} 个镜头需要先处理失败原因，请打开对应节点查看`);
+            const { blockedItems, retryableItems } = partitionRetryableBatchItems(failedItems, nodeById);
+            if (blockedItems.length) message.warning(`${blockedItems.length} 个镜头需要先处理失败原因或单独确认，请打开对应节点查看`);
             if (!retryableItems.length) return;
             const retry = async () => {
                 const retryContexts = new Map<string, Awaited<ReturnType<typeof createGenerationRetryContext>>>();
@@ -389,6 +385,23 @@ export function useCanvasGenerationBatches({ projectId, projectLoaded, nodes, no
         retryFailedBatchItems,
         stopRemainingBatchItems,
     };
+}
+
+export function partitionRetryableBatchItems(
+    failedItems: readonly CanvasGenerationBatchItem[],
+    nodeById: ReadonlyMap<string, CanvasNodeData>,
+) {
+    // 批量重试没有逐个确认弹窗：已阻止、需确认（可能重复扣费）或上游取消仍待确认的项必须回单节点处理。
+    const blockedItems = failedItems.filter((item) => {
+        if (item.submissionUncertain) return true;
+        const node = nodeById.get(item.nodeId);
+        if (!node) return false;
+        const view = canvasNodeFailureView(node);
+        return view.regenerateBlocked || view.regenerateConfirm || nodeRequiresRegenerateConfirmation(node.metadata);
+    });
+    const blockedSet = new Set(blockedItems);
+    const retryableItems = failedItems.filter((item) => !blockedSet.has(item));
+    return { blockedItems, retryableItems };
 }
 
 function batchItemKey(batchId: string, itemId: string) {
