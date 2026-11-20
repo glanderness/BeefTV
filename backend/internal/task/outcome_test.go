@@ -337,3 +337,22 @@ func TestCancelledMediaResultUnconfirmed(t *testing.T) {
 		t.Fatal("cancelled unreadable task must remain active until evidence can be read")
 	}
 }
+
+func TestCanvasFailureScanRefreshesWhenProviderCancelStatusChanges(t *testing.T) {
+	scan := &CanvasFailureScan{
+		checked: map[string]canvasFailureCheck{
+			"cancelled-task": {
+				outcome:              Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonCancelledResultUnconfirmed},
+				providerCancelStatus: model.ProviderCancelStatusRequested,
+				revision:             7,
+			},
+		},
+	}
+	outcome := Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonCancelledResultUnconfirmed}
+	if !scan.unchanged([]model.Task{{ID: "cancelled-task", ProviderCancelStatus: model.ProviderCancelStatusRequested}}, []Outcome{outcome}, 7) {
+		t.Fatal("same outcome, providerCancelStatus, and revision should be treated as unchanged")
+	}
+	if scan.unchanged([]model.Task{{ID: "cancelled-task", ProviderCancelStatus: model.ProviderCancelStatusConfirmed}}, []Outcome{outcome}, 7) {
+		t.Fatal("transitioning providerCancelStatus from requested to confirmed must trigger a canvas node refresh")
+	}
+}

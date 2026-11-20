@@ -17,9 +17,8 @@ import { formatTaskKind, generationTaskStatusLabel, operationOptions } from "@/l
 import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
 
-import { createClientId } from "@/lib/client-id";
-import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryGenerationTask, recoverTask, regenerateGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
-import { canRecoverTaskOutcome, isRegenerateConfirm, isTaskRegenerateBlocked, readTaskOutcome } from "@/lib/task-outcome";
+import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryGenerationTask, recoverTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
+import { canRecoverTaskOutcome, isTaskRegenerateBlocked, readTaskOutcome } from "@/lib/task-outcome";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -28,7 +27,7 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
-import { computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, shouldFastPollTaskCenter, shouldUseTaskRegenerateEndpoint, taskMediaKind, taskOutcomeCopyForTask } from "./task-shared";
+import { canBatchRetryTaskInTaskCenter, computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, shouldFastPollTaskCenter, taskCenterRetryRequiresNewSubmission, taskMediaKind, taskOutcomeCopyForTask } from "./task-shared";
 import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
 import { workspaceCapabilities } from "@/services/workspace-mode";
@@ -142,7 +141,7 @@ export default function TasksPage() {
     };
 
     const retryGroupTasks = async (key: string, items: GenerationTask[]) => {
-        const retryable = items.filter((task) => isTaskFailed(task) && !isTaskRegenerateBlocked(task));
+        const retryable = items.filter((task) => canBatchRetryTaskInTaskCenter(task));
         if (!retryable.length) return;
         setRetryingGroup(key);
         try {
@@ -326,21 +325,57 @@ export default function TasksPage() {
                 message.warning(taskOutcomeCopyForTask(detail, detailOutcome).message);
                 return;
             }
-            if (isRegenerateConfirm(detailOutcome)) {
+            if (taskCenterRetryRequiresNewSubmission(detail, detailOutcome)) {
                 const copy = taskOutcomeCopyForTask(detail, detailOutcome);
-                const confirmed = await new Promise<boolean>((resolve) => {
-                    modal.confirm({
-                        title: copy.confirmTitle || "确认重新生成？",
-                        content: copy.confirmContent || copy.message,
-                        okText: "继续重新生成",
-                        cancelText: "取消",
-                        centered: true,
-                        onOk: () => resolve(true),
-                        onCancel: () => resolve(false),
-                        afterClose: () => resolve(false),
+                const hasCanvas = Boolean(detail.projectId && canvasById.has(detail.projectId));
+                if (hasCanvas && detail.projectId) {
+                    const targetCanvasId = detail.projectId;
+                    const goToCanvas = await new Promise<boolean>((resolve) => {
+                        modal.confirm({
+                            title: copy.confirmTitle || "请回到画布重新生成",
+                            content: `${copy.confirmContent || copy.message} 为保留原任务的提交与扣费核对记录并将新结果写回原节点，请回到对应画布重新生成。`,
+                            okText: "前往画布",
+                            cancelText: "取消",
+                            centered: true,
+                            onOk: () => resolve(true),
+                            onCancel: () => resolve(false),
+                            afterClose: () => resolve(false),
+                        });
                     });
-                });
-                if (!confirmed) return;
+                    if (goToCanvas) {
+                        setDetailTask(null);
+                        navigate(`/canvas/${encodeURIComponent(targetCanvasId)}`);
+                    }
+                    return;
+                }
+                if (detail.type.startsWith("video_")) {
+                    const createFresh = await new Promise<boolean>((resolve) => {
+                        modal.confirm({
+                            title: copy.confirmTitle || "确认重新生成？",
+                            content: copy.confirmContent || copy.message,
+                            okText: "创建新任务",
+                            cancelText: "取消",
+                            centered: true,
+                            onOk: () => resolve(true),
+                            onCancel: () => resolve(false),
+                            afterClose: () => resolve(false),
+                        });
+                    });
+                    if (createFresh) {
+                        const operation = detail.operation || detail.type.replace(/^video_/, "") || "text_to_video";
+                        form.setFieldsValue({
+                            operation,
+                            prompt: detail.prompt || "",
+                            model: detail.model || "",
+                            projectId: undefined,
+                        });
+                        setDetailTask(null);
+                        setCreateOpen(true);
+                    }
+                    return;
+                }
+                message.warning(`${copy.message} 原画布已不存在，请在创作页或新建画布后重新生成`);
+                return;
             }
             const portraitError = portraitTaskRetryError(detail.inputJson, detail.model);
             if (portraitError) throw new Error(portraitError);
@@ -348,15 +383,12 @@ export default function TasksPage() {
             if (warning && !(await new Promise<boolean>((resolve) => {
                 modal.confirm({ ...warning, centered: true, onOk: () => resolve(true), onCancel: () => resolve(false), afterClose: () => resolve(false) });
             }))) return;
-            const createNewTask = shouldUseTaskRegenerateEndpoint(detail, detailOutcome);
-            const next = createNewTask
-                ? await regenerateGenerationTask(id, { clientOperationId: createClientId() })
-                : await retryGenerationTask(id);
-            setTasks((items) => (createNewTask ? [next, ...items] : items.map((item) => (item.id === id ? next : item))));
-            setDetailTask((current) => (current?.id === id ? (createNewTask ? next : { ...current, ...next }) : current));
+            const next = await retryGenerationTask(id);
+            setTasks((items) => items.map((item) => (item.id === id ? next : item)));
+            setDetailTask((current) => (current?.id === id ? { ...current, ...next } : current));
             setStatusFilter("active");
             setPage(1);
-            message.success(createNewTask ? "已创建新任务重新生成" : "任务已重新入队");
+            message.success("任务已重新入队");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "操作失败");
         } finally {

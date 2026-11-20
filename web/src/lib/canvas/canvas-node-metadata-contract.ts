@@ -12,6 +12,7 @@ export const TRANSIENT_TASK_TELEMETRY_KEYS = [
     "taskDurationMs",
     "taskStartedAt",
     "taskProviderRequestId",
+    "taskProviderCancelStatus",
     "taskOfficialStatus",
     "taskReceiptRecorded",
 ] as const satisfies ReadonlyArray<keyof CanvasNodeMetadata>;

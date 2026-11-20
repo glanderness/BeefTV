@@ -1,5 +1,5 @@
 import { explainGenerationError } from "@/lib/generation-error";
-import { normalizeTaskOutcome, readTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
+import { isTaskRegenerateBlocked, normalizeTaskOutcome, readTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
 import { isActiveGenerationTask, type GenerationTask, type TaskStatus } from "@/services/api/task-center";
 import { modelDisplayName, type AiConfig } from "@/stores/use-config-store";
 
@@ -67,16 +67,25 @@ export function taskOutcomeCopyForTask(
 }
 
 /**
- * 任务中心点击重新生成时，若后端 outcome 要求确认（如 cancelled_result_unconfirmed /
- * charged_result_unrecoverable / result_unrecoverable）或为图片任务（避免命中原任务
- * 图片幂等守门），应走 `/tasks/:id/regenerate` 创建全新任务，保留原任务记录与回执。
+ * 判断任务中心是否不能就地复用原任务 `/tasks/:id/retry`（需保留原任务记录与图片幂等回执，改为新提交）：
+ * - `outcome.regenerate === "confirm"`（含 `cancelled_result_unconfirmed`、`charged_result_unrecoverable`、`result_unrecoverable`、`input_rejected` 与计费不明任务）
+ * - 阶段/错误码标明提交未确认（`submission_unknown`、`submission_uncertain`）
+ * - 图片任务且无明确未扣费证据（避免命中后端 `ValidateImageTaskRetry` 图片幂等守门）
  */
-export function shouldUseTaskRegenerateEndpoint(
+export function taskCenterRetryRequiresNewSubmission(
     task: Pick<GenerationTask, "type" | "status" | "stage" | "errorCode" | "error" | "providerRequestId" | "outcome" | "outputs">,
     outcome = readTaskOutcome(task),
 ) {
     if (outcome?.regenerate === "confirm") return true;
-    return task.type === "canvas_image";
+    if (task.stage === "submission_unknown" || task.errorCode === "submission_uncertain") return true;
+    if (task.type === "canvas_image" && outcome?.reason !== "not_charged" && outcome?.reason !== "request_not_sent") {
+        return true;
+    }
+    return false;
+}
+
+export function canBatchRetryTaskInTaskCenter(task: GenerationTask) {
+    return isTaskFailed(task) && !isTaskRegenerateBlocked(task) && !taskCenterRetryRequiresNewSubmission(task);
 }
 
 export function taskAttentionReason(task: GenerationTask) {

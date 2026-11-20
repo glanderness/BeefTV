@@ -323,10 +323,6 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	return s.taskDomain().Retry(userID, id)
 }
 
-func (s *Service) RegenerateTask(userID string, id string, clientOperationID string) (*model.Task, error) {
-	return s.taskDomain().Regenerate(userID, id, clientOperationID)
-}
-
 func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*model.Task, error) {
 	if task, err := s.repo.TaskForUser(userID, id); err == nil && task.Status == model.TaskStatusSucceeded {
 		return s.pauseGenerationDownload(*task, model.TaskStageDeliveryPaused)

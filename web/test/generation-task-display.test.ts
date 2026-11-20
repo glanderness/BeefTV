@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel } from "@/lib/generation-task-display";
-import { providerCancelStatusLabel, shouldUseTaskRegenerateEndpoint, taskAttentionReason, taskOutcomeCopyForTask } from "@/pages/tasks/task-shared";
+import { canBatchRetryTaskInTaskCenter, providerCancelStatusLabel, taskAttentionReason, taskCenterRetryRequiresNewSubmission, taskOutcomeCopyForTask } from "@/pages/tasks/task-shared";
 import type { GenerationTask } from "@/services/api/task-center";
 
 test("cancelled image with unconfirmed result does not claim recovery is running", () => {
@@ -32,12 +32,18 @@ test("cancelled image with unconfirmed result does not claim recovery is running
     expect(providerCancelStatusLabel({ ...task, outcome: undefined, providerCancelStatus: "confirmed" })).toBe("上游已确认取消");
     expect(providerCancelStatusLabel({ ...task, outcome: undefined })).toBe("任务已取消，请核对原任务的结果与扣费状态");
 
-    // Task-center regenerate routing avoids old-task /retry image idempotency guard for confirm & image tasks.
-    expect(shouldUseTaskRegenerateEndpoint(task)).toBe(true);
-    expect(shouldUseTaskRegenerateEndpoint({ ...task, model: "topaz-standard-v2" })).toBe(true);
-    expect(shouldUseTaskRegenerateEndpoint({ ...task, outcome: { phase: "failed", regenerate: "allowed", reason: "refunded" } })).toBe(true);
-    expect(shouldUseTaskRegenerateEndpoint({ ...task, type: "canvas_video" })).toBe(true);
-    expect(shouldUseTaskRegenerateEndpoint({ ...task, type: "canvas_video", outcome: { phase: "failed", regenerate: "allowed", reason: "not_charged" } })).toBe(false);
+    // Task-center retry must never invoke in-place /retry for confirm, submission_unknown, or submitted image tasks.
+    expect(taskCenterRetryRequiresNewSubmission(task)).toBe(true);
+    expect(taskCenterRetryRequiresNewSubmission({ ...task, model: "topaz-standard-v2" })).toBe(true);
+    expect(taskCenterRetryRequiresNewSubmission({ ...task, outcome: { phase: "failed", regenerate: "allowed", reason: "refunded" } })).toBe(true);
+    expect(taskCenterRetryRequiresNewSubmission({ ...task, outcome: { phase: "failed", regenerate: "allowed", reason: "not_charged" } })).toBe(false);
+    expect(taskCenterRetryRequiresNewSubmission({ ...task, type: "canvas_video" })).toBe(true);
+    expect(taskCenterRetryRequiresNewSubmission({ ...task, type: "canvas_video", stage: "submission_unknown", outcome: { phase: "failed", regenerate: "allowed", reason: "task_failed" } })).toBe(true);
+    expect(taskCenterRetryRequiresNewSubmission({ ...task, type: "canvas_video", outcome: { phase: "failed", regenerate: "allowed", reason: "not_charged" } })).toBe(false);
+
+    expect(canBatchRetryTaskInTaskCenter(task)).toBe(false);
+    expect(canBatchRetryTaskInTaskCenter({ ...task, type: "canvas_video", outcome: { phase: "failed", regenerate: "allowed", reason: "not_charged" } })).toBe(true);
+    expect(canBatchRetryTaskInTaskCenter({ ...task, outcome: { phase: "failed", regenerate: "allowed", reason: "not_charged" } })).toBe(true);
 });
 
 for (const [stage, label] of [["delivery_paused", "已暂停取回结果"], ["delivery_timed_out", "下载超时，可继续取回原结果"]]) {
