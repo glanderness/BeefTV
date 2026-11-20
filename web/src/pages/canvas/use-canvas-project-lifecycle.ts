@@ -472,7 +472,14 @@ export function useCanvasProjectLifecycle({
                 historyRestore?.resolve();
             }
             if (!loadedProject) {
-                if (!cachedProject) navigate("/canvas", { replace: true });
+                const stillInStore = Boolean(useCanvasStore.getState().openProject(projectId));
+                if (!cachedProject || !stillInStore) {
+                    editorReadyRef.current = false;
+                    editorProjectIdRef.current = null;
+                    setProjectLoaded(false);
+                    setLoadError("");
+                    navigate("/canvas", { replace: true });
+                }
                 return;
             }
             const project = useCanvasStore.getState().projects.find((p) => p.id === projectId) || loadedProject;

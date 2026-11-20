@@ -1,5 +1,6 @@
 import { clearCanvasDocumentBase, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { ApiError, http } from "@/services/api/request";
+import { appPathname, type AppRoutingRuntime } from "@/lib/app-routing";
 import { beginCanvasHydration, finishCanvasHydration } from "./canvas-hydration-health";
 import { restoreCanvasHistory } from "@/services/api/workspace-data";
 import { CanvasBackendSubmitPausedError, isCanvasRevisionConflict } from "@/services/canvas-revision-conflict";
@@ -27,10 +28,16 @@ function isNotFoundApiError(error: unknown): boolean {
     return (error instanceof ApiError || candidate.name === "ApiError") && candidate.status === 404;
 }
 
-function isCanvasOpenInEditor(id: string): boolean {
-    if (typeof window === "undefined") return false;
-    const path = window.location?.pathname || "";
-    return path === `/canvas/${encodeURIComponent(id)}` || path === `/canvas/${id}`;
+export function isCanvasOpenInEditor(id: string, runtime?: AppRoutingRuntime): boolean {
+    if (!runtime && typeof window === "undefined") return false;
+    const pathname = appPathname(runtime).replace(/\/+$/u, "");
+    const segments = pathname.split("/").filter(Boolean);
+    if (segments.length !== 2 || segments[0] !== "canvas") return false;
+    try {
+        return decodeURIComponent(segments[1]!) === id || segments[1] === id;
+    } catch {
+        return segments[1] === id;
+    }
 }
 
 /**

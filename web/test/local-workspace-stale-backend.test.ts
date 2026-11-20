@@ -419,4 +419,80 @@ describe("local workspace stale backend protection", () => {
         const keptOffline = await repository.openLocalCanvasProjectFromBackend(offlineCanvas.id);
         expect(keptOffline?.id).toBe(offlineCanvas.id);
     });
+
+    it("protects the open editor canvas from background hydration 404 eviction under Wails hash and embedded basePath routing", async () => {
+        const { isCanvasOpenInEditor } = await import("@/services/local-workspace-hydration");
+        expect(isCanvasOpenInEditor("open-1", {
+            location: { protocol: "wails:", host: "wails", pathname: "/index.html", hash: "#/canvas/open-1?tab=nodes" },
+        })).toBe(true);
+        expect(isCanvasOpenInEditor("open 2", {
+            location: { protocol: "https:", host: "host.test", pathname: "/beeftv/app/canvas/open%202/" },
+            basePath: "/beeftv/app",
+        })).toBe(true);
+
+        const originalWindow = globalThis.window;
+        try {
+            // 1. Native Wails hash routing (#/canvas/open-wails)
+            const kept = project({ id: "canvas-kept", revision: 2 });
+            const openWails = project({ id: "open-wails", revision: 3 });
+            const closedDeleted = project({ id: "closed-deleted", revision: 3 });
+            resetProjects([kept, openWails, closedDeleted]);
+            bases.set(openWails.id, { revision: 3, snapshot: openWails });
+            bases.set(closedDeleted.id, { revision: 3, snapshot: closedDeleted });
+            setRemoteProject(kept);
+            remoteDetailsById.set(openWails.id, "404");
+            remoteDetailsById.set(closedDeleted.id, "404");
+            Object.defineProperty(globalThis, "window", {
+                configurable: true,
+                value: {
+                    location: {
+                        protocol: "wails:",
+                        host: "wails",
+                        hostname: "wails",
+                        pathname: "/index.html",
+                        hash: "#/canvas/open-wails",
+                        href: "wails://wails/index.html#/canvas/open-wails",
+                        origin: "wails://wails",
+                    },
+                },
+            });
+
+            expect(await repository.hydrateLocalCanvasProjectsFromBackend()).toBe(true);
+            expect(projects.map((item) => item.id).sort()).toEqual(["canvas-kept", "open-wails"]);
+
+            // 2. Embedded basePath browser routing (/beeftv/app/canvas/open-base)
+            const openBase = project({ id: "open-base", revision: 3 });
+            const closedDeleted2 = project({ id: "closed-deleted-2", revision: 3 });
+            resetProjects([kept, openBase, closedDeleted2]);
+            bases.set(openBase.id, { revision: 3, snapshot: openBase });
+            bases.set(closedDeleted2.id, { revision: 3, snapshot: closedDeleted2 });
+            remoteDetailsById.set(openBase.id, "404");
+            remoteDetailsById.set(closedDeleted2.id, "404");
+            Object.defineProperty(globalThis, "window", {
+                configurable: true,
+                value: {
+                    location: {
+                        protocol: "https:",
+                        host: "host.test",
+                        hostname: "host.test",
+                        pathname: "/beeftv/app/canvas/open-base",
+                        hash: "",
+                        href: "https://host.test/beeftv/app/canvas/open-base",
+                        origin: "https://host.test",
+                    },
+                    __BEEFTV_HARNESS__: {
+                        embedded: true,
+                        basePath: "/beeftv/app",
+                        apiBase: "/beeftv/app/api",
+                    },
+                },
+            });
+
+            expect(await repository.hydrateLocalCanvasProjectsFromBackend()).toBe(true);
+            expect(projects.map((item) => item.id).sort()).toEqual(["canvas-kept", "open-base"]);
+        } finally {
+            if (originalWindow === undefined) delete (globalThis as { window?: unknown }).window;
+            else Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+        }
+    });
 });

@@ -1,6 +1,6 @@
 import { StrictMode, useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { App } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useCanvasGeneration } from "../../src/pages/canvas/use-canvas-generation";
@@ -158,8 +158,13 @@ function Harness() {
     </>;
 }
 function MountController() {
+    const location = useLocation();
     const [mounted, setMounted] = useState(true);
     (harness as any).unmount = () => setMounted(false);
-    return mounted ? <Harness /> : <div data-testid="unmounted">Left canvas</div>;
+    (harness as any).hasStoredCanvas = (id = "c1") => Boolean(useCanvasStore.getState().openProject(id));
+    return <>
+        <div data-testid="route">{location.pathname}</div>
+        {mounted ? <Harness /> : <div data-testid="unmounted">Left canvas</div>}
+    </>;
 }
 createRoot(document.getElementById("root")!).render(<StrictMode><MemoryRouter><QueryClientProvider client={new QueryClient()}><App><MountController /></App></QueryClientProvider></MemoryRouter></StrictMode>);
