@@ -491,11 +491,13 @@ test("supports Space peek and Arrow keys after clicking filmstrip buttons, side-
     expect(perfFileRequests.length).toBeLessThanOrEqual(1);
 
     // Download action must fetch full-resolution /file blob rather than saving the 128px preview fallback
-    const downloadedPayload = await page.evaluate(async () => {
+    const download = await page.evaluate(async () => {
         let capturedHref = "";
+        let fileName = "";
         const origClick = HTMLAnchorElement.prototype.click;
         HTMLAnchorElement.prototype.click = function () {
             capturedHref = this.href;
+            fileName = this.download;
         };
         try {
             // Switch to item 1 (perf-02) and immediately click download BEFORE full-res finishes resolving
@@ -505,14 +507,14 @@ test("supports Space peek and Arrow keys after clicking filmstrip buttons, side-
             while (!capturedHref && Date.now() < deadline) {
                 await new Promise((r) => setTimeout(r, 25));
             }
-            if (!capturedHref) return "";
-            const res = await fetch(capturedHref);
-            return await res.text();
+            const payload = capturedHref ? await (await fetch(capturedHref)).text() : "";
+            return { fileName, payload };
         } finally {
             HTMLAnchorElement.prototype.click = origClick;
         }
     });
-    expect(downloadedPayload).toContain("FULL_RES_PAYLOAD");
+    expect(download.fileName).toBe("50版性能测试节点.png");
+    expect(download.payload).toContain("FULL_RES_PAYLOAD");
 });
 
 test("resolves standalone protected /api/resources URLs without a node, enforces readOnly on node inspector, peeks protected primary without blank flash, probes zero-size metrics once, and bounds cold-cache 50-version downloads", async () => {

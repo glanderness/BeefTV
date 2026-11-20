@@ -35,10 +35,12 @@ const MIME_EXTENSIONS: Record<string, string> = {
 
 const CONTENT_EXTENSIONS = new Set(Object.values(MIME_EXTENSIONS).concat(["jpeg", "mpg"]));
 
-export function buildCanvasMediaDownloadFileName(canvasTitle: string, node: CanvasNodeData, now = new Date()) {
-    const canvasName = safeFileNamePart(canvasTitle, "未命名画布");
-    const nodeName = safeFileNamePart(node.title, defaultNodeName(node.type));
-    return `${canvasName}_${nodeName}_${formatDownloadDate(now)}.${canvasMediaFileExtension(node)}`;
+export function buildCanvasMediaDownloadFileName(node: Pick<CanvasNodeData, "type" | "title" | "metadata">) {
+    const extension = canvasMediaFileExtension(node);
+    const title = node.title.trim();
+    const dot = title.lastIndexOf(".");
+    const stem = dot > 0 && normalizeMediaExtension(title.slice(dot + 1)) === extension ? title.slice(0, dot) : title;
+    return `${safeFileNamePart(stem, defaultNodeName(node.type))}.${extension}`;
 }
 
 export function sanitizeDownloadFileName(value: string, fallback = "未命名文件") {
@@ -51,7 +53,7 @@ export function sanitizeDownloadFileName(value: string, fallback = "未命名文
     return `${safeBase}.${extension.toLowerCase() === "jpeg" ? "jpg" : extension.toLowerCase()}`;
 }
 
-export function canvasMediaFileExtension(node: CanvasNodeData) {
+export function canvasMediaFileExtension(node: Pick<CanvasNodeData, "type" | "metadata">) {
     return mediaFileExtension(node.metadata?.mimeType, node.metadata?.content)
         || defaultExtension(node.type);
 }
@@ -71,11 +73,15 @@ function extensionFromContent(content?: string) {
     const dataExtension = extensionFromMimeType(dataMimeType);
     if (dataExtension) return dataExtension;
     const path = content.split(/[?#]/, 1)[0];
-    const extension = path.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
-    if (!extension || !CONTENT_EXTENSIONS.has(extension)) return undefined;
-    if (extension === "jpeg") return "jpg";
-    if (extension === "mpg") return "mpeg";
-    return extension;
+    return normalizeMediaExtension(path.match(/\.([a-z0-9]+)$/i)?.[1]);
+}
+
+function normalizeMediaExtension(extension?: string) {
+    const normalized = extension?.toLowerCase();
+    if (!normalized || !CONTENT_EXTENSIONS.has(normalized)) return undefined;
+    if (normalized === "jpeg") return "jpg";
+    if (normalized === "mpg") return "mpeg";
+    return normalized;
 }
 
 function safeFileNamePart(value: string, fallback: string) {
@@ -89,13 +95,6 @@ function safeFileNamePart(value: string, fallback: string) {
         .replace(/[. ]+$/g, "");
     if (!normalized) return fallback;
     return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(normalized) ? `_${normalized}` : normalized;
-}
-
-function formatDownloadDate(date: Date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}${month}${day}`;
 }
 
 function defaultNodeName(type: CanvasNodeTypeId) {

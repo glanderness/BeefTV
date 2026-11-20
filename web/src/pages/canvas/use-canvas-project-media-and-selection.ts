@@ -50,7 +50,6 @@ type MediaAndSelectionParams = {
     projectId: string;
     linkedProjectId: string;
     readOnly: boolean;
-    canvasTitle: string;
     directorScenes?: CanvasProject["directorScenes"];
     addedSkills: ReturnType<typeof useCanvasProjectLifecycle>["addedSkills"];
     projectLoaded: boolean;
@@ -91,7 +90,6 @@ export function useCanvasProjectMediaAndSelection({
     projectId,
     linkedProjectId,
     readOnly,
-    canvasTitle,
     directorScenes,
     addedSkills,
     projectLoaded,
@@ -388,7 +386,6 @@ export function useCanvasProjectMediaAndSelection({
     const nodeEditor = useCanvasNodeEditor({
         pageUi,
         canvasId: projectId,
-        canvasTitle,
         domainProjectId: linkedProjectId,
         readOnly,
         nodesRef,

@@ -8,16 +8,17 @@ import { CachedResourceImage } from "@/components/cached-resource-image";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { activeImageHistoryIndex, getPrimarySwitchBlockReason, isActiveImageHistoryItem, resolveCanvasNodeImageHistory } from "@/lib/canvas/canvas-image-history";
 import { discoverNodeImageHistoryFromTasks, filterPersistableDiscoveredHistoryItems } from "@/lib/canvas/canvas-image-history-tasks";
-import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
+import { buildCanvasMediaDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { extractOwnedResourceId } from "@/lib/canvas/canvas-resource-id";
-import { getResource, isProtectedResourceFileUrl, ownedResourceStorageKey } from "@/services/api/resources";
+import { getResource, isProtectedResourceFileUrl, ownedResourceIdFromMediaRef, ownedResourceStorageKey } from "@/services/api/resources";
 import { listGenerationTasks } from "@/services/api/task-center";
+import { downloadOwnedOrBrowserMedia, isWailsNativeShell, reportOwnedMediaSave } from "@/services/desktop-media-save";
 import { resolveImageUrl } from "@/services/image-storage";
 import { canUseSameOriginResourceAsset, resourcePreviewAssetUrl } from "@/services/media-asset-url";
 import { cacheResourceObjectUrl, peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useEffectiveConfig } from "@/stores/use-config-store";
-import type { CanvasImageHistoryItem, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
+import { CanvasNodeType, type CanvasImageHistoryItem, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 import { CanvasImageCompareStage, type CanvasImageViewerMode, type ResolvedViewerImage } from "./canvas-image-compare-stage";
 import { CanvasImageInfoSidebar, type SupplementedMediaMetrics } from "./canvas-image-info-sidebar";
@@ -524,7 +525,21 @@ export function CanvasImageViewerModal({
     const downloadCurrent = async () => {
         if (downloading) return;
         const target = inCompareMode && inspectTarget === "B" && compareItem ? compareItem : activeItem;
-        const targetOwnedId = extractOwnedResourceId(target.storageKey, target.content);
+        const targetOwnedId = ownedResourceIdFromMediaRef(target.storageKey, target.content);
+        const fileName = buildCanvasMediaDownloadFileName({
+            type: CanvasNodeType.Image,
+            title: node?.title || alt,
+            metadata: { mimeType: target.mimeType || metricsById[target.id]?.mimeType, content: target.content },
+        });
+        if (targetOwnedId && isWailsNativeShell()) {
+            setDownloading(true);
+            try {
+                await reportOwnedMediaSave(message, downloadOwnedOrBrowserMedia({ fileName, resourceId: targetOwnedId }));
+            } finally {
+                setDownloading(false);
+            }
+            return;
+        }
         // Desktop stage renders disk-cached 2048px previews; download must always fetch the lossless original.
         const preferOriginalBlob = Boolean(targetOwnedId && target.storageKey && canUseSameOriginResourceAsset());
         let href = preferOriginalBlob ? "" : fullUrlFor(target);
@@ -555,11 +570,9 @@ export function CanvasImageViewerModal({
             }
         }
         if (!href) return;
-        const ext = mediaFileExtension(target.mimeType || metricsById[target.id]?.mimeType, target.content) || "png";
-        const baseName = `${node?.title || alt || "image"}-v${items.indexOf(target) + 1}.${ext}`;
         const link = document.createElement("a");
         link.href = href;
-        link.download = sanitizeDownloadFileName(baseName, "image");
+        link.download = fileName;
         document.body.appendChild(link);
         link.click();
         link.remove();

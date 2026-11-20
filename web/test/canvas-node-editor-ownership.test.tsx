@@ -45,7 +45,6 @@ function mountEditor(canvasId = "canvas-a") {
     function Harness() {
         editor = useCanvasNodeEditor({ pageUi,
             canvasId,
-            canvasTitle: "画布",
             domainProjectId: "project-a",
             nodesRef,
             setNodes: (value) => {

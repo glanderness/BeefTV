@@ -446,7 +446,6 @@ function InfiniteCanvasPage() {
         projectId,
         linkedProjectId,
         readOnly,
-        canvasTitle: currentProject?.title || "未命名画布",
         directorScenes: currentProject?.directorScenes,
         addedSkills,
         projectLoaded,

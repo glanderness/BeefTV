@@ -28,7 +28,6 @@ import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-s
 type UseCanvasNodeEditorOptions = {
     pageUi: CanvasPageUiStoreHook;
     canvasId: string;
-    canvasTitle: string;
     domainProjectId?: string;
     readOnly?: boolean;
     nodesRef: { current: CanvasNodeData[] };
@@ -40,7 +39,6 @@ type UseCanvasNodeEditorOptions = {
 export function useCanvasNodeEditor({
     pageUi,
     canvasId,
-    canvasTitle,
     domainProjectId,
     readOnly = false,
     nodesRef,
@@ -289,11 +287,11 @@ export function useCanvasNodeEditor({
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
         void reportOwnedMediaSave(message, downloadOwnedOrBrowserMedia({
-            fileName: buildCanvasMediaDownloadFileName(canvasTitle, node),
+            fileName: buildCanvasMediaDownloadFileName(node),
             resourceId: ownedResourceIdFromMediaRef(node.metadata?.storageKey, node.metadata?.content),
             browserUrl: node.metadata.content,
         }));
-    }, [canvasTitle, message]);
+    }, [message]);
 
     const saveNodeAsset = useCallback(async (node: CanvasNodeData) => {
         if (node.type !== CanvasNodeType.Text && node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) return message.error("当前节点类型不能保存为素材");
