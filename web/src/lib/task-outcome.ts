@@ -72,6 +72,10 @@ export function submissionUnknownTaskOutcome(): TaskOutcome {
     return { phase: "retrievable", regenerate: "blocked", reason: "submission_unknown" };
 }
 
+export function cancelledResultUnconfirmedTaskOutcome(): TaskOutcome {
+    return { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" };
+}
+
 export function notChargedTaskOutcome(): TaskOutcome {
     return { phase: "failed", regenerate: "allowed", reason: "not_charged" };
 }
@@ -185,17 +189,22 @@ export function readTaskOutcome(source?: TaskOutcome | TaskOutcomeSource | null)
             return resultTargetUnavailableTaskOutcome();
         }
         if (stage === "submission_unknown") {
-            return submissionUnknownTaskOutcome();
+            return status === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : submissionUnknownTaskOutcome();
         }
         if (stage === "delivery_paused" || stage === "delivery_timed_out" || LEGACY_RETRIEVABLE_ERROR_CODES.has(errorCode)) {
-            return deliveryPendingTaskOutcome();
+            return status === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : deliveryPendingTaskOutcome();
         }
         if (LEGACY_INPUT_REJECTED_ERROR_CODES.has(errorCode)) {
             return { phase: "failed", regenerate: "confirm", reason: "input_rejected" };
         }
-        // 与后端 ComputeOutcome 一致：已有上游任务号的失败任务先免费查询原任务。
-        if (status === "failed" && typeof record.providerRequestId === "string" && record.providerRequestId.trim()) {
-            return { phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" };
+        // 与后端 ComputeOutcome 一致：已有上游任务号的失败任务先免费查询原任务；已取消任务不再自动取回，需核对确认后再重生成。
+        if (typeof record.providerRequestId === "string" && record.providerRequestId.trim()) {
+            if (status === "cancelled") {
+                return cancelledResultUnconfirmedTaskOutcome();
+            }
+            if (status === "failed") {
+                return { phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" };
+            }
         }
         if (errorCode === "request_not_sent" || status === "cancelled") {
             return notChargedTaskOutcome();
@@ -219,7 +228,7 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
     if (explicit) return explicit;
 
     if (metadata.generationSubmissionState === "unknown" || metadata.taskStage === "submission_unknown") {
-        return submissionUnknownTaskOutcome();
+        return metadata.taskStatus === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : submissionUnknownTaskOutcome();
     }
     if (metadata.status === "success" && Boolean(metadata.content || metadata.storageKey)) {
         return readyTaskOutcome();
@@ -236,7 +245,7 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
             return resultTargetUnavailableTaskOutcome();
         }
         if (LEGACY_RETRIEVABLE_ERROR_CODES.has(errorCode)) {
-            return deliveryPendingTaskOutcome();
+            return metadata.taskStatus === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : deliveryPendingTaskOutcome();
         }
         if (LEGACY_INPUT_REJECTED_ERROR_CODES.has(errorCode)) {
             return { phase: "failed", regenerate: "confirm", reason: "input_rejected" };
@@ -452,11 +461,6 @@ export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()
         }
         case "failed": {
             if (outcome.regenerate === "blocked") {
-                if (outcome.reason === "cancelled_result_unconfirmed") {
-                    const reason = "任务已取消，上游结果尚未确认";
-                    const action = "请在渠道端核对原请求的结果与扣费状态，勿重复生成";
-                    return { badge: "结果待确认", reason, action, message: `${reason}。${action}。` };
-                }
                 if (outcome.reason === "result_target_unavailable") {
                     const reason = "生成结果已保存在生成历史，当前目标节点已变更";
                     const action = "请从生成历史查看结果，请勿重复生成";
@@ -479,6 +483,18 @@ export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()
                 };
             }
             if (outcome.regenerate === "confirm") {
+                if (outcome.reason === "cancelled_result_unconfirmed") {
+                    const reason = "任务已取消，无法确认上游是否已生成或扣费";
+                    const action = "可先到渠道后台核对原请求状态，确认后可重新生成";
+                    return {
+                        badge: "结果待确认",
+                        reason,
+                        action,
+                        message: `${reason}。${action}。`,
+                        confirmTitle: "确认重新生成？",
+                        confirmContent: "上次任务在提交后取消，无法确认渠道是否已执行或扣费，重新生成可能会再扣一次。",
+                    };
+                }
                 if (outcome.reason === "charged_result_unrecoverable") {
                     const reason = "上次已扣费，但结果拿不回，重新生成会再扣一次";
                     const action = "确认后将创建新任务重新生成";

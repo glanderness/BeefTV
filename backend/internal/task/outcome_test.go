@@ -42,11 +42,39 @@ func TestComputeOutcome(t *testing.T) {
 		{"明确失败不代表退款", with(func(t *model.Task) { t.RecoveryOutcome = &noResult }), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "no_result")},
 		{"旧回执没有路由", failed, "", OutcomeFacts{HasImageReceipt: true}, want("retrievable", "blocked", "image_recovery_pending")},
 		{"已接受", failed, "", OutcomeFacts{DispatchState: "accepted"}, want("retrievable", "blocked", "image_recovery_pending")},
-		{"取消后提交未确认不假装自动取回", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "submission_unknown"}, want("failed", "blocked", "cancelled_result_unconfirmed")},
-		{"取消后已接受仍需核对原请求", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "blocked", "cancelled_result_unconfirmed")},
-		{"取消后证据读取失败不能允许重新生成", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{Unreadable: true}, want("failed", "blocked", "cancelled_result_unconfirmed")},
+		{"取消后提交未确认不假装自动取回且需确认重生成", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "submission_unknown"}, want("failed", "confirm", "cancelled_result_unconfirmed")},
+		{"取消后已接受仍需核对原请求并在确认后可重生成", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "cancelled_result_unconfirmed")},
+		{"取消后证据读取失败保留evidence_unavailable不误报未确认", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{Unreadable: true}, want("retrievable", "blocked", "evidence_unavailable")},
 		{"取消前确认未发送可重新生成", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "not_sent"}, want("failed", "allowed", "task_failed")},
 		{"取消后确认无结果保留终态", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled; t.RecoveryOutcome = &noResult }), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "no_result")},
+		{"取消后BeefTV视频已确认扣费保留已扣费结论并退出活跃轮询", with(func(t *model.Task) {
+			u := "completed"
+			t.Type = "canvas_video"
+			t.Status = model.TaskStatusCancelled
+			t.ProviderRequestID = "vid-cancelled-completed"
+			t.BeefUsageState = &u
+		}), "", OutcomeFacts{}, want("failed", "confirm", "charged_result_unrecoverable")},
+		{"取消后BeefTV图片已确认扣费保留已扣费结论并退出活跃轮询", with(func(t *model.Task) {
+			b := "settled"
+			t.Status = model.TaskStatusCancelled
+			t.ImageJobID = "img-cancelled-settled"
+			t.BeefBillingState = &b
+		}), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "charged_result_unrecoverable")},
+		{"取消后BeefTV待结算继续阻塞重生成并透传截止时间", with(func(t *model.Task) {
+			u := "pending"
+			dl := "2026-04-20T12:00:00Z"
+			t.Type = "canvas_video"
+			t.Status = model.TaskStatusCancelled
+			t.ProviderRequestID = "vid-cancelled-pending"
+			t.BeefUsageState = &u
+			t.BeefReconcileDeadline = &dl
+		}), "", OutcomeFacts{}, Outcome{Phase: "failed", Regenerate: "blocked", Reason: "settlement_pending", ReconcileDeadline: "2026-04-20T12:00:00Z"}},
+		{"取消后BeefTV图片已退款允许直接重生成", with(func(t *model.Task) {
+			b := "refunded"
+			t.Status = model.TaskStatusCancelled
+			t.ImageJobID = "img-cancelled-refunded"
+			t.BeefBillingState = &b
+		}), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "allowed", "task_failed")},
 		{"同键待重发", failed, "", OutcomeFacts{DispatchState: "submission_unknown", SafeImageReplay: true}, want("retrievable", "blocked", "image_recovery_pending")},
 		{"旧提交未确认等待扫描", with(func(t *model.Task) { t.Stage = "submission_unknown" }), "", OutcomeFacts{}, want("retrievable", "blocked", "image_recovery_pending")},
 		{"确认取不回", with(func(t *model.Task) { t.RecoveryOutcome = &unrecoverable }), "", OutcomeFacts{HasImageReceipt: true}, want("failed", "confirm", "result_unrecoverable")},
@@ -197,8 +225,8 @@ func TestCancelledUnconfirmedImageLeavesActiveList(t *testing.T) {
 	if len(got) != 1 || got[0].ID != "running-image" {
 		t.Fatalf("active summaries = %+v", got)
 	}
-	if RegenerableFailure(outcome) {
-		t.Fatal("unconfirmed cancellation must not allow regeneration")
+	if outcome.Regenerate != "confirm" || !RegenerableFailure(outcome) {
+		t.Fatalf("unconfirmed cancellation should require explicit confirmation instead of deadlocking node: %+v", outcome)
 	}
 }
 
@@ -207,17 +235,20 @@ func TestCancelledMediaResultUnconfirmed(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			task := model.Task{Type: kind, Status: model.TaskStatusCancelled, ProviderRequestID: "original-request", ProviderCancelStatus: model.ProviderCancelStatusUncertain}
 			got := ComputeOutcome(task, "", OutcomeFacts{})
-			if got != (Outcome{Phase: "failed", Regenerate: "blocked", Reason: "cancelled_result_unconfirmed"}) {
+			if got != (Outcome{Phase: "failed", Regenerate: "confirm", Reason: "cancelled_result_unconfirmed"}) {
 				t.Fatalf("cancelled task outcome = %+v", got)
 			}
-			if isActiveTaskSummary(Summary{Status: task.Status, Outcome: &got}) || RegenerableFailure(got) {
-				t.Fatal("unconfirmed cancellation must neither poll as active nor allow regeneration")
+			if isActiveTaskSummary(Summary{Status: task.Status, Outcome: &got}) {
+				t.Fatal("unconfirmed cancellation must not poll as active")
+			}
+			if !RegenerableFailure(got) {
+				t.Fatal("unconfirmed cancellation must remain confirm-regenerable instead of bricking the node")
 			}
 		})
 	}
 	task := model.Task{Type: "canvas_image", Model: "topaz-standard-v2", Status: model.TaskStatusCancelled, ProviderRequestID: "upscale-original"}
 	got := ComputeOutcome(task, "", OutcomeFacts{})
-	if got.Phase != "failed" || got.Reason != "cancelled_result_unconfirmed" || got.Regenerate != "blocked" {
+	if got.Phase != "failed" || got.Reason != "cancelled_result_unconfirmed" || got.Regenerate != "confirm" {
 		t.Fatalf("cancelled upscale outcome = %+v", got)
 	}
 }

@@ -1,15 +1,25 @@
 import { expect, test } from "bun:test";
 import { generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel } from "@/lib/generation-task-display";
+import { providerCancelStatusLabel, taskAttentionReason } from "@/pages/tasks/task-shared";
+import type { GenerationTask } from "@/services/api/task-center";
 
 test("cancelled image with unconfirmed result does not claim recovery is running", () => {
     const task = {
+        id: "cancelled-1",
+        type: "canvas_image",
         status: "cancelled" as const,
         stage: "任务已取消",
-        outcome: { phase: "failed" as const, regenerate: "blocked" as const, reason: "cancelled_result_unconfirmed" },
-    };
+        createdAt: "2026-11-20T00:00:00Z",
+        updatedAt: "2026-11-20T00:00:00Z",
+        attempts: 1,
+        outcome: { phase: "failed" as const, regenerate: "confirm" as const, reason: "cancelled_result_unconfirmed" },
+    } as GenerationTask;
     expect(generationTaskStatusLabel(task)).toBe("结果待确认");
-    expect(generationTaskStageLabel(task)).toBe("任务已取消，上游结果尚未确认");
+    expect(generationTaskStageLabel(task)).toBe("任务已取消，无法确认上游是否已生成或扣费");
     expect(generationTaskShowsProgress(task)).toBe(false);
+    expect(taskAttentionReason(task)).toContain("核对原请求状态");
+    expect(providerCancelStatusLabel(task)).toContain("核对原请求状态");
+    expect(providerCancelStatusLabel({ ...task, outcome: undefined })).toBe("任务已取消，请核对原任务的结果与扣费状态");
 });
 
 for (const [stage, label] of [["delivery_paused", "已暂停取回结果"], ["delivery_timed_out", "下载超时，可继续取回原结果"]]) {

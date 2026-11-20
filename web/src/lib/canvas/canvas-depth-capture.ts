@@ -116,6 +116,7 @@ function explanationMatchesAuthoritativeOutcome(outcome: TaskOutcome, explanatio
     }
     if (
         outcome.regenerate === "blocked" ||
+        outcome.reason === "cancelled_result_unconfirmed" ||
         outcome.reason === "charged_result_unrecoverable" ||
         outcome.reason === "result_unrecoverable"
     ) {

@@ -317,8 +317,23 @@ func TestActiveOnlyTasksEndpointIncludesOutcomeActiveTasksBeyondFirstPage(t *tes
 	for _, item := range env.Data {
 		gotIDs = append(gotIDs, item.ID)
 	}
-	wantIDs := []string{"old-running", "old-cancelled-log-retrievable", "old-failed-log-retrievable", "old-failed-retrievable", "old-succeeded-retrievable"}
+	wantIDs := []string{"old-running", "old-failed-log-retrievable", "old-failed-retrievable", "old-succeeded-retrievable"}
 	if strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
 		t.Fatalf("activeOnly ids=%v, want %v", gotIDs, wantIDs)
+	}
+
+	detailResp := h.do(t, http.MethodGet, "/api/tasks/old-cancelled-log-retrievable", nil)
+	if detailResp.Code != http.StatusOK {
+		t.Fatalf("detail status=%d body=%s", detailResp.Code, detailResp.Body.String())
+	}
+	var detailEnv struct {
+		Data model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(detailResp.Body.Bytes(), &detailEnv); err != nil {
+		t.Fatal(err)
+	}
+	wantOutcome := model.TaskOutcome{Phase: "failed", Regenerate: "confirm", Reason: "cancelled_result_unconfirmed"}
+	if detailEnv.Data.Outcome == nil || *detailEnv.Data.Outcome != wantOutcome {
+		t.Fatalf("cancelled detail outcome=%+v, want %+v", detailEnv.Data.Outcome, wantOutcome)
 	}
 }

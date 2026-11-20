@@ -35,15 +35,27 @@ import {
 } from "@/lib/task-outcome";
 
 describe("task-outcome", () => {
-    it("keeps unconfirmed cancellation out of active work without permitting duplicate generation", () => {
-        const outcome: TaskOutcome = { phase: "failed", regenerate: "blocked", reason: "cancelled_result_unconfirmed" };
+    it("keeps unconfirmed cancellation out of active work while requiring explicit confirmation to regenerate", () => {
+        const outcome: TaskOutcome = { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" };
         expect(isTaskOutcomeWorking(outcome)).toBe(false);
         expect(canRecoverTaskOutcome(outcome)).toBe(false);
-        expect(canRegenerateTaskOutcome(outcome)).toBe(false);
+        expect(isRegenerateBlocked(outcome)).toBe(false);
+        expect(isRegenerateConfirm(outcome)).toBe(true);
+        expect(canRegenerateTaskOutcome(outcome)).toBe(true);
         const copy = taskOutcomeCopy(outcome);
         expect(copy.badge).toBe("结果待确认");
-        expect(copy.message).toContain("渠道端核对");
+        expect(copy.message).toContain("核对原请求");
         expect(copy.message).not.toContain("正在");
+        expect(copy.confirmTitle).toBe("确认重新生成？");
+        expect(copy.confirmContent).toContain("再扣一次");
+
+        // Legacy fallback without explicit outcome stays consistent with backend projection.
+        expect(readTaskOutcome({ status: "cancelled", stage: "submission_unknown" })).toEqual(outcome);
+        expect(readTaskOutcome({ status: "cancelled", providerRequestId: "req-1" })).toEqual(outcome);
+        expect(readTaskOutcome({ status: "cancelled", errorCode: "submission_uncertain" })).toEqual(outcome);
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", taskStage: "submission_unknown" })).toEqual(outcome);
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", generationSubmissionState: "unknown" })).toEqual(outcome);
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", generationErrorCode: "submission_uncertain" })).toEqual(outcome);
     });
     it("recognizes all 5 phase values and 3 regenerate values", () => {
         const phases: TaskOutcomePhase[] = ["running", "fetching", "ready", "retrievable", "failed"];

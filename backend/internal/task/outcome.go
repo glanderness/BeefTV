@@ -16,6 +16,7 @@ const (
 
 	ReasonSettlementPending          = "settlement_pending"
 	ReasonChargedResultUnrecoverable = "charged_result_unrecoverable"
+	ReasonCancelledResultUnconfirmed = "cancelled_result_unconfirmed"
 )
 
 // OutcomeFacts 来自持久化证据。读失败必须显式标记，不能当成没有证据。
@@ -29,14 +30,7 @@ type OutcomeFacts struct {
 	RequestNotSent        bool
 }
 
-func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) (outcome Outcome) {
-	// Cancellation stops the worker and is not scanned by automatic result recovery.
-	// Keep uncertain upstream results blocked without claiming recovery is running.
-	defer func() {
-		if task.Status == model.TaskStatusCancelled && outcome.Phase == "retrievable" {
-			outcome = Outcome{Phase: "failed", Regenerate: "blocked", Reason: "cancelled_result_unconfirmed"}
-		}
-	}()
+func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Outcome {
 	out := func(phase, regenerate, reason string) Outcome {
 		return Outcome{Phase: phase, Regenerate: regenerate, Reason: reason}
 	}
@@ -80,9 +74,17 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) (ou
 	}
 	pendingImageReceipt := facts.HasImageReceipt && facts.DispatchState != "rejected_no_job" && facts.DispatchState != "not_sent"
 	if task.Type == "canvas_image" && !task.IsUpscale() && (pendingImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay || facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown") {
+		if task.Status == model.TaskStatusCancelled {
+			// Cancellation stops local execution and is excluded from automatic/manual recovery.
+			// Exit active polling without locking the node permanently; require explicit confirmation.
+			return out("failed", "confirm", ReasonCancelledResultUnconfirmed)
+		}
 		return out("retrievable", "blocked", "image_recovery_pending")
 	}
 	if task.ProviderRequestID != "" || ((task.Type == "canvas_video" || task.Type == "canvas_audio" || strings.HasPrefix(task.Type, "video_") || task.IsUpscale()) && (facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown")) {
+		if task.Status == model.TaskStatusCancelled {
+			return out("failed", "confirm", ReasonCancelledResultUnconfirmed)
+		}
 		return out("retrievable", "blocked", "provider_result_pending")
 	}
 	return out("failed", regenerate, "task_failed")
@@ -155,7 +157,7 @@ func computeProviderSettlementOutcome(task model.Task) (Outcome, bool) {
 
 	switch strings.ToLower(strings.TrimSpace(task.ProviderUsageState())) {
 	case "completed":
-		if terminalRecovery {
+		if terminalRecovery || task.Status == model.TaskStatusCancelled {
 			return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
 		}
 		return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "provider_result_pending"}, true
@@ -165,7 +167,7 @@ func computeProviderSettlementOutcome(task model.Task) (Outcome, bool) {
 
 	switch strings.ToLower(strings.TrimSpace(task.ProviderBillingState())) {
 	case "settled":
-		if terminalRecovery {
+		if terminalRecovery || task.Status == model.TaskStatusCancelled {
 			return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
 		}
 		return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "image_recovery_pending"}, true
