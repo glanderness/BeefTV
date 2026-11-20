@@ -223,6 +223,7 @@ export function taskAttentionReason(task: GenerationTask) {
             outcome.reason === "charged_result_unrecoverable" ||
             outcome.reason === "result_unrecoverable" ||
             outcome.reason === "no_result" ||
+            (outcome.phase === "failed" && (task.providerCancelStatus === "requested" || task.providerCancelStatus === "uncertain")) ||
             (!task.error && !task.errorCode && task.status !== "cancelled")
         ) {
             return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus }).message;

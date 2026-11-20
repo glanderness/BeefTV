@@ -160,23 +160,14 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 	if want <= 0 || want > 100 {
 		want = 50
 	}
-	if health, ok := s.store.(evidenceHealthStore); ok && !health.EvidenceReadable() {
-		// Evidence tables are unreadable: fail closed on a bounded recent page
-		// so activeOnly surfaces evidence_unavailable without full-history scans.
-		tasks, err := s.store.List(userID, want, options.ProjectID, false)
-		if err != nil {
-			return nil, err
-		}
-		s.hydrateOutcomeProviderRequestIDs(tasks)
-		projected, err := presentSummaries(s.deps.Present, tasks)
-		if err != nil {
-			return nil, err
-		}
-		return filterActiveTaskSummaries(projected, want), nil
+	evidenceReadable := true
+	if health, ok := s.store.(evidenceHealthStore); ok {
+		evidenceReadable = health.EvidenceReadable()
 	}
 	if pager, ok := s.store.(activeCandidateStore); ok {
 		const pageSize = 100
 		collected := make([]Summary, 0, want)
+		seen := make(map[string]struct{}, want)
 		var beforeCreatedAt *time.Time
 		var beforeID string
 		for len(collected) < want {
@@ -195,6 +186,7 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 			for _, summary := range projected {
 				if isActiveTaskSummary(summary) {
 					collected = append(collected, summary)
+					seen[summary.ID] = struct{}{}
 					if len(collected) >= want {
 						break
 					}
@@ -208,9 +200,36 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 			beforeCreatedAt = &cursorTime
 			beforeID = last.ID
 		}
+		if !evidenceReadable && len(collected) < want {
+			// Active candidates (queued/running/retrievable) are always prioritized first.
+			// When evidence storage is unreadable, top up remaining slots from a bounded
+			// recent page so fail-closed evidence_unavailable rows stay visible without
+			// hiding older genuinely active tasks or scanning full history.
+			recent, err := s.store.List(userID, want, options.ProjectID, false)
+			if err != nil {
+				return nil, err
+			}
+			s.hydrateOutcomeProviderRequestIDs(recent)
+			projected, err := presentSummaries(s.deps.Present, recent)
+			if err != nil {
+				return nil, err
+			}
+			for _, summary := range projected {
+				if _, dup := seen[summary.ID]; dup {
+					continue
+				}
+				if isActiveTaskSummary(summary) {
+					collected = append(collected, summary)
+					seen[summary.ID] = struct{}{}
+					if len(collected) >= want {
+						break
+					}
+				}
+			}
+		}
 		return collected, nil
 	}
-	tasks, err := s.store.List(userID, want, options.ProjectID, true)
+	tasks, err := s.store.List(userID, want, options.ProjectID, evidenceReadable)
 	if err != nil {
 		return nil, err
 	}

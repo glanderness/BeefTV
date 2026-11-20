@@ -395,10 +395,31 @@ describe("task-outcome", () => {
                 taskOutcome: allowedOutcome,
             }),
         ).toBe(true);
+        expect(
+            isNodeRegenerateConfirm({
+                taskId: "task-req-1",
+                taskStatus: "cancelled",
+                taskProviderCancelStatus: "requested",
+                taskOutcome: allowedOutcome,
+            }),
+        ).toBe(true);
+        expect(
+            isNodeRegenerateConfirm({
+                taskId: "task-unc-1",
+                taskStatus: "cancelled",
+                taskProviderCancelStatus: "uncertain",
+                taskOutcome: allowedOutcome,
+            }),
+        ).toBe(true);
 
         const requestedAllowedCopy = taskOutcomeCopy(allowedOutcome, undefined, { providerCancelStatus: "requested" });
         expect(requestedAllowedCopy.badge).toBe("取消待确认");
         expect(requestedAllowedCopy.confirmTitle).toContain("取消仍在确认中");
+        expect(requestedAllowedCopy.confirmContent).toContain("可能会再扣一次");
+        const uncertainAllowedCopy = taskOutcomeCopy(allowedOutcome, undefined, { providerCancelStatus: "uncertain" });
+        expect(uncertainAllowedCopy.badge).toBe("取消待确认");
+        expect(uncertainAllowedCopy.confirmTitle).toContain("未能确认取消");
+        expect(uncertainAllowedCopy.confirmContent).toContain("可能会再扣一次");
         const uncertainConfirmCopy = taskOutcomeCopy(
             { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" },
             undefined,
@@ -406,5 +427,6 @@ describe("task-outcome", () => {
         );
         expect(uncertainConfirmCopy.badge).toBe("取消待确认");
         expect(uncertainConfirmCopy.confirmTitle).toContain("未能确认取消");
+        expect(uncertainConfirmCopy.confirmContent).toContain("可能会再扣一次");
     });
 });

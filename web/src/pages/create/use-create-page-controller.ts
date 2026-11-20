@@ -504,6 +504,7 @@ export function useCreatePageController() {
         const confirmed = await confirmCreationRetryIfNeeded({
             category: explanation.category,
             outcome,
+            providerCancelStatus: item.providerCancelStatus,
             modalConfirm: modal?.confirm,
             onEditDraft: () => {
                 if (!promptRef.current.trim()) restoreMessageDraft(previous);

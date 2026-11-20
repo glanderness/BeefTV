@@ -530,3 +530,74 @@ func TestActiveOnlySQLPreFilterSkipsHistoricalTerminalTasks(t *testing.T) {
 		t.Fatalf("activeOnly ids=%v, want %v", gotIDs, wantIDs)
 	}
 }
+
+func TestActiveOnlyEvidenceUnreadablePrioritizesOlderActiveTasksAndDetectsMissingColumn(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Hour)
+	noResult := "no_result"
+	// Seed an older genuinely queued task followed by 60 newer terminal/cancelled rows.
+	seed := []model.Task{
+		{
+			ID:        "older-active-queued",
+			UserID:    owner.ID,
+			ProjectID: "degraded-canvas",
+			Type:      "canvas_image",
+			Status:    model.TaskStatusQueued,
+			Stage:     "等待队列调度",
+			CreatedAt: base,
+			UpdatedAt: base,
+		},
+	}
+	for i := 0; i < 60; i++ {
+		ts := base.Add(time.Duration(i+1) * time.Second)
+		seed = append(seed, model.Task{
+			ID:              fmt.Sprintf("newer-cancelled-%02d", i),
+			UserID:          owner.ID,
+			ProjectID:       "degraded-canvas",
+			Type:            "canvas_image",
+			Status:          model.TaskStatusCancelled,
+			Stage:           "任务已取消",
+			RecoveryOutcome: &noResult,
+			CreatedAt:       ts,
+			UpdatedAt:       ts,
+		})
+	}
+	if err := h.db.CreateInBatches(&seed, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Replace route_attempts with a corrupted table missing dispatch_state (table exists, required column missing).
+	if err := h.db.Exec("DROP TABLE route_attempts").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.Exec("CREATE TABLE route_attempts (id TEXT PRIMARY KEY, task_id TEXT)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if repository.New(h.db).EvidenceReadable() {
+		t.Fatal("EvidenceReadable() = true when route_attempts is missing dispatch_state column, want false")
+	}
+
+	resp := h.do(t, http.MethodGet, "/api/tasks?projectId=degraded-canvas&pageSize=10&activeOnly=true", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var env struct {
+		Data []model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if len(env.Data) != 10 {
+		t.Fatalf("activeOnly degraded len=%d, want bounded pageSize=10", len(env.Data))
+	}
+	// The older genuinely queued task must be prioritized first instead of being crowded out by newer terminal rows.
+	if env.Data[0].ID != "older-active-queued" {
+		t.Fatalf("first activeOnly degraded item = %s, want older-active-queued", env.Data[0].ID)
+	}
+	if env.Data[1].Outcome == nil || env.Data[1].Outcome.Reason != "evidence_unavailable" {
+		t.Fatalf("second activeOnly degraded item outcome = %+v, want evidence_unavailable", env.Data[1].Outcome)
+	}
+}

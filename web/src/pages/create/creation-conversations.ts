@@ -117,7 +117,20 @@ export function reconcileCreationTaskMessages(runtime: CreationRuntime, conversa
                 return { ...message, status: "done" as const, content, resultUrls, error: undefined, generationErrorSummary: undefined, generationErrorCode: undefined, generationProviderCode: undefined, taskFailureDiagnostics: undefined, taskIds: nextTaskIds };
             }
             if (matches.every((task) => task.status === "cancelled")) {
-                return { ...message, status: "cancelled" as const, content: "已停止", error: undefined, generationErrorSummary: undefined, generationErrorCode: undefined, generationProviderCode: undefined, taskFailureDiagnostics: undefined, taskIds: nextTaskIds };
+                const cancelledTask = matches.find((task) => task.providerCancelStatus || task.outcome) || matches[0];
+                return {
+                    ...message,
+                    status: "cancelled" as const,
+                    content: "已停止",
+                    error: undefined,
+                    generationErrorSummary: undefined,
+                    generationErrorCode: undefined,
+                    generationProviderCode: undefined,
+                    taskFailureDiagnostics: undefined,
+                    taskOutcome: cancelledTask?.outcome ?? message.taskOutcome,
+                    providerCancelStatus: cancelledTask?.providerCancelStatus ?? message.providerCancelStatus,
+                    taskIds: nextTaskIds,
+                };
             }
             const failed = matches.find((task) => task.status === "failed" || task.creationError);
             const rawError = failed?.creationError
@@ -136,6 +149,7 @@ export function reconcileCreationTaskMessages(runtime: CreationRuntime, conversa
                 taskFailureDiagnostics: failed?.failureDiagnostics,
                 generationErrorCode: failed?.creationError ? generationErrorCode(failed.creationError) : failed?.errorCode || generationErrorCode(rawError),
                 taskOutcome: failed?.outcome,
+                providerCancelStatus: failed?.providerCancelStatus ?? message.providerCancelStatus,
                 taskIds: nextTaskIds,
             };
         });

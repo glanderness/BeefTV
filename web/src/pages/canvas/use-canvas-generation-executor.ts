@@ -374,7 +374,9 @@ export function useCanvasGenerationExecutor({
                         }
                         const generationContext = { ...rawGenerationContext, prompt: effectivePrompt };
                         if (isNodeRegenerateConfirm(sourceNode?.metadata) && modal?.confirm) {
-                            const copy = taskOutcomeCopy(readNodeTaskOutcome(sourceNode?.metadata));
+                            const copy = taskOutcomeCopy(readNodeTaskOutcome(sourceNode?.metadata), undefined, {
+                                providerCancelStatus: sourceNode?.metadata?.taskProviderCancelStatus,
+                            });
                             stage = "duplicate_confirmation";
                             diagnostic("generation_confirmation_waiting");
                             const confirmed = await confirmCanvasGeneration(

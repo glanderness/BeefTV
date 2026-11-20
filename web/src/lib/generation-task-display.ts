@@ -35,7 +35,13 @@ export function generationTaskStatusLabel(task: GenerationTaskDisplayTarget) {
 
 export function generationTaskStageLabel(task: GenerationTaskDisplayTarget) {
     const outcome = normalizeTaskOutcome(task.outcome);
-    if (outcome && (outcome.phase === "retrievable" || isTaskOutcomeReconciling(outcome) || outcome.reason === "cancelled_result_unconfirmed")) {
+    if (
+        outcome &&
+        (outcome.phase === "retrievable" ||
+            isTaskOutcomeReconciling(outcome) ||
+            outcome.reason === "cancelled_result_unconfirmed" ||
+            (outcome.phase === "failed" && (task.providerCancelStatus === "requested" || task.providerCancelStatus === "uncertain")))
+    ) {
         return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus }).reason;
     }
     if (isGenerationTaskSubmissionUncertain(task)) return "为避免重复创建上游任务，未自动重试";

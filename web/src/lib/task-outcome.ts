@@ -367,7 +367,7 @@ export function isNodeRegenerateBlocked(metadata?: CanvasNodeOutcomeMetadata | n
 }
 
 export function isNodeRegenerateConfirm(metadata?: CanvasNodeOutcomeMetadata | null): boolean {
-    return isRegenerateConfirm(readNodeTaskOutcome(metadata));
+    return nodeRequiresRegenerateConfirmation(metadata);
 }
 
 export type FreshSubmissionSource = {
@@ -700,26 +700,26 @@ export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()
             // regenerate === "allowed"
             if (options?.providerCancelStatus === "requested") {
                 const reason = "已请求上游取消，正在等待确认";
-                const action = "旧任务可能仍在执行，确认后可创建新任务重新生成";
+                const action = "旧任务可能仍在执行，重新生成可能会再扣一次";
                 return {
                     badge: "取消待确认",
                     reason,
                     action,
                     message: `${reason}。${action}。`,
                     confirmTitle: "上游取消仍在确认中，确认重新生成？",
-                    confirmContent: "已向上游发送取消请求，但尚未收到确认，旧任务可能仍在执行。确认后将创建新任务重新生成。",
+                    confirmContent: "已向上游发送取消请求，但尚未收到确认，旧任务可能仍在执行。确认后将创建新任务，重新生成可能会再扣一次。",
                 };
             }
             if (options?.providerCancelStatus === "uncertain") {
                 const reason = "上游无法确认取消，状态待确认";
-                const action = "旧任务可能仍在执行，确认后可创建新任务重新生成";
+                const action = "旧任务可能仍在执行，重新生成可能会再扣一次";
                 return {
                     badge: "取消待确认",
                     reason,
                     action,
                     message: `${reason}。${action}。`,
                     confirmTitle: "上游未能确认取消，确认重新生成？",
-                    confirmContent: "上游无法确认取消本次任务，旧任务可能仍在执行。确认后将创建新任务重新生成。",
+                    confirmContent: "上游无法确认取消本次任务，旧任务可能仍在执行。确认后将创建新任务，重新生成可能会再扣一次。",
                 };
             }
             let reason = "上次生成未完成，可以直接重新生成";

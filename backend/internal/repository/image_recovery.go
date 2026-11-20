@@ -22,21 +22,24 @@ type ImageRecoveryEvidence struct {
 	HasReceipt bool
 }
 
-// EvidenceReadable probes the persistence tables required to build task outcome
-// evidence. When healthy, activeOnly queries can safely exclude terminal rows
-// in SQL; when unreadable, callers fall back to a bounded fail-closed page.
+// EvidenceReadable probes the exact tables and columns required by
+// ImageRecoveryEvidence. When healthy, activeOnly queries can safely exclude
+// terminal rows in SQL; when unreadable (missing table or column), callers fall
+// back to an active-first bounded fail-closed read.
 func (r *Repository) EvidenceReadable() bool {
 	if r == nil || r.db == nil {
 		return false
 	}
-	var probe int
-	if err := r.db.Model(&model.RouteAttempt{}).Select("1").Limit(1).Scan(&probe).Error; err != nil {
+	var attempts []model.RouteAttempt
+	if err := r.db.Select("id", "task_id", "route_run", "channel_id", "dispatch_state", "started_at").Limit(1).Find(&attempts).Error; err != nil {
 		return false
 	}
-	if err := r.db.Model(&model.ImageSubmission{}).Select("1").Limit(1).Scan(&probe).Error; err != nil {
+	var submissions []ImageSubmissionEvidence
+	if err := r.db.Model(&model.ImageSubmission{}).Select("attempt_id", "task_id", "user_id", "response_accepted").Limit(1).Find(&submissions).Error; err != nil {
 		return false
 	}
-	if err := r.db.Model(&model.ApiCallLog{}).Select("1").Limit(1).Scan(&probe).Error; err != nil {
+	var logs []struct{ TaskID string }
+	if err := r.db.Model(&model.ApiCallLog{}).Select("task_id", "capability", "request_kind", "method").Limit(1).Scan(&logs).Error; err != nil {
 		return false
 	}
 	return true

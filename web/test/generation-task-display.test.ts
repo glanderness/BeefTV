@@ -42,6 +42,22 @@ test("cancelled image with unconfirmed result does not claim recovery is running
     expect(providerCancelStatusLabel(uncertainTask)).toBe("上游超时未返回取消结果");
     expect(generationTaskStatusLabel(uncertainTask)).toBe("取消待确认");
 
+    // Allowed outcome with requested/uncertain providerCancelStatus surfaces consistent stage & attention copy (even when error/stage exist).
+    const allowedRequestedCancel = {
+        ...task,
+        error: "任务已取消",
+        providerCancelStatus: "requested" as const,
+        outcome: { phase: "failed" as const, regenerate: "allowed" as const, reason: "task_failed" },
+    };
+    expect(generationTaskStatusLabel(allowedRequestedCancel)).toBe("取消待确认");
+    expect(generationTaskStageLabel(allowedRequestedCancel)).toBe("已请求上游取消，正在等待确认");
+    expect(taskAttentionReason(allowedRequestedCancel)).toContain("正在等待确认");
+    expect(taskAttentionReason(allowedRequestedCancel)).toContain("可能会再扣一次");
+    const allowedUncertainCancel = { ...allowedRequestedCancel, providerCancelStatus: "uncertain" as const };
+    expect(generationTaskStatusLabel(allowedUncertainCancel)).toBe("取消待确认");
+    expect(generationTaskStageLabel(allowedUncertainCancel)).toBe("上游无法确认取消，状态待确认");
+    expect(taskAttentionReason(allowedUncertainCancel)).toContain("上游无法确认取消");
+
     // Cancelled tasks with evidence_unavailable must never expose the RecoverTask button (backend rejects cancelled /recover).
     const cancelledUnreadable = {
         ...task,

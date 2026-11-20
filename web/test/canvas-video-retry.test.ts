@@ -1084,6 +1084,7 @@ test("partitionRetryableBatchItems excludes confirm and pending-cancel items, an
         expect(confirmDialogs).toHaveLength(1);
         expect(String(confirmDialogs[0]?.title)).toContain("取消仍在确认中");
         expect(String(confirmDialogs[0]?.content)).toContain("尚未收到确认");
+        expect(String(confirmDialogs[0]?.content)).toContain("可能会再扣一次");
         expect(consumerCalls).toHaveLength(0);
         expect(storedRetrySpy).not.toHaveBeenCalled();
 
