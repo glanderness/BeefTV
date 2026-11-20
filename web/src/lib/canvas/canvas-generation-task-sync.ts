@@ -431,6 +431,7 @@ function completedTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
     return {
         taskFailureDiagnostics: task.failureDiagnostics,
         taskProviderRequestId: task.providerRequestId,
+        taskProviderCancelStatus: task.providerCancelStatus,
         taskId: task.id,
         taskOutcome:
             !task.outcome || task.outcome.phase === "running" || task.outcome.phase === "fetching"

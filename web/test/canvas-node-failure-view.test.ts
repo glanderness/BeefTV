@@ -911,21 +911,23 @@ const EXPECTED: Array<{ name: string } & CanvasNodeFailureView> = [
         "name": "cancelled",
         "outcome": {
             "phase": "failed",
-            "regenerate": "allowed",
-            "reason": "not_charged"
+            "regenerate": "confirm",
+            "reason": "task_failed"
         },
         "copy": {
-            "badge": "生成失败",
-            "reason": "上次请求未扣费，可以直接重新生成",
-            "action": "可以直接重新生成",
-            "message": "上次请求未扣费，可以直接重新生成。"
+            "badge": "生成未完成",
+            "reason": "这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次",
+            "action": "确认后可重新生成",
+            "message": "这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次。确认后可重新生成。",
+            "confirmTitle": "确认重新生成？",
+            "confirmContent": "这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次。"
         },
         "explanation": {
             "category": "cancelled",
             "summary": "任务已取消",
             "reason": "任务已取消",
-            "action": "可按原输入重新提交",
-            "message": "任务已取消。可按原输入重新提交。",
+            "action": "请核对原任务的结果与扣费状态",
+            "message": "任务已取消。请核对原任务的结果与扣费状态。",
             "errorCode": "cancelled",
             "retryable": false,
             "uncertain": false,
@@ -935,7 +937,7 @@ const EXPECTED: Array<{ name: string } & CanvasNodeFailureView> = [
         },
         "retryBlocked": false,
         "regenerateBlocked": false,
-        "regenerateConfirm": false,
+        "regenerateConfirm": true,
         "canReload": false,
         "needsRecovery": true,
         "recoveryRoute": "single",
@@ -1760,6 +1762,7 @@ describe("canvasNodeFailureView", () => {
             { outcome: { phase: "retrievable", regenerate: "blocked", reason: "submission_unknown" }, incompatibleCodes: ["download_failed", "result_target_unavailable", "network", "invalid_params", "sensitive_words_detected"] },
             { outcome: { phase: "failed", regenerate: "blocked", reason: "settlement_pending", reconcileDeadline: FUTURE_DEADLINE }, incompatibleCodes: ["download_failed", "submission_uncertain", "result_target_unavailable", "network", "invalid_params", "sensitive_words_detected"] },
             { outcome: { phase: "failed", regenerate: "confirm", reason: "charged_result_unrecoverable" }, incompatibleCodes: ["download_failed", "submission_uncertain", "result_target_unavailable", "network", "invalid_params", "sensitive_words_detected"] },
+            { outcome: { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" }, incompatibleCodes: ["download_failed", "submission_uncertain", "result_target_unavailable", "network", "invalid_params", "sensitive_words_detected"] },
             { outcome: { phase: "failed", regenerate: "confirm", reason: "task_failed" }, incompatibleCodes: ["download_failed", "submission_uncertain", "result_target_unavailable", "network", "invalid_params", "sensitive_words_detected"] },
             { outcome: { phase: "failed", regenerate: "confirm", reason: "input_rejected" }, incompatibleCodes: ["download_failed", "submission_uncertain", "result_target_unavailable", "network"] },
             { outcome: { phase: "failed", regenerate: "allowed", reason: "task_failed" }, incompatibleCodes: ["download_failed", "submission_uncertain", "result_target_unavailable", "invalid_params", "sensitive_words_detected"] },
@@ -1857,6 +1860,98 @@ describe("canvasNodeFailureView", () => {
             expect(confirmNoResultModerationRef.explanation.reason).toBe("@图片2 未通过实人或肖像权检查");
             expect(confirmNoResultModerationRef.explanation.action).toBe("请更换 @图片2 或改用非真人参考图后重试");
             expect(confirmNoResultModerationRef.regenerateConfirm).toBe(true);
+
+            const depthCancelledUnconfirmed = canvasNodeFailureView(
+                node(
+                    "depth-cancelled-unconfirmed-stale-params",
+                    {
+                        status: "error",
+                        depthSourceNodeId: "source-depth",
+                        taskType: "depth_capture",
+                        taskId: "depth-task-cancelled",
+                        taskStatus: "cancelled",
+                        taskOutcome: { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" },
+                        generationErrorCode: "invalid_params",
+                        errorDetails: "第 3 张参考图不支持该格式。请更换参考图后重试。",
+                    },
+                    CanvasNodeType.Video,
+                ),
+                { nowMs: NOW_MS },
+            );
+            expect(depthCancelledUnconfirmed.explanation.reason).toBe(depthCancelledUnconfirmed.copy.reason);
+            expect(depthCancelledUnconfirmed.explanation.action).toBe(depthCancelledUnconfirmed.copy.action);
+            expect(depthCancelledUnconfirmed.regenerateConfirm).toBe(true);
+            expect(depthCancelledUnconfirmed.explanation.blockAutomaticRetry).toBe(true);
+            expect(depthCancelledUnconfirmed.explanation.blockManualRetry).toBe(false);
+
+            const legacyCancelledWithProviderReq = canvasNodeFailureView(
+                node("legacy-cancelled-provider-req-stale-network", {
+                    status: "error",
+                    taskId: "legacy-cancel-1",
+                    taskStatus: "cancelled",
+                    taskProviderRequestId: "req-1",
+                    errorDetails: "Failed to fetch",
+                }),
+                { nowMs: NOW_MS },
+            );
+            expect(legacyCancelledWithProviderReq.outcome).toEqual({ phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" });
+            expect(legacyCancelledWithProviderReq.explanation.reason).toBe(legacyCancelledWithProviderReq.copy.reason);
+            expect(legacyCancelledWithProviderReq.explanation.action).toBe(legacyCancelledWithProviderReq.copy.action);
+            expect(legacyCancelledWithProviderReq.regenerateConfirm).toBe(true);
+
+            const legacyDepthCancelled = canvasNodeFailureView(
+                node(
+                    "legacy-depth-cancelled-stale-network",
+                    {
+                        status: "error",
+                        depthSourceNodeId: "source-depth-legacy",
+                        taskType: "depth_capture",
+                        taskId: "legacy-depth-cancel-1",
+                        taskStatus: "cancelled",
+                        taskProviderRequestId: "req-depth-1",
+                        errorDetails: "Failed to fetch",
+                    },
+                    CanvasNodeType.Video,
+                ),
+                { nowMs: NOW_MS },
+            );
+            expect(legacyDepthCancelled.outcome).toEqual({ phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" });
+            expect(legacyDepthCancelled.explanation.reason).toBe(legacyDepthCancelled.copy.reason);
+            expect(legacyDepthCancelled.explanation.action).toBe(legacyDepthCancelled.copy.action);
+            expect(legacyDepthCancelled.regenerateConfirm).toBe(true);
+
+            const legacyFailedUnknownBilling = canvasNodeFailureView(
+                node("legacy-failed-unknown-billing-stale-network", {
+                    status: "error",
+                    taskId: "legacy-fail-1",
+                    taskStatus: "failed",
+                    errorDetails: "Failed to fetch",
+                }),
+                { nowMs: NOW_MS },
+            );
+            expect(legacyFailedUnknownBilling.outcome).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+            expect(legacyFailedUnknownBilling.explanation.reason).toBe(legacyFailedUnknownBilling.copy.reason);
+            expect(legacyFailedUnknownBilling.explanation.action).toBe(legacyFailedUnknownBilling.copy.action);
+            expect(legacyFailedUnknownBilling.regenerateConfirm).toBe(true);
+
+            const canvasConfirmedCancel = canvasNodeFailureView(
+                node("canvas-confirmed-cancel-copy", {
+                    status: "error",
+                    taskId: "task-cancel-confirmed-1",
+                    taskStatus: "cancelled",
+                    taskProviderCancelStatus: "confirmed",
+                    taskOutcome: { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" },
+                    errorDetails: "任务已取消",
+                }),
+                { nowMs: NOW_MS },
+            );
+            expect(canvasConfirmedCancel.copy.badge).toBe("已取消");
+            expect(canvasConfirmedCancel.copy.reason).toBe("上游已确认取消，请核对渠道后台确认是否已扣费");
+            expect(canvasConfirmedCancel.copy.confirmContent).toContain("上游已确认取消");
+            expect(canvasConfirmedCancel.copy.confirmContent).not.toContain("无法确认渠道是否已执行");
+            expect(canvasConfirmedCancel.explanation.reason).toBe(canvasConfirmedCancel.copy.reason);
+            expect(canvasConfirmedCancel.explanation.action).toBe(canvasConfirmedCancel.copy.action);
+            expect(canvasConfirmedCancel.regenerateConfirm).toBe(true);
         } finally {
             Date.now = realNow;
         }

@@ -2,7 +2,7 @@ import { FolderKanban, RotateCcw } from "lucide-react";
 
 import { isTaskRegenerateBlocked } from "@/lib/task-outcome";
 import type { GenerationTask } from "@/services/api/task-center";
-import { isTaskBadgeActive, isTaskFailed, isTaskSucceeded } from "./task-shared";
+import { canBatchRetryTaskInTaskCenter, isTaskBadgeActive, isTaskFailed, isTaskSucceeded } from "./task-shared";
 
 export type TaskGroup = { key: string; title: string; projectName: string; tasks: GenerationTask[] };
 
@@ -10,6 +10,7 @@ export function TaskGroupHeader({ group, retrying = false, onRetryFailed }: { gr
     const succeeded = group.tasks.filter((task) => isTaskSucceeded(task)).length;
     const active = group.tasks.filter((task) => !isTaskFailed(task) && isTaskBadgeActive(task)).length;
     const failed = group.tasks.filter((task) => isTaskFailed(task) && !isTaskRegenerateBlocked(task)).length;
+    const batchRetryable = group.tasks.filter((task) => canBatchRetryTaskInTaskCenter(task)).length;
     const title = group.projectName ? `${group.title} · ${group.projectName}` : group.title;
     return (
         <div className="task-group-head">
@@ -32,7 +33,7 @@ export function TaskGroupHeader({ group, retrying = false, onRetryFailed }: { gr
                     {!active && !failed && !succeeded ? "暂无进行中的任务" : null}
                 </span>
             </div>
-            {failed ? (
+            {batchRetryable ? (
                 <button type="button" className="task-group-reset" disabled={retrying} onClick={onRetryFailed}>
                     <RotateCcw className={retrying ? "animate-spin" : undefined} />
                     {retrying ? "重试中..." : "重试失败任务"}

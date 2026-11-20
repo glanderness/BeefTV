@@ -100,7 +100,7 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryTimeout:             {Reason: "模型服务响应超时", Action: "请稍后查询原任务，不要立即重新提交"},
 	CategorySubmissionUncertain: {Reason: "提交结果尚未确认，上游任务可能仍在执行", Action: "请先查询原任务状态，不要立即重新提交"},
 	CategoryAsyncFailed:         {Reason: "生成任务没有完成", Action: "请查看详情后决定是否重试"},
-	CategoryCancelled:           {Reason: "任务已取消", Action: "可按原输入重新提交"},
+	CategoryCancelled:           {Reason: "任务已取消", Action: "请核对原任务的结果与扣费状态"},
 	CategoryPartialSuccess:      {Reason: "部分结果已生成，其余失败", Action: "请查看已有结果后再决定是否补做"},
 	CategoryDownloadFailed:      {Reason: "生成结果下载失败", Action: "请稍后重新加载，不要立即重新提交"},
 	CategoryDeliveryFailed:      {Reason: "视频已生成，但暂时无法取回", Action: "请联系支持恢复成片，恢复后点击「取回结果」；无需重新付费生成"},

@@ -35,6 +35,7 @@ export type CreationMessage = {
     generationStage?: string;
     generationEffectKeys?: string[];
     taskOutcome?: import("@/lib/task-outcome").TaskOutcome;
+    providerCancelStatus?: import("@/services/api/task-center").ProviderCancelStatus;
 };
 export type CreationConversationConflict = {
     revision: number;

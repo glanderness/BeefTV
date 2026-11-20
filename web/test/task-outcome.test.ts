@@ -20,6 +20,7 @@ import {
     isTaskOutcomeSubmissionUncertain,
     isTaskOutcomeWorking,
     isTaskRegenerateBlocked,
+    nodeRequiresRegenerateConfirmation,
     normalizeTaskOutcome,
     notChargedTaskOutcome,
     readNodeTaskOutcome,
@@ -29,12 +30,73 @@ import {
     runningTaskOutcome,
     submissionUnknownTaskOutcome,
     taskOutcomeCopy,
+    taskRequiresRegenerateConfirmation,
     type TaskOutcome,
     type TaskOutcomePhase,
     type TaskOutcomeRegenerate,
 } from "@/lib/task-outcome";
 
 describe("task-outcome", () => {
+    it("keeps unconfirmed cancellation out of active work while requiring explicit confirmation to regenerate", () => {
+        const outcome: TaskOutcome = { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" };
+        expect(isTaskOutcomeWorking(outcome)).toBe(false);
+        expect(canRecoverTaskOutcome(outcome)).toBe(false);
+        expect(isRegenerateBlocked(outcome)).toBe(false);
+        expect(isRegenerateConfirm(outcome)).toBe(true);
+        expect(canRegenerateTaskOutcome(outcome)).toBe(true);
+        const copy = taskOutcomeCopy(outcome);
+        expect(copy.badge).toBe("结果待确认");
+        expect(copy.message).toContain("核对原请求");
+        expect(copy.message).not.toContain("正在");
+        expect(copy.confirmTitle).toBe("确认重新生成？");
+        expect(copy.confirmContent).toContain("再扣一次");
+
+        // Legacy fallback without explicit outcome stays consistent with backend projection.
+        expect(readTaskOutcome({ status: "cancelled", stage: "submission_unknown" })).toEqual(outcome);
+        expect(readTaskOutcome({ status: "cancelled", providerRequestId: "req-1" })).toEqual(outcome);
+        expect(readTaskOutcome({ status: "cancelled", errorCode: "submission_uncertain" })).toEqual(outcome);
+        expect(readTaskOutcome({ status: "cancelled" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(isRegenerateConfirm(readTaskOutcome({ status: "cancelled" }))).toBe(true);
+        expect(readTaskOutcome({ status: "failed" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(isRegenerateConfirm(readTaskOutcome({ status: "failed" }))).toBe(true);
+        expect(readTaskOutcome({ status: "failed", type: "depth_capture" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "failed", type: "depth_capture", stage: "submission_unknown" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "cancelled", type: "depth_capture", stage: "submission_unknown" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "cancelled", type: "depth_capture", stage: "delivery_paused" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "cancelled", type: "depth_capture", errorCode: "download_failed" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "failed", type: "depth_capture", errorCode: "submission_uncertain" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readTaskOutcome({ status: "failed", type: "depth_capture", errorCode: "download_failed" })).toEqual(deliveryPendingTaskOutcome());
+        expect(readTaskOutcome({ status: "failed", errorCode: "request_not_sent" })).toEqual(notChargedTaskOutcome());
+        expect(readTaskOutcome({ status: "cancelled", errorCode: "request_not_sent" })).toEqual(notChargedTaskOutcome());
+        expect(readTaskOutcome({ status: "cancelled", stage: "request_not_sent" })).toEqual(notChargedTaskOutcome());
+
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", taskStage: "submission_unknown" })).toEqual(outcome);
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", generationSubmissionState: "unknown" })).toEqual(outcome);
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", generationErrorCode: "submission_uncertain" })).toEqual(outcome);
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", taskProviderRequestId: "req-1" })).toEqual(outcome);
+        expect(isNodeRegenerateConfirm({ taskStatus: "cancelled", taskProviderRequestId: "req-1" })).toBe(true);
+        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "cancelled" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "cancelled", taskProviderRequestId: "req-1" })).toEqual(outcome);
+        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "failed" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(isNodeRegenerateConfirm({ status: "loading", taskStatus: "failed" })).toBe(true);
+        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "failed", taskType: "depth_capture" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ taskType: "depth_capture", taskStatus: "failed", generationSubmissionState: "unknown" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ taskType: "depth_capture", taskStatus: "cancelled", taskStage: "submission_unknown" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ taskType: "depth_capture", taskStatus: "cancelled", generationErrorCode: "download_failed" })).toEqual({ phase: "failed", regenerate: "allowed", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ taskType: "depth_capture", taskStatus: "failed", generationErrorCode: "download_failed" })).toEqual(deliveryPendingTaskOutcome());
+        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "failed", taskProviderRequestId: "req-1" })).toEqual({ phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" });
+        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "text_replay" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(isNodeRegenerateConfirm({ taskStatus: "cancelled" })).toBe(true);
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", generationErrorCode: "request_not_sent" })).toEqual(notChargedTaskOutcome());
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", taskStage: "request_not_sent" })).toEqual(notChargedTaskOutcome());
+
+        const confirmedCopy = taskOutcomeCopy(outcome, undefined, { providerCancelStatus: "confirmed" });
+        expect(confirmedCopy.badge).toBe("已取消");
+        expect(confirmedCopy.reason).toContain("上游已确认取消");
+        expect(confirmedCopy.message).toContain("扣费");
+        expect(confirmedCopy.confirmContent).toContain("再扣一次");
+    });
     it("recognizes all 5 phase values and 3 regenerate values", () => {
         const phases: TaskOutcomePhase[] = ["running", "fetching", "ready", "retrievable", "failed"];
         const regenerates: TaskOutcomeRegenerate[] = ["allowed", "confirm", "blocked"];
@@ -304,5 +366,67 @@ describe("task-outcome", () => {
         expect(isTaskOutcomeSubmissionUncertain(deliveryPendingTaskOutcome())).toBe(false);
         expect(isTaskOutcomeSubmissionUncertain({ phase: "failed", regenerate: "blocked", reason: "settlement_pending" })).toBe(true);
         expect(isTaskOutcomeSubmissionUncertain(notChargedTaskOutcome())).toBe(false);
+    });
+
+    it("suppresses reload on cancelled evidence_unavailable nodes and requires confirmation when cancel is requested or uncertain", () => {
+        const cancelledEvidenceMeta = {
+            taskId: "task-cancelled-unreadable",
+            taskStatus: "cancelled",
+            taskOutcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "evidence_unavailable" },
+        };
+        expect(canReloadCanvasNodeResource(cancelledEvidenceMeta)).toBe(false);
+        expect(isNodeRegenerateBlocked(cancelledEvidenceMeta)).toBe(true);
+        expect(
+            canReloadCanvasNodeResource({
+                ...cancelledEvidenceMeta,
+                taskStatus: "failed",
+            }),
+        ).toBe(true);
+
+        const allowedOutcome: TaskOutcome = { phase: "failed", regenerate: "allowed", reason: "task_failed" };
+        expect(taskRequiresRegenerateConfirmation({ outcome: allowedOutcome, providerCancelStatus: "requested" })).toBe(true);
+        expect(taskRequiresRegenerateConfirmation({ outcome: allowedOutcome, providerCancelStatus: "uncertain" })).toBe(true);
+        expect(taskRequiresRegenerateConfirmation({ outcome: allowedOutcome, providerCancelStatus: "confirmed" })).toBe(false);
+        expect(
+            nodeRequiresRegenerateConfirmation({
+                taskId: "task-req-1",
+                taskStatus: "cancelled",
+                taskProviderCancelStatus: "requested",
+                taskOutcome: allowedOutcome,
+            }),
+        ).toBe(true);
+        expect(
+            isNodeRegenerateConfirm({
+                taskId: "task-req-1",
+                taskStatus: "cancelled",
+                taskProviderCancelStatus: "requested",
+                taskOutcome: allowedOutcome,
+            }),
+        ).toBe(true);
+        expect(
+            isNodeRegenerateConfirm({
+                taskId: "task-unc-1",
+                taskStatus: "cancelled",
+                taskProviderCancelStatus: "uncertain",
+                taskOutcome: allowedOutcome,
+            }),
+        ).toBe(true);
+
+        const requestedAllowedCopy = taskOutcomeCopy(allowedOutcome, undefined, { providerCancelStatus: "requested" });
+        expect(requestedAllowedCopy.badge).toBe("取消待确认");
+        expect(requestedAllowedCopy.confirmTitle).toContain("取消仍在确认中");
+        expect(requestedAllowedCopy.confirmContent).toContain("可能会再扣一次");
+        const uncertainAllowedCopy = taskOutcomeCopy(allowedOutcome, undefined, { providerCancelStatus: "uncertain" });
+        expect(uncertainAllowedCopy.badge).toBe("取消待确认");
+        expect(uncertainAllowedCopy.confirmTitle).toContain("未能确认取消");
+        expect(uncertainAllowedCopy.confirmContent).toContain("可能会再扣一次");
+        const uncertainConfirmCopy = taskOutcomeCopy(
+            { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" },
+            undefined,
+            { providerCancelStatus: "uncertain" },
+        );
+        expect(uncertainConfirmCopy.badge).toBe("取消待确认");
+        expect(uncertainConfirmCopy.confirmTitle).toContain("未能确认取消");
+        expect(uncertainConfirmCopy.confirmContent).toContain("可能会再扣一次");
     });
 });

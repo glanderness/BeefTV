@@ -59,7 +59,7 @@ var boundGenerationOutputFields = []string{
 	"generationSubmissionState", "retryOf", "attemptGroupId",
 	"taskProvider", "taskStatus", "taskProgress", "taskStage",
 	"taskCreatedAt", "taskStartedAt", "taskCompletedAt", "taskDurationMs",
-	"taskErrorCode", "taskProviderRequestId", "taskOfficialStatus",
+	"taskErrorCode", "taskProviderRequestId", "taskProviderCancelStatus", "taskOfficialStatus",
 	"taskReceiptRecorded", "taskUpdatedAt", "generationEffectKeys",
 }
 

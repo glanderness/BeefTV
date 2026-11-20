@@ -24,8 +24,9 @@ type CanvasFailureScan struct {
 }
 
 type canvasFailureCheck struct {
-	outcome  Outcome
-	revision int64
+	outcome              Outcome
+	providerCancelStatus model.ProviderCancelStatus
+	revision             int64
 }
 
 type CanvasFailureDeps struct {
@@ -104,7 +105,7 @@ func (scan *CanvasFailureScan) Run(deps CanvasFailureDeps, limit int) error {
 			continue
 		}
 		for i, task := range group.tasks {
-			scan.checked[task.ID] = canvasFailureCheck{outcome: group.outcomes[i], revision: revision}
+			scan.checked[task.ID] = canvasFailureCheck{outcome: group.outcomes[i], providerCancelStatus: task.ProviderCancelStatus, revision: revision}
 		}
 	}
 	return last
@@ -112,7 +113,7 @@ func (scan *CanvasFailureScan) Run(deps CanvasFailureDeps, limit int) error {
 
 func (scan *CanvasFailureScan) unchanged(tasks []model.Task, outcomes []Outcome, revision int64) bool {
 	for i, task := range tasks {
-		if scan.checked[task.ID] != (canvasFailureCheck{outcome: outcomes[i], revision: revision}) {
+		if scan.checked[task.ID] != (canvasFailureCheck{outcome: outcomes[i], providerCancelStatus: task.ProviderCancelStatus, revision: revision}) {
 			return false
 		}
 	}

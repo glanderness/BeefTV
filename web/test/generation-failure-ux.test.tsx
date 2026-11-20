@@ -363,6 +363,21 @@ describe("generation-failure-ux", () => {
         expect(modals[2]).toEqual({ title: "输入尚未修改，确认直接重试？", cancelText: "去修改输入" });
         expect(dualWarningContent).toContain("未修改直接重试大概率仍会失败");
         expect(dualWarningContent).toContain("重新生成可能会再扣一次");
+
+        let pendingCancelContent = "";
+        const pendingCancelRejected = await confirmCreationRetryIfNeeded({
+            category: "cancelled",
+            outcome: { phase: "failed", regenerate: "allowed", reason: "task_failed" },
+            providerCancelStatus: "requested",
+            modalConfirm: (config) => {
+                pendingCancelContent = String(config.content || "");
+                modals.push({ title: config.title, cancelText: config.cancelText });
+                config.onCancel?.();
+            },
+        });
+        expect(pendingCancelRejected).toBe(false);
+        expect(modals[3]?.title).toContain("取消仍在确认中");
+        expect(pendingCancelContent).toContain("可能会再扣一次");
     });
 
     test("CanvasNodeErrorContent suppresses retry and reload controls in readOnly mode", () => {

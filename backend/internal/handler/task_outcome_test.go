@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 func TestTaskOutcomeReadEndpointsOnlyAddPublicProjection(t *testing.T) {
@@ -317,8 +318,456 @@ func TestActiveOnlyTasksEndpointIncludesOutcomeActiveTasksBeyondFirstPage(t *tes
 	for _, item := range env.Data {
 		gotIDs = append(gotIDs, item.ID)
 	}
-	wantIDs := []string{"old-running", "old-cancelled-log-retrievable", "old-failed-log-retrievable", "old-failed-retrievable", "old-succeeded-retrievable"}
+	wantIDs := []string{"old-running", "old-failed-log-retrievable", "old-failed-retrievable", "old-succeeded-retrievable"}
 	if strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
 		t.Fatalf("activeOnly ids=%v, want %v", gotIDs, wantIDs)
+	}
+
+	detailResp := h.do(t, http.MethodGet, "/api/tasks/old-cancelled-log-retrievable", nil)
+	if detailResp.Code != http.StatusOK {
+		t.Fatalf("detail status=%d body=%s", detailResp.Code, detailResp.Body.String())
+	}
+	var detailEnv struct {
+		Data model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(detailResp.Body.Bytes(), &detailEnv); err != nil {
+		t.Fatal(err)
+	}
+	wantOutcome := model.TaskOutcome{Phase: "failed", Regenerate: "confirm", Reason: "cancelled_result_unconfirmed"}
+	if detailEnv.Data.Outcome == nil || *detailEnv.Data.Outcome != wantOutcome {
+		t.Fatalf("cancelled detail outcome=%+v, want %+v", detailEnv.Data.Outcome, wantOutcome)
+	}
+}
+
+func TestActiveOnlyTasksEndpointRetainsCancelledTaskWhenEvidenceUnreadable(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	noResult := "no_result"
+	unrecoverable := "unrecoverable"
+	tasks := []model.Task{
+		{
+			ID:        "cancelled-unreadable",
+			UserID:    owner.ID,
+			ProjectID: "unreadable-canvas",
+			Type:      "canvas_image",
+			Status:    model.TaskStatusCancelled,
+			Stage:     "任务已取消",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:              "cancelled-terminal-unreadable",
+			UserID:          owner.ID,
+			ProjectID:       "unreadable-canvas",
+			Type:            "canvas_video",
+			Status:          model.TaskStatusCancelled,
+			Stage:           "任务已取消",
+			RecoveryOutcome: &noResult,
+			CreatedAt:       now.Add(time.Second),
+			UpdatedAt:       now.Add(time.Second),
+		},
+		{
+			ID:              "failed-terminal-unreadable",
+			UserID:          owner.ID,
+			ProjectID:       "unreadable-canvas",
+			Type:            "canvas_image",
+			Status:          model.TaskStatusFailed,
+			Stage:           "任务失败",
+			RecoveryOutcome: &unrecoverable,
+			CreatedAt:       now.Add(2 * time.Second),
+			UpdatedAt:       now.Add(2 * time.Second),
+		},
+	}
+	if err := h.db.Create(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.Exec("DROP TABLE route_attempts").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	resp := h.do(t, http.MethodGet, "/api/tasks?projectId=unreadable-canvas&pageSize=20&activeOnly=true", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var env struct {
+		Data []model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	gotIDs := make([]string, 0, len(env.Data))
+	wantOutcome := model.TaskOutcome{Phase: "retrievable", Regenerate: "blocked", Reason: "evidence_unavailable"}
+	for _, item := range env.Data {
+		gotIDs = append(gotIDs, item.ID)
+		if item.Outcome == nil || *item.Outcome != wantOutcome {
+			t.Fatalf("unreadable task %s outcome=%+v, want %+v", item.ID, item.Outcome, wantOutcome)
+		}
+	}
+	wantIDs := []string{"failed-terminal-unreadable", "cancelled-terminal-unreadable", "cancelled-unreadable"}
+	if strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
+		t.Fatalf("activeOnly unreadable ids=%v, want %v", gotIDs, wantIDs)
+	}
+}
+
+func TestActiveOnlySQLPreFilterSkipsHistoricalTerminalTasks(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	noResult := "no_result"
+	unrecoverable := "unrecoverable"
+	settled := "settled"
+	completed := "completed"
+	var batch []model.Task
+	for i := 0; i < 200; i++ {
+		ts := now.Add(time.Duration(i) * time.Millisecond)
+		batch = append(batch,
+			model.Task{
+				ID:                fmt.Sprintf("hist-cancelled-%03d", i),
+				UserID:            owner.ID,
+				ProjectID:         "scale-canvas",
+				Type:              "canvas_image",
+				Status:            model.TaskStatusCancelled,
+				Stage:             "任务已取消",
+				ProviderRequestID: fmt.Sprintf("prov-cancel-%03d", i),
+				CreatedAt:         ts,
+				UpdatedAt:         ts,
+			},
+			model.Task{
+				ID:              fmt.Sprintf("hist-failed-terminal-%03d", i),
+				UserID:          owner.ID,
+				ProjectID:       "scale-canvas",
+				Type:            "canvas_video",
+				Status:          model.TaskStatusFailed,
+				Stage:           "任务失败",
+				RecoveryOutcome: &noResult,
+				CreatedAt:       ts,
+				UpdatedAt:       ts,
+			},
+			model.Task{
+				ID:               fmt.Sprintf("hist-failed-charged-%03d", i),
+				UserID:           owner.ID,
+				ProjectID:        "scale-canvas",
+				Type:             "canvas_image",
+				Status:           model.TaskStatusFailed,
+				Stage:            "任务失败",
+				RecoveryOutcome:  &unrecoverable,
+				BeefUsageState:   &completed,
+				BeefBillingState: &settled,
+				CreatedAt:        ts,
+				UpdatedAt:        ts,
+			},
+		)
+	}
+	batch = append(batch,
+		model.Task{
+			ID:                "active-failed-retrievable",
+			UserID:            owner.ID,
+			ProjectID:         "scale-canvas",
+			Type:              "canvas_video",
+			Status:            model.TaskStatusFailed,
+			Stage:             "任务失败",
+			ProviderRequestID: "prov-retrievable-1",
+			CreatedAt:         now.Add(time.Second),
+			UpdatedAt:         now.Add(time.Second),
+		},
+		model.Task{
+			ID:         "active-succeeded-delivery",
+			UserID:     owner.ID,
+			ProjectID:  "scale-canvas",
+			Type:       "canvas_image",
+			Status:     model.TaskStatusSucceeded,
+			Stage:      "生成完成",
+			ResultJSON: `{"images":[{"url":"https://example.invalid/pending.png"}]}`,
+			CreatedAt:  now.Add(2 * time.Second),
+			UpdatedAt:  now.Add(2 * time.Second),
+		},
+		model.Task{
+			ID:        "active-queued",
+			UserID:    owner.ID,
+			ProjectID: "scale-canvas",
+			Type:      "canvas_image",
+			Status:    model.TaskStatusQueued,
+			Stage:     "等待队列调度",
+			CreatedAt: now.Add(3 * time.Second),
+			UpdatedAt: now.Add(3 * time.Second),
+		},
+	)
+	if err := h.db.CreateInBatches(&batch, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := repository.New(h.db).ActiveCandidateTasksAfter(owner.ID, "scale-canvas", nil, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 3 {
+		t.Fatalf("SQL active candidates = %d, want 3 (600 historical terminal rows must be filtered in SQL)", len(candidates))
+	}
+
+	resp := h.do(t, http.MethodGet, "/api/tasks?projectId=scale-canvas&pageSize=20&activeOnly=true", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var env struct {
+		Data []model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	gotIDs := make([]string, 0, len(env.Data))
+	for _, item := range env.Data {
+		gotIDs = append(gotIDs, item.ID)
+	}
+	wantIDs := []string{"active-queued", "active-succeeded-delivery", "active-failed-retrievable"}
+	if strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
+		t.Fatalf("activeOnly ids=%v, want %v", gotIDs, wantIDs)
+	}
+}
+
+func TestActiveOnlyEvidenceUnreadablePrioritizesOlderActiveTasksAndDetectsMissingColumn(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Hour)
+	noResult := "no_result"
+	// Seed an older genuinely queued task followed by 60 newer terminal/cancelled rows.
+	seed := []model.Task{
+		{
+			ID:        "older-active-queued",
+			UserID:    owner.ID,
+			ProjectID: "degraded-canvas",
+			Type:      "canvas_image",
+			Status:    model.TaskStatusQueued,
+			Stage:     "等待队列调度",
+			CreatedAt: base,
+			UpdatedAt: base,
+		},
+	}
+	for i := 0; i < 60; i++ {
+		ts := base.Add(time.Duration(i+1) * time.Second)
+		seed = append(seed, model.Task{
+			ID:              fmt.Sprintf("newer-cancelled-%02d", i),
+			UserID:          owner.ID,
+			ProjectID:       "degraded-canvas",
+			Type:            "canvas_image",
+			Status:          model.TaskStatusCancelled,
+			Stage:           "任务已取消",
+			RecoveryOutcome: &noResult,
+			CreatedAt:       ts,
+			UpdatedAt:       ts,
+		})
+	}
+	if err := h.db.CreateInBatches(&seed, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Replace route_attempts with a corrupted table missing dispatch_state (table exists, required column missing).
+	if err := h.db.Exec("DROP TABLE route_attempts").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.Exec("CREATE TABLE route_attempts (id TEXT PRIMARY KEY, task_id TEXT)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if repository.New(h.db).EvidenceReadable() {
+		t.Fatal("EvidenceReadable() = true when route_attempts is missing dispatch_state column, want false")
+	}
+
+	resp := h.do(t, http.MethodGet, "/api/tasks?projectId=degraded-canvas&pageSize=10&activeOnly=true", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var env struct {
+		Data []model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if len(env.Data) != 10 {
+		t.Fatalf("activeOnly degraded len=%d, want bounded pageSize=10", len(env.Data))
+	}
+	// The older genuinely queued task must be prioritized first instead of being crowded out by newer terminal rows.
+	if env.Data[0].ID != "older-active-queued" {
+		t.Fatalf("first activeOnly degraded item = %s, want older-active-queued", env.Data[0].ID)
+	}
+	if env.Data[1].Outcome == nil || env.Data[1].Outcome.Reason != "evidence_unavailable" {
+		t.Fatalf("second activeOnly degraded item outcome = %+v, want evidence_unavailable", env.Data[1].Outcome)
+	}
+}
+
+func TestActiveOnlyEvidenceProbeDetectsMissingAttemptNumberAndCallLogUserIDAndSurfacesOlderCancelledBeyondSucceeded(t *testing.T) {
+	cases := []struct {
+		name  string
+		breakSQL []string
+	}{
+		{
+			name: "missing route_attempts.attempt_number",
+			breakSQL: []string{
+				"DROP TABLE route_attempts",
+				"CREATE TABLE route_attempts (id TEXT PRIMARY KEY, task_id TEXT, route_run INTEGER, channel_id TEXT, dispatch_state TEXT, started_at DATETIME)",
+			},
+		},
+		{
+			name: "missing api_call_logs.user_id",
+			breakSQL: []string{
+				"DROP TABLE api_call_logs",
+				"CREATE TABLE api_call_logs (id TEXT PRIMARY KEY, task_id TEXT, capability TEXT, request_kind TEXT, method TEXT, status TEXT, provider_request_id TEXT, created_at DATETIME)",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newRetiredAgentHarness(t)
+			owner, err := h.svc.WorkspaceOwner("local")
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := time.Now().UTC().Add(-time.Hour)
+			noResult := "no_result"
+			seed := []model.Task{
+				{
+					ID:              "older-cancelled-evidence",
+					UserID:          owner.ID,
+					ProjectID:       "probe-canvas",
+					Type:            "canvas_image",
+					Status:          model.TaskStatusCancelled,
+					Stage:           "任务已取消",
+					RecoveryOutcome: &noResult,
+					CreatedAt:       base,
+					UpdatedAt:       base,
+				},
+			}
+			for i := 0; i < 60; i++ {
+				ts := base.Add(time.Duration(i+1) * time.Second)
+				seed = append(seed, model.Task{
+					ID:         fmt.Sprintf("newer-succeeded-text-%02d", i),
+					UserID:     owner.ID,
+					ProjectID:  "probe-canvas",
+					Type:       "canvas_text",
+					Status:     model.TaskStatusSucceeded,
+					Stage:      "已完成",
+					ResultJSON: `{"text":"ok"}`,
+					CreatedAt:  ts,
+					UpdatedAt:  ts,
+				})
+			}
+			if err := h.db.CreateInBatches(&seed, 100).Error; err != nil {
+				t.Fatal(err)
+			}
+			for _, stmt := range tc.breakSQL {
+				if err := h.db.Exec(stmt).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			if repository.New(h.db).EvidenceReadable() {
+				t.Fatalf("EvidenceReadable() = true for %s, want false", tc.name)
+			}
+			resp := h.do(t, http.MethodGet, "/api/tasks?projectId=probe-canvas&pageSize=10&activeOnly=true", nil)
+			if resp.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+			}
+			var env struct {
+				Data []model.Task `json:"data"`
+			}
+			if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
+				t.Fatal(err)
+			}
+			if len(env.Data) != 1 || env.Data[0].ID != "older-cancelled-evidence" {
+				t.Fatalf("activeOnly degraded data = %+v, want [older-cancelled-evidence]", env.Data)
+			}
+			if env.Data[0].Outcome == nil || env.Data[0].Outcome.Reason != "evidence_unavailable" {
+				t.Fatalf("outcome = %+v, want evidence_unavailable", env.Data[0].Outcome)
+			}
+		})
+	}
+}
+
+func TestActiveOnlyImageSubmissionsUnreadableSurfacesAttemptedImageWithinBoundedFallback(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Hour)
+	seed := []model.Task{
+		{
+			ID:        "attempted-cancelled-image",
+			UserID:    owner.ID,
+			ProjectID: "img-sub-canvas",
+			Type:      "canvas_image",
+			Status:    model.TaskStatusCancelled,
+			Stage:     "任务已取消",
+			RouteRun:  1,
+			CreatedAt: base,
+			UpdatedAt: base,
+		},
+	}
+	// 110 newer cancelled text tasks without route attempts sit ahead of the image task
+	// (page 1 skips 100 non-attempt rows; page 2 hits attempted-cancelled-image within the 2-page budget).
+	for i := 0; i < 110; i++ {
+		ts := base.Add(time.Duration(i+1) * time.Second)
+		seed = append(seed, model.Task{
+			ID:        fmt.Sprintf("non-attempt-text-%03d", i),
+			UserID:    owner.ID,
+			ProjectID: "img-sub-canvas",
+			Type:      "canvas_text",
+			Status:    model.TaskStatusCancelled,
+			Stage:     "任务已取消",
+			CreatedAt: ts,
+			UpdatedAt: ts,
+		})
+	}
+	if err := h.db.CreateInBatches(&seed, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.Create(&model.RouteAttempt{
+		ID:            "attempt-img-1",
+		TaskID:        "attempted-cancelled-image",
+		RouteRun:      1,
+		AttemptNumber: 1,
+		Status:        "selected",
+		DispatchState: "accepted",
+		StartedAt:     base,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Drop ONLY image_submissions: tasks without route attempts do not query image_submissions,
+	// while attempted-cancelled-image does and fails closed to evidence_unavailable.
+	if err := h.db.Exec("DROP TABLE image_submissions").Error; err != nil {
+		t.Fatal(err)
+	}
+	if repository.New(h.db).EvidenceReadable() {
+		t.Fatal("EvidenceReadable() = true when image_submissions table is missing, want false")
+	}
+
+	resp := h.do(t, http.MethodGet, "/api/tasks?projectId=img-sub-canvas&pageSize=20&activeOnly=true", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var env struct {
+		Data []model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range env.Data {
+		if item.ID == "attempted-cancelled-image" {
+			found = true
+			if item.Outcome == nil || item.Outcome.Reason != "evidence_unavailable" {
+				t.Fatalf("attempted image outcome = %+v, want evidence_unavailable", item.Outcome)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected attempted-cancelled-image in activeOnly response, got %d items", len(env.Data))
 	}
 }

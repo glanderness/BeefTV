@@ -65,6 +65,14 @@ type activeCandidateStore interface {
 	ListActiveCandidatesAfter(userID string, projectID string, beforeCreatedAt *time.Time, beforeID string, limit int) ([]model.Task, error)
 }
 
+type evidenceHealthStore interface {
+	EvidenceReadable() bool
+}
+
+type unreadableEvidenceFallbackStore interface {
+	ListTerminalForUnreadableEvidenceAfter(userID string, projectID string, beforeCreatedAt *time.Time, beforeID string, limit int) ([]model.Task, error)
+}
+
 type batchProviderRequestIDStore interface {
 	LatestProviderRequestIDs(taskIDs []string) (map[string]string, error)
 }
@@ -156,9 +164,14 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 	if want <= 0 || want > 100 {
 		want = 50
 	}
+	evidenceReadable := true
+	if health, ok := s.store.(evidenceHealthStore); ok {
+		evidenceReadable = health.EvidenceReadable()
+	}
 	if pager, ok := s.store.(activeCandidateStore); ok {
 		const pageSize = 100
 		collected := make([]Summary, 0, want)
+		seen := make(map[string]struct{}, want)
 		var beforeCreatedAt *time.Time
 		var beforeID string
 		for len(collected) < want {
@@ -177,6 +190,7 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 			for _, summary := range projected {
 				if isActiveTaskSummary(summary) {
 					collected = append(collected, summary)
+					seen[summary.ID] = struct{}{}
 					if len(collected) >= want {
 						break
 					}
@@ -190,9 +204,76 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 			beforeCreatedAt = &cursorTime
 			beforeID = last.ID
 		}
+		if !evidenceReadable && len(collected) < want {
+			// Active candidates (queued/running/retrievable) are always prioritized first.
+			// When evidence storage is unreadable, cursor-page only failed/cancelled rows
+			// (skipping succeeded history) with a hard page budget so older
+			// evidence_unavailable tasks are not crowded out by newer completed tasks
+			// AND degraded polling can never degenerate into a full-history scan.
+			const maxUnreadableFallbackPages = 2
+			if fallback, ok := s.store.(unreadableEvidenceFallbackStore); ok {
+				var fbCreatedAt *time.Time
+				var fbID string
+				for pages := 0; len(collected) < want && pages < maxUnreadableFallbackPages; pages++ {
+					batch, err := fallback.ListTerminalForUnreadableEvidenceAfter(userID, options.ProjectID, fbCreatedAt, fbID, pageSize)
+					if err != nil {
+						return nil, err
+					}
+					if len(batch) == 0 {
+						break
+					}
+					s.hydrateOutcomeProviderRequestIDs(batch)
+					projected, err := presentSummaries(s.deps.Present, batch)
+					if err != nil {
+						return nil, err
+					}
+					for _, summary := range projected {
+						if _, dup := seen[summary.ID]; dup {
+							continue
+						}
+						if isActiveTaskSummary(summary) {
+							collected = append(collected, summary)
+							seen[summary.ID] = struct{}{}
+							if len(collected) >= want {
+								break
+							}
+						}
+					}
+					if len(batch) < pageSize {
+						break
+					}
+					last := batch[len(batch)-1]
+					cursorTime := last.CreatedAt
+					fbCreatedAt = &cursorTime
+					fbID = last.ID
+				}
+			} else {
+				recent, err := s.store.List(userID, want, options.ProjectID, false)
+				if err != nil {
+					return nil, err
+				}
+				s.hydrateOutcomeProviderRequestIDs(recent)
+				projected, err := presentSummaries(s.deps.Present, recent)
+				if err != nil {
+					return nil, err
+				}
+				for _, summary := range projected {
+					if _, dup := seen[summary.ID]; dup {
+						continue
+					}
+					if isActiveTaskSummary(summary) {
+						collected = append(collected, summary)
+						seen[summary.ID] = struct{}{}
+						if len(collected) >= want {
+							break
+						}
+					}
+				}
+			}
+		}
 		return collected, nil
 	}
-	tasks, err := s.store.List(userID, want, options.ProjectID, true)
+	tasks, err := s.store.List(userID, want, options.ProjectID, evidenceReadable)
 	if err != nil {
 		return nil, err
 	}

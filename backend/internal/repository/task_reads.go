@@ -12,8 +12,13 @@ import (
 const taskSummarySelectColumns = "id, user_id, route_run, recovery_outcome, beef_usage_state, beef_billing_state, beef_reconcile_deadline, image_job_id, project_id, type, status, stage, progress, prompt, operation, provider, model, input_json, result_json, error, error_code, failure_diagnostics, provider_request_id, provider_cancel_status, provider_cancel_error, provider_cancel_attempts, provider_cancel_requested_at, provider_cancelled_at, provider_cancel_next_check_at, attempts, started_at, completed_at, created_at, updated_at"
 
 func applyActiveCandidateTaskFilter(query *gorm.DB) *gorm.DB {
+	// Pre-filter rows that ComputeOutcome can never project to running/fetching/retrievable
+	// when outcome evidence is readable: cancelled rows, failed rows whose recovery already
+	// concluded (no_result / unrecoverable), and succeeded text tasks.
+	// Unreadable evidence is handled upstream via EvidenceReadable() bounded fallback.
 	return query.
-		Where("status NOT IN ? OR recovery_outcome IS NULL OR recovery_outcome NOT IN ?", []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled}, []string{"no_result", "unrecoverable"}).
+		Where("status <> ?", model.TaskStatusCancelled).
+		Where("status <> ? OR recovery_outcome IS NULL OR recovery_outcome NOT IN ?", model.TaskStatusFailed, []string{"no_result", "unrecoverable"}).
 		Where("status <> ? OR type NOT IN ?", model.TaskStatusSucceeded, []string{"text", "canvas_text"})
 }
 
@@ -40,6 +45,27 @@ func (r *Repository) ActiveCandidateTasksAfter(userID string, projectID string, 
 		limit = 100
 	}
 	query := applyActiveCandidateTaskFilter(r.db.Select(taskSummarySelectColumns).Where("user_id = ?", userID))
+	if strings.TrimSpace(projectID) != "" {
+		query = query.Where("project_id = ?", strings.TrimSpace(projectID))
+	}
+	if beforeCreatedAt != nil {
+		query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", *beforeCreatedAt, *beforeCreatedAt, beforeID)
+	}
+	err := query.Order("created_at desc, id desc").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+// TerminalTasksForUnreadableEvidenceAfter pages only failed/cancelled rows that
+// the healthy activeOnly SQL filter excluded, skipping succeeded tasks so newer
+// completed history cannot crowd out older evidence_unavailable rows.
+func (r *Repository) TerminalTasksForUnreadableEvidenceAfter(userID string, projectID string, beforeCreatedAt *time.Time, beforeID string, limit int) ([]model.Task, error) {
+	var tasks []model.Task
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	query := r.db.Select(taskSummarySelectColumns).
+		Where("user_id = ?", userID).
+		Where("status IN ?", []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled})
 	if strings.TrimSpace(projectID) != "" {
 		query = query.Where("project_id = ?", strings.TrimSpace(projectID))
 	}

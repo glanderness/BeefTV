@@ -67,7 +67,7 @@ export function canvasGenerationFailureMetadata(error: unknown, input: CanvasGen
 
 export function textReplayRecoveryErrorMessage(task: GenerationTask): string {
     if (task.error) return task.error;
-    return taskOutcomeCopy(readTaskOutcome(task)).message;
+    return taskOutcomeCopy(readTaskOutcome(task), undefined, { providerCancelStatus: task.providerCancelStatus }).message;
 }
 
 export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: CanvasNodeMetadata, error: unknown = { code: task.errorCode, message: task.error || (task.status === "cancelled" ? "任务已取消" : "任务失败") }) {
@@ -94,8 +94,8 @@ export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: Canva
     const taskOutcome = task.status === "succeeded" && !resultLost
         ? ("taskOutcome" in failure && failure.taskOutcome ? failure.taskOutcome : deliveryPendingTaskOutcome())
         : (task.outcome ?? ("taskOutcome" in failure ? failure.taskOutcome : undefined) ?? backendOutcome);
-    const lostResultCopy = resultLost ? { errorDetails: taskOutcomeCopy(backendOutcome).message, generationErrorCode: undefined } : {};
-    return { ...failure, ...lostResultCopy, ...(taskOutcome ? { taskOutcome } : {}), taskFailureDiagnostics: diagnostics, taskProviderRequestId: task.providerRequestId };
+    const lostResultCopy = resultLost ? { errorDetails: taskOutcomeCopy(backendOutcome, undefined, { providerCancelStatus: task.providerCancelStatus }).message, generationErrorCode: undefined } : {};
+    return { ...failure, ...lostResultCopy, ...(taskOutcome ? { taskOutcome } : {}), taskFailureDiagnostics: diagnostics, taskProviderRequestId: task.providerRequestId, taskProviderCancelStatus: task.providerCancelStatus };
 }
 
 export function canvasImagePendingResultMessage(node: CanvasNodeData | undefined, nodes: CanvasNodeData[]) {

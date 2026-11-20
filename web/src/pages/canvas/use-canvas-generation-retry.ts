@@ -21,7 +21,7 @@ import {
     isCreativeInputFailureCategory,
     shouldConfirmUnchangedModerationRetry,
 } from "@/lib/generation-failure-ux";
-import { isRegenerateAllowed, isRegenerateBlocked, isRegenerateConfirm, readNodeTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
+import { isRegenerateAllowed, isRegenerateBlocked, nodeRequiresFreshSubmission, nodeRequiresRegenerateConfirmation, readNodeTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
@@ -141,14 +141,14 @@ export function useCanvasGenerationRetry({
             ) => {
                 const targetOutcome = readNodeTaskOutcome(targetNode.metadata);
                 const baseline = evaluateCreativeRetryBaseline(targetNode.metadata, category, submittedPrompt, submittedRefs);
-                const needsOutcomeConfirm = isRegenerateConfirm(targetOutcome);
+                const needsOutcomeConfirm = nodeRequiresRegenerateConfirmation(targetNode.metadata, targetOutcome);
                 if (!needsOutcomeConfirm && !baseline.unchangedModeration) {
                     return { confirmed: true, prompted: false, baseline };
                 }
                 if (!modal?.confirm) {
                     return { confirmed: true, prompted: false, baseline };
                 }
-                const targetCopy = taskOutcomeCopy(targetOutcome);
+                const targetCopy = taskOutcomeCopy(targetOutcome, undefined, { providerCancelStatus: targetNode.metadata?.taskProviderCancelStatus });
                 const latestNode = nodesRef.current.find((item) => item.id === node.id) || node;
                 const promptTarget = !readOnly
                     ? resolveCanvasPromptEditTarget(latestNode, nodesRef.current, connectionsRef.current)
@@ -193,12 +193,14 @@ export function useCanvasGenerationRetry({
             if (!creativeInputFailure && retryMode === "video" && node.metadata?.taskId && node.metadata.status === "error") {
                 const outcome = readNodeTaskOutcome(node.metadata);
                 if (isRegenerateBlocked(outcome)) {
-                    const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome).message;
+                    const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome, undefined, { providerCancelStatus: node.metadata?.taskProviderCancelStatus }).message;
                     message?.warning?.(reason);
                     surfaceRetryFailure(node.id, reason, setNodes);
                     return;
                 }
-                if (!isRegenerateConfirm(outcome)) {
+                if (nodeRequiresFreshSubmission(node.metadata, { nodeTaskType: "canvas_video", outcome })) {
+                    skipStoredVideoRetry = true;
+                } else {
                     const requestProjectId = projectId;
                     const controller = startGenerationRequest(node.id, node.id);
                     setRunningNodeId(node.id);
@@ -246,13 +248,13 @@ export function useCanvasGenerationRetry({
                 const batchExplanation = nodeFailureExplanation(batchTarget.metadata);
                 const batchOutcome = readNodeTaskOutcome(batchTarget.metadata);
                 if (isRegenerateBlocked(batchOutcome)) {
-                    const reason = batchTarget.metadata?.errorDetails || taskOutcomeCopy(batchOutcome).message;
+                    const reason = batchTarget.metadata?.errorDetails || taskOutcomeCopy(batchOutcome, undefined, { providerCancelStatus: batchTarget.metadata?.taskProviderCancelStatus }).message;
                     message?.warning?.(reason);
                     surfaceRetryFailure(node.id, reason, setNodes);
                     return;
                 }
                 let batchPrompted = false;
-                if (shouldConfirmUnchangedModerationRetry(batchExplanation.category) || isRegenerateConfirm(batchOutcome)) {
+                if (shouldConfirmUnchangedModerationRetry(batchExplanation.category) || nodeRequiresRegenerateConfirmation(batchTarget.metadata, batchOutcome)) {
                     let batchContextPrompt = retryPromptSource;
                     let batchRefs: ReturnType<typeof submittedReferences> = [];
                     try {
@@ -411,7 +413,7 @@ export function useCanvasGenerationRetry({
                 submittedInput = input;
                 const outcome = readNodeTaskOutcome(node.metadata);
                 if (isRegenerateBlocked(outcome)) {
-                    const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome).message;
+                    const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome, undefined, { providerCancelStatus: node.metadata?.taskProviderCancelStatus }).message;
                     message?.warning?.(reason);
                     surfaceRetryFailure(node.id, reason, setNodes);
                     return;
@@ -421,8 +423,17 @@ export function useCanvasGenerationRetry({
                     if (!gate.confirmed) return;
                     confirmedUnchangedModeration = gate.prompted;
                 }
-                // Edited input after a non-retryable failure is a new submission, not replay of the old retry operation.
-                const retryContext = !storedVideoFallbackError && !skipStoredVideoRetry && node.metadata?.taskId && isRegenerateAllowed(outcome)
+                const nodeTaskType =
+                    node.type === CanvasNodeType.Image
+                        ? "canvas_image"
+                        : node.type === CanvasNodeType.Video
+                          ? "canvas_video"
+                          : node.type === CanvasNodeType.Audio
+                            ? "canvas_audio"
+                            : undefined;
+                const requiresFreshSubmission = nodeRequiresFreshSubmission(node.metadata, { nodeTaskType, outcome });
+                // Edited input after a non-retryable failure or unconfirmed/submitted task is a new submission, not replay of the old retry operation.
+                const retryContext = !storedVideoFallbackError && !skipStoredVideoRetry && !requiresFreshSubmission && node.metadata?.taskId && isRegenerateAllowed(outcome)
                     ? await createGenerationRetryContext(node.metadata.taskId, node.metadata.attemptGroupId)
                     : node.metadata?.taskClientOperationId && !node.metadata?.taskId
                       ? { clientOperationId: node.metadata.taskClientOperationId }
@@ -467,7 +478,7 @@ export function useCanvasGenerationRetry({
                     if (creativeInputFailure && node.metadata?.taskId && node.metadata.status === "error") {
                         const outcome = readNodeTaskOutcome(node.metadata);
                         if (isRegenerateBlocked(outcome)) {
-                            const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome).message;
+                            const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome, undefined, { providerCancelStatus: node.metadata?.taskProviderCancelStatus }).message;
                             message?.warning?.(reason);
                             surfaceRetryFailure(node.id, reason, setNodes);
                             return;
@@ -482,7 +493,7 @@ export function useCanvasGenerationRetry({
                         const gate = await confirmRetryGate(node, failureExplanation.category, mediaPrompt, videoRefs, controller.signal);
                         if (!gate.confirmed) return;
                         confirmedUnchangedModeration = gate.prompted;
-                        if (gate.baseline.canReplayStoredTask && !isRegenerateConfirm(outcome)) {
+                        if (gate.baseline.canReplayStoredTask && !nodeRequiresFreshSubmission(node.metadata, { nodeTaskType: "canvas_video", outcome })) {
                             const handled = await runVideoStoredReplay(node.metadata.taskId, controller.signal);
                             if (handled) return;
                         } else {

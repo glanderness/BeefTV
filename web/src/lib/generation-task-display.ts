@@ -10,7 +10,10 @@ export const statusLabel: Record<TaskStatus, string> = {
     cancelled: "已取消",
 };
 
-type GenerationTaskDisplayTarget = Pick<GenerationTask, "status" | "stage"> & { outcome?: GenerationTask["outcome"] };
+type GenerationTaskDisplayTarget = Pick<GenerationTask, "status" | "stage"> & {
+    outcome?: GenerationTask["outcome"];
+    providerCancelStatus?: GenerationTask["providerCancelStatus"];
+};
 
 export function isGenerationTaskSubmissionUncertain(task: GenerationTaskDisplayTarget) {
     const outcome = normalizeTaskOutcome(task.outcome);
@@ -23,7 +26,7 @@ export function isGenerationTaskSubmissionUncertain(task: GenerationTaskDisplayT
 export function generationTaskStatusLabel(task: GenerationTaskDisplayTarget) {
     const outcome = normalizeTaskOutcome(task.outcome);
     if (outcome) {
-        return taskOutcomeCopy(outcome).badge;
+        return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus }).badge;
     }
     if (isGenerationTaskSubmissionUncertain(task)) return "提交结果待确认";
     if (task.stage === "delivery_paused" || task.stage === "delivery_timed_out") return "待取回结果";
@@ -32,8 +35,14 @@ export function generationTaskStatusLabel(task: GenerationTaskDisplayTarget) {
 
 export function generationTaskStageLabel(task: GenerationTaskDisplayTarget) {
     const outcome = normalizeTaskOutcome(task.outcome);
-    if (outcome && (outcome.phase === "retrievable" || isTaskOutcomeReconciling(outcome))) {
-        return taskOutcomeCopy(outcome).reason;
+    if (
+        outcome &&
+        (outcome.phase === "retrievable" ||
+            isTaskOutcomeReconciling(outcome) ||
+            outcome.reason === "cancelled_result_unconfirmed" ||
+            (outcome.phase === "failed" && (task.providerCancelStatus === "requested" || task.providerCancelStatus === "uncertain")))
+    ) {
+        return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus }).reason;
     }
     if (isGenerationTaskSubmissionUncertain(task)) return "为避免重复创建上游任务，未自动重试";
     if (task.stage === "delivery_paused") return "已暂停取回结果";

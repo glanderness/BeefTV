@@ -82,6 +82,7 @@ export function bindGenerationTaskToMessage(item: CreationMessage, task: Generat
     return {
         ...item,
         taskOutcome: task.outcome,
+        providerCancelStatus: task.providerCancelStatus,
         taskFailureDiagnostics: task.failureDiagnostics ?? item.taskFailureDiagnostics,
         generationStage: task.stage,
         generationOperation: task.operation,
@@ -110,6 +111,7 @@ export function applyGenerationFailureToMessage(
         generationProviderCode: explained.providerCode,
         taskFailureDiagnostics: failedTask?.failureDiagnostics,
         taskOutcome: failedTask?.outcome ?? item.taskOutcome,
+        providerCancelStatus: failedTask?.providerCancelStatus ?? item.providerCancelStatus,
         generationErrorCode: item.generationErrorCode || failedTask?.errorCode || (explained.category === "unknown" ? undefined : explained.errorCode),
         generationOperation: item.generationOperation || fallbackOperation,
         createdAt,

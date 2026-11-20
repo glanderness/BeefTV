@@ -76,7 +76,7 @@ BeefTV 官方算力托管媒体任务（图片、视频、音频与放大）的�
 | `timeout` | 408/504/524 | 先查原任务 | 否 |
 | `submission_uncertain` | `submission_unknown` | 查询原任务，不要重交 | 否 |
 | `async_failed` | 上游任务失败 | 查看详情后决定 | 否 |
-| `cancelled` | 用户取消 | 可按原输入再提交 | 可由用户重试 |
+| `cancelled` | 用户取消 | 请核对原任务的结果与扣费状态；已提交上游且结果未确认时投影为 `cancelled_result_unconfirmed` | 核对并确认后可重新生成（明确未发出或已退款时可直接重试） |
 | `partial_success` | 部分成功 | 查看已有结果 | 否 |
 | `download_failed` | 结果下载失败 | 重新加载，不要立刻重交 | 否 |
 | `results_missing` | 没有可用结果 | 查看详情 | 否 |

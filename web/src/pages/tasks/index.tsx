@@ -18,8 +18,9 @@ import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
 
 import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryGenerationTask, recoverTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
-import { canRecoverTaskOutcome, isRegenerateConfirm, isTaskRegenerateBlocked, readTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
+import { isTaskRegenerateBlocked, readTaskOutcome } from "@/lib/task-outcome";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
+import { readLocalCanvasProjectFromBackend } from "@/services/local-workspace-hydration";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -27,7 +28,7 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
-import { computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, shouldFastPollTaskCenter, taskMediaKind } from "./task-shared";
+import { canBatchRetryTaskInTaskCenter, canQueryProviderTask, checkTaskCanvasAvailability, computeTaskCenterStats, formatModelName, getTaskCanvasContext, isTaskFailed, matchesTaskCenterStatusFilter, providerCancelStatusLabel, resolveTaskCenterNewSubmissionRoute, shouldFastPollTaskCenter, taskCenterRetryRequiresNewSubmission, taskMediaKind, taskOutcomeCopyForTask } from "./task-shared";
 import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
 import { workspaceCapabilities } from "@/services/workspace-mode";
@@ -101,6 +102,7 @@ export default function TasksPage() {
     const [taskLogs, setTaskLogs] = useState<TaskLog[]>([]);
     const [logsLoading, setLogsLoading] = useState(false);
     const [detailIncomplete, setDetailIncomplete] = useState(false);
+    const [extraProjectOption, setExtraProjectOption] = useState<{ label: string; value: string } | null>(null);
     const [mediaPreview, setMediaPreview] = useState<{ url: string; kind: "image" | "video"; title: string } | null>(null);
     const [tasks, setTasks] = useState<GenerationTask[]>([]);
     const [tasksIncomplete, setTasksIncomplete] = useState(false);
@@ -109,10 +111,16 @@ export default function TasksPage() {
     const tasksRef = useRef<GenerationTask[]>([]);
     const canvasById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
     const domainProjectNameById = useMemo(() => new Map(domainProjects.map((item) => [item.project.id, item.project.name])), [domainProjects]);
-    const projectOptions = useMemo(() => projects.map((project) => {
-        const projectName = project.projectId ? domainProjectNameById.get(project.projectId) : "";
-        return { label: projectName ? `${project.title || "未命名画布"} · ${projectName}` : project.title || "未命名画布", value: project.id };
-    }), [domainProjectNameById, projects]);
+    const projectOptions = useMemo(() => {
+        const options = projects.map((project) => {
+            const projectName = project.projectId ? domainProjectNameById.get(project.projectId) : "";
+            return { label: projectName ? `${project.title || "未命名画布"} · ${projectName}` : project.title || "未命名画布", value: project.id };
+        });
+        if (extraProjectOption && !projects.some((project) => project.id === extraProjectOption.value)) {
+            options.push(extraProjectOption);
+        }
+        return options;
+    }, [domainProjectNameById, extraProjectOption, projects]);
     const modelOptions = useMemo(() => Array.from(new Set(tasks.map((task) => formatModelName(effectiveConfig, task)).filter(Boolean))).sort((left, right) => left.localeCompare(right, "zh-CN")), [effectiveConfig, tasks]);
     const filteredTasks = useMemo(() => tasks.filter((task) => matchesTaskCenterStatusFilter(task, statusFilter)).filter((task) => {
         if (projectFilter !== "all" && task.projectId !== projectFilter) return false;
@@ -141,7 +149,7 @@ export default function TasksPage() {
     };
 
     const retryGroupTasks = async (key: string, items: GenerationTask[]) => {
-        const retryable = items.filter((task) => isTaskFailed(task) && !isTaskRegenerateBlocked(task));
+        const retryable = items.filter((task) => canBatchRetryTaskInTaskCenter(task));
         if (!retryable.length) return;
         setRetryingGroup(key);
         try {
@@ -312,7 +320,7 @@ export default function TasksPage() {
         }
         const currentTask = tasksRef.current.find((task) => task.id === id);
         if (currentTask && isTaskRegenerateBlocked(currentTask)) {
-            message.warning(taskOutcomeCopy(readTaskOutcome(currentTask)).message);
+            message.warning(taskOutcomeCopyForTask(currentTask).message);
             return;
         }
         setActingId(id);
@@ -322,24 +330,69 @@ export default function TasksPage() {
             const detail = await queryGenerationTask(id);
             const detailOutcome = readTaskOutcome(detail);
             if (isTaskRegenerateBlocked(detail)) {
-                message.warning(taskOutcomeCopy(detailOutcome).message);
+                message.warning(taskOutcomeCopyForTask(detail, detailOutcome).message);
                 return;
             }
-            if (isRegenerateConfirm(detailOutcome)) {
-                const copy = taskOutcomeCopy(detailOutcome);
-                const confirmed = await new Promise<boolean>((resolve) => {
-                    modal.confirm({
-                        title: copy.confirmTitle || "确认重新生成？",
-                        content: copy.confirmContent || copy.message,
-                        okText: "继续重新生成",
-                        cancelText: "取消",
-                        centered: true,
-                        onOk: () => resolve(true),
-                        onCancel: () => resolve(false),
-                        afterClose: () => resolve(false),
+            if (taskCenterRetryRequiresNewSubmission(detail, detailOutcome)) {
+                const copy = taskOutcomeCopyForTask(detail, detailOutcome);
+                let loadedCanvasTitle = "";
+                const targetProjectId = detail.projectId?.trim();
+                const canvasAvailability = targetProjectId
+                    ? await checkTaskCanvasAvailability(targetProjectId, canvasById, async (canvasId) => {
+                          const loaded = await readLocalCanvasProjectFromBackend(canvasId);
+                          loadedCanvasTitle = loaded.title || "未命名画布";
+                          return loaded;
+                      })
+                    : undefined;
+                const route = resolveTaskCenterNewSubmissionRoute(detail, copy.message, canvasAvailability);
+                if (route.kind === "navigate_canvas") {
+                    const goToCanvas = await new Promise<boolean>((resolve) => {
+                        modal.confirm({
+                            title: copy.confirmTitle || "请回到画布重新生成",
+                            content: `${copy.confirmContent || copy.message} 为保留原任务的提交与扣费核对记录并将新结果写回原节点，请回到对应画布重新生成。`,
+                            okText: "前往画布",
+                            cancelText: "取消",
+                            centered: true,
+                            onOk: () => resolve(true),
+                            onCancel: () => resolve(false),
+                            afterClose: () => resolve(false),
+                        });
                     });
-                });
-                if (!confirmed) return;
+                    if (goToCanvas) {
+                        setDetailTask(null);
+                        navigate(`/canvas/${encodeURIComponent(route.canvasId)}`);
+                    }
+                    return;
+                }
+                if (route.kind === "prefill_video_modal") {
+                    const createFresh = await new Promise<boolean>((resolve) => {
+                        modal.confirm({
+                            title: copy.confirmTitle || "确认重新生成？",
+                            content: copy.confirmContent || copy.message,
+                            okText: "创建新任务",
+                            cancelText: "取消",
+                            centered: true,
+                            onOk: () => resolve(true),
+                            onCancel: () => resolve(false),
+                            afterClose: () => resolve(false),
+                        });
+                    });
+                    if (createFresh) {
+                        if (route.values.projectId && !canvasById.has(route.values.projectId)) {
+                            setExtraProjectOption({ label: loadedCanvasTitle || route.values.projectId, value: route.values.projectId });
+                        }
+                        form.setFieldsValue(route.values);
+                        setDetailTask(null);
+                        setCreateOpen(true);
+                    }
+                    return;
+                }
+                if (route.kind === "error") {
+                    message.error(route.message);
+                    return;
+                }
+                message.warning(route.message);
+                return;
             }
             const portraitError = portraitTaskRetryError(detail.inputJson, detail.model);
             if (portraitError) throw new Error(portraitError);
@@ -600,11 +653,6 @@ export default function TasksPage() {
             </Modal>
         </>
     );
-}
-
-function canQueryProviderTask(task: GenerationTask) {
-    if (task.outcome) return canRecoverTaskOutcome(readTaskOutcome(task));
-    return canRecoverTaskOutcome(readTaskOutcome(task)) || (task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId));
 }
 
 function TaskResultMedia({ value, taskType }: { value?: string; taskType: string }) {

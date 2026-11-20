@@ -36,7 +36,7 @@ func ProjectTaskInTx(tx *gorm.DB, userID string, task model.Task) (taskdelivery.
 		return taskdelivery.Projection{}, nil, nil, errors.New("task projection requires a database connection")
 	}
 	repo := repository.New(tx)
-	if task.Status == model.TaskStatusFailed && task.ProviderRequestID == "" {
+	if (task.Status == model.TaskStatusFailed || task.Status == model.TaskStatusCancelled) && task.ProviderRequestID == "" {
 		providerRequestID, err := repo.LatestProviderRequestIDForTask(task.ID)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return taskdelivery.Projection{}, nil, nil, err
