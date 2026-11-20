@@ -100,15 +100,17 @@ func ValidateStructuredReplacementQuota(usage repository.UserStorageUsage, kind 
 }
 
 func CreateTaskWithStorageQuota(repo *repository.Repository, task *model.Task, policy platform.RuntimePolicySetting) error {
-	usage, err := repo.UserStorageUsage(task.UserID)
-	if err != nil {
-		return TaskStorageError(err)
+	if !policy.Resource.Unlimited {
+		usage, err := repo.UserStorageUsage(task.UserID)
+		if err != nil {
+			return TaskStorageError(err)
+		}
+		incomingBytes := int64(len([]byte(task.Prompt)) + len([]byte(task.InputJSON)) + len([]byte(task.Error)))
+		if err := ValidateTaskStorageQuota(usage, incomingBytes, policy.Resource); err != nil {
+			return err
+		}
 	}
-	incomingBytes := int64(len([]byte(task.Prompt)) + len([]byte(task.InputJSON)) + len([]byte(task.Error)))
-	if err := ValidateTaskStorageQuota(usage, incomingBytes, policy.Resource); err != nil {
-		return err
-	}
-	err = repo.CreateTaskWithActiveLimit(task, policy.Task.ActiveTaskLimit)
+	err := repo.CreateTaskWithActiveLimit(task, policy.Task.ActiveTaskLimit)
 	if err == nil || errors.Is(err, repository.ErrActiveTaskLimit) || errors.Is(err, repository.ErrLogicalModelUnavailable) {
 		return err
 	}
@@ -146,10 +148,6 @@ func SaveTaskCompletionWithinStorageQuota(
 		defer lock.Unlock()
 	}
 
-	usage, err := repo.UserStorageUsage(task.UserID)
-	if err != nil {
-		return err
-	}
 	publicInputJSON, err := completionInputJSON(*task, resultJSON)
 	if err != nil {
 		return err
@@ -158,21 +156,25 @@ func SaveTaskCompletionWithinStorageQuota(
 	if err != nil {
 		return err
 	}
-	taskDelta := int64(len(resultJSON) + len(publicInputJSON) + len(sourceCipher) - len(task.ResultJSON) - len(task.InputJSON) - len(task.WorkflowSourceCipher))
-
 	results := make([]model.Result, 0, 2)
-	structuredDelta := int64(0)
 	if hasCanvasOps {
 		results = append(results, model.Result{ID: kernel.NewID(), UserID: task.UserID, TaskID: task.ID, Kind: "canvas_ops", Payload: string(opsJSON)})
 	}
-	for index := range results {
-		taskDelta += int64(len(results[index].URL) + len(results[index].Payload))
-	}
-	if err := ValidateTaskDataGrowthQuota(usage, taskDelta, policy.Resource); err != nil {
-		return err
-	}
-	if err := ValidateStructuredStorageQuota(usage, "canvas", false, structuredDelta, policy.Resource); err != nil {
-		return err
+	if !policy.Resource.Unlimited {
+		usage, err := repo.UserStorageUsage(task.UserID)
+		if err != nil {
+			return err
+		}
+		taskDelta := int64(len(resultJSON) + len(publicInputJSON) + len(sourceCipher) - len(task.ResultJSON) - len(task.InputJSON) - len(task.WorkflowSourceCipher))
+		for index := range results {
+			taskDelta += int64(len(results[index].URL) + len(results[index].Payload))
+		}
+		if err := ValidateTaskDataGrowthQuota(usage, taskDelta, policy.Resource); err != nil {
+			return err
+		}
+		if err := ValidateStructuredStorageQuota(usage, "canvas", false, 0, policy.Resource); err != nil {
+			return err
+		}
 	}
 
 	expectedStatus := task.Status

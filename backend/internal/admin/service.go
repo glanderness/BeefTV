@@ -330,17 +330,19 @@ func LogAPICall(
 	if err != nil {
 		return err
 	}
-	if lock != nil {
-		lock.Lock()
-		defer lock.Unlock()
-	}
-	usage, err := repo.UserStorageUsage(log.UserID)
-	if err != nil {
-		return err
-	}
-	incomingBytes := int64(len(log.Path) + len(log.Model) + len(log.ProviderRequestID) + len(log.ErrorCode) + len(log.Error) + len(log.UpstreamURL) + len(log.RequestContentType) + len(log.RequestBody) + len(log.ResponseBody))
-	if err := resource.ValidateAPICallLogQuota(usage, incomingBytes, currentPolicy.Resource); err != nil {
-		return err
+	if !currentPolicy.Resource.Unlimited {
+		if lock != nil {
+			lock.Lock()
+			defer lock.Unlock()
+		}
+		usage, err := repo.UserStorageUsage(log.UserID)
+		if err != nil {
+			return err
+		}
+		incomingBytes := int64(len(log.Path) + len(log.Model) + len(log.ProviderRequestID) + len(log.ErrorCode) + len(log.Error) + len(log.UpstreamURL) + len(log.RequestContentType) + len(log.RequestBody) + len(log.ResponseBody))
+		if err := resource.ValidateAPICallLogQuota(usage, incomingBytes, currentPolicy.Resource); err != nil {
+			return err
+		}
 	}
 	return repo.Create(&log)
 }

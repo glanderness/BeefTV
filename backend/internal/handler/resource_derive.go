@@ -29,7 +29,7 @@ func registerResourceDeriveRoutes(r *gin.RouterGroup, owners workspaceOwners, re
 			return
 		}
 		policy, available := loadRuntimePolicy(c, usage)
-		if !available || !enforceRateLimit(c, "resources-upload:"+user.ID, policy.Request.ResourceUploadPerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "resources-upload:"+user.ID, policy.Request.ResourceUploadPerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, resourceDeriveBodyCapJSON)
@@ -57,7 +57,7 @@ func registerResourceDeriveRoutes(r *gin.RouterGroup, owners workspaceOwners, re
 			return
 		}
 		policy, available := loadRuntimePolicy(c, usage)
-		if !available || !enforceRateLimit(c, "resources-upload:"+user.ID, policy.Request.ResourceUploadPerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "resources-upload:"+user.ID, policy.Request.ResourceUploadPerMinute, time.Minute) {
 			return
 		}
 		result, err := resources.SeparateVideoAudio(c.Request.Context(), user.ID, c.Param("id"), c.GetHeader("X-Idempotency-Key"))

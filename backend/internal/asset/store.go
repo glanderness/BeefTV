@@ -246,6 +246,9 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 	}
 	resource.ETag = etag
 	if err := s.finalizeReady(resource); err != nil {
+		if heldRetry && day == localReservationDay {
+			s.releaseRetry(userID, day, size, identity)
+		}
 		return nil, err
 	}
 	s.commitQuota(resource)

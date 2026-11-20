@@ -15,29 +15,102 @@ const resourceDeletionLease = 2 * time.Minute
 const incompleteResourceRetention = time.Hour
 const detachedReadyResourceRetention = 24 * time.Hour
 
+var deletionRetryBase = 15 * time.Second
+
+func (s *Service) signalDeletionWorker() {
+	if s == nil || s.deletionWake == nil {
+		return
+	}
+	select {
+	case s.deletionWake <- struct{}{}:
+	default:
+	}
+}
+
 func (s *Service) StartDeletionWorker(ctx context.Context, loop func(func(context.Context)) bool) {
 	_ = ctx
 	if loop == nil {
 		return
 	}
 	loop(func(ctx context.Context) {
-		s.DrainDeletionJobs(32)
+		var retryTimer *time.Timer
+		var retryC <-chan time.Time
+		stopRetryTimer := func() {
+			if retryTimer != nil {
+				if !retryTimer.Stop() {
+					select {
+					case <-retryTimer.C:
+					default:
+					}
+				}
+			}
+			retryC = nil
+		}
+		defer stopRetryTimer()
+
+		armRetry := func(delay time.Duration) {
+			if delay <= 0 {
+				stopRetryTimer()
+				return
+			}
+			if retryTimer == nil {
+				retryTimer = time.NewTimer(delay)
+			} else {
+				stopRetryTimer()
+				retryTimer.Reset(delay)
+			}
+			retryC = retryTimer.C
+		}
+
+		runDrain := func() {
+			more, _, drainErr := s.drainDeletionJobs(32)
+			if drainErr != nil {
+				armRetry(deletionRetryBase)
+				return
+			}
+			if more {
+				armRetry(50 * time.Millisecond)
+				return
+			}
+			if s.repo == nil {
+				armRetry(0)
+				return
+			}
+			nextAt, err := s.repo.NextResourceDeletionWakeAt()
+			if err != nil {
+				log.Printf("resource deletion worker next-wake query failed: %v", err)
+				armRetry(deletionRetryBase)
+				return
+			}
+			if nextAt == nil {
+				armRetry(0)
+				return
+			}
+			delay := time.Until(*nextAt)
+			if delay < 10*time.Millisecond {
+				delay = 10 * time.Millisecond
+			}
+			armRetry(delay)
+		}
+
+		runDrain()
 		s.CleanupExpiredArchivedAssets()
 		s.CleanupDetachedResources()
-		ticker := time.NewTicker(15 * time.Second)
-		defer ticker.Stop()
-		lastPeriodicCleanup := time.Now()
+		hourlyTicker := time.NewTicker(time.Hour)
+		defer hourlyTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
-				s.DrainDeletionJobs(32)
-				if time.Since(lastPeriodicCleanup) >= time.Hour {
-					s.CleanupExpiredArchivedAssets()
-					s.CleanupDetachedResources()
-					lastPeriodicCleanup = time.Now()
-				}
+			case <-s.deletionWake:
+				runDrain()
+			case <-retryC:
+				retryC = nil
+				runDrain()
+			case <-hourlyTicker.C:
+				runDrain()
+				s.CleanupExpiredArchivedAssets()
+				s.CleanupDetachedResources()
 			}
 		}
 	})
@@ -144,6 +217,7 @@ func (s *Service) cleanupDetachedUserResourcesLocked(userID string, candidates [
 	}
 	log.Printf("detached resource cleanup: removed %d resource rows for user %s", len(detached), userID)
 	if len(deletionJobs) > 0 {
+		s.signalDeletionWorker()
 		s.runBackground(func() { s.DrainDeletionJobs(len(deletionJobs)) })
 	}
 	return nil
@@ -177,33 +251,50 @@ func (s *Service) CleanupExpiredArchivedAssets() {
 }
 
 func (s *Service) DrainDeletionJobs(limit int) {
-	if s == nil || s.repo == nil {
-		return
+	more, hasRetry, drainErr := s.drainDeletionJobs(limit)
+	if more || hasRetry || drainErr != nil {
+		s.signalDeletionWorker()
+	}
+}
+
+func (s *Service) drainDeletionJobs(limit int) (bool, bool, error) {
+	if s == nil || s.repo == nil || limit <= 0 {
+		return false, false, nil
 	}
 	owner := s.workerID()
+	hasRetry := false
+	var firstErr error
 	for index := 0; index < limit; index++ {
 		job, err := s.repo.ClaimNextResourceDeletionJob(owner, resourceDeletionLease)
 		if err != nil {
 			log.Printf("resource deletion worker claim failed: %v", err)
-			return
+			return false, hasRetry, err
 		}
 		if job == nil {
-			return
+			return false, hasRetry, firstErr
 		}
 		if err := s.deleteOutboxObject(job); err != nil {
+			hasRetry = true
 			delay := deletionRetryDelay(job.Attempts)
 			if retryErr := s.repo.RetryResourceDeletionJob(job.ID, owner, err.Error(), time.Now().Add(delay)); retryErr != nil {
 				log.Printf("resource deletion worker retry update failed for %s: %v", job.ID, retryErr)
+				if firstErr == nil {
+					firstErr = retryErr
+				}
 			}
 			continue
 		}
 		if err := s.repo.CompleteResourceDeletionJob(job.ID, owner); err != nil {
 			log.Printf("resource deletion worker completion failed for %s: %v", job.ID, err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
+	return true, hasRetry, firstErr
 }
 
 func deletionRetryDelay(attempts int) time.Duration {
 	exponent := math.Min(float64(max(attempts-1, 0)), 8)
-	return time.Duration(math.Pow(2, exponent)) * 15 * time.Second
+	return time.Duration(math.Pow(2, exponent)) * deletionRetryBase
 }

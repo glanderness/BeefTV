@@ -134,6 +134,13 @@ func normalizedCustomRelayPath(value string) (string, error) {
 	return cleaned, nil
 }
 
+func enforcePolicyRateLimit(c *gin.Context, policy app.RuntimePolicySetting, key string, limit int, window time.Duration) bool {
+	if policy.Request.Unlimited {
+		return true
+	}
+	return enforceRateLimit(c, key, limit, window)
+}
+
 func enforceRateLimit(c *gin.Context, key string, limit int, window time.Duration) bool {
 	dependencies, ok := runtimeDependencies(c)
 	if !ok || dependencies.RequestCoordinator == nil {

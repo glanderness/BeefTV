@@ -55,7 +55,7 @@ func registerVideoSubtitleEraseRoutes(r *gin.RouterGroup, svc videoSubtitleErase
 				return
 			}
 			policy, available := loadRuntimePolicy(c, svc)
-			if !available || !enforceRateLimit(c, "video-subtitle-erase:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
+			if !available || !enforcePolicyRateLimit(c, policy, "video-subtitle-erase:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
 				return
 			}
 			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)

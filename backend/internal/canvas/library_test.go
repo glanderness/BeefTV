@@ -584,7 +584,7 @@ type quotaAdmit struct {
 	delta    int64
 }
 
-func (h *recordingQuotaHost) AdmitStructuredQuota(_ repository.UserStorageUsage, kind string, creating bool, deltaBytes int64) error {
+func (h *recordingQuotaHost) AdmitStructuredQuota(_ func() (repository.UserStorageUsage, error), kind string, creating bool, deltaBytes int64) error {
 	h.admits = append(h.admits, quotaAdmit{kind: kind, creating: creating, delta: deltaBytes})
 	return nil
 }
@@ -594,7 +594,11 @@ type limitedQuotaHost struct {
 	limit int64
 }
 
-func (h *limitedQuotaHost) AdmitStructuredQuota(usage repository.UserStorageUsage, _ string, _ bool, deltaBytes int64) error {
+func (h *limitedQuotaHost) AdmitStructuredQuota(loadUsage func() (repository.UserStorageUsage, error), _ string, _ bool, deltaBytes int64) error {
+	usage, err := loadUsage()
+	if err != nil {
+		return err
+	}
 	if usage.AssetBytes+usage.CanvasBytes+deltaBytes > h.limit {
 		mb := h.limit >> 20
 		if mb < 1 {

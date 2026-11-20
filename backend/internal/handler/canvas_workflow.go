@@ -39,7 +39,7 @@ func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc canvasWorkflowService)
 		}
 		if write {
 			policy, available := loadRuntimePolicy(c, svc)
-			if !available || !enforceRateLimit(c, "canvas-workflow:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
+			if !available || !enforcePolicyRateLimit(c, policy, "canvas-workflow:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
 				return ""
 			}
 		}

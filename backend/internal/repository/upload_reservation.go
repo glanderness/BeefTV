@@ -37,7 +37,7 @@ func saveResourceSettlingReservation(tx *gorm.DB, resource *model.Resource) erro
 	if err != nil {
 		return err
 	}
-	if held != nil && held.Unattributed() {
+	if held == nil || held.Unattributed() {
 		return nil
 	}
 	switch resource.Status {
@@ -73,7 +73,10 @@ func settleDeletedResourceReservation(tx *gorm.DB, resource *model.Resource) err
 	if err != nil {
 		return err
 	}
-	if held != nil && held.Unattributed() {
+	if held == nil {
+		return nil
+	}
+	if held.Unattributed() {
 		// User delete of the unfinished row is the explicit resolution: drop
 		// the sentinel without refunding anonymous daily bytes.
 		return clearUploadReservationTx(tx, resource.UserID, identity)

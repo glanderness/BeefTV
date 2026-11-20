@@ -189,7 +189,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 			return
 		}
 		policy, available := loadRuntimePolicy(c, usage)
-		if !available || !enforceRateLimit(c, "resources-upload:"+user.ID, policy.Request.ResourceUploadPerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "resources-upload:"+user.ID, policy.Request.ResourceUploadPerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, (policy.Resource.ResourceUploadMB<<20)+(1<<20))
@@ -498,7 +498,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 			return
 		}
 		policy, available := loadRuntimePolicy(c, usage)
-		if !available || !enforceRateLimit(c, "assets-write:"+user.ID, policy.Request.AssetWritePerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "assets-write:"+user.ID, policy.Request.AssetWritePerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 5<<20)
@@ -655,7 +655,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 			return
 		}
 		policy, available := loadRuntimePolicy(c, usage)
-		if !available || !enforceRateLimit(c, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
@@ -681,7 +681,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 			return
 		}
 		policy, available := loadRuntimePolicy(c, usage)
-		if !available || !enforceRateLimit(c, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, canvasData.RequestMaxBodyBytes())

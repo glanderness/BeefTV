@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/app"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -58,5 +60,46 @@ func TestRuntimeDependenciesKeepRoutersIsolated(t *testing.T) {
 	}
 	if allowed.calls != 1 || blocked.calls != 1 {
 		t.Fatalf("coordinator calls = (%d, %d), want (1, 1)", allowed.calls, blocked.calls)
+	}
+}
+
+func TestEnforcePolicyRateLimitSkipsCoordinatorWhenUnlimited(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	blocked := &stubRequestCoordinator{allowed: false, retry: 5 * time.Second}
+
+	router := gin.New()
+	router.Use(RuntimeDependenciesMiddleware(RuntimeDependencies{RequestCoordinator: blocked}))
+	router.GET("/unlimited", func(c *gin.Context) {
+		var policy app.RuntimePolicySetting
+		policy.Request.Unlimited = true
+		if !enforcePolicyRateLimit(c, policy, "canvas-write:local", 1, time.Minute) {
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+	router.GET("/enforced", func(c *gin.Context) {
+		var policy app.RuntimePolicySetting
+		if !enforcePolicyRateLimit(c, policy, "canvas-write:hosted", 1, time.Minute) {
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+
+	unlimitedResp := httptest.NewRecorder()
+	router.ServeHTTP(unlimitedResp, httptest.NewRequest(http.MethodGet, "/unlimited", nil))
+	if unlimitedResp.Code != http.StatusNoContent {
+		t.Fatalf("unlimited policy status = %d, want %d", unlimitedResp.Code, http.StatusNoContent)
+	}
+	if blocked.calls != 0 {
+		t.Fatalf("unlimited policy called coordinator %d times, want 0", blocked.calls)
+	}
+
+	enforcedResp := httptest.NewRecorder()
+	router.ServeHTTP(enforcedResp, httptest.NewRequest(http.MethodGet, "/enforced", nil))
+	if enforcedResp.Code != http.StatusTooManyRequests {
+		t.Fatalf("enforced policy status = %d, want %d", enforcedResp.Code, http.StatusTooManyRequests)
+	}
+	if blocked.calls != 1 {
+		t.Fatalf("enforced policy called coordinator %d times, want 1", blocked.calls)
 	}
 }

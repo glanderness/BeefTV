@@ -33,7 +33,7 @@ func RegisterChunkedUploadRoutes(r *gin.RouterGroup, svc chunkedUploadService, h
 			return
 		}
 		policy, available := loadRuntimePolicy(c, svc)
-		if !available || !enforceRateLimit(c, "resources-upload:"+user.ID, policy.Request.ResourceUploadPerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "resources-upload:"+user.ID, policy.Request.ResourceUploadPerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, chunkUploadBodyCapJSON)

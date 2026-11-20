@@ -49,7 +49,7 @@ func registerCanvasLibraryRoutes(r *gin.RouterGroup, owners workspaceOwners, can
 			return
 		}
 		policy, available := loadRuntimePolicy(c, writes)
-		if !available || !enforceRateLimit(c, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
@@ -123,7 +123,7 @@ func registerCanvasLibraryRoutes(r *gin.RouterGroup, owners workspaceOwners, can
 			return
 		}
 		policy, available := loadRuntimePolicy(c, writes)
-		if !available || !enforceRateLimit(c, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+		if !available || !enforcePolicyRateLimit(c, policy, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, (policy.Resource.StructuredDataMB<<20)+canvasDrawingJSONEnvelopeSlackBytes)

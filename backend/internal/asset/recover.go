@@ -208,6 +208,9 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 			return resource, fmt.Errorf("保存资源就绪状态失败：%w", err)
 		}
 	} else if err := s.finalizeReady(resource); err != nil {
+		if acquired && day == localReservationDay {
+			s.releaseRetry(resource.UserID, day, artifact.Size, identity)
+		}
 		return resource, err
 	}
 	s.commitQuota(resource)
@@ -230,11 +233,15 @@ func (s *Service) promoteReady(resource *model.Resource, reserve func() (string,
 		return nil, ResourceMissing()
 	}
 	identity := quotaIdentity(resource.UploadKey, resource.ID)
-	if _, _, err := s.ensureReservation(resource.UserID, identity, reserve); err != nil {
+	day, acquired, err := s.ensureReservation(resource.UserID, identity, reserve)
+	if err != nil {
 		return resource, err
 	}
 	resource.UpdatedAt = time.Now()
 	if err := s.finalizeReady(resource); err != nil {
+		if acquired && day == localReservationDay {
+			s.releaseRetry(resource.UserID, day, resource.Size, identity)
+		}
 		return resource, err
 	}
 	s.commitQuota(resource)

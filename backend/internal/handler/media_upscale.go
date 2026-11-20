@@ -54,7 +54,7 @@ func registerMediaUpscaleRoutes(r *gin.RouterGroup, svc mediaUpscaleService) {
 				return
 			}
 			policy, available := loadRuntimePolicy(c, svc)
-			if !available || !enforceRateLimit(c, "media-upscale:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
+			if !available || !enforcePolicyRateLimit(c, policy, "media-upscale:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
 				return
 			}
 			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)

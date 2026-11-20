@@ -66,9 +66,6 @@ func (l *Library) ReplaceUserAssets(userID string, req AssetsSyncRequest) ([]jso
 		return nil, err
 	}
 	err := l.host.WithStorageLock(func() error {
-		if err := l.GuardReplacementCanvasReferences(userID, items); err != nil {
-			return err
-		}
 		if err := l.host.StructuredReplacementQuota(userID, "asset", len(items), totalBytes); err != nil {
 			return err
 		}
@@ -100,10 +97,10 @@ func (l *Library) ReplaceUserAssets(userID string, req AssetsSyncRequest) ([]jso
 	return l.UserAssets(userID)
 }
 
-// PrepareAssetWrites validates folder ownership, resource ownership and canvas
-// reference guards, then checks aggregate quota once. Quota is check-only.
-// Callers must already hold the storage lock. PersistPreparedAssets still has
-// to run inside the caller's transaction.
+// PrepareAssetWrites validates folder ownership and resource ownership, then
+// checks aggregate quota once. Quota is check-only. Callers must already hold
+// the storage lock. PersistPreparedAssets enforces the canvas-reference guard
+// inside the caller's transaction before writing.
 func (l *Library) PrepareAssetWrites(userID string, items []model.Asset) (int, error) {
 	if err := l.requireHost(); err != nil {
 		return 0, err
@@ -185,11 +182,6 @@ func (l *Library) prepareOwnedAssetWrite(userID string, item model.Asset) (exist
 		return 0, false, existingErr
 	}
 	creating = isNotFound(existingErr)
-	if existing != nil && existing.PayloadJSON != item.PayloadJSON {
-		if err := l.GuardCanvasReferences(userID, item); err != nil {
-			return 0, false, err
-		}
-	}
 	if err := l.validateOwnedResources(userID, item.PayloadJSON); err != nil {
 		return 0, false, err
 	}
@@ -210,12 +202,32 @@ func (l *Library) persistPreparedAsset(userID string, item *model.Asset) error {
 	if existingErr != nil && !isNotFound(existingErr) {
 		return existingErr
 	}
-	if existing != nil && existing.PayloadJSON != item.PayloadJSON {
+	if existing != nil && existing.PayloadJSON != item.PayloadJSON && assetRemovesAnyResource(existing.PayloadJSON, item.PayloadJSON) {
 		if err := l.GuardCanvasReferences(userID, *item); err != nil {
 			return err
 		}
 	}
 	return l.repo.UpsertAsset(item)
+}
+
+func assetRemovesAnyResource(beforeJSON, afterJSON string) bool {
+	beforeIDs := map[string]struct{}{}
+	if err := assets.CollectOwnedDocumentReferences(beforeJSON, beforeIDs); err != nil {
+		return true
+	}
+	if len(beforeIDs) == 0 {
+		return false
+	}
+	afterIDs := map[string]struct{}{}
+	if err := assets.CollectOwnedDocumentReferences(afterJSON, afterIDs); err != nil {
+		return true
+	}
+	for id := range beforeIDs {
+		if _, kept := afterIDs[id]; !kept {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *Library) requireOwnedFolder(userID, folderID string) error {

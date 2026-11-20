@@ -126,6 +126,9 @@ func ValidateCanvasWithPolicy(u string, repo *repository.Repository, creating bo
 	if err != nil {
 		return err
 	}
+	if p.Resource.Unlimited {
+		return nil
+	}
 	usage, err := repo.UserStorageUsage(u)
 	if err != nil {
 		return err
