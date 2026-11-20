@@ -3,7 +3,7 @@ import { lazy, Suspense, useState } from "react";
 
 import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { extractOwnedResourceId } from "@/lib/canvas/canvas-resource-id";
-import { mediaFileExtension } from "@/lib/canvas/canvas-media-download";
+import { buildCanvasMediaDownloadFileName, mediaFileExtension } from "@/lib/canvas/canvas-media-download";
 import { buildLibTVVideoSourceUrl } from "@/lib/canvas/libtv-import";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatImageRatio } from "@/lib/image-display-format";
@@ -57,8 +57,7 @@ export function CanvasVideoViewer({ node, onClose, onOpenNodeInfo }: Props) {
     ];
 
     const downloadOriginal = async () => {
-        const ext = extension || "mp4";
-        const fileName = title.toLowerCase().endsWith(`.${ext.toLowerCase()}`) ? title : `${title}.${ext}`;
+        const fileName = buildCanvasMediaDownloadFileName(node);
         const browserUrl = isProtectedResourceFileUrl(fallback)
             ? ((!playback.compatible ? playback.url : "") || fallback)
             : (fallback || playback.url);

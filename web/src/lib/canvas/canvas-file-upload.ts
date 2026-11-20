@@ -11,6 +11,7 @@ import {
     stripStaleFileUploadMetadata,
     UPLOAD_REPLACEMENT_RESET_KEYS,
 } from "@/lib/canvas/canvas-node-metadata-contract";
+import { isKnownMediaExtension } from "@/lib/canvas/canvas-media-download";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { isCanvasMediaNode, mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
@@ -50,6 +51,15 @@ export function createFileUploadAttemptId(): string {
     return `upload-attempt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function uploadNodeTitle(fileName: string): string {
+    const extensionStart = fileName.lastIndexOf(".");
+    if (extensionStart <= 0 || extensionStart >= fileName.length - 1) return fileName;
+    const extension = fileName.slice(extensionStart + 1);
+    return isKnownMediaExtension(extension) || /^(txt|md|markdown|docx)$/i.test(extension)
+        ? fileName.slice(0, extensionStart)
+        : fileName;
+}
+
 export async function createFileUploadPlaceholder(
     id: string,
     file: File,
@@ -64,7 +74,7 @@ export async function createFileUploadPlaceholder(
     // 浏览器能否解码不决定能否导入；尺寸与封面由上传后的媒体信息补齐。
     const size = NODE_DEFAULT_SIZE[type];
     return {
-        ...size, id, type, title: file.name,
+        ...size, id, type, title: uploadNodeTitle(file.name),
         position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
         metadata: { fileUpload: "uploading", fileUploadAttemptId: attemptId, bytes: file.size, mimeType: file.type },
     } satisfies CanvasNodeData;
@@ -93,7 +103,7 @@ export function createImageUploadPlaceholder(
 ): CanvasNodeData {
     const size = fitNodeSize(naturalSize.width, naturalSize.height);
     return {
-        id, type: CanvasNodeType.Image, title: file.name,
+        id, type: CanvasNodeType.Image, title: uploadNodeTitle(file.name),
         position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
         ...size,
         metadata: {

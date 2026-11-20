@@ -7,7 +7,7 @@ import { CachedResourceImage } from "@/components/cached-resource-image";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { activeImageHistoryIndex, getPrimarySwitchBlockReason, isActiveImageHistoryItem, resolveCanvasNodeImageHistory } from "@/lib/canvas/canvas-image-history";
 import { discoverNodeImageHistoryFromTasks, filterPersistableDiscoveredHistoryItems } from "@/lib/canvas/canvas-image-history-tasks";
-import { mediaFileExtension } from "@/lib/canvas/canvas-media-download";
+import { buildCanvasMediaDownloadFileName, firstKnownMediaMimeType } from "@/lib/canvas/canvas-media-download";
 import { extractOwnedResourceId } from "@/lib/canvas/canvas-resource-id";
 import { getResource, isProtectedResourceFileUrl, ownedResourceStorageKey } from "@/services/api/resources";
 import { listGenerationTasks } from "@/services/api/task-center";
@@ -18,7 +18,7 @@ import { canUseSameOriginResourceAsset, resourcePreviewAssetUrl } from "@/servic
 import { cacheResourceObjectUrl, peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useEffectiveConfig } from "@/stores/use-config-store";
-import type { CanvasImageHistoryItem, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
+import { CanvasNodeType, type CanvasImageHistoryItem, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 import { CanvasImageCompareStage, type CanvasImageViewerMode, type ResolvedViewerImage } from "./canvas-image-compare-stage";
 import { CanvasImageInfoSidebar, type SupplementedMediaMetrics } from "./canvas-image-info-sidebar";
@@ -541,8 +541,11 @@ export function CanvasImageViewerModal({
         const resourceId = extractOwnedResourceId(target.storageKey, target.content);
         const nativeResource = resourceId && isWailsNativeShell();
         const blob = nativeResource ? undefined : await loadOriginal();
-        const ext = mediaFileExtension(blob?.type || target.mimeType || metricsById[target.id]?.mimeType, target.content) || "png";
-        const fileName = `${node?.title || alt || "图片"}-v${items.indexOf(target) + 1}.${ext}`;
+        const fileName = buildCanvasMediaDownloadFileName({
+            type: CanvasNodeType.Image,
+            title: node?.title || alt,
+            metadata: { mimeType: firstKnownMediaMimeType(blob?.type, target.mimeType, metricsById[target.id]?.mimeType), content: target.content },
+        });
         const status = blob ? await saveOwnedOrBrowserBlob(fileName, blob) : await downloadOwnedOrBrowserMedia({ fileName, resourceId });
         if (status === "saved" && isWailsNativeShell()) message.success("已保存原图");
     };

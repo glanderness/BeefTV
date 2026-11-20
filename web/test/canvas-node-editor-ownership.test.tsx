@@ -5,6 +5,7 @@ import { App } from "antd";
 
 import { useCanvasNodeEditor } from "@/pages/canvas/use-canvas-node-editor";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
+import * as desktopMediaSave from "@/services/desktop-media-save";
 import * as assetSync from "@/services/project-asset-sync";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { createCanvasPageUiStore } from "../src/stores/canvas/use-canvas-page-ui-store";
@@ -45,7 +46,6 @@ function mountEditor(canvasId = "canvas-a") {
     function Harness() {
         editor = useCanvasNodeEditor({ pageUi,
             canvasId,
-            canvasTitle: "画布",
             domainProjectId: "project-a",
             nodesRef,
             setNodes: (value) => {
@@ -127,5 +127,27 @@ test("ordinary save error while still owned does not write assetId", async () =>
     } finally {
         ensure.mockRestore();
         restore();
+    }
+});
+
+test("toolbar downloadNodeImage passes node-name filename without version suffix to desktop/browser save", () => {
+    const downloadSpy = spyOn(desktopMediaSave, "downloadOwnedOrBrowserMedia").mockResolvedValue("saved");
+    try {
+        const { editor } = mountEditor();
+        editor.downloadNodeImage({
+            ...imageNode("node-dl", {
+                content: "/api/resources/res-dl/file",
+                storageKey: "resource:res-dl",
+                mimeType: "image/jpeg",
+            }),
+            title: "角色三视图.jpeg",
+        });
+        expect(downloadSpy).toHaveBeenCalledWith({
+            fileName: "角色三视图.jpg",
+            resourceId: "res-dl",
+            browserUrl: "/api/resources/res-dl/file",
+        });
+    } finally {
+        downloadSpy.mockRestore();
     }
 });

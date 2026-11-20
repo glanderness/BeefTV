@@ -92,7 +92,6 @@ function Harness() {
 
     const editor = useCanvasNodeEditor({ pageUi,
         canvasId,
-        canvasTitle: "画布",
         domainProjectId: "project-a",
         nodesRef,
         setNodes,

@@ -5,13 +5,17 @@ const FILE_NAME_PART_LIMIT = 80;
 const MIME_EXTENSIONS: Record<string, string> = {
     "image/png": "png",
     "image/jpeg": "jpg",
+    "image/jpg": "jpg",
     "image/webp": "webp",
     "image/gif": "gif",
     "image/svg+xml": "svg",
     "image/avif": "avif",
     "image/bmp": "bmp",
     "image/tiff": "tiff",
+    "image/heic": "heic",
+    "image/heif": "heif",
     "video/mp4": "mp4",
+    "video/x-m4v": "m4v",
     "video/webm": "webm",
     "video/quicktime": "mov",
     "video/ogg": "ogv",
@@ -33,12 +37,35 @@ const MIME_EXTENSIONS: Record<string, string> = {
     "audio/x-m4a": "m4a",
 };
 
-const CONTENT_EXTENSIONS = new Set(Object.values(MIME_EXTENSIONS).concat(["jpeg", "mpg"]));
+const EXTENSION_ALIASES: Record<string, string> = {
+    jpeg: "jpg",
+    jpe: "jpg",
+    jfif: "jpg",
+    tif: "tiff",
+    mpg: "mpeg",
+    wave: "wav",
+    svgz: "svg",
+};
 
-export function buildCanvasMediaDownloadFileName(canvasTitle: string, node: CanvasNodeData, now = new Date()) {
-    const canvasName = safeFileNamePart(canvasTitle, "未命名画布");
-    const nodeName = safeFileNamePart(node.title, defaultNodeName(node.type));
-    return `${canvasName}_${nodeName}_${formatDownloadDate(now)}.${canvasMediaFileExtension(node)}`;
+const CONTENT_EXTENSIONS = new Set(Object.values(MIME_EXTENSIONS).concat(Object.keys(EXTENSION_ALIASES)));
+
+export function buildCanvasMediaDownloadFileName(
+    node: Pick<CanvasNodeData, "type" | "title" | "metadata">,
+    options?: { fallbackName?: string },
+) {
+    const extension = canvasMediaFileExtension(node);
+    const title = node.title.trim();
+    const dot = title.lastIndexOf(".");
+    const stem = dot > 0 && normalizeMediaExtension(title.slice(dot + 1)) === extension ? title.slice(0, dot) : title;
+    return `${safeFileNamePart(stem, options?.fallbackName ?? defaultNodeName(node.type))}.${extension}`;
+}
+
+export function firstKnownMediaMimeType(...candidates: Array<string | undefined>) {
+    return candidates.find((candidate) => Boolean(extensionFromMimeType(candidate)));
+}
+
+export function isKnownMediaExtension(extension?: string) {
+    return Boolean(normalizeMediaExtension(extension));
 }
 
 export function sanitizeDownloadFileName(value: string, fallback = "未命名文件") {
@@ -48,10 +75,11 @@ export function sanitizeDownloadFileName(value: string, fallback = "未命名文
     const base = lastDot > 0 ? leaf.slice(0, lastDot) : leaf;
     const safeBase = safeFileNamePart(base, fallback);
     if (!extension || !/^[a-z0-9]{1,8}$/i.test(extension)) return safeBase;
-    return `${safeBase}.${extension.toLowerCase() === "jpeg" ? "jpg" : extension.toLowerCase()}`;
+    const lowerExtension = extension.toLowerCase();
+    return `${safeBase}.${EXTENSION_ALIASES[lowerExtension] ?? lowerExtension}`;
 }
 
-export function canvasMediaFileExtension(node: CanvasNodeData) {
+export function canvasMediaFileExtension(node: Pick<CanvasNodeData, "type" | "metadata">) {
     return mediaFileExtension(node.metadata?.mimeType, node.metadata?.content)
         || defaultExtension(node.type);
 }
@@ -71,11 +99,13 @@ function extensionFromContent(content?: string) {
     const dataExtension = extensionFromMimeType(dataMimeType);
     if (dataExtension) return dataExtension;
     const path = content.split(/[?#]/, 1)[0];
-    const extension = path.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
-    if (!extension || !CONTENT_EXTENSIONS.has(extension)) return undefined;
-    if (extension === "jpeg") return "jpg";
-    if (extension === "mpg") return "mpeg";
-    return extension;
+    return normalizeMediaExtension(path.match(/\.([a-z0-9]+)$/i)?.[1]);
+}
+
+function normalizeMediaExtension(extension?: string) {
+    const normalized = extension?.toLowerCase();
+    if (!normalized || !CONTENT_EXTENSIONS.has(normalized)) return undefined;
+    return EXTENSION_ALIASES[normalized] ?? normalized;
 }
 
 function safeFileNamePart(value: string, fallback: string) {
@@ -89,13 +119,6 @@ function safeFileNamePart(value: string, fallback: string) {
         .replace(/[. ]+$/g, "");
     if (!normalized) return fallback;
     return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(normalized) ? `_${normalized}` : normalized;
-}
-
-function formatDownloadDate(date: Date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}${month}${day}`;
 }
 
 function defaultNodeName(type: CanvasNodeTypeId) {

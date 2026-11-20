@@ -29,6 +29,13 @@ const file = { name: "photo.png", size: 1234, type: "image/png" };
 const placeholder = () => createImageUploadPlaceholder("upload", file, { x: 100, y: 200 }, { width: 1920, height: 1080 });
 
 describe("图片上传占位", () => {
+    test("使用文件主名作为节点标题，保留名称里的点", () => {
+        for (const [name, title] of [["场景1.png", "场景1"], ["场景1.v2.PNG", "场景1.v2"], ["photo.jfif", "photo"], ["photo.tif", "photo"], ["clip.v2.m4v", "clip.v2"], ["clip.final", "clip.final"], ["场景1", "场景1"], [".场景1", ".场景1"]]) {
+            const node = createImageUploadPlaceholder("upload", { ...file, name }, { x: 0, y: 0 }, { width: 1, height: 1 });
+            expect(node.title).toBe(title);
+        }
+    });
+
     for (const [width, height] of [[1920, 1080], [900, 1600], [800, 800], [4000, 500]]) {
         test(`按真实尺寸保持比例并围绕落点居中 ${width}x${height}`, () => {
             const node = createImageUploadPlaceholder("upload", file, { x: 100, y: 200 }, { width, height });
@@ -600,9 +607,10 @@ test("统一识别图片、视频、音频、纯文本文件，不误收 PDF 或
 });
 
 test("音频与文本在传输前就有独立占位，可重试且不带模型生成状态", async () => {
-    for (const [name, type, expected] of [["voice.mp3", "audio/mpeg", CanvasNodeType.Audio], ["note.md", "text/markdown", CanvasNodeType.Text]] as const) {
+    for (const [name, type, expected, title] of [["voice.mp3", "audio/mpeg", CanvasNodeType.Audio, "voice"], ["note.md", "text/markdown", CanvasNodeType.Text, "note"]] as const) {
         const node = await createFileUploadPlaceholder("file", new File(["content"], name, { type }), { x: 0, y: 0 });
         expect(node.type).toBe(expected);
+        expect(node.title).toBe(title);
         expect(node.metadata?.fileUpload).toBe("uploading");
         expect(node.metadata?.content).toBeUndefined();
         expect(node.metadata?.status).toBeUndefined();
@@ -614,7 +622,7 @@ test("H.265 视频不需要浏览器解码即可创建上传节点，空 MIME �
     for (const [name, type] of [["hevc.mp4", "video/mp4"], ["hevc.mov", ""], ["hevc.mkv", "application/octet-stream"]]) {
         const node = await createFileUploadPlaceholder("hevc", new File(["undecodable video"], name, { type }), { x: 100, y: 200 });
         expect(node.type).toBe(CanvasNodeType.Video);
-        expect(node.title).toBe(name);
+        expect(node.title).toBe("hevc");
         expect(node.metadata?.fileUpload).toBe("uploading");
         expect(node.position.x + node.width / 2).toBe(100);
         expect(node.metadata?.naturalWidth).toBeUndefined();
