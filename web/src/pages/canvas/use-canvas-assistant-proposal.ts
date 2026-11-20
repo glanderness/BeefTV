@@ -91,7 +91,7 @@ export function useCanvasAssistantProposal({
                     setAssistantProposalFeedback(current => ({ ...current, [proposalId]: "正在按已确认方案制作，素材保存后会自动继续。" }));
                 })().catch(error => {
                     if (!lifetime.matches(owner, projectIdRef.current)) return;
-                    if (error instanceof AssistantProposalBlockedError && (error.reason === "canvas_saving" || error.reason === "canvas_conflict")) recordAssistantProposalCanvasRejection(owner.canvasId);
+                    if (error instanceof AssistantProposalBlockedError && error.reason === "canvas_saving") recordAssistantProposalCanvasRejection(owner.canvasId);
                     setAssistantProposalFeedback(current => ({ ...current, [proposalId]: error instanceof AssistantProposalBlockedError ? error.message : "暂未确认制作是否开始，请重试查询同一方案，不会重复提交已接受的素材。" }));
                 }).finally(() => {
                     claimsRef.current.delete(proposalId);
@@ -111,7 +111,7 @@ export function useCanvasAssistantProposal({
                         () => readAssistantProposalSourceState(owner.canvasId, nodesRef.current, connectionsRef.current, addedSkillsRef.current),
                         () => readPersistedAssistantProposalSource(owner.canvasId),
                     ).catch(error => {
-                        if (error instanceof AssistantProposalBlockedError && (error.reason === "canvas_saving" || error.reason === "canvas_conflict") && lifetime.matches(owner, projectIdRef.current)) recordAssistantProposalCanvasRejection(owner.canvasId);
+                        if (error instanceof AssistantProposalBlockedError && error.reason === "canvas_saving" && lifetime.matches(owner, projectIdRef.current)) recordAssistantProposalCanvasRejection(owner.canvasId);
                         throw error;
                     });
                     return snapshot;

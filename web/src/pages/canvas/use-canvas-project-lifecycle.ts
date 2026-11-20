@@ -17,14 +17,14 @@ import { migrateDirectorCanvas } from "@/lib/canvas/director/director-node-migra
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { carryGenerationRecoveryRestore, hydrateAssistantImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
-import { forceOverwriteRemoteCanvasSync, hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, subscribeCanvasRefresh } from "@/services/local-workspace-sync";
+import { forceOverwriteRemoteCanvasSync, loadCanvasProjectForEditing, subscribeCanvasRefresh } from "@/services/local-workspace-sync";
 import { createWorkspaceCanvasProject, deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { hasUnconfirmedCanvasEdits, markCanvasMergeOverlap, scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { isCanvasSubmitControlError } from "@/services/canvas-revision-conflict";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
-import { projectSyncProgress, useSyncProgressStore } from "@/stores/use-sync-progress-store";
+import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { readCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { useUserStore } from "@/stores/use-user-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
@@ -36,11 +36,6 @@ import { queryGenerationTask } from "@/services/api/task-center";
 import { persistCanvasNodeFailure } from "@/lib/canvas/canvas-node-failure-state";
 
 const CANVAS_VIEWPORT_SAVE_DELAY_MS = 2000;
-
-function isExpectedLocalOnlySyncError(error: unknown) {
-    const message = error instanceof Error ? error.message : String(error || "");
-    return /尚未建立云端同步会话|未登录|guest/i.test(message);
-}
 
 type EditorDocument = Pick<CanvasHistorySnapshot, "nodes" | "connections" | "chatSessions" | "activeChatId">;
 
@@ -247,9 +242,7 @@ export function useCanvasProjectLifecycle({
 
     const observedContentRef = useRef<CanvasHistorySnapshot | null>(null);
     const observedAtRender = observedContentRef.current;
-    const loadLatestRef = useRef(false);
     const historyRestoreRef = useRef<{ snapshotId: string; revision: number; resolve: () => void; reject: (error: unknown) => void } | null>(null);
-    const pendingReloadRef = useRef<{ resolve: () => void; reject: (error: unknown) => void } | null>(null);
     const editorReadyRef = useRef(false);
     // React keeps the previous canvas state for one render after the route id
     // changes. Track which project the live editor refs actually belong to so
@@ -389,13 +382,10 @@ export function useCanvasProjectLifecycle({
         if (!localMode && (!hydrated || !sessionHydrated)) return;
         let cancelled = false;
         setInitialReadComplete(false);
-        // Keep load intent on the refs until this attempt finishes. React Strict
-        // Mode remounts the effect; consuming the flags here would turn "load
-        // latest" into a normal open and immediately recreate the conflict.
-        const latest = loadLatestRef.current;
+        // Keep history restore intent on the ref until this attempt finishes
+        // so React Strict Mode remounts do not turn a restore into a normal open.
         const historyRestore = historyRestoreRef.current;
-        const pendingReload = pendingReloadRef.current;
-        const keepEditor = editorReadyRef.current && (latest || Boolean(historyRestore));
+        const keepEditor = editorReadyRef.current && Boolean(historyRestore);
         if (!keepEditor) {
             editorReadyRef.current = false;
             editorProjectIdRef.current = null;
@@ -467,14 +457,14 @@ export function useCanvasProjectLifecycle({
 
         const load = async () => {
             const cachedProject = useCanvasStore.getState().projects.find((p) => p.id === projectId);
-            if (!latest && !historyRestore && cachedProject) {
+            if (!historyRestore && cachedProject) {
                 traceCanvasGraph("editor.load.cache", { cached: cachedProject });
                 // 本地已有该画布的持久化缓存：先以本地数据秒开渲染，彻底消除白屏与等待
                 applyRestoredProject(cachedProject);
             }
-            // An explicit "load latest" or history restore replaces the editor on purpose.
-            const mergeLiveEdits = !latest && !historyRestore;
-            const loadedProject = await loadCanvasProjectForEditing(projectId, { latest, historyRestore: historyRestore || undefined, onLoad: (project) => applyRestoredProject(project, { mergeLiveEdits }) });
+            // An explicit history restore replaces the editor on purpose.
+            const mergeLiveEdits = !historyRestore;
+            const loadedProject = await loadCanvasProjectForEditing(projectId, { historyRestore: historyRestore || undefined, onLoad: (project) => applyRestoredProject(project, { mergeLiveEdits }) });
             traceCanvasGraph("editor.load.return", { loaded: loadedProject, stored: useCanvasStore.getState().openProject(projectId) });
             if (cancelled) return;
             if (historyRestoreRef.current === historyRestore) {
@@ -482,7 +472,14 @@ export function useCanvasProjectLifecycle({
                 historyRestore?.resolve();
             }
             if (!loadedProject) {
-                if (!cachedProject) navigate("/canvas", { replace: true });
+                const stillInStore = Boolean(useCanvasStore.getState().openProject(projectId));
+                if (!cachedProject || !stillInStore) {
+                    editorReadyRef.current = false;
+                    editorProjectIdRef.current = null;
+                    setProjectLoaded(false);
+                    setLoadError("");
+                    navigate("/canvas", { replace: true });
+                }
                 return;
             }
             const project = useCanvasStore.getState().projects.find((p) => p.id === projectId) || loadedProject;
@@ -504,27 +501,17 @@ export function useCanvasProjectLifecycle({
             .then(() => {
                 if (cancelled) return;
                 setInitialReadComplete(true);
-                loadLatestRef.current = false;
-                if (pendingReloadRef.current === pendingReload) {
-                    pendingReloadRef.current = null;
-                    pendingReload?.resolve();
-                }
             })
             .catch((error) => {
                 if (cancelled) return;
                 // A failed first read leaves the cache unreconciled; do not
                 // capture failures or backfill outcomes on top of it.
-                loadLatestRef.current = false;
                 if (historyRestoreRef.current === historyRestore) {
                     historyRestoreRef.current = null;
                     historyRestore?.reject(error);
                 }
-                if (pendingReloadRef.current === pendingReload) {
-                    pendingReloadRef.current = null;
-                    pendingReload?.reject(error);
-                }
-                const detail = error instanceof Error ? error.message : (localMode ? "读取本地画布失败，请重试" : "读取画布失败，请重试");
-                if (projectSyncProgress(projectId)?.phase !== "conflict") useSyncProgressStore.getState().setProjectProgress(projectId, { phase: "error", message: localMode ? detail : (error instanceof Error ? error.message : "读取云端版本失败") });
+                const detail = error instanceof Error ? error.message : "读取本地画布失败，请重试";
+                useSyncProgressStore.getState().setProjectProgress(projectId, { phase: "error", message: detail });
                 if (keepEditor) message.error(detail);
                 else setLoadError(detail);
             });
@@ -677,18 +664,10 @@ export function useCanvasProjectLifecycle({
     const createAndOpenCanvas = useCallback(() => {
         const workspaceProjectId = currentProject ? canvasWorkspaceProjectId(currentProject) : undefined;
         const domainProjectId = currentProject?.projectId;
-        if (localMode) {
-            void createWorkspaceCanvasProject("未命名画布", domainProjectId, undefined, workspaceProjectId)
-                .then(({ id }) => navigate(`/canvas/${id}`))
-                .catch((error) => message.error(error instanceof Error ? `新建画布失败：${error.message}` : "新建画布失败，请稍后重试"));
-            return;
-        }
-        void createWorkspaceCanvasProject("未命名画布", domainProjectId, undefined, workspaceProjectId).then(({ id, syncError }) => {
-            // 本地/访客模式下没有远端同步会话，这是预期状态，不应在画布中央弹出错误 toast。
-            if (syncError && !isExpectedLocalOnlySyncError(syncError)) message.warning(syncError instanceof Error ? `画布已在本地创建，云端同步失败：${syncError.message}` : "画布已在本地创建，云端同步失败");
-            navigate(`/canvas/${id}`);
-        }).catch((error) => message.error(error instanceof Error ? `新建画布失败：${error.message}` : "新建画布失败，请稍后重试"));
-    }, [currentProject, localMode, message, navigate]);
+        void createWorkspaceCanvasProject("未命名画布", domainProjectId, undefined, workspaceProjectId)
+            .then(({ id }) => navigate(`/canvas/${id}`))
+            .catch((error) => message.error(error instanceof Error ? `新建画布失败：${error.message}` : "新建画布失败，请稍后重试"));
+    }, [currentProject, message, navigate]);
 
     const deleteCurrentProject = useCallback(async () => {
         const siblingCanvases = listCanvasWorkspaceProjectCanvases(useCanvasStore.getState().projects, projectId);
@@ -742,16 +721,6 @@ export function useCanvasProjectLifecycle({
         return registerDesktopUpdatePreparation(() => persistLocalEdits());
     }, [persistLocalEdits, projectLoaded]);
 
-    const reloadLatestCanvasProject = useCallback(async () => {
-        await persistLocalEdits();
-        return new Promise<void>((resolve, reject) => {
-            pendingReloadRef.current?.reject(new Error("已有新的加载请求"));
-            loadLatestRef.current = true;
-            pendingReloadRef.current = { resolve, reject };
-            setLoadAttempt((value) => value + 1);
-        });
-    }, [persistLocalEdits]);
-
     const restoreCanvasProjectVersion = useCallback(async (snapshotId: string, revision: number) => {
         await persistLocalEdits();
         return new Promise<void>((resolve, reject) => {
@@ -761,28 +730,16 @@ export function useCanvasProjectLifecycle({
         });
     }, [persistLocalEdits]);
 
-    const saveCanvasProject = useCallback(async (options: { requireRemote?: boolean } = {}): Promise<boolean> => {
+    const saveCanvasProject = useCallback(async (): Promise<boolean> => {
         try {
             await persistLocalEdits();
         } catch {
             message.error("画布保存失败，请稍后重试");
             return false;
         }
-        if (!hasRemoteUserDataSyncSession()) {
-            message.success("画布已保存到本地");
-            return true;
-        }
-        try {
-            await saveRemoteUserDataNow(projectId);
-            message.success("画布已保存到云端");
-        } catch (error) {
-            const detail = error instanceof Error ? error.message : "未知错误";
-            if (!isExpectedLocalOnlySyncError(error)) message.warning(`本地画布布局已保存，云端同步失败：${detail}`);
-            // Imports can retain their durable local result; sharing requires cloud success.
-            return options.requireRemote === false;
-        }
+        message.success("画布已保存到本地");
         return true;
-    }, [message, persistLocalEdits, projectId]);
+    }, [message, persistLocalEdits]);
 
     const forceSaveCanvasProject = useCallback(async (): Promise<boolean> => {
         try { await persistLocalEdits(); } catch { message.error("本地保存失败，请重试"); return false; }
@@ -809,7 +766,6 @@ export function useCanvasProjectLifecycle({
         currentProject,
         deleteCurrentProject,
         renameCurrentProject,
-        reloadLatestCanvasProject,
         restoreCanvasProjectVersion,
         saveCanvasProject,
         forceSaveCanvasProject,

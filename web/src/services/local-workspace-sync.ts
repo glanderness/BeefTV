@@ -1,6 +1,6 @@
 import { rebindInconsistentCanvasAssets, type CanvasAssetRebindResult } from "@/services/canvas-asset-repair";
 import { createLocalCanvasProject, deleteLocalCanvasProjects, openLocalCanvasProject, openLocalCanvasProjectFromBackend, persistCanvasDocument, restoreLocalCanvasProjectFromHistory } from "@/services/local-workspace-repository";
-import { flushAssetStorePersistence, useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { flushAssetStorePersistence, useAssetStore } from "@/stores/use-asset-store";
 import {
     loadWorkspaceAssetLibraryPage,
     loadWorkspaceAssetsForUse,
@@ -10,29 +10,11 @@ import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from 
 
 export { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
-let operationTail: Promise<void> = Promise.resolve();
 const canvasRefreshListeners = new Set<(project: CanvasProject, previous: CanvasProject | undefined) => void>();
-
-/**
- * Backward-compatible local persistence facade.
- *
- * Call sites keep their historical function names while the implementation
- * contains no account, cloud snapshot, upload queue, conflict baseline or
- * retry machinery. New code should use the workspace repositories directly.
- */
-export function hasRemoteUserDataSyncSession() {
-    return false;
-}
-
-export function withRemoteUserDataSyncExclusive<T>(operation: () => Promise<T>): Promise<T> {
-    const next = operationTail.then(operation, operation);
-    operationTail = next.then(() => undefined, () => undefined);
-    return next;
-}
 
 export async function loadCanvasProjectForEditing(
     id: string,
-    options: { latest?: boolean; historyRestore?: { snapshotId: string; revision: number }; onLoad?: (project: CanvasProject) => void } = {},
+    options: { historyRestore?: { snapshotId: string; revision: number }; onLoad?: (project: CanvasProject) => void } = {},
 ) {
     if (options.historyRestore) {
         const restored = await restoreLocalCanvasProjectFromHistory(id, options.historyRestore);
@@ -94,24 +76,13 @@ export async function createCanvasProjectWithRemoteSync(
     return { ...await createLocalCanvasProject(title, projectId, initialContent), syncError: undefined };
 }
 
-export async function deleteAssetWithRemoteSync(id: string) {
-    const assetId = id.trim();
-    if (!assetId) throw new Error("素材 ID 不能为空");
-    await useAssetStore.getState().removeAsset(assetId);
-    await flushAssetStorePersistence();
-}
-
 export function deleteCanvasProjectsWithRemoteSync(ids: string[]) {
     return deleteLocalCanvasProjects(ids);
 }
 
-/** Legacy save name retained while callers migrate to workspace repositories. */
+/** Flush local workspace persistence stores (canvas + assets). */
 export async function saveRemoteUserDataNow(_input?: string | readonly string[] | { force?: boolean }) {
     await Promise.all([flushCanvasStorePersistence(), flushAssetStorePersistence()]);
-}
-
-export function scheduleRemoteUserDataSync() {
-    void saveRemoteUserDataNow().catch((error) => console.error("本地工作区保存失败", error));
 }
 
 export async function forceOverwriteRemoteCanvasSync(): Promise<CanvasAssetRebindResult> {

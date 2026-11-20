@@ -12,6 +12,7 @@ let server: ReturnType<typeof Bun.serve>;
 let commits: Array<{ at: number; canvasId: string; nodes: Array<{ id: string; title: string }>; connections: unknown[]; upsertNodeIds?: string[] }> = [];
 const remote = { id: "c1", revision: 111, title: "Restart", createdAt: "2026-10-02", updatedAt: "2026-10-02", nodes: Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, type: "image", title: `Node ${i}`, width: 320, height: 200, position: { x: i * 400, y: 0 }, metadata: {} })), connections: Array.from({ length: 6 }, (_, i) => ({ id: `e${i}`, fromNodeId: `n${i}`, toNodeId: `n${i + 1}` })), chatSessions: [], activeChatId: null, backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
 let backend = structuredClone(remote);
+let backendMissing = false;
 let secondBackend = { ...structuredClone(remote), id: "c2", title: "Second canvas", nodes: remote.nodes.slice(0, 2), connections: remote.connections.slice(0, 1) };
 
 beforeAll(async () => {
@@ -25,7 +26,10 @@ beforeAll(async () => {
     server = Bun.serve({ port: 0, async fetch(request) {
         const path = new URL(request.url).pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "application/javascript" } });
-        if (path === "/api/canvas-projects/c1") return json({ project: backend });
+        if (path === "/api/canvas-projects/c1") {
+            if (backendMissing) return Response.json({ code: 404, data: null, msg: "画布不存在" }, { status: 404 });
+            return json({ project: backend });
+        }
         if (path === "/api/canvas-projects/c2") return json({ project: secondBackend });
         if (path === "/api/ops/canvas.document.patch") {
             const body = await request.json();
@@ -70,6 +74,7 @@ beforeAll(async () => {
 afterAll(async () => { await browser?.close(); server?.stop(true); });
 beforeEach(() => {
     backend = structuredClone(remote);
+    backendMissing = false;
     secondBackend = { ...structuredClone(remote), id: "c2", title: "Second canvas", nodes: remote.nodes.slice(0, 2), connections: remote.connections.slice(0, 1) };
     commits = [];
 });
@@ -152,5 +157,17 @@ test("leave flush patches only the edited node without sending untouched open-st
         expect(lastPatch?.upsertNodeIds).toEqual(["n0"]);
         expect(backend.nodes).toHaveLength(10);
         expect(backend.nodes[0]!.title).toBe("Local unsaved text");
+    } finally { await page.close(); }
+}, 30000);
+
+test("direct 404 on a clean cached ghost evicts the canvas, tears down editor state, and navigates to /canvas", async () => {
+    backendMissing = true;
+    const page = await browser.newPage();
+    try {
+        await page.goto(server.url.toString());
+        await page.waitForFunction(() => document.querySelector('[data-testid="route"]')?.textContent === "/canvas");
+        expect(await page.evaluate(() => (window as any).__lifecycle.hasStoredCanvas("c1"))).toBe(false);
+        expect(await page.locator('[data-testid="graph"]').textContent()).toMatch(/^false:/);
+        expect(commits).toEqual([]);
     } finally { await page.close(); }
 }, 30000);

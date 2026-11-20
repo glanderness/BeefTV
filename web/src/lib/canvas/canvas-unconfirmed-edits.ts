@@ -1,13 +1,12 @@
 import { sameCanvasDocument } from "./canvas-content";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
-export type CanvasUnconfirmedReason = "pending" | "blocked" | "inFlight" | "pendingProjection" | "confirmed-diff" | "durable-diff" | "no-baseline";
+export type CanvasUnconfirmedReason = "pending" | "inFlight" | "pendingProjection" | "confirmed-diff" | "durable-diff" | "no-baseline";
 export type CanvasUnconfirmedState = {
     live?: CanvasProject;
     confirmed?: CanvasProject;
     durable?: CanvasProject;
     pending: boolean;
-    blocked: boolean;
     inFlight: boolean;
     pendingProjection: boolean;
 };
@@ -15,7 +14,6 @@ export type CanvasUnconfirmedState = {
 export function canvasUnconfirmedReason(state: CanvasUnconfirmedState): CanvasUnconfirmedReason | undefined {
     if (!state.live) return undefined;
     if (state.pending) return "pending";
-    if (state.blocked) return "blocked";
     if (state.inFlight) return "inFlight";
     if (state.pendingProjection) return "pendingProjection";
     if (state.confirmed) return sameCanvasDocument(state.confirmed, state.live) ? undefined : "confirmed-diff";

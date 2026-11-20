@@ -138,14 +138,12 @@ mock.module("@/services/api/resources", () => ({
 }));
 
 const {
-    acceptExternalCanvasRevision,
     hasUnconfirmedCanvasEdits,
-    holdExternalCanvasRevisionForEditor,
     refreshLocalCanvasProjectIfChanged,
     resetLocalCanvasBackendSaveState,
     syncLocalCanvasProjectToBackend,
 } = await import("@/services/local-workspace-repository");
-const { canvasExternalRevisionConflict, clearCanvasExternalRevisionConflict, useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
+const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
 const { getActiveUserScope } = await import("@/lib/user-scope");
 const { projectSyncProgress, useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
 const { resetCanvasOperationJournalMemory } = await import("@/services/canvas-operation-journal");
@@ -195,7 +193,6 @@ beforeEach(() => {
     server.releaseGet = null;
     server.rejectNextWrite = null;
     useSyncProgressStore.getState().clearAll();
-    clearCanvasExternalRevisionConflict(scope, "c1");
     useCanvasStore.setState({ projects: [] });
 });
 
@@ -208,7 +205,7 @@ describe("画布刷新接缝（服务端基线）", () => {
         expect(applied?.title).toBe("外部新增内容");
         expect(useCanvasStore.getState().projects[0].title).toBe("外部新增内容");
         expect(useCanvasStore.getState().projects[0].revision).toBe(4);
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
         expect(server.puts.length).toBe(1);
     });
@@ -251,7 +248,7 @@ describe("画布刷新接缝（服务端基线）", () => {
         expect(applied?.title).toBe("用户刚改的标题");
         const live = useCanvasStore.getState().projects[0];
         expect(live.title).toBe("用户刚改的标题");
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
     });
 
     test("HTTP 提交尚未落地时不会被判成可安全刷新", async () => {
@@ -260,23 +257,6 @@ describe("画布刷新接缝（服务端基线）", () => {
 
         // 服务端还没确认这次编辑：即使本地内容已经写进浏览器存储也必须算未确认。
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(true);
-    });
-
-    test("显式持有候选并选择以最新为准：采用候选，本地回到已确认状态且不重复回写", async () => {
-        await establishConfirmedBaseline();
-        useCanvasStore.getState().updateProject("c1", { title: "本地新标题" });
-        const candidate = canvas(4, { title: "外部改名" });
-        replaceServerDocument(candidate);
-        holdExternalCanvasRevisionForEditor(candidate);
-        expect(canvasExternalRevisionConflict(scope, "c1")?.candidate.title).toBe("外部改名");
-
-        const accepted = await acceptExternalCanvasRevision("c1");
-
-        expect(accepted?.title).toBe("外部改名");
-        expect(useCanvasStore.getState().projects[0].title).toBe("外部改名");
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
-        expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
-        expect(server.puts.length).toBe(1);
     });
 
     test("本地编辑的是旧白名单之外的字段时，外部刷新保留本地字段并合并其余服务端字段", async () => {
@@ -291,7 +271,7 @@ describe("画布刷新接缝（服务端基线）", () => {
         const live = useCanvasStore.getState().projects[0];
         expect(live.folderId).toBe("folder-keep-me");
         expect(live.title).toBe("外部改名");
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
 
         await syncLocalCanvasProjectToBackend("c1");
         expect(server.document?.folderId).toBe("folder-keep-me");
@@ -308,5 +288,32 @@ describe("画布刷新接缝（服务端基线）", () => {
         expect(projectSyncProgress("c1")?.phase).toBe("error");
         expect(useCanvasStore.getState().projects[0].title).toBe("本地新标题");
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(true);
+    });
+
+    test("外部刷新采纳远端文档内容时保留本地视口与画布视图偏好（含 showImageInfo）", async () => {
+        await establishConfirmedBaseline();
+        useCanvasStore.getState().updateProject("c1", {
+            viewport: { x: 180, y: -64, k: 0.75 },
+            appearance: { theme: "dark" } as never,
+            backgroundMode: "dots",
+            showImageInfo: true,
+        });
+        replaceServerDocument(canvas(3, {
+            title: "远端新标题",
+            nodes: [{ id: "n1", type: "image", title: "远端镜头", position: { x: 10, y: 20 }, width: 320, height: 220, metadata: { prompt: "远端提示" } }],
+            viewport: { x: 0, y: 0, k: 1 },
+            appearance: undefined,
+            backgroundMode: "grid",
+            showImageInfo: false,
+        }));
+
+        const applied = await refreshLocalCanvasProjectIfChanged("c1");
+        expect(applied?.title).toBe("远端新标题");
+        expect(applied?.revision).toBe(3);
+        expect(applied?.nodes[0]?.title).toBe("远端镜头");
+        expect(applied?.viewport).toEqual({ x: 180, y: -64, k: 0.75 });
+        expect(applied?.appearance).toEqual({ theme: "dark" } as never);
+        expect(applied?.backgroundMode).toBe("dots");
+        expect(applied?.showImageInfo).toBe(true);
     });
 });

@@ -71,14 +71,7 @@ mock.module("@/stores/canvas/use-canvas-store", () => ({
     recordCanvasStorageDocument: () => {},
     commitPendingCanvasStorePersistenceLocked: async () => {},
     pendingCanvasStorePersistence: () => false,
-    registerCanvasGenerationPersistenceAttempt: () => {},
-    applyExternalCanvasRevision: () => ({ kind: "keep-local", projectId: "", candidate: {}, localRevision: 0, remoteRevision: 0 }),
-    acceptCanvasExternalRevisionCandidate: () => undefined,
-    clearCanvasExternalRevisionConflict: () => {},
     canvasDurableSnapshot: () => undefined,
-    canvasExternalRevisionConflict: () => undefined,
-    canvasExternalRevisionVersion: () => 0,
-    subscribeCanvasExternalRevision: () => () => {},
     recordCanvasDocumentBase: (proj: any) => {
         bases.set(proj.id, { revision: proj.revision ?? 0, snapshot: proj });
     },

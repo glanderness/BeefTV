@@ -149,18 +149,14 @@ mock.module("@/services/api/resources", () => ({
 }));
 
 const {
-    acceptExternalCanvasRevision,
-    CanvasBackendSubmitPausedError,
     hasUnconfirmedCanvasEdits,
-    holdExternalCanvasRevisionForEditor,
     openLocalCanvasProjectFromBackend,
     refreshLocalCanvasProjectIfChanged,
     resetLocalCanvasBackendSaveState,
     scheduleLocalCanvasBackendSync,
     syncLocalCanvasProjectToBackend,
 } = await import("@/services/local-workspace-repository");
-const { canvasExternalRevisionConflict, clearCanvasDocumentBase, clearCanvasExternalRevisionConflict, recordCanvasDocumentBase, useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
-const { canvasBackendSubmitPaused } = await import("@/services/canvas-revision-conflict");
+const { clearCanvasDocumentBase, recordCanvasDocumentBase, useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
 const { getActiveUserScope } = await import("@/lib/user-scope");
 const { projectSyncProgress, useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
 const { loadCanvasOperationJournal, resetCanvasOperationJournalMemory, saveCanvasOperationJournal } = await import("@/services/canvas-operation-journal");
@@ -215,7 +211,6 @@ function reloadWith(live: Doc) {
     resetCanvasOperationJournalMemory();
     resetLocalCanvasBackendSaveState();
     clearCanvasDocumentBase("c1", scope);
-    clearCanvasExternalRevisionConflict(scope, "c1");
     useSyncProgressStore.getState().clearAll();
     useCanvasStore.setState({ projects: [structuredClone(live) as never] });
 }
@@ -251,7 +246,6 @@ beforeEach(() => {
     server.failGets = 0;
     draftFailure = false;
     useSyncProgressStore.getState().clearAll();
-    clearCanvasExternalRevisionConflict(scope, "c1");
     useCanvasStore.setState({ projects: [] });
 });
 
@@ -266,8 +260,7 @@ describe("服务端写入与本地自动保存交错", () => {
 
         expect(ids(live().nodes)).toEqual(["n1", "n2"]);
         expect(ids(live().chatSessions)).toEqual(["s1"]);
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
 
         await waitFor(() => !hasUnconfirmedCanvasEdits("c1"));
         expect(attempts()).toEqual([[2, true]]);
@@ -290,8 +283,6 @@ describe("服务端写入与本地自动保存交错", () => {
         expect(ids(live().nodes)).toEqual(["n1", "n2"]);
         expect(ids(live().chatSessions)).toEqual(["s1"]);
         expect(notifications.some((item) => item.revision === 3)).toBe(true);
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
         expect(projectSyncProgress("c1", scope)?.phase).toBe("done");
     });
@@ -306,26 +297,9 @@ describe("服务端写入与本地自动保存交错", () => {
         expect(attempts()).toEqual([[1, true]]);
         expect(live().title).toBe("本地标题");
         expect(server.document!.title).toBe("本地标题");
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
         expect((await loadCanvasOperationJournal("c1", scope)).confirmedRevision).toBe(3);
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
         expect(projectSyncProgress("c1", scope)?.phase).toBe("done");
-    });
-
-    test("显式持有候选且「使用最新版本」时草稿没存成：不替换本地内容，冲突和候选都保留", async () => {
-        await seedConfirmed(canvas(1));
-        useCanvasStore.getState().updateProject("c1", { title: "本地标题" });
-        externalWrite((doc) => ({ ...doc, title: "助手标题" }));
-        holdExternalCanvasRevisionForEditor(structuredClone(server.document!) as never);
-        expect(canvasExternalRevisionConflict(scope, "c1")?.candidate.title).toBe("助手标题");
-
-        draftFailure = true;
-        await expect(acceptExternalCanvasRevision("c1")).rejects.toThrow("草稿");
-        expect(live().title).toBe("本地标题");
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(true);
-        expect(canvasExternalRevisionConflict(scope, "c1")?.candidate.title).toBe("助手标题");
-        expect((await loadCanvasOperationJournal("c1", scope)).confirmedRevision).toBe(1);
     });
 
     test("连续多次并发写入：增量 patch 连续收敛，不丢任何一方的新增节点与聊天", async () => {
@@ -342,7 +316,7 @@ describe("服务端写入与本地自动保存交错", () => {
         expect(ids(server.document!.chatSessions as never)).toEqual(["s1"]);
         expect(ids(live().nodes)).toEqual(["n1", "n2", "n3"]);
         expect(ids(live().chatSessions)).toEqual(["s1"]);
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+        expect(projectSyncProgress("c1", scope)?.phase).toBe("done");
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
     });
 
@@ -356,8 +330,7 @@ describe("服务端写入与本地自动保存交错", () => {
         externalWrite(addNode("n2", "助手加的镜头"));
 
         await refreshLocalCanvasProjectIfChanged("c1");
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
 
         await waitFor(() => !hasUnconfirmedCanvasEdits("c1"));
         expect(server.attempts.map((attempt) => [attempt.opId === lostOp, attempt.expectedRevision, attempt.accepted])).toEqual([[true, 1, true]]);
@@ -403,8 +376,7 @@ describe("服务端写入与本地自动保存交错", () => {
         expect(journal.confirmedRevision).toBe(2);
         expect(journal.confirmedSnapshot?.title).toBe("本地标题");
         expect(live().title).toBe("本地标题");
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
     });
 });
@@ -426,8 +398,7 @@ describe("重载后恢复", () => {
 
         const opened = await openLocalCanvasProjectFromBackend("c1");
         expect(ids(opened?.chatSessions)).toEqual(["s1"]);
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
 
         await syncLocalCanvasProjectToBackend("c1");
         expect(server.attempts.map((attempt) => [attempt.opId, attempt.expectedRevision, attempt.accepted])).toEqual([["op-lost", 1, false], [expect.any(String), 2, true]]);
@@ -463,7 +434,7 @@ describe("重载后恢复", () => {
         expect(journal.inFlight).toBeNull();
         expect(journal.confirmedRevision).toBe(2);
         expect(live().title).toBe("已提交的标题");
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
     });
 
     test("未保存的聊天修改与服务端新节点互不相关：打开时合并，不暂停，下一次保存带上两边", async () => {
@@ -474,7 +445,7 @@ describe("重载后恢复", () => {
         const opened = await openLocalCanvasProjectFromBackend("c1");
         expect(ids(opened?.nodes)).toEqual(["n1", "n2"]);
         expect(ids(opened?.chatSessions)).toEqual(["s1"]);
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
 
         await syncLocalCanvasProjectToBackend("c1");
         expect(attempts()).toEqual([[2, true]]);
@@ -494,7 +465,7 @@ describe("重载后恢复", () => {
         const opened = await openLocalCanvasProjectFromBackend("c1");
         expect(ids(opened?.connections as never)).toEqual(["e0"]);
         expect((opened?.nodes as Array<{ title: string }>)[0].title).toBe("未保存的标题");
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
 
         await syncLocalCanvasProjectToBackend("c1");
         expect(attempts()).toEqual([[111, true]]);
@@ -510,8 +481,7 @@ describe("重载后恢复", () => {
         const opened = await openLocalCanvasProjectFromBackend("c1");
         expect(opened?.title).toBe("本地标题");
         expect(live().title).toBe("本地标题");
-        expect(canvasBackendSubmitPaused("c1", scope)).toBe(false);
-        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
+        expect(projectSyncProgress("c1", scope)?.phase).not.toBe("conflict");
 
         await syncLocalCanvasProjectToBackend("c1");
         expect(server.document!.title).toBe("本地标题");
@@ -543,18 +513,5 @@ describe("本地保存状态", () => {
         await syncLocalCanvasProjectToBackend("c1");
         expect(projectSyncProgress("c1", scope)?.phase).toBe("done");
         expect(server.document!.title).toBe("第二次");
-    });
-
-    test("显式持有冲突暂停期间的保存尝试不会把状态改回保存中或已保存", async () => {
-        await seedConfirmed(canvas(1));
-        useCanvasStore.getState().updateProject("c1", { title: "本地标题" });
-        externalWrite((doc) => ({ ...doc, title: "助手标题" }));
-        holdExternalCanvasRevisionForEditor(structuredClone(server.document!) as never);
-        expect(projectSyncProgress("c1", scope)?.phase).toBe("conflict");
-
-        scheduleLocalCanvasBackendSync("c1");
-        expect(projectSyncProgress("c1", scope)?.phase).toBe("conflict");
-        await expect(syncLocalCanvasProjectToBackend("c1")).rejects.toBeInstanceOf(CanvasBackendSubmitPausedError);
-        expect(projectSyncProgress("c1", scope)?.phase).toBe("conflict");
     });
 });

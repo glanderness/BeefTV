@@ -69,7 +69,7 @@ type ProjectActionsParams = {
     openAssistant: () => void;
     undoCanvas: () => void;
     redoCanvas: () => void;
-    saveCanvasProject: (options?: { requireRemote?: boolean }) => Promise<boolean>;
+    saveCanvasProject: () => Promise<boolean>;
     updateProject: (id: string, patch: Partial<CanvasProject>) => void;
     viewportState: ReturnType<typeof useCanvasViewportState>;
     viewportController: ReturnType<typeof useCanvasViewportController>;
