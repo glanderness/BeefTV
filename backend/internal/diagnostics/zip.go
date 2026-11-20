@@ -106,6 +106,15 @@ func buildZIP(brandName string, bundleID string, manifest manifest, collection *
 			return nil, err
 		}
 	}
+	if len(collection.CrashpadReports) > 0 {
+		crashData, err := json.MarshalIndent(collection.CrashpadReports, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		if err := writeZipFile(archive, "desktop/crashpad-reports.json", append(crashData, byte(10))); err != nil {
+			return nil, err
+		}
+	}
 	if err := archive.Close(); err != nil {
 		return nil, err
 	}

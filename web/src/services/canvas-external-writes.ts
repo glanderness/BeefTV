@@ -75,12 +75,31 @@ export async function undoExternalCanvasWrite(canvasId: string, opId: string): P
     });
 }
 
+export type CanvasEventsStreamOptions = {
+    onConnectionChange?: (connected: boolean) => void;
+};
+
+function parseRevisionFromEventData(raw: string): number | undefined {
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    try {
+        const parsed = JSON.parse(trimmed) as { revision?: unknown };
+        return typeof parsed?.revision === "number" && Number.isFinite(parsed.revision) ? parsed.revision : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 /**
  * 订阅画布实时更新事件（SSE）。
  * 浏览器 http: 环境且未配置桌面端 Token 时优先使用原生 EventSource；
  * Wails 桌面环境（wails: 协议或携带 X-Desktop-Token）使用流式 fetch，确保桌面版外部改动实时推送（消除 4 秒轮询延迟）。
  */
-export function subscribeCanvasEventsStream(projectId: string, onUpdate: () => void): () => void {
+export function subscribeCanvasEventsStream(
+    projectId: string,
+    onUpdate: (revision?: number) => void,
+    options?: CanvasEventsStreamOptions,
+): () => void {
     if (typeof window === "undefined" || !projectId) return () => {};
 
     let activeStop: (() => void) | null = null;
@@ -90,10 +109,11 @@ export function subscribeCanvasEventsStream(projectId: string, onUpdate: () => v
                 activeStop();
                 activeStop = null;
             }
+            options?.onConnectionChange?.(false);
             return;
         }
         if (activeStop) return;
-        activeStop = openCanvasEventsStream(projectId, onUpdate);
+        activeStop = openCanvasEventsStream(projectId, onUpdate, options);
     };
 
     syncTransport();
@@ -105,18 +125,33 @@ export function subscribeCanvasEventsStream(projectId: string, onUpdate: () => v
             activeStop();
             activeStop = null;
         }
+        options?.onConnectionChange?.(false);
     };
 }
 
-function openCanvasEventsStream(projectId: string, onUpdate: () => void): () => void {
+function openCanvasEventsStream(
+    projectId: string,
+    onUpdate: (revision?: number) => void,
+    options?: CanvasEventsStreamOptions,
+): () => void {
     const desktopToken = apiClient.defaults.headers.common["X-Desktop-Token"];
     const hasDesktopToken = typeof desktopToken === "string" && desktopToken.trim().length > 0;
 
     if (window.location.protocol === "http:" && !hasDesktopToken && typeof EventSource !== "undefined") {
         const source = new EventSource(`${apiBaseURL.replace(/\/+$/u, "")}/canvas-projects/${encodeURIComponent(projectId)}/events`, { withCredentials: true });
-        source.addEventListener("canvas.updated", onUpdate);
+        const handleOpen = () => options?.onConnectionChange?.(true);
+        const handleError = () => options?.onConnectionChange?.(false);
+        const handleUpdate = (event: MessageEvent<string>) => {
+            options?.onConnectionChange?.(true);
+            onUpdate(parseRevisionFromEventData(typeof event.data === "string" ? event.data : ""));
+        };
+        source.addEventListener("open", handleOpen);
+        source.addEventListener("error", handleError);
+        source.addEventListener("canvas.updated", handleUpdate as EventListener);
         return () => {
-            source.removeEventListener("canvas.updated", onUpdate);
+            source.removeEventListener("open", handleOpen);
+            source.removeEventListener("error", handleError);
+            source.removeEventListener("canvas.updated", handleUpdate as EventListener);
             source.close();
         };
     }
@@ -145,12 +180,14 @@ function openCanvasEventsStream(projectId: string, onUpdate: () => void): () => 
                 credentials: "include",
             });
             if (response.status === 401 || response.status === 403) {
+                options?.onConnectionChange?.(false);
                 return;
             }
             if (!response.ok || !response.body) {
                 throw new Error(`SSE status ${response.status}`);
             }
             attempts = 0;
+            options?.onConnectionChange?.(true);
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = "";
@@ -162,8 +199,13 @@ function openCanvasEventsStream(projectId: string, onUpdate: () => void): () => 
                 while (boundary >= 0) {
                     const frame = buffer.slice(0, boundary);
                     buffer = buffer.slice(boundary + 2);
-                    if (frame.split("\n").some((line) => line.trim() === "event: canvas.updated")) {
-                        onUpdate();
+                    const lines = frame.split("\n");
+                    if (lines.some((line) => line.trim() === "event: canvas.updated")) {
+                        const dataPayload = lines
+                            .filter((line) => line.startsWith("data:"))
+                            .map((line) => line.slice(5).trim())
+                            .join("\n");
+                        onUpdate(parseRevisionFromEventData(dataPayload));
                     }
                     boundary = buffer.indexOf("\n\n");
                 }
@@ -171,6 +213,7 @@ function openCanvasEventsStream(projectId: string, onUpdate: () => void): () => 
         } catch {
             // Reconnect below unless disposed.
         }
+        options?.onConnectionChange?.(false);
         if (!disposed && isDesktopStreamingAvailable()) {
             const delayMs = 1500 * Math.min(8, 2 ** attempts);
             attempts = Math.min(attempts + 1, 4);

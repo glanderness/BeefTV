@@ -441,8 +441,11 @@ func TestAssistantTurnsMigrationFromPreviewV9(t *testing.T) {
 	if err := db.Order("version").Find(&ledger).Error; err != nil {
 		t.Fatal(err)
 	}
-	if ledger[len(ledger)-1].Version != CurrentSchemaVersion || ledger[len(ledger)-1].Name != "mcp-call-history" {
+	if ledger[len(ledger)-1].Version != CurrentSchemaVersion || ledger[len(ledger)-1].Name != "task-effects-outbox" {
 		t.Fatalf("current identity: %+v", ledger[len(ledger)-1])
+	}
+	if !db.Migrator().HasTable(&model.TaskEffect{}) {
+		t.Fatal("v31 did not create task_effects")
 	}
 	foundV10 := false
 	for _, row := range ledger {
@@ -541,5 +544,95 @@ func TestCreationConversationsImportIndexRepairedWithoutNewMigration(t *testing.
 	}
 	if len(ledgerAfter) != len(ledgerBefore) {
 		t.Fatalf("repair added a migration: %d -> %d", len(ledgerBefore), len(ledgerAfter))
+	}
+}
+
+func TestV31TaskEffectsMigrationBackfillsHistoricalSucceededTasksAndValidatesSchema(t *testing.T) {
+	db := openHistorical(t, "preview-v9")
+	now := time.Now()
+	oldDoneAt := now.Add(-2 * time.Hour)
+	recentDoneAt := now.Add(-5 * time.Minute)
+	// 1. Historical succeeded task completed >1h ago -> must be backfilled as settled.
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at, completed_at)
+		VALUES ('hist-done', 'local', 'canvas-1', 'canvas_image', 'succeeded', '生成完成', 'old', '{"images":[]}', ?, ?, ?)`, oldDoneAt, oldDoneAt, oldDoneAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	// 1b. Legacy succeeded task with NULL completed_at but old updated_at -> must also be backfilled (prevents upgrade replay storm).
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at, completed_at)
+		VALUES ('hist-null-completed-old', 'local', 'canvas-1', 'canvas_image', 'succeeded', '生成完成', 'legacy-null', '{"images":[]}', ?, ?, NULL)`, oldDoneAt, oldDoneAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	// 1c. Recent succeeded task with NULL completed_at and recent updated_at -> must NOT be backfilled.
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at, completed_at)
+		VALUES ('hist-null-completed-recent', 'local', 'canvas-1', 'canvas_image', 'succeeded', '生成完成', 'recent-null', '{"images":[]}', ?, ?, NULL)`, recentDoneAt, recentDoneAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	// 2. Actively downloading task -> must NOT be backfilled.
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at, completed_at)
+		VALUES ('hist-inflight', 'local', 'canvas-1', 'canvas_image', 'succeeded', '正在取回结果', 'inflight', '{"images":[]}', ?, ?, ?)`, oldDoneAt, oldDoneAt, oldDoneAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	// 3. Paused delivery task -> must NOT be backfilled.
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at, completed_at)
+		VALUES ('hist-paused', 'local', 'canvas-1', 'canvas_image', 'succeeded', 'delivery_paused', 'paused', '{"images":[]}', ?, ?, ?)`, oldDoneAt, oldDoneAt, oldDoneAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	// 4. Recently completed task (<1h grace window) -> must NOT be backfilled.
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, created_at, updated_at, completed_at)
+		VALUES ('hist-recent', 'local', 'canvas-1', 'canvas_image', 'succeeded', '生成完成', 'recent', '{"images":[]}', ?, ?, ?)`, recentDoneAt, recentDoneAt, recentDoneAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Migrate to v30 first so recovery_outcome column exists, then seed a canvas_bind refusal task before v31.
+	if err := migrateLocalSchema(db, func(v int64) error {
+		if v == 31 {
+			return errors.New("pause-before-v31")
+		}
+		return nil
+	}); err == nil {
+		t.Fatal("expected pause before v31")
+	}
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, project_id, type, status, stage, prompt, result_json, recovery_outcome, created_at, updated_at, completed_at)
+		VALUES ('hist-refused', 'local', 'canvas-1', 'canvas_text', 'succeeded', '任务完成', 'refused', '{"text":"ok"}', 'canvas_bind:{"version":4,"targets":[{"nodeId":"n1","outputIndex":0,"reason":"node_deleted","revision":3}]}', ?, ?, ?)`, oldDoneAt, oldDoneAt, oldDoneAt).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireLocalSchema(db); err != nil {
+		t.Fatalf("RequireLocalSchema after v31 failed: %v", err)
+	}
+
+	for _, backfilledID := range []string{"hist-done", "hist-null-completed-old"} {
+		var doneEffects []model.TaskEffect
+		if err := db.Where("task_id = ?", backfilledID).Find(&doneEffects).Error; err != nil {
+			t.Fatal(err)
+		}
+		if len(doneEffects) != 2 {
+			t.Fatalf("expected 2 backfilled settled effects (delivery+bind) for %s, got %+v", backfilledID, doneEffects)
+		}
+		for _, effect := range doneEffects {
+			if effect.Status != model.TaskEffectStatusSettled || effect.Reason != "v31_migration_baseline" {
+				t.Fatalf("unexpected backfilled effect row for %s: %+v", backfilledID, effect)
+			}
+		}
+	}
+
+	for _, excludedID := range []string{"hist-null-completed-recent", "hist-inflight", "hist-paused", "hist-recent", "hist-refused"} {
+		var count int64
+		if err := db.Model(&model.TaskEffect{}).Where("task_id = ?", excludedID).Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("task %s must not be backfilled as settled during v31 migration, got %d rows", excludedID, count)
+		}
+	}
+
+	// Dropping task_effects must cause RequireLocalSchema to fail Ready.
+	if err := db.Exec("DROP TABLE task_effects").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireLocalSchema(db); err == nil {
+		t.Fatal("expected RequireLocalSchema to reject v31 database missing task_effects table")
 	}
 }

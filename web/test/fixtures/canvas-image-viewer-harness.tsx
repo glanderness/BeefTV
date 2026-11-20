@@ -16,9 +16,8 @@ import {
     syncDiscoveredCanvasNodeHistory,
 } from "../../src/lib/canvas/canvas-image-history";
 import { applyNodeConfigPatch } from "../../src/lib/canvas/canvas-project-domain";
-import { RESOURCE_BLOB_META_STORE_NAME, RESOURCE_BLOBS_STORE_NAME, localForageInstance } from "../../src/lib/localforage-storage";
 import { deliveryPendingTaskOutcome } from "../../src/lib/task-outcome";
-import { getActiveUserScope } from "../../src/lib/user-scope";
+import { primeResourceImagePreviewForTests } from "../../src/services/resource-blob-cache";
 import type { Asset } from "../../src/stores/use-asset-store";
 import { useActiveTheme, useCanvasThemeStore } from "../../src/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasImageHistoryItem, type CanvasNodeData, type CanvasNodeMetadata } from "../../src/types/canvas";
@@ -156,9 +155,6 @@ declare global {
         };
     }
 }
-
-const previewBlobStore = localForageInstance(RESOURCE_BLOBS_STORE_NAME);
-const previewMetaStore = localForageInstance(RESOURCE_BLOB_META_STORE_NAME);
 
 function HarnessApp() {
     const [node, setNode] = useState<CanvasNodeData>(initialNode);
@@ -318,7 +314,6 @@ function HarnessApp() {
         },
         load50VersionNodeWithPrimedPreviews: async () => {
             setStandaloneSrc(null);
-            const scope = getActiveUserScope();
             const thumbSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="#0f766e"/></svg>`;
             const thumbBlob = new Blob([thumbSvg], { type: "image/svg+xml" });
             const history50: CanvasImageHistoryItem[] = [];
@@ -326,18 +321,7 @@ function HarnessApp() {
             for (let i = 1; i <= 50; i += 1) {
                 const resId = `res-perf-${String(i).padStart(2, "0")}`;
                 const assetId = `asset-perf-${String(i).padStart(2, "0")}`;
-                const version = "canvas-preview-v2-p3-128";
-                const cacheKey = `${scope}:${resId}:${version}`;
-                await previewBlobStore.setItem(cacheKey, thumbBlob);
-                await previewMetaStore.setItem(cacheKey, {
-                    key: cacheKey,
-                    userScope: scope,
-                    resourceId: resId,
-                    version,
-                    size: thumbBlob.size,
-                    mimeType: thumbBlob.type,
-                    lastAccessedAt: Date.now(),
-                });
+                primeResourceImagePreviewForTests(`resource:${resId}`, 128, thumbBlob);
                 nextAssets.push({
                     id: assetId,
                     kind: "image",
@@ -394,21 +378,9 @@ function HarnessApp() {
         },
         loadPrimedPreviewPermFailNode: async (resId = "res-perm-fail") => {
             setStandaloneSrc(null);
-            const scope = getActiveUserScope();
             const thumbSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="#b45309"/></svg>`;
             const thumbBlob = new Blob([thumbSvg], { type: "image/svg+xml" });
-            const version = "canvas-preview-v2-p3-128";
-            const cacheKey = `${scope}:${resId}:${version}`;
-            await previewBlobStore.setItem(cacheKey, thumbBlob);
-            await previewMetaStore.setItem(cacheKey, {
-                key: cacheKey,
-                userScope: scope,
-                resourceId: resId,
-                version,
-                size: thumbBlob.size,
-                mimeType: thumbBlob.type,
-                lastAccessedAt: Date.now(),
-            });
+            primeResourceImagePreviewForTests(`resource:${resId}`, 128, thumbBlob);
             const permFailNode: CanvasNodeData = {
                 id: `node-perm-fail-preview-${resId}`,
                 type: CanvasNodeType.Image,

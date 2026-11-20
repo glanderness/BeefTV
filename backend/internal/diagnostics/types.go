@@ -99,6 +99,7 @@ type collection struct {
 	TraceCoverage     *supporttrace.Coverage
 	Collectors        map[string]CollectorCoverage
 	BootEvents        []BootLogEntry
+	CrashpadReports   []CrashpadReportMeta
 	BackendEvents     []supporttrace.Event
 	AssistantTurns    []AssistantTurnEvidence
 	AssistantEvidence []AssistantRuntimeEvidence

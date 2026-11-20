@@ -16,8 +16,9 @@ body .app-user-workspace .app-workspace-sidebar-nav { background: var(--user-pag
 .beeftv-home-hero { position: relative; min-height: 160px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--user-border-strong); border-radius: 12px; background: var(--user-surface-muted); }
 .beeftv-home-dot-base,.beeftv-home-dot-flow { position: absolute; inset: 8px 2px; pointer-events: none; background-size: 18px 18px; }
 .beeftv-home-dot-base { background-image: radial-gradient(circle,color-mix(in srgb,var(--user-ink) 12%,transparent) .3px,transparent 1.4px); }
-.beeftv-home-dot-flow { background-image: radial-gradient(circle,color-mix(in srgb,var(--user-ink) 45%,transparent) .3px,transparent 1.4px); -webkit-mask-image: radial-gradient(circle,transparent 18%,rgba(0,0,0,.2) 32%,rgba(0,0,0,.85) 50%,rgba(0,0,0,.2) 68%,transparent 82%); mask-image: radial-gradient(circle,transparent 18%,rgba(0,0,0,.2) 32%,rgba(0,0,0,.85) 50%,rgba(0,0,0,.2) 68%,transparent 82%); -webkit-mask-position:center; mask-position:center; -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat; opacity:0; animation:beeftv-dot-ripple 4s cubic-bezier(.33,0,.2,1) infinite; }
-.beeftv-home-dot-flow-delay { animation-delay:-2s; }
+.beeftv-home-dot-flow { inset: 50% auto auto 50%; width: 760px; height: 760px; margin: -380px 0 0 -380px; border-radius: 9999px; background: radial-gradient(circle, transparent 18%, color-mix(in srgb, var(--user-ink) 8%, transparent) 44%, color-mix(in srgb, var(--user-ink) 16%, transparent) 54%, transparent 74%); opacity: .18; animation: beeftv-dot-ripple 3.6s cubic-bezier(.33,0,.2,1) 1 forwards; }
+.beeftv-home-dot-flow-delay { animation-delay: .9s; }
+body:has(.ant-modal-wrap:not([style*="display: none"])) .beeftv-home-dot-flow { animation-play-state: paused; }
 .beeftv-home-create { position: relative; z-index: 1; display: flex; align-items: center; flex-direction: column; border: 0; background: none; color: inherit; cursor: pointer; }
 .beeftv-home-create { gap:13px; }
 .beeftv-home-create-icon { display:grid; width:88px; height:52px; place-items:center; border:1.35px solid #2c2c2c; border-radius:16px; color:#070707; background:linear-gradient(180deg,#fff 25.3%,rgba(255,255,255,.87) 89.7%); box-shadow:0 8px 20px rgba(0,0,0,.2); transition:transform .18s ease,box-shadow .18s ease; }
@@ -57,7 +58,7 @@ body .app-user-workspace .app-workspace-sidebar-nav { background: var(--user-pag
 .beeftv-recent-card.is-loading { background: linear-gradient(100deg,var(--user-surface) 30%,var(--user-surface-hover) 50%,var(--user-surface) 70%); background-size: 200% 100%; animation: beeftv-shimmer 1.4s linear infinite; }
 .beeftv-recent-card.is-empty { color:inherit; cursor:pointer; }
 .beeftv-home-error { display: flex; width: 100%; height: 86px; align-items: center; justify-content: center; gap: 10px; border: 1px solid var(--home-border); border-radius: 18px; background: var(--user-surface); color: var(--user-ink-muted); cursor: pointer; }
-@keyframes beeftv-dot-ripple { 0% { opacity:0; -webkit-mask-size:72px 72px; mask-size:72px 72px; } 18% { opacity:.34; } 72% { opacity:.12; } 100% { opacity:0; -webkit-mask-size:1120px 1120px; mask-size:1120px 1120px; } }
+@keyframes beeftv-dot-ripple { 0% { opacity:0; transform:scale(.18); } 30% { opacity:.32; } 100% { opacity:.18; transform:scale(1); } }
 @keyframes beeftv-shimmer { to { background-position: -200% 0; } }
 @media (max-width: 1500px) { .beeftv-home{padding:64px 40px 60px}.beeftv-capabilities{gap:8px;margin-inline:0} }
 @media (max-width: 1100px) { .beeftv-recent-grid{grid-template-columns:repeat(2,minmax(0,1fr))} }

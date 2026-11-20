@@ -30,5 +30,9 @@ func createTaskWithStorageQuotaRepository(repo *repository.Repository, task *mod
 	return resource.CreateTaskWithStorageQuota(repo, task, policy)
 }
 func (s *Service) saveTaskCompletionWithinStorageQuota(task *model.Task, resultJSON, opsJSON []byte, hasCanvasOps bool) error {
-	return resource.SaveTaskCompletionWithLoader(s.repo, &s.storageMu, s.RuntimePolicy, task, resultJSON, opsJSON, hasCanvasOps, s.completionInputJSON, s.captureCanvasWorkflowSource)
+	err := resource.SaveTaskCompletionWithLoader(s.repo, &s.storageMu, s.RuntimePolicy, task, resultJSON, opsJSON, hasCanvasOps, s.completionInputJSON, s.captureCanvasWorkflowSource)
+	if err == nil {
+		s.deliveryWakeup.Signal()
+	}
+	return err
 }

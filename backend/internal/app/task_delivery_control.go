@@ -19,7 +19,11 @@ func (s *Service) pauseGenerationDownload(task model.Task, stage string) (*model
 }
 
 func (s *Service) resumeGenerationDownload(task model.Task) (*model.Task, error) {
-	return taskdelivery.ResumeGenerationDownload(&s.deliveryControlMu, &s.deliveryClosed, s.IsDraining, s.repo, s.deliveryCancels, s.attachTaskDelivery, task)
+	resumed, err := taskdelivery.ResumeGenerationDownload(&s.deliveryControlMu, &s.deliveryClosed, s.IsDraining, s.repo, s.deliveryCancels, s.attachTaskDelivery, task)
+	if err == nil {
+		s.deliveryWakeup.Signal()
+	}
+	return resumed, err
 }
 
 func (s *Service) beginGenerationDownload(userID, identity string, timeout time.Duration) (context.Context, func(error), error) {
@@ -29,7 +33,7 @@ func (s *Service) beginGenerationDownload(userID, identity string, timeout time.
 			return s.SupportTrace().Start(taskSupportContext(parent, task), "generation.download", taskSupportFields(task))
 		},
 		supportFailureReason,
-		func(task model.Task) { _, _ = s.pauseGenerationDownload(task, "delivery_timed_out") },
+		func(task model.Task) { _, _ = s.pauseGenerationDownload(task, model.TaskStageDeliveryTimedOut) },
 		&s.deliveryDeadlines, &s.deliveryCancels, userID, identity, timeout,
 	)
 }

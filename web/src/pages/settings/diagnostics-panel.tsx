@@ -1,15 +1,17 @@
 import { App, Button, Input } from "antd";
 import { Select } from "@/components/ui/base/select";
 import { ChevronDown, Copy, Download, FolderOpen, X } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, useSyncExternalStore } from "react";
 
 import { exportDiagnosticBundle, downloadDiagnosticBundle, previewDiagnosticBundle, type DiagnosticExportInput, type DiagnosticPreview } from "@/services/diagnostics/diagnostics-api";
 import { getClientDiagnosticSnapshot, getDiagnosticRuntime } from "@/services/diagnostics/client-diagnostics";
 import { DEFAULT_DIAGNOSTIC_RANGE, diagnosticRangeMilliseconds, type DiagnosticRange } from "@/services/diagnostics/diagnostic-window";
 import { clearVideoPreviewCache } from "@/services/api/resources";
+import { useCanvasMemoryMode, type CanvasMemoryMode } from "@/lib/canvas/canvas-memory-policy";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { getDesktopAppBinding } from "@/services/desktop-runtime";
+import { beginRendererBusyLease, getDesktopAppBinding, getDesktopBootSnapshot, subscribeDesktopBootSnapshot } from "@/services/desktop-runtime";
+import { updateDesktopBootSnapshot } from "@/services/workspace-startup-state";
 import { EnvironmentChecks } from "./environment-checks";
 
 type DiagnosticsPanelProps = {
@@ -34,6 +36,12 @@ const rangeOptions: { value: DiagnosticRange; label: string }[] = [
     { value: "30m", label: "最近 30 分钟" },
 ];
 
+const memoryModeOptions: { value: CanvasMemoryMode; label: string }[] = [
+    { value: "normal", label: "正常（自动按缩放清晰度加载）" },
+    { value: "low-memory", label: "低内存（最高 512px，关闭悬停预播）" },
+    { value: "thumbnail-only", label: "安全模式（仅 256px 缩略图）" },
+];
+
 export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
     const { taskId, projectId, embedded } = props;
     const open = embedded || props.open;
@@ -47,6 +55,8 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
     const [exporting, setExporting] = useState(false);
     const [exportResult, setExportResult] = useState<ExportResultState | null>(null);
     const [clearingPreviews, setClearingPreviews] = useState(false);
+    const [memoryMode, setMemoryMode] = useCanvasMemoryMode();
+    const bootSnapshot = useSyncExternalStore(subscribeDesktopBootSnapshot, getDesktopBootSnapshot, getDesktopBootSnapshot);
     const desktopBinding = getDesktopAppBinding();
     const openUpdateLogs = desktopBinding?.OpenUpdateLogDirectory;
     const revealBundle = desktopBinding?.RevealDiagnosticBundle;
@@ -59,6 +69,16 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
             return;
         }
         let cancelled = false;
+        if (bootSnapshot.uncleanPreviousShutdown && !bootSnapshot.lastCrashDiagnosticPath && typeof desktopBinding?.StartupState === "function") {
+            void desktopBinding.StartupState().then((fresh) => {
+                if (!cancelled && fresh?.lastCrashDiagnosticPath) {
+                    updateDesktopBootSnapshot({
+                        uncleanPreviousShutdown: true,
+                        lastCrashDiagnosticPath: fresh.lastCrashDiagnosticPath,
+                    });
+                }
+            }).catch(() => undefined);
+        }
         setLoadingPreview(true);
         void buildInput(range, undefined, taskId, projectId)
             .then(previewDiagnosticBundle)
@@ -79,8 +99,21 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
     const handleExport = async () => {
         setExporting(true);
         setExportResult(null);
+        const releaseBusy = beginRendererBusyLease();
         try {
-            const download = await exportDiagnosticBundle(await buildInput(range, description, taskId, projectId));
+            const input = await buildInput(range, description, taskId, projectId);
+            if (typeof desktopBinding?.ExportRuntimeDiagnosticsToDownloads === "function") {
+                const savedPath = await desktopBinding.ExportRuntimeDiagnosticsToDownloads(JSON.stringify(input));
+                if (!savedPath) {
+                    message.info("已取消保存诊断包");
+                    return;
+                }
+                const match = savedPath.match(/DIAG_[A-Z0-9]+/u);
+                setExportResult({ bundleId: match?.[0] || "DIAG_LOCAL", savedPath });
+                message.success("诊断包已存至下载目录并自动打开所在文件夹，可直接发送给支持人员");
+                return;
+            }
+            const download = await exportDiagnosticBundle(input);
             let resolvedSavedPath = "";
             const saved = await downloadDiagnosticBundle(download, (path) => {
                 resolvedSavedPath = path;
@@ -98,6 +131,7 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         } catch (error) {
             message.error(error instanceof Error ? error.message : "导出诊断包失败");
         } finally {
+            releaseBusy();
             setExporting(false);
         }
     };
@@ -118,8 +152,45 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
 
     const rangeLabel = rangeOptions.find((option) => option.value === range)?.label.replace("（推荐）", "") ?? "最近 7 天";
 
+    const showLastCrashNotice = bootSnapshot.uncleanPreviousShutdown || Boolean(bootSnapshot.lastCrashDiagnosticPath);
+
     const content = (
         <div className={embedded ? "space-y-4" : "max-h-[calc(100dvh-180px)] space-y-4 overflow-y-auto pt-3"}>
+            {showLastCrashNotice ? (
+                <section
+                    aria-label="上次异常退出诊断摘要"
+                    className="rounded-xl border border-border bg-muted/45 p-4"
+                    role="status"
+                >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 flex-1">
+                            <h3 className="text-[14px] leading-[22px] font-medium text-foreground">
+                                检测到上次异常退出
+                            </h3>
+                            <p className="mt-1 text-[12px] leading-[18px] text-foreground/70">
+                                {bootSnapshot.lastCrashDiagnosticPath
+                                    ? "后台已自动留存上次退出时的诊断摘要，可直接打开所在文件夹发送给支持人员。"
+                                    : "正在后台自动留存上次退出时的诊断摘要，稍后可在此打开或直接点击下方导出。"}
+                            </p>
+                            {bootSnapshot.lastCrashDiagnosticPath ? (
+                                <p className="mt-1.5 font-mono text-[12px] leading-[20px] text-foreground/70 [overflow-wrap:anywhere]">
+                                    保存位置：{bootSnapshot.lastCrashDiagnosticPath}
+                                </p>
+                            ) : null}
+                        </div>
+                        {bootSnapshot.lastCrashDiagnosticPath && revealBundle ? (
+                            <Button
+                                className="w-full shrink-0 sm:w-auto"
+                                icon={<FolderOpen className="size-4" />}
+                                onClick={() => void handleRevealBundle()}
+                            >
+                                打开诊断包所在文件夹
+                            </Button>
+                        ) : null}
+                    </div>
+                </section>
+            ) : null}
+
             <section
                 aria-label="一键导出诊断包"
                 className="rounded-xl border border-border bg-muted/45 p-4"
@@ -255,6 +326,30 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
                             value={description}
                             onChange={(event) => setDescription(event.target.value)}
                             placeholder="例如：生成一直停在处理中。"
+                        />
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                            <span className="block text-[12px] leading-[18px] font-medium text-foreground">
+                                画布显存与预览模式
+                            </span>
+                            <span className="mt-0.5 block text-[12px] leading-[18px] text-foreground/70">
+                                低配置或大画布场景下可限制缩略图清晰度以显著降低内存占用。
+                            </span>
+                        </div>
+                        <Select
+                            ariaLabel="画布显存与预览模式"
+                            className="w-full sm:w-64"
+                            value={memoryMode}
+                            options={memoryModeOptions}
+                            onChange={(value) => {
+                                const next = memoryModeOptions.find((option) => option.value === value)?.value;
+                                if (next) {
+                                    setMemoryMode(next);
+                                    message.success("已切换画布预览模式");
+                                }
+                            }}
                         />
                     </div>
 

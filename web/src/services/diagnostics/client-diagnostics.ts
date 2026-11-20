@@ -3,7 +3,7 @@ import { type AxiosError, type AxiosRequestConfig } from "axios";
 import { appPathnameFrom } from "@/lib/app-routing";
 import { apiClient } from "@/services/api/request";
 import { browserCapabilities } from "./browser-environment";
-import { localForageStorageForScope } from "@/lib/localforage-storage";
+import { diagnosticsStorageForScope } from "@/lib/diagnostics-storage";
 import {
     setStartupDiagnosticEventSink,
     setStartupDiagnosticPayloadBuilder,
@@ -71,7 +71,7 @@ const startupScope = `startup:${launchId}`;
 const memoryStartupStorage = { getItem: () => null, setItem: () => undefined };
 let scopedUserId = startupScope;
 const eventStore = createDiagnosticEventStore({
-    storage: (scope) => (scope.startsWith("startup:") ? memoryStartupStorage : localForageStorageForScope(scope)),
+    storage: (scope) => (scope.startsWith("startup:") ? memoryStartupStorage : diagnosticsStorageForScope(scope)),
     sanitize: sanitizeEvent,
     launchId,
 });

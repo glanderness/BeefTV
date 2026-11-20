@@ -14,6 +14,7 @@ import { listGenerationTasks } from "@/services/api/task-center";
 import { downloadOwnedOrBrowserMedia, isWailsNativeShell, saveOwnedOrBrowserBlob } from "@/services/desktop-media-save";
 import { writeImageToClipboard } from "@/services/image-clipboard";
 import { resolveImageUrl } from "@/services/image-storage";
+import { canUseSameOriginResourceAsset, resourcePreviewAssetUrl } from "@/services/media-asset-url";
 import { cacheResourceObjectUrl, peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useEffectiveConfig } from "@/stores/use-config-store";
@@ -75,16 +76,12 @@ export function CanvasImageViewerModal({
     const probedMetricEntryIdsRef = useRef<Set<string>>(new Set());
     const urlRetryCountRef = useRef<Map<string, number>>(new Map());
     const metricRetryCountRef = useRef<Map<string, number>>(new Map());
+    const imageErrorTimersRef = useRef<Set<number>>(new Set());
 
-    useEffect(() => {
-        if (!open) {
-            probedDiscoveredResourceIdsRef.current.clear();
-            resolvedUrlEntryIdsRef.current.clear();
-            probedMetricEntryIdsRef.current.clear();
-            urlRetryCountRef.current.clear();
-            metricRetryCountRef.current.clear();
-        }
-    }, [open]);
+    useEffect(() => () => {
+        for (const timer of imageErrorTimersRef.current) window.clearTimeout(timer);
+        imageErrorTimersRef.current.clear();
+    }, []);
 
     const rawDiscoveredItems = useMemo<CanvasImageHistoryItem[]>(
         () => (node ? discoverNodeImageHistoryFromTasks(node, tasksQuery.data) : []),
@@ -178,7 +175,19 @@ export function CanvasImageViewerModal({
     const [metricsById, setMetricsById] = useState<Record<string, SupplementedMediaMetrics>>({});
 
     useEffect(() => {
-        if (!open) return;
+        for (const timer of imageErrorTimersRef.current) window.clearTimeout(timer);
+        imageErrorTimersRef.current.clear();
+        if (!open) {
+            probedDiscoveredResourceIdsRef.current.clear();
+            resolvedUrlEntryIdsRef.current.clear();
+            probedMetricEntryIdsRef.current.clear();
+            urlRetryCountRef.current.clear();
+            metricRetryCountRef.current.clear();
+            setSelectedId("");
+            setResolvedUrls({});
+            setFailedUrlsById({});
+            return;
+        }
         resolvedUrlEntryIdsRef.current.clear();
         probedMetricEntryIdsRef.current.clear();
         urlRetryCountRef.current.clear();
@@ -257,8 +266,16 @@ export function CanvasImageViewerModal({
                     }
                 } else {
                     const reload = (urlRetryCountRef.current.get(entry.id) || 0) > 0;
+                    const ownedId = extractOwnedResourceId(entry.storageKey, entry.content);
+                    if (ownedId && canUseSameOriginResourceAsset()) {
+                        const directUrl = resourcePreviewAssetUrl(ownedId, 2048, "preserve", reload ? Date.now() : undefined);
+                        resolvedUrlEntryIdsRef.current.add(entry.id);
+                        setFailedUrlsById((prev) => (!prev[entry.id] ? prev : { ...prev, [entry.id]: false }));
+                        setResolvedUrls((prev) => (prev[entry.id] === directUrl ? prev : { ...prev, [entry.id]: directUrl }));
+                        continue;
+                    }
                     resolvedUrlEntryIdsRef.current.add(entry.id);
-                    const resolver = reload && extractOwnedResourceId(entry.storageKey, entry.content)
+                    const resolver = reload && ownedId
                         ? cacheResourceObjectUrl(entry.storageKey, true, true)
                         : resolveImageUrl(entry.storageKey, fallback, { cacheMiss: true });
                     void resolver
@@ -385,21 +402,58 @@ export function CanvasImageViewerModal({
     if (!open || !activeItem) return null;
 
     const safeDirectUrl = (candidate?: string) => (candidate && !isProtectedResourceFileUrl(candidate) ? candidate : "");
+    const desktopPreviewUrlFor = (entry: CanvasImageHistoryItem) => {
+        if (failedUrlsById[entry.id] || !canUseSameOriginResourceAsset()) return "";
+        const ownedId = extractOwnedResourceId(entry.storageKey, entry.content);
+        return ownedId ? resourcePreviewAssetUrl(ownedId, 2048) : "";
+    };
     const fullUrlFor = (entry: CanvasImageHistoryItem) =>
         resolvedUrls[entry.id]
+        || desktopPreviewUrlFor(entry)
         || (entry.storageKey ? peekCachedResourceObjectUrl(entry.storageKey) : "")
         || ((node && isActiveImageHistoryItem(node, entry) && safeDirectUrl(src)) ? src : safeDirectUrl(entry.content));
     const buildResolvedStageImage = (entry: CanvasImageHistoryItem, label: string): ResolvedViewerImage => {
         const fullUrl = fullUrlFor(entry);
+        const usingDesktopPreview = Boolean(
+            !failedUrlsById[entry.id]
+            && canUseSameOriginResourceAsset()
+            && extractOwnedResourceId(entry.storageKey, entry.content),
+        );
         const previewUrl = !fullUrl && entry.storageKey ? peekCachedResourceObjectUrl(entry.storageKey, 128) : "";
         return {
             id: entry.id,
             url: fullUrl || previewUrl || "",
             label,
             isPrimary: Boolean(primaryItem && primaryItem.id === entry.id),
-            isPreview: !fullUrl && Boolean(previewUrl),
+            isPreview: usingDesktopPreview || (!fullUrl && Boolean(previewUrl)),
             failed: Boolean(failedUrlsById[entry.id]) && !fullUrl,
         };
+    };
+
+    const handleStageImageError = (id: string) => {
+        const entry = items.find((item) => item.id === id);
+        if (!entry || failedUrlsById[id]) return;
+        const ownedId = extractOwnedResourceId(entry.storageKey, entry.content);
+        if (!ownedId || !canUseSameOriginResourceAsset()) return;
+        const attempts = urlRetryCountRef.current.get(id) || 0;
+        if (attempts < 1) {
+            urlRetryCountRef.current.set(id, attempts + 1);
+            resolvedUrlEntryIdsRef.current.delete(id);
+            const timer = window.setTimeout(() => {
+                imageErrorTimersRef.current.delete(timer);
+                setRetryNonce((n) => n + 1);
+            }, 250);
+            imageErrorTimersRef.current.add(timer);
+            return;
+        }
+        resolvedUrlEntryIdsRef.current.add(id);
+        setResolvedUrls((prev) => {
+            if (!prev[id]) return prev;
+            const next = { ...prev };
+            delete next[id];
+            return next;
+        });
+        setFailedUrlsById((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
     };
 
     const activeResolved = buildResolvedStageImage(activeItem, items.length > 1 ? `第 ${selectedIndex + 1} 版` : alt);
@@ -428,16 +482,26 @@ export function CanvasImageViewerModal({
 
     const loadOriginal = async () => {
         const target = sidebarItem;
-        let href = fullUrlFor(target);
+        const targetOwnedId = extractOwnedResourceId(target.storageKey, target.content);
+        // Desktop stage renders disk-cached 2048px previews; download/copy must always fetch the lossless original.
+        const preferOriginalBlob = Boolean(targetOwnedId && target.storageKey && canUseSameOriginResourceAsset());
+        let href = preferOriginalBlob ? "" : fullUrlFor(target);
         if (!href && target.storageKey) {
-            const reload = failedUrlsById[target.id] && extractOwnedResourceId(target.storageKey, target.content);
-            href = reload
+            const reload = Boolean(failedUrlsById[target.id]) && Boolean(targetOwnedId);
+            const resolved = reload
                 ? await cacheResourceObjectUrl(target.storageKey, true, true)
                 : await resolveImageUrl(target.storageKey, "", { cacheMiss: true });
-            if (href && !isProtectedResourceFileUrl(href)) {
-                resolvedUrlEntryIdsRef.current.add(target.id);
-                setFailedUrlsById((prev) => ({ ...prev, [target.id]: false }));
-                setResolvedUrls((prev) => ({ ...prev, [target.id]: href }));
+            if (resolved && !isProtectedResourceFileUrl(resolved)) {
+                href = resolved;
+                if (!preferOriginalBlob) {
+                    resolvedUrlEntryIdsRef.current.add(target.id);
+                    setFailedUrlsById((prev) => (!prev[target.id] ? prev : { ...prev, [target.id]: false }));
+                    setResolvedUrls((prev) => ({ ...prev, [target.id]: resolved }));
+                } else if (failedUrlsById[target.id]) {
+                    resolvedUrlEntryIdsRef.current.delete(target.id);
+                    setFailedUrlsById((prev) => ({ ...prev, [target.id]: false }));
+                    setRetryNonce((n) => n + 1);
+                }
             }
         }
         if (!href || isProtectedResourceFileUrl(href)) throw new Error("原图读取失败，请重试");
@@ -651,11 +715,26 @@ export function CanvasImageViewerModal({
                     if (!width || !height) return;
                     setMetricsById((prev) => (prev[id]?.width === width && prev[id]?.height === height ? prev : { ...prev, [id]: { ...prev[id], width, height } }));
                 }}
+                onImageError={handleStageImageError}
                 onRetryImage={(id) => {
                     resolvedUrlEntryIdsRef.current.delete(id);
                     probedMetricEntryIdsRef.current.delete(id);
                     urlRetryCountRef.current.set(id, 1);
                     metricRetryCountRef.current.set(id, 0);
+                    const retryEntry = items.find((item) => item.id === id);
+                    const retryOwnedId = retryEntry ? extractOwnedResourceId(retryEntry.storageKey, retryEntry.content) : "";
+                    if (retryOwnedId && canUseSameOriginResourceAsset()) {
+                        const freshUrl = resourcePreviewAssetUrl(retryOwnedId, 2048, "preserve", Date.now());
+                        resolvedUrlEntryIdsRef.current.add(id);
+                        setResolvedUrls((prev) => ({ ...prev, [id]: freshUrl }));
+                    } else {
+                        setResolvedUrls((prev) => {
+                            if (!prev[id]) return prev;
+                            const next = { ...prev };
+                            delete next[id];
+                            return next;
+                        });
+                    }
                     setFailedUrlsById((prev) => ({ ...prev, [id]: false }));
                     setRetryNonce((n) => n + 1);
                 }}

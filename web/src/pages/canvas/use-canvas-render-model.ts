@@ -243,13 +243,12 @@ export function useCanvasRenderModel({
             const node = nodeById.get(nodeId);
             if (node) candidates.push(node);
         }
-        const prioritized = candidates.filter((node) => forcedNodeIds.has(node.id));
-        const remaining = candidates.filter((node) => !forcedNodeIds.has(node.id));
-        // Gesture-retained nodes were appended after the spatial query. Keep
-        // document order so React never moves a mounted card (a moved <video>
-        // reloads) when a node passes between the query and the retained set.
-        if (gestureRetainedIds.size) remaining.sort((left, right) => (nodeIndexById.get(left.id) ?? 0) - (nodeIndexById.get(right.id) ?? 0));
-        [...prioritized, ...remaining].forEach((node) => {
+        // Keep strict document order across visible, pinned, hovered, selected,
+        // and gesture-retained cards. Reordering a mounted DOM card on hover or
+        // selection calls insertBefore() under the pointer, which triggers a
+        // mouseleave/mouseenter feedback loop (100%+ CPU) and reloads <video>.
+        candidates.sort((left, right) => (nodeIndexById.get(left.id) ?? 0) - (nodeIndexById.get(right.id) ?? 0));
+        candidates.forEach((node) => {
             if (renderHiddenNodeIds.has(node.id)) return;
             const retained = forcedNodeIds.has(node.id) || renderedNodeIds.has(node.id) || gestureRetainedIds.has(node.id);
             const insideEnterBounds = node.position.x + node.width > renderBounds.enter.left && node.position.x < renderBounds.enter.right && node.position.y + node.height > renderBounds.enter.top && node.position.y < renderBounds.enter.bottom;

@@ -12,7 +12,7 @@ import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, t
 import { http } from "@/services/api/request";
 import { startOperation } from "@/stores/use-operation-progress";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
-import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { getResource, resourceIdFromStorageKey } from "@/services/api/resources";
 
 export const ARCHIVE_STORAGE_KEY_PATTERN = /^(image|video|audio|file|resource|model|video-reference|audio-reference):/;
 
@@ -57,6 +57,7 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
     let completed = 0;
     const total = projects.reduce((count, project) => count + collectStorageKeys(project).length, 0);
     progress({ phase: "media", completed, total });
+    const canUseNativeArchive = typeof window !== "undefined" && typeof window.go?.main?.DesktopApp?.SaveOwnedArchive === "function";
     const zipFiles: { name: string; data: BlobPart; resourceId?: string }[] = [];
     const missingFiles: MissingExportFile[] = [];
     const exportedProjects = await Promise.all(
@@ -64,30 +65,51 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
             const files: CanvasExportAsset[] = [];
             const missingStorageKeys = new Set<string>();
             const missingDrawingIds = new Set<string>();
-            await Promise.all(
-                collectStorageKeys(project).map(async (storageKey) => {
-                    let blob: Blob | null | undefined;
+            await runWithConcurrency(collectStorageKeys(project), 4, async (storageKey) => {
+                const resourceId = resourceIdFromStorageKey(storageKey);
+                if (canUseNativeArchive && resourceId) {
                     try {
-                        blob = await step(storageKey.startsWith("image:") ? getImageBlob(storageKey) : getMediaBlob(storageKey));
+                        const resource = await step(getResource(resourceId, { signal: options.signal }));
                         check();
-                    } catch (error) {
+                        if (!resource || resource.status !== "ready") {
+                            missingStorageKeys.add(storageKey);
+                            missingFiles.push({ owner: project.title || project.id, reference: storageKey });
+                            return;
+                        }
+                        const mimeType = resource.mimeType || "application/octet-stream";
+                        const path = `projects/${encodeURIComponent(project.id)}/files/${encodeURIComponent(storageKey)}.${archiveFileExtension(mimeType, resource.kind === "image" ? "png" : "bin")}`;
+                        files.push({ storageKey, path, mimeType, bytes: resource.size || 0 });
+                        zipFiles.push({ name: path, data: "", resourceId });
+                    } catch {
                         check();
                         missingStorageKeys.add(storageKey);
                         missingFiles.push({ owner: project.title || project.id, reference: `${storageKey}（读取失败）` });
-                        return;
                     } finally {
                         if (!options.signal?.aborted) progress({ phase: "media", completed: ++completed, total });
                     }
-                    if (!blob || blob.size === 0) {
-                        missingStorageKeys.add(storageKey);
-                        missingFiles.push({ owner: project.title || project.id, reference: storageKey });
-                        return;
-                    }
-                    const path = `projects/${encodeURIComponent(project.id)}/files/${encodeURIComponent(storageKey)}.${archiveFileExtension(blob.type, storageKey.startsWith("image:") ? "png" : "bin")}`;
-                    files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
-                    zipFiles.push({ name: path, data: blob, resourceId: resourceIdFromStorageKey(storageKey) || undefined });
-                }),
-            );
+                    return;
+                }
+                let blob: Blob | null | undefined;
+                try {
+                    blob = await step(storageKey.startsWith("image:") ? getImageBlob(storageKey) : getMediaBlob(storageKey));
+                    check();
+                } catch {
+                    check();
+                    missingStorageKeys.add(storageKey);
+                    missingFiles.push({ owner: project.title || project.id, reference: `${storageKey}（读取失败）` });
+                    return;
+                } finally {
+                    if (!options.signal?.aborted) progress({ phase: "media", completed: ++completed, total });
+                }
+                if (!blob || blob.size === 0) {
+                    missingStorageKeys.add(storageKey);
+                    missingFiles.push({ owner: project.title || project.id, reference: storageKey });
+                    return;
+                }
+                const path = `projects/${encodeURIComponent(project.id)}/files/${encodeURIComponent(storageKey)}.${archiveFileExtension(blob.type, storageKey.startsWith("image:") ? "png" : "bin")}`;
+                files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
+                zipFiles.push({ name: path, data: blob, resourceId: resourceId || undefined });
+            });
             check();
             const drawingNodes = project.nodes.filter((node) => options.includeLocalDrawings !== false && node.type === "drawing" && node.metadata?.drawingId);
             if (drawingNodes.length) progress({ phase: "drawings" });
@@ -427,4 +449,15 @@ function stripMissingArchiveReferences<T>(
 
 function safeFileName(value: string) {
     return value.replace(/[\\/:*?"<>|]/g, "_");
+}
+
+async function runWithConcurrency<T>(items: readonly T[], limit: number, worker: (item: T) => Promise<void>) {
+    let index = 0;
+    const runners = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+        while (index < items.length) {
+            const current = index++;
+            await worker(items[current]);
+        }
+    });
+    await Promise.all(runners);
 }

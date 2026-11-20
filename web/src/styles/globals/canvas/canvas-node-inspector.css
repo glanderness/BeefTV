@@ -100,14 +100,16 @@
         }
     }
 
+    /* 选中节点时播放有限次流光脉冲后静止为清晰高亮线，避免非合成的 stroke-dashoffset
+       无限重绘导致大画布和 Windows ANGLE GPU 进程持续满载。 */
     .canvas-connection-flow {
-        animation: canvas-connection-flow 1.25s var(--motion-ease-linear) infinite;
+        animation: canvas-connection-flow 1.25s var(--motion-ease-linear) 2;
     }
 
     /* 流光：一小段高亮沿连线跑。周期与上面的虚线流动刻意错开，两者同频会锁成
        一条整体平移的虚线、看不出「有光在走」。只在选中/关联态渲染（见 canvas-connections.tsx）。 */
     .canvas-connection-comet {
-        animation: canvas-connection-comet 2.1s var(--motion-ease-linear) infinite;
+        animation: canvas-connection-comet 2.1s var(--motion-ease-out) 1 forwards;
     }
 
     .canvas-connection-draft {

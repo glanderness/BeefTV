@@ -131,6 +131,7 @@ func desktopAppOptions(app *DesktopApp) *options.App {
 			Assets:  assets,
 			Handler: desktopAssetHandler{app: app},
 		},
+		Menu:      desktopApplicationMenu(app),
 		OnStartup: app.startup,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: skillInstanceID(app.dataDir),

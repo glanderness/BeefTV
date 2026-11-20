@@ -36,6 +36,14 @@ func (r *Repository) CanvasProjectMetadata(userID, id string) (*model.CanvasProj
 	return &project, err
 }
 
+func (r *Repository) CanvasProjectRevision(userID, id string) (int64, error) {
+	var row struct {
+		Revision int64
+	}
+	err := r.db.Model(&model.CanvasProject{}).Select("revision").Where("id = ? AND user_id = ?", id, userID).Take(&row).Error
+	return row.Revision, err
+}
+
 func (r *Repository) CanvasSnapshots(userID, canvasID string, limit int) ([]model.CanvasSnapshot, error) {
 	items := []model.CanvasSnapshot{}
 	err := r.db.Select(canvasSnapshotSummaryColumns).Where("user_id = ? AND canvas_id = ?", userID, canvasID).

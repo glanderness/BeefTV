@@ -94,6 +94,7 @@ type Service struct {
 	generationDeliveryMedia  taskdelivery.Media
 	generationDelivery       *taskdelivery.Deliverer
 	deliveryMu               sync.Mutex
+	deliveryWakeup           taskdelivery.RecoveryWakeup
 	deliveryProgress         *deliveryProgressRegistry
 	deliveryProgressOnce     sync.Once
 	referenceProgress        sync.Map
@@ -324,7 +325,7 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 
 func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*model.Task, error) {
 	if task, err := s.repo.TaskForUser(userID, id); err == nil && task.Status == model.TaskStatusSucceeded {
-		return s.pauseGenerationDownload(*task, "delivery_paused")
+		return s.pauseGenerationDownload(*task, model.TaskStageDeliveryPaused)
 	}
 	return s.taskDomain().Cancel(ctx, userID, id)
 }

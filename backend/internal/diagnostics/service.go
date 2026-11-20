@@ -255,6 +255,7 @@ func (s *Service) collect(userID string, req ExportRequest) (*collection, error)
 	}
 	collected.collectUpdateCoverage()
 	collected.collectBootEvidence(s.dataDir, window)
+	collected.CrashpadReports = CollectCrashpadReportMeta(s.dataDir)
 	s.collectAssistantEvidence(userID, collected)
 	s.collectTraceEvidence(userID, collected)
 	s.collectResourceEvidence(userID, tasks, collected)

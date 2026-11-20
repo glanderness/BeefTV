@@ -49,6 +49,8 @@ v28 `managed-media-query-identity` 只给 `image_submissions` 追加可空 `quer
 
 v29 `task-failure-category` 只给 `tasks` 追加可空 `error_code TEXT`，不回填旧任务、不改写历史迁移记录。任务失败时在同一终态写入中保存当时算出的失败类目和已经脱敏的用户文案；任务列表与详情优先读取这两个值，不再按保存后的中文文案重新归类。旧任务该列为空，仍按旧文案归类，行为不变。迁移只加列；缺列拒绝 Ready。
 
+v31 `task-effects-outbox` 在 v30 `mcp-call-history` 之后追加 `task_effects` 副作用状态表，建立 `(task_id, kind, node_id, output_index, conversation_id, message_id)` 唯一索引 `idx_task_effects_identity` 与 `(task_id, kind, status)` 辅助索引 `idx_task_effects_task_kind_status`。后台交付恢复与画布绑定恢复通过反连接查询未进入 `settled` 且已到期（或被画布拒绝后画布版本已推进）的记录；空闲时返回空候选集、不加载画布正文，也不重放历史操作。该表属于派生调度状态，不改写任务终态与历史迁移记录；缺表拒绝 Ready。本地派生媒体缩略图与视频首帧存放在 `data/cache/previews/`，属于可重建缓存，迁移数据目录时自动跳过。
+
 
 v13 `upload-reservation-witness` 追加 `user_upload_reservations`，以 `(user_id, identity)` 唯一索引记录未完成上传预留的日期和字节数。日额仍由 `user_daily_upload_usages` 记账，预留索引与日额增加在同一事务内完成。资源进入 READY 时与状态保存在同一事务清除索引并保留日额；进入 FAILED 或放弃时与状态保存在同一事务按索引金额和日期释放。FAILED 准入只把状态改成 PENDING，不退日额。未结算资源写成 READY 前必须持有见证，缺见证时再预留；残留 FAILED 若仍持有原见证则沿用，不二次扣额。已结算 READY 丢失物理文件时，恢复不重新预留；物理写入或最终保存失败保留原 READY 状态并返回错误，下一次恢复仍复用原资源身份及已消费额度。启动恢复：无对应资源则释放一次；PENDING 保留索引；FAILED 释放；READY 清索引且保留日额。删除 READY 资源只清索引，不把已计入日额当成孤儿退还。重复清理不再扣减其他上传的日额。分片会话文件不是配额账；查询失败时保留恢复证据并记录恢复错误。同一身份的进行中重复预留映射为上传进行中。
 
@@ -90,7 +92,7 @@ Agent 宿主在安装仓库锁定的依赖后，可从仓库根目录执行 `bun
 
 `failure_diagnostics.source=local_network` 表示本机访问外部服务时的网络故障。DNS 底层 cause 只用于运行时的取消与重试判断；持久化内容仅包含安全摘要、`transportPhase=dns` 和实际操作阶段，不包含解析目标或 DNS 服务器地址。
 
-本地 SQLite 使用 `local_schema_migrations` 记录版本。本地候选目前为 v30，正式 v1.6.21 为 v3；历史图片恢复预览曾使用 v7。正式 v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。整合 v8 同时补齐历史分支可能缺失的产品与 Agent 结构，v9 修复已标 v8 的已知结构缺损并强化完整性检查，v10 追加助手业务回合表，v11 追加创作对话表，v12 追加画布文件夹与画板，v13 追加上传预留恢复索引，v14 追加固定技能版本，v15 追加内置权限和跨画布快照，v16 追加助手持久会话绑定，保留原迁移记录、Agent 表和任务扩展列。v17–v21 的活动技能、生成接续、意图撤销、制作授权和市场版本元数据见本文前述迁移说明。
+本地 SQLite 使用 `local_schema_migrations` 记录版本。本地候选目前为 v31，正式 v1.6.21 为 v3；历史图片恢复预览曾使用 v7。正式 v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。整合 v8 同时补齐历史分支可能缺失的产品与 Agent 结构，v9 修复已标 v8 的已知结构缺损并强化完整性检查，v10 追加助手业务回合表，v11 追加创作对话表，v12 追加画布文件夹与画板，v13 追加上传预留恢复索引，v14 追加固定技能版本，v15 追加内置权限和跨画布快照，v16 追加助手持久会话绑定，保留原迁移记录、Agent 表和任务扩展列。v17–v21 的活动技能、生成接续、意图撤销、制作授权和市场版本元数据见本文前述迁移说明。
 
 部分预览版曾将 v3–v6 用于其他迁移。启动时还会按实际表结构检查并补齐 `failure_diagnostics`，不覆盖迁移记录、不删除预览版字段或旧任务；就绪检查同时要求最低版本和该字段存在。任务入库失败返回 HTTP 500、`reason=local_storage_failed`，界面明确显示本地保存失败、尚未提交生成。内部错误链保留数据库原因，HTTP 响应不包含 SQL 原文；handler 日志记录错误类型。
 
@@ -135,7 +137,7 @@ HTTPS 图片提交前读取同源 `/models` 元数据，仅成功响应明确声
 
 ### 本地工作区结构（桌面形态）
 
-桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（当前候选为 27，见 `backend/internal/database/local_schema.go`），
+桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（当前候选为 31，见 `backend/internal/database/local_schema.go`），
 与上面的托管版本序列相互独立。版本 11 由会话工作单独占用，本序列从 10 直接进入 12。
 
 版本 3 `agent-operation-records` 为既有版本 2 工作区创建 `agent_op_records` 及用户、操作 ID 联合主键；版本 4/5 为任务的客户端操作编号补充结构；版本 6 `agent-operation-turn-attribution` 为 `agent_op_records` 增加可空的 `turn_id` 与索引，用于把内置助手一轮对话的写入回执归到该轮上。迁移只新增结构，不重写画布、项目或任务数据；结构创建与迁移记录在同一事务中提交。重复启动不会重复迁移，已成功操作的幂等结果在重启后继续回放。
@@ -299,3 +301,5 @@ HTTPS 图片提交前读取同源 `/models` 元数据，仅成功响应明确声
 素材状态为 `archived` 时进入回收站。后台按“资源与请求策略”中的 `recycleBinRetentionDays` 定期扫描过期项；`0` 表示永久保留。自动清理与用户手动彻底删除复用同一 service 引用校验和 `resource_deletion_jobs` Outbox，仍被画布、项目、任务或其他业务记录引用的素材不会被删除。
 
 本地 schema v30 新增 `mcp_calls`，每个工作区保留最近 200 次 MCP 工具调用及关联任务运行编号。记录不保存工具参数或响应正文。`image_submissions.settled_quota` 保存对应尝试的官方媒体结算回执额度，空值表示尚无已确认金额。
+
+本地 schema v31 新增 `task_effects` 表（唯一索引 `idx_task_effects_identity` 与 `(task_id, kind, status)` 索引），将任务完成后的交付、画布节点绑定与对话消息附加进度独立持久化在 `tasks.recovery_outcome` 之外，支持按 `next_attempt_at` 指数退避、记录画布修订号相关的终端拒绝，使空闲巡检在无待处理任务时返回空候选集且不加载画布正文或触发写操作；v31 迁移仅对升级前已完成超过 1 小时的历史成功任务（排除仍在取回/已暂停/超时及带有 `canvas_bind:` 等待标记的任务）回填已结算基线，避免升级首启重放历史绑定；就绪检查要求 `task_effects` 表与唯一索引完整，缺表或缺索引时拒绝 Ready。
