@@ -129,7 +129,7 @@ export async function captureCanvasVideoPosterBlobUrl(
     if (cached) return URL.createObjectURL(cached.poster);
     const inFlight = previewRequests.get(requestKey);
     if (inFlight) {
-        const result = await awaitWithAbort(inFlight.promise, signal);
+        const result = await awaitWithAbort(inFlight.promise, signal, timeoutMs);
         throwIfAborted(signal);
         const blob = result && getCachedCanvasVideoPreviewBlob(node);
         if (blob) return URL.createObjectURL(blob);
@@ -162,17 +162,48 @@ function touchCachedPoster(requestKey: string): CachedPoster | undefined {
     return cached;
 }
 
-function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
-    if (!signal) return promise;
-    if (signal.aborted) return Promise.reject(abortError());
+function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal, timeoutMs = 0): Promise<T> {
+    if (!signal && timeoutMs <= 0) return promise;
+    if (signal?.aborted) return Promise.reject(abortError());
     let onAbort: () => void = () => undefined;
-    const aborted = new Promise<never>((_, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bounded = new Promise<never>((_, reject) => {
         onAbort = () => reject(abortError());
-        signal.addEventListener("abort", onAbort, { once: true });
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (timeoutMs > 0) {
+            timer = setTimeout(() => reject(new DOMException("Video poster timed out", "TimeoutError")), timeoutMs);
+        }
     });
-    return Promise.race([promise, aborted]).finally(() => {
-        signal.removeEventListener("abort", onAbort);
+    return Promise.race([promise, bounded]).finally(() => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
     });
+}
+
+async function acquireTimedVideoSource(
+    storageKey: string | undefined,
+    fallback: string,
+    signal?: AbortSignal,
+    needsCompatible = false,
+    timeoutMs = 0,
+) {
+    if (timeoutMs <= 0) {
+        return acquireCanvasVideoSource(storageKey, fallback, signal, needsCompatible);
+    }
+    throwIfAborted(signal);
+    const controller = new AbortController();
+    const onParentAbort = () => controller.abort(signal?.reason ?? abortError());
+    signal?.addEventListener("abort", onParentAbort, { once: true });
+    const deadline = setTimeout(
+        () => controller.abort(new DOMException("Video poster timed out", "TimeoutError")),
+        timeoutMs,
+    );
+    try {
+        return await acquireCanvasVideoSource(storageKey, fallback, controller.signal, needsCompatible);
+    } finally {
+        clearTimeout(deadline);
+        signal?.removeEventListener("abort", onParentAbort);
+    }
 }
 
 async function capturePosterWithSharedSlot(
@@ -183,28 +214,25 @@ async function capturePosterWithSharedSlot(
 ): Promise<CachedPoster | null> {
     await waitForBrowserIdle(signal);
     const releaseSlot = await acquirePreviewSourceSlot(signal);
-    const workController = new AbortController();
-    const onParentAbort = () => workController.abort(signal?.reason ?? abortError());
-    if (signal?.aborted) {
-        releaseSlot();
-        throw abortError();
-    }
-    signal?.addEventListener("abort", onParentAbort, { once: true });
-    const deadline = workTimeoutMs > 0
-        ? setTimeout(() => workController.abort(new DOMException("Video poster timed out", "TimeoutError")), workTimeoutMs)
-        : undefined;
     let captured: Awaited<ReturnType<typeof captureVideoPoster>>;
     try {
-        throwIfAborted(workController.signal);
+        throwIfAborted(signal);
         const cached = touchCachedPoster(requestKey);
         if (cached) return cached;
         const storageKey = node.metadata?.storageKey;
         const fallback = node.metadata?.content || "";
-        const source = await acquireCanvasVideoSource(storageKey, fallback, workController.signal);
+        // Bound source acquisition and active decoding separately so neither
+        // the 2-slot source queue nor captureVideoPoster's single-decoder queue
+        // consumes the active work timeout budget.
+        const source = await acquireTimedVideoSource(storageKey, fallback, signal, false, workTimeoutMs);
         if (!source.url) { source.release(); return null; }
         let firstError: unknown;
         try {
-            captured = await captureVideoPoster(source.url, { signal: workController.signal, maxWidth: 400 });
+            captured = await captureVideoPoster(source.url, {
+                signal,
+                maxWidth: 400,
+                timeoutMs: workTimeoutMs > 0 ? workTimeoutMs : undefined,
+            });
         } catch (error) {
             firstError = error;
             captured = { width: 0, height: 0, capturedAtMs: 0 };
@@ -212,25 +240,27 @@ async function capturePosterWithSharedSlot(
             source.release();
         }
         if (!captured.poster) {
-            throwIfAborted(workController.signal);
+            throwIfAborted(signal);
             if (!resourceIdFromStorageKey(storageKey)) {
                 if (firstError) throw firstError;
                 return null;
             }
-            const compatibleSource = await acquireCanvasVideoSource(storageKey, fallback, workController.signal, true);
+            const compatibleSource = await acquireTimedVideoSource(storageKey, fallback, signal, true, workTimeoutMs);
             if (!compatibleSource.url) { compatibleSource.release(); return null; }
             try {
-                captured = await captureVideoPoster(compatibleSource.url, { signal: workController.signal, maxWidth: 400 });
+                captured = await captureVideoPoster(compatibleSource.url, {
+                    signal,
+                    maxWidth: 400,
+                    timeoutMs: workTimeoutMs > 0 ? workTimeoutMs : undefined,
+                });
             } finally {
                 compatibleSource.release();
             }
         }
     } finally {
-        clearTimeout(deadline);
-        signal?.removeEventListener("abort", onParentAbort);
         releaseSlot();
     }
-    throwIfAborted(workController.signal);
+    throwIfAborted(signal);
     if (!captured.poster) return null;
     const meta: Omit<VideoPreview, "content"> = {
         width: captured.width,

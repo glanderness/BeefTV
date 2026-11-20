@@ -6,6 +6,7 @@ import { AssetMediaPreview } from "../../src/components/asset-media-preview";
 import { setCanvasMemoryMode } from "../../src/lib/canvas/canvas-memory-policy";
 import { GenerationHistorySurface } from "../../src/pages/assets/assets-generation-history";
 import type { LibraryAsset } from "../../src/pages/assets/assets-shared";
+import { acquireCanvasVideoPreview, captureCanvasVideoPosterBlobUrl } from "../../src/services/canvas-video-preview";
 import { setDirectMediaAssetsEnabled } from "../../src/services/media-asset-url";
 import type { Asset } from "../../src/stores/use-asset-store";
 
@@ -16,6 +17,39 @@ type FixtureParams = { count: number; poster: boolean; portrait: boolean; direct
 const initialParams = (window as Window & { __fixture: FixtureParams }).__fixture;
 setDirectMediaAssetsEnabled(initialParams.directPoster);
 setCanvasMemoryMode(initialParams.lowMemory ? "low-memory" : "normal");
+
+const previewApi = window as Window & {
+    __previewJoin?: {
+        startCanvasPreview: (id: string) => void;
+        joinTimedPoster: (id: string, timeoutMs: number) => Promise<{ ok: boolean; errorName?: string; url?: string }>;
+        awaitCanvasPreview: () => Promise<boolean>;
+    };
+};
+let activeCanvasLease: ReturnType<typeof acquireCanvasVideoPreview> | undefined;
+previewApi.__previewJoin = {
+    startCanvasPreview(id: string) {
+        activeCanvasLease?.release();
+        activeCanvasLease = acquireCanvasVideoPreview({ metadata: { storageKey: `resource:${id}`, content: `/api/resources/${id}/file` } });
+    },
+    async joinTimedPoster(id: string, timeoutMs: number) {
+        try {
+            const url = await captureCanvasVideoPosterBlobUrl(
+                { metadata: { storageKey: `resource:${id}`, content: `/api/resources/${id}/file` } },
+                { timeoutMs },
+            );
+            if (url) URL.revokeObjectURL(url);
+            return { ok: Boolean(url), url };
+        } catch (error) {
+            return { ok: false, errorName: error instanceof Error ? error.name : String(error) };
+        }
+    },
+    async awaitCanvasPreview() {
+        const result = await activeCanvasLease?.promise;
+        activeCanvasLease?.release();
+        activeCanvasLease = undefined;
+        return Boolean(result?.content);
+    },
+};
 
 function Harness() {
     const params = initialParams;
