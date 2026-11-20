@@ -12,14 +12,75 @@ import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, t
 import { http } from "@/services/api/request";
 import { startOperation } from "@/stores/use-operation-progress";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
-import { getResource, resourceIdFromStorageKey } from "@/services/api/resources";
+import { getResource, isResourceUrl, resourceIdFromStorageKey } from "@/services/api/resources";
+import { isTrustedLocalOriginUrl } from "@/lib/desktop-shell";
+import { extractOwnedResourceId } from "@/lib/canvas/canvas-resource-id";
 
 export const ARCHIVE_STORAGE_KEY_PATTERN = /^(image|video|audio|file|resource|model|video-reference|audio-reference):/;
+const ARCHIVE_RESOURCE_ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
+
+export const ARCHIVE_PRIMARY_MEDIA_URL_KEYS = new Set([
+    "content",
+    "previewContent",
+    "url",
+    "dataUrl",
+]);
+
+export const ARCHIVE_BARE_RESOURCE_ID_KEYS = new Set([
+    "resourceId",
+    "sampleResourceId",
+    "referenceResourceId",
+]);
+
+export const ARCHIVE_BARE_RESOURCE_ID_ARRAY_KEYS = new Set([
+    "resourceIds",
+    "referenceResourceIds",
+]);
+
+export const ARCHIVE_MEDIA_CONTAINER_KEYS = new Set([
+    "imageHistory",
+    "videoPreview",
+    "directorScenes",
+    "panorama",
+    "screenshots",
+    "panoramaConfig",
+    "emotionEdit",
+    "mediaConversion",
+]);
 
 export function isArchiveStorageKey(value: string) {
     const key = value.trim();
     if (!key || key.startsWith("data:") || key.startsWith("blob:")) return false;
     return ARCHIVE_STORAGE_KEY_PATTERN.test(key);
+}
+
+export function isArchiveStorageKeyField(key: string) {
+    return key === "storageKey" || key.endsWith("StorageKey");
+}
+
+export function isArchiveMediaUrlField(key: string) {
+    return key === "content" || key === "previewContent" || key === "url" || key.endsWith("Url");
+}
+
+export function isArchiveMediaNodeType(type: unknown): boolean {
+    return type === "image" || type === "video" || type === "audio";
+}
+
+export function validArchiveResourceId(value: string): string {
+    const trimmed = value.trim();
+    return ARCHIVE_RESOURCE_ID_PATTERN.test(trimmed) ? trimmed : "";
+}
+
+export function extractOwnedResourceIdFromArchiveUrl(
+    value: string,
+    options: { allowAnyOrigin?: boolean } = {},
+): string {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.startsWith("resource:")) return "";
+    if (!options.allowAnyOrigin && !isResourceUrl(trimmed) && !isTrustedLocalOriginUrl(trimmed)) {
+        return "";
+    }
+    return extractOwnedResourceId(undefined, trimmed);
 }
 
 export type CanvasExportProgress = { phase: "loading" | "media" | "drawings" | "packing" | "saving"; completed?: number; total?: number };
@@ -281,6 +342,7 @@ export async function exportCanvasProjectsByIds(
 export type OpenCanvasArchive = {
     data: CanvasExportFile;
     files: Map<string, Blob>;
+    missingFiles?: MissingExportFile[];
 };
 
 export async function openCanvasArchive(file: Blob): Promise<OpenCanvasArchive> {
@@ -293,17 +355,18 @@ export async function openCanvasArchive(file: Blob): Promise<OpenCanvasArchive> 
     } catch {
         throw new Error("画布备份已损坏，无法导入");
     }
-    preflightCanvasArchive(data, zip);
-    return { data, files: zip };
+    const missingFiles = preflightCanvasArchive(data, zip);
+    return { data, files: zip, ...(missingFiles.length ? { missingFiles } : {}) };
 }
 
-export function preflightCanvasArchive(data: CanvasExportFile, zip: Map<string, Blob>): void {
+export function preflightCanvasArchive(data: CanvasExportFile, zip: Map<string, Blob>): MissingExportFile[] {
     if (!data || data.app !== "infinite-canvas") throw new Error("不是有效的画布备份");
     if (data.version !== 3 && data.version !== 4) throw new Error("不支持的画布备份版本");
     if (!Array.isArray(data.projects)) throw new Error("projects.json 中缺少画布列表");
     if (data.folders !== undefined && !Array.isArray(data.folders)) throw new Error("备份中的文件夹列表无效");
     const folderIds = new Set<string>();
     const archivePaths = new Set<string>(["projects.json"]);
+    const missingFiles: MissingExportFile[] = [];
     for (const folder of data.folders || []) {
         if (!folder || typeof folder.id !== "string" || !folder.id.trim() || typeof folder.name !== "string") {
             throw new Error("备份中的文件夹无效");
@@ -315,13 +378,16 @@ export function preflightCanvasArchive(data: CanvasExportFile, zip: Map<string, 
             if (archivePaths.has(path)) throw new Error(`压缩包存在重名文件：${path}`);
             archivePaths.add(path);
             const blob = zip.get(path);
-            if (!blob?.size) throw new Error(`压缩包缺少文件夹封面：${folder.name}`);
+            if (!blob?.size) {
+                missingFiles.push({ owner: folder.name || folder.id, reference: folder.coverPath });
+            }
         }
     }
     const projectIds = new Set<string>();
     for (const item of data.projects) {
-        preflightCanvasArchiveProject(item, zip, projectIds, folderIds, archivePaths);
+        preflightCanvasArchiveProject(item, zip, projectIds, folderIds, archivePaths, missingFiles);
     }
+    return missingFiles;
 }
 
 function preflightCanvasArchiveProject(
@@ -330,6 +396,7 @@ function preflightCanvasArchiveProject(
     projectIds: Set<string>,
     folderIds: Set<string>,
     archivePaths: Set<string>,
+    missingFiles: MissingExportFile[],
 ) {
     if (!item || !item.project || typeof item.project !== "object") throw new Error("备份中的画布无效");
     const project = item.project;
@@ -337,7 +404,9 @@ function preflightCanvasArchiveProject(
     if (typeof project.id !== "string" || !project.id.trim()) throw new Error(`画布「${title}」缺少编号`);
     if (projectIds.has(project.id)) throw new Error(`备份中存在重复的画布：${title}`);
     projectIds.add(project.id);
-    if (project.folderId && !folderIds.has(project.folderId)) throw new Error(`画布「${title}」引用了不存在的文件夹`);
+    if (project.folderId && !folderIds.has(project.folderId)) {
+        missingFiles.push({ owner: title, reference: `文件夹 ${project.folderId}` });
+    }
     if (!Array.isArray(item.files)) throw new Error(`画布「${title}」的媒体清单无效`);
     if (project.nodes !== undefined && !Array.isArray(project.nodes)) throw new Error(`画布「${title}」的节点列表无效`);
     if (project.connections !== undefined && !Array.isArray(project.connections)) throw new Error(`画布「${title}」的连线列表无效`);
@@ -364,14 +433,15 @@ function preflightCanvasArchiveProject(
         if (path === "projects.json" || archivePaths.has(path)) throw new Error(`压缩包存在重名文件：${path}`);
         archivePaths.add(path);
         const blob = zip.get(path) || zip.get(fileItem.path);
-        if (!blob || blob.size === 0) throw new Error(`压缩包缺少媒体文件：${fileItem.path || "未命名文件"}`);
+        if (!blob || blob.size === 0) {
+            missingFiles.push({ owner: title, reference: fileItem.path || fileItem.storageKey });
+        }
     }
     const liveKeys = collectStorageKeys(project);
     for (const storageKey of liveKeys) {
-        if (!fileKeys.has(storageKey)) throw new Error(`压缩包缺少媒体文件：${storageKey}`);
-    }
-    for (const storageKey of fileKeys) {
-        if (!liveKeys.includes(storageKey)) throw new Error(`画布「${title}」的媒体清单与画布内容不一致`);
+        if (!fileKeys.has(storageKey)) {
+            missingFiles.push({ owner: title, reference: storageKey });
+        }
     }
     if (item.drawingDocuments !== undefined && !Array.isArray(item.drawingDocuments)) {
         throw new Error(`画布「${title}」的画板文档无效`);
@@ -387,19 +457,23 @@ function preflightCanvasArchiveProject(
             const path = confinedArchivePath(document.previewPath);
             if (archivePaths.has(path)) throw new Error(`压缩包存在重名文件：${path}`);
             archivePaths.add(path);
-            if (!zip.get(path) && !zip.get(document.previewPath)) throw new Error(`压缩包缺少媒体文件：${document.previewPath}`);
+            if (!zip.get(path) && !zip.get(document.previewPath)) {
+                missingFiles.push({ owner: title, reference: document.previewPath });
+            }
         }
         if (document.generationRender?.path) {
             const path = confinedArchivePath(document.generationRender.path);
             if (archivePaths.has(path)) throw new Error(`压缩包存在重名文件：${path}`);
             archivePaths.add(path);
-            if (!zip.get(path) && !zip.get(document.generationRender.path)) throw new Error(`压缩包缺少媒体文件：${document.generationRender.path}`);
+            if (!zip.get(path) && !zip.get(document.generationRender.path)) {
+                missingFiles.push({ owner: title, reference: document.generationRender.path });
+            }
         }
     }
     for (const node of project.nodes || []) {
         if (node.type !== "drawing" || !node.metadata?.drawingId) continue;
         if (item.drawingDocuments && !drawingIds.has(node.metadata.drawingId)) {
-            throw new Error(`画布「${title}」缺少画板 ${node.title || node.metadata.drawingId}`);
+            missingFiles.push({ owner: title, reference: `画板 ${node.title || node.metadata.drawingId}` });
         }
     }
 }
@@ -410,10 +484,130 @@ function preflightCanvasArchiveTimeline(timeline: NonNullable<CanvasProject["tim
     }
 }
 
-export function collectStorageKeys(value: unknown, keys = new Set<string>()) {
-    if (!value || typeof value !== "object") return [...keys];
-    if ("storageKey" in value && typeof value.storageKey === "string" && isArchiveStorageKey(value.storageKey)) keys.add(value.storageKey);
-    Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectStorageKeys(child, keys)) : collectStorageKeys(item, keys)));
+export type ArchiveMediaTreeHooks = {
+    shouldOmitKey?: (key: string, value: unknown) => boolean;
+    onStorageKey: (key: string, storageKey: string) => string | undefined;
+    onResourceId: (key: string, resourceId: string) => string | undefined;
+    onMediaUrl: (input: {
+        key: string;
+        value: string;
+        record: Record<string, unknown>;
+        inMediaContext: boolean;
+    }) => string;
+    finalizeObject?: (next: Record<string, unknown>, source: Record<string, unknown>, inMediaContext: boolean) => void;
+};
+
+export function transformArchiveMediaTree<T>(
+    value: T,
+    hooks: ArchiveMediaTreeHooks,
+    inMediaContext = false,
+): T {
+    if (!value || typeof value !== "object") return value;
+    if (Array.isArray(value)) {
+        return value.map((item) => transformArchiveMediaTree(item, hooks, inMediaContext)) as T;
+    }
+    const record = value as Record<string, unknown>;
+    let objectMediaContext = inMediaContext;
+    if (typeof record.type === "string" && typeof record.id === "string" && "metadata" in record) {
+        objectMediaContext = isArchiveMediaNodeType(record.type);
+    } else if (record.kind === "text") {
+        objectMediaContext = false;
+    }
+    const next: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(record)) {
+        if (hooks.shouldOmitKey?.(key, child)) {
+            continue;
+        }
+        if (typeof child === "string") {
+            if (isArchiveStorageKeyField(key)) {
+                if (isArchiveStorageKey(child)) {
+                    const transformed = hooks.onStorageKey(key, child);
+                    if (transformed !== undefined && transformed !== "") next[key] = transformed;
+                } else {
+                    next[key] = child;
+                }
+                continue;
+            }
+            if (ARCHIVE_BARE_RESOURCE_ID_KEYS.has(key)) {
+                const validId = validArchiveResourceId(child);
+                if (validId) {
+                    const transformed = hooks.onResourceId(key, validId);
+                    if (transformed !== undefined && transformed !== "") next[key] = transformed;
+                } else {
+                    next[key] = child;
+                }
+                continue;
+            }
+            if (isArchiveMediaUrlField(key) && (key !== "content" || objectMediaContext)) {
+                next[key] = hooks.onMediaUrl({ key, value: child, record, inMediaContext: objectMediaContext });
+                continue;
+            }
+            next[key] = child;
+            continue;
+        }
+        if (key === "referenceUrls" && Array.isArray(child)) {
+            next.referenceUrls = child
+                .map((entry) => (typeof entry === "string"
+                    ? hooks.onMediaUrl({ key: "referenceUrl", value: entry, record, inMediaContext: true })
+                    : entry))
+                .filter((entry) => entry !== "");
+            continue;
+        }
+        if (ARCHIVE_BARE_RESOURCE_ID_ARRAY_KEYS.has(key) && Array.isArray(child)) {
+            const nextIds: unknown[] = [];
+            for (const entry of child) {
+                if (typeof entry !== "string") {
+                    nextIds.push(entry);
+                    continue;
+                }
+                const validId = validArchiveResourceId(entry);
+                if (!validId) {
+                    nextIds.push(entry);
+                    continue;
+                }
+                const transformed = hooks.onResourceId(key, validId);
+                if (transformed !== undefined && transformed !== "") nextIds.push(transformed);
+            }
+            next[key] = nextIds;
+            continue;
+        }
+        let childMediaContext = objectMediaContext;
+        if (ARCHIVE_MEDIA_CONTAINER_KEYS.has(key)) {
+            childMediaContext = true;
+        } else if (key === "directMedia") {
+            childMediaContext = Boolean(child && typeof child === "object" && (child as Record<string, unknown>).kind !== "text");
+        }
+        next[key] = transformArchiveMediaTree(child, hooks, childMediaContext);
+    }
+    hooks.finalizeObject?.(next, record, objectMediaContext);
+    return next as T;
+}
+
+export function collectStorageKeys(
+    value: unknown,
+    keys = new Set<string>(),
+    inMediaContext = false,
+    options: { allowAnyOrigin?: boolean } = {},
+): string[] {
+    transformArchiveMediaTree(
+        value,
+        {
+            onStorageKey: (_key, storageKey) => {
+                keys.add(storageKey);
+                return storageKey;
+            },
+            onResourceId: (_key, resourceId) => {
+                keys.add(`resource:${resourceId}`);
+                return resourceId;
+            },
+            onMediaUrl: ({ value: url }) => {
+                const resourceId = extractOwnedResourceIdFromArchiveUrl(url, options);
+                if (resourceId) keys.add(`resource:${resourceId}`);
+                return url;
+            },
+        },
+        inMediaContext,
+    );
     return [...keys];
 }
 
@@ -421,30 +615,38 @@ function stripMissingArchiveReferences<T>(
     value: T,
     missingStorageKeys: ReadonlySet<string>,
     missingDrawingIds: ReadonlySet<string>,
+    inMediaContext = false,
 ): T {
-    if (!value || typeof value !== "object") return value;
-    if (Array.isArray(value)) {
-        return value.map((item) => stripMissingArchiveReferences(item, missingStorageKeys, missingDrawingIds)) as T;
-    }
-    const record = value as Record<string, unknown>;
-    const next: Record<string, unknown> = {};
-    const droppedResourceId = typeof record.storageKey === "string" && missingStorageKeys.has(record.storageKey)
-        ? resourceIdFromStorageKey(record.storageKey)
-        : "";
-    for (const [key, child] of Object.entries(record)) {
-        if (key === "storageKey" && typeof child === "string" && missingStorageKeys.has(child)) {
-            continue;
-        }
-        if (key === "drawingId" && typeof child === "string" && missingDrawingIds.has(child)) {
-            continue;
-        }
-        if (droppedResourceId && (key === "content" || key === "previewContent" || key === "url") && typeof child === "string" && child.includes(`/resources/${encodeURIComponent(droppedResourceId)}/file`)) {
-            next[key] = "";
-            continue;
-        }
-        next[key] = stripMissingArchiveReferences(child, missingStorageKeys, missingDrawingIds);
-    }
-    return next as T;
+    return transformArchiveMediaTree(
+        value,
+        {
+            shouldOmitKey: (key, child) => key === "drawingId" && typeof child === "string" && missingDrawingIds.has(child),
+            onStorageKey: (_key, storageKey) => (missingStorageKeys.has(storageKey) ? undefined : storageKey),
+            onResourceId: (_key, resourceId) => (missingStorageKeys.has(`resource:${resourceId}`) ? undefined : resourceId),
+            onMediaUrl: ({ value: url }) => {
+                const refId = extractOwnedResourceIdFromArchiveUrl(url);
+                return refId && missingStorageKeys.has(`resource:${refId}`) ? "" : url;
+            },
+            finalizeObject: (next) => {
+                if (Array.isArray(next.imageHistory)) {
+                    const liveHistory = next.imageHistory.filter((entry) => {
+                        if (!entry || typeof entry !== "object") return false;
+                        const item = entry as Record<string, unknown>;
+                        const hasStorageKey = typeof item.storageKey === "string" && item.storageKey.trim() !== "";
+                        const hasContent = typeof item.content === "string" && item.content.trim() !== "";
+                        const hasResourceId = typeof item.resourceId === "string" && item.resourceId.trim() !== "";
+                        return hasStorageKey || hasContent || hasResourceId;
+                    });
+                    if (liveHistory.length > 0) {
+                        next.imageHistory = liveHistory;
+                    } else {
+                        delete next.imageHistory;
+                    }
+                }
+            },
+        },
+        inMediaContext,
+    );
 }
 
 function safeFileName(value: string) {
