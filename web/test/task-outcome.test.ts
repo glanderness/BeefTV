@@ -53,9 +53,22 @@ describe("task-outcome", () => {
         expect(readTaskOutcome({ status: "cancelled", stage: "submission_unknown" })).toEqual(outcome);
         expect(readTaskOutcome({ status: "cancelled", providerRequestId: "req-1" })).toEqual(outcome);
         expect(readTaskOutcome({ status: "cancelled", errorCode: "submission_uncertain" })).toEqual(outcome);
+        expect(readTaskOutcome({ status: "cancelled" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(isRegenerateConfirm(readTaskOutcome({ status: "cancelled" }))).toBe(true);
+        expect(readTaskOutcome({ status: "cancelled", errorCode: "request_not_sent" })).toEqual(notChargedTaskOutcome());
+        expect(readTaskOutcome({ status: "cancelled", stage: "request_not_sent" })).toEqual(notChargedTaskOutcome());
+
         expect(readNodeTaskOutcome({ taskStatus: "cancelled", taskStage: "submission_unknown" })).toEqual(outcome);
         expect(readNodeTaskOutcome({ taskStatus: "cancelled", generationSubmissionState: "unknown" })).toEqual(outcome);
         expect(readNodeTaskOutcome({ taskStatus: "cancelled", generationErrorCode: "submission_uncertain" })).toEqual(outcome);
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", taskProviderRequestId: "req-1" })).toEqual(outcome);
+        expect(isNodeRegenerateConfirm({ taskStatus: "cancelled", taskProviderRequestId: "req-1" })).toBe(true);
+        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "cancelled" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(readNodeTaskOutcome({ status: "loading", taskStatus: "cancelled", taskProviderRequestId: "req-1" })).toEqual(outcome);
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled" })).toEqual({ phase: "failed", regenerate: "confirm", reason: "task_failed" });
+        expect(isNodeRegenerateConfirm({ taskStatus: "cancelled" })).toBe(true);
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", generationErrorCode: "request_not_sent" })).toEqual(notChargedTaskOutcome());
+        expect(readNodeTaskOutcome({ taskStatus: "cancelled", taskStage: "request_not_sent" })).toEqual(notChargedTaskOutcome());
     });
     it("recognizes all 5 phase values and 3 regenerate values", () => {
         const phases: TaskOutcomePhase[] = ["running", "fetching", "ready", "retrievable", "failed"];

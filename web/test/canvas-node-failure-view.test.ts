@@ -911,14 +911,16 @@ const EXPECTED: Array<{ name: string } & CanvasNodeFailureView> = [
         "name": "cancelled",
         "outcome": {
             "phase": "failed",
-            "regenerate": "allowed",
-            "reason": "not_charged"
+            "regenerate": "confirm",
+            "reason": "task_failed"
         },
         "copy": {
-            "badge": "生成失败",
-            "reason": "上次请求未扣费，可以直接重新生成",
-            "action": "可以直接重新生成",
-            "message": "上次请求未扣费，可以直接重新生成。"
+            "badge": "生成未完成",
+            "reason": "这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次",
+            "action": "确认后可重新生成",
+            "message": "这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次。确认后可重新生成。",
+            "confirmTitle": "确认重新生成？",
+            "confirmContent": "这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次。"
         },
         "explanation": {
             "category": "cancelled",
@@ -935,7 +937,7 @@ const EXPECTED: Array<{ name: string } & CanvasNodeFailureView> = [
         },
         "retryBlocked": false,
         "regenerateBlocked": false,
-        "regenerateConfirm": false,
+        "regenerateConfirm": true,
         "canReload": false,
         "needsRecovery": true,
         "recoveryRoute": "single",
@@ -1858,6 +1860,29 @@ describe("canvasNodeFailureView", () => {
             expect(confirmNoResultModerationRef.explanation.reason).toBe("@图片2 未通过实人或肖像权检查");
             expect(confirmNoResultModerationRef.explanation.action).toBe("请更换 @图片2 或改用非真人参考图后重试");
             expect(confirmNoResultModerationRef.regenerateConfirm).toBe(true);
+
+            const depthCancelledUnconfirmed = canvasNodeFailureView(
+                node(
+                    "depth-cancelled-unconfirmed-stale-params",
+                    {
+                        status: "error",
+                        depthSourceNodeId: "source-depth",
+                        taskType: "depth_capture",
+                        taskId: "depth-task-cancelled",
+                        taskStatus: "cancelled",
+                        taskOutcome: { phase: "failed", regenerate: "confirm", reason: "cancelled_result_unconfirmed" },
+                        generationErrorCode: "invalid_params",
+                        errorDetails: "第 3 张参考图不支持该格式。请更换参考图后重试。",
+                    },
+                    CanvasNodeType.Video,
+                ),
+                { nowMs: NOW_MS },
+            );
+            expect(depthCancelledUnconfirmed.explanation.reason).toBe(depthCancelledUnconfirmed.copy.reason);
+            expect(depthCancelledUnconfirmed.explanation.action).toBe(depthCancelledUnconfirmed.copy.action);
+            expect(depthCancelledUnconfirmed.regenerateConfirm).toBe(true);
+            expect(depthCancelledUnconfirmed.explanation.blockAutomaticRetry).toBe(true);
+            expect(depthCancelledUnconfirmed.explanation.blockManualRetry).toBe(false);
         } finally {
             Date.now = realNow;
         }

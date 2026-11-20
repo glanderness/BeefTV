@@ -170,6 +170,18 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
     if (explicitOutcome ? explicitOutcome.phase === "retrievable" || explicitOutcome.phase === "ready" : node.metadata?.taskStatus === "succeeded") {
         return { ...explanation, reason: "深度视频已生成，暂时未能显示在画布上", action: "点击「恢复结果」重新加载原任务", uncertain: false, retryable: true, blockAutomaticRetry: false, blockManualRetry: false };
     }
+    if (explicitOutcome && explicitOutcome.phase === "failed" && (explicitOutcome.regenerate === "confirm" || explicitOutcome.regenerate === "blocked")) {
+        const copy = taskOutcomeCopy(explicitOutcome);
+        const keepRefinedCopy = explanationMatchesAuthoritativeOutcome(explicitOutcome, explanation);
+        return {
+            ...explanation,
+            ...(keepRefinedCopy ? {} : { reason: copy.reason, action: copy.action }),
+            uncertain: isTaskOutcomeSubmissionUncertain(explicitOutcome),
+            retryable: explicitOutcome.regenerate !== "blocked",
+            blockAutomaticRetry: true,
+            blockManualRetry: explicitOutcome.regenerate === "blocked",
+        };
+    }
     return {
         ...explanation,
         ...(["unknown", "download_failed", "submission_uncertain"].includes(explanation.category) ? { reason: "深度处理失败", action: "请查看详情，检查深度组件和网络后重试" } : {}),

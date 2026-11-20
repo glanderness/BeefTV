@@ -72,22 +72,37 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 			return out("failed", regenerate, "no_result")
 		}
 	}
-	pendingImageReceipt := facts.HasImageReceipt && facts.DispatchState != "rejected_no_job" && facts.DispatchState != "not_sent"
-	if task.Type == "canvas_image" && !task.IsUpscale() && (pendingImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay || facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown") {
+	pendingImage := hasUnconfirmedImageSubmission(task, facts)
+	pendingProvider := !pendingImage && hasUnconfirmedProviderSubmission(task, facts)
+	if pendingImage || pendingProvider {
 		if task.Status == model.TaskStatusCancelled {
 			// Cancellation stops local execution and is excluded from automatic/manual recovery.
 			// Exit active polling without locking the node permanently; require explicit confirmation.
 			return out("failed", "confirm", ReasonCancelledResultUnconfirmed)
 		}
-		return out("retrievable", "blocked", "image_recovery_pending")
-	}
-	if task.ProviderRequestID != "" || ((task.Type == "canvas_video" || task.Type == "canvas_audio" || strings.HasPrefix(task.Type, "video_") || task.IsUpscale()) && (facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown")) {
-		if task.Status == model.TaskStatusCancelled {
-			return out("failed", "confirm", ReasonCancelledResultUnconfirmed)
+		if pendingImage {
+			return out("retrievable", "blocked", "image_recovery_pending")
 		}
 		return out("retrievable", "blocked", "provider_result_pending")
 	}
 	return out("failed", regenerate, "task_failed")
+}
+
+func hasUnconfirmedImageSubmission(task model.Task, facts OutcomeFacts) bool {
+	if task.Type != "canvas_image" || task.IsUpscale() {
+		return false
+	}
+	pendingImageReceipt := facts.HasImageReceipt && facts.DispatchState != "rejected_no_job" && facts.DispatchState != "not_sent"
+	return pendingImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay ||
+		facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown"
+}
+
+func hasUnconfirmedProviderSubmission(task model.Task, facts OutcomeFacts) bool {
+	if task.ProviderRequestID != "" {
+		return true
+	}
+	isAsyncMedia := task.Type == "canvas_video" || task.Type == "canvas_audio" || strings.HasPrefix(task.Type, "video_") || task.IsUpscale()
+	return isAsyncMedia && (facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown")
 }
 
 // RegenerableFailure 是后端唯一的「失败后能在原节点重新生成」读法。
@@ -151,27 +166,25 @@ func isInputRejectedCode(code string) bool {
 func computeProviderSettlementOutcome(task model.Task) (Outcome, bool) {
 	deadline := strings.TrimSpace(task.ProviderReconcileDeadline())
 	terminalRecovery := task.RecoveryOutcome != nil && (*task.RecoveryOutcome == RecoveryNoResult || *task.RecoveryOutcome == RecoveryUnrecoverable)
-	if task.MediaSettlementPending() {
-		return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
-	}
+	usageState := strings.ToLower(strings.TrimSpace(task.ProviderUsageState()))
+	billingState := strings.ToLower(strings.TrimSpace(task.ProviderBillingState()))
 
-	switch strings.ToLower(strings.TrimSpace(task.ProviderUsageState())) {
-	case "completed":
+	if usageState == "completed" {
 		if terminalRecovery || task.Status == model.TaskStatusCancelled {
 			return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
 		}
 		return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "provider_result_pending"}, true
-	case "failed":
-		return Outcome{Phase: "failed", Regenerate: "allowed", Reason: providerRefundedFailureReason(task)}, true
 	}
-
-	switch strings.ToLower(strings.TrimSpace(task.ProviderBillingState())) {
-	case "settled":
+	if billingState == "settled" {
 		if terminalRecovery || task.Status == model.TaskStatusCancelled {
 			return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
 		}
 		return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "image_recovery_pending"}, true
-	case "refunded":
+	}
+	if task.MediaSettlementPending() {
+		return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
+	}
+	if usageState == "failed" || billingState == "refunded" {
 		return Outcome{Phase: "failed", Regenerate: "allowed", Reason: providerRefundedFailureReason(task)}, true
 	}
 

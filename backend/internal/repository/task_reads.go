@@ -13,8 +13,7 @@ const taskSummarySelectColumns = "id, user_id, route_run, recovery_outcome, beef
 
 func applyActiveCandidateTaskFilter(query *gorm.DB) *gorm.DB {
 	return query.
-		Where("status <> ?", model.TaskStatusCancelled).
-		Where("status <> ? OR recovery_outcome IS NULL OR recovery_outcome NOT IN ?", model.TaskStatusFailed, []string{"no_result", "unrecoverable"}).
+		Where("status NOT IN ? OR recovery_outcome IS NULL OR recovery_outcome NOT IN ?", []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled}, []string{"no_result", "unrecoverable"}).
 		Where("status <> ? OR type NOT IN ?", model.TaskStatusSucceeded, []string{"text", "canvas_text"})
 }
 

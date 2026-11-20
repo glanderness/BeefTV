@@ -38,6 +38,8 @@ export type CanvasNodeOutcomeMetadata = {
     generationSubmissionState?: string;
     taskStatus?: string;
     taskStage?: string;
+    taskProviderRequestId?: string;
+    providerRequestId?: string;
     status?: string;
     content?: string;
     storageKey?: string;
@@ -152,6 +154,44 @@ function defaultReasonForPhase(phase: TaskOutcomePhase): string {
     }
 }
 
+type LegacyTerminalOutcomeInput = {
+    status: string;
+    stage: string;
+    errorCode: string;
+    providerRequestId: string;
+};
+
+function readLegacyTerminalOutcome({ status, stage, errorCode, providerRequestId }: LegacyTerminalOutcomeInput): TaskOutcome {
+    if (errorCode === "result_target_unavailable") {
+        return resultTargetUnavailableTaskOutcome();
+    }
+    if (stage === "submission_unknown") {
+        return status === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : submissionUnknownTaskOutcome();
+    }
+    if (stage === "delivery_paused" || stage === "delivery_timed_out" || LEGACY_RETRIEVABLE_ERROR_CODES.has(errorCode)) {
+        return status === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : deliveryPendingTaskOutcome();
+    }
+    if (LEGACY_INPUT_REJECTED_ERROR_CODES.has(errorCode)) {
+        return { phase: "failed", regenerate: "confirm", reason: "input_rejected" };
+    }
+    // 与后端 ComputeOutcome 一致：已有上游任务号的失败任务先免费查询原任务；已取消任务不再自动取回，需核对确认后再重生成。
+    if (providerRequestId) {
+        if (status === "cancelled") {
+            return cancelledResultUnconfirmedTaskOutcome();
+        }
+        if (status === "failed") {
+            return { phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" };
+        }
+    }
+    if (errorCode === "request_not_sent" || stage === "request_not_sent") {
+        return notChargedTaskOutcome();
+    }
+    if (status === "cancelled" || status === "text_replay") {
+        return { phase: "failed", regenerate: "confirm", reason: "task_failed" };
+    }
+    return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
+}
+
 /**
  * 读取任务的 `outcome`。
  * 一旦 `outcome` 存在，完全以 `outcome` 为准，绝不参考 `status`、`stage`、`errorCode` 或错误文案。
@@ -168,6 +208,7 @@ export function readTaskOutcome(source?: TaskOutcome | TaskOutcomeSource | null)
     const status = typeof record.status === "string" ? record.status.trim() : "";
     const stage = typeof record.stage === "string" ? record.stage.trim() : "";
     const errorCode = typeof record.errorCode === "string" ? record.errorCode.trim() : "";
+    const providerRequestId = typeof record.providerRequestId === "string" ? record.providerRequestId.trim() : "";
 
     if (status === "queued" || status === "running") {
         if (stage === "正在取回生成结果") {
@@ -185,34 +226,12 @@ export function readTaskOutcome(source?: TaskOutcome | TaskOutcomeSource | null)
         return readyTaskOutcome();
     }
     if (status === "failed" || status === "cancelled" || status === "text_replay" || errorCode || record.error) {
-        if (errorCode === "result_target_unavailable") {
-            return resultTargetUnavailableTaskOutcome();
-        }
-        if (stage === "submission_unknown") {
-            return status === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : submissionUnknownTaskOutcome();
-        }
-        if (stage === "delivery_paused" || stage === "delivery_timed_out" || LEGACY_RETRIEVABLE_ERROR_CODES.has(errorCode)) {
-            return status === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : deliveryPendingTaskOutcome();
-        }
-        if (LEGACY_INPUT_REJECTED_ERROR_CODES.has(errorCode)) {
-            return { phase: "failed", regenerate: "confirm", reason: "input_rejected" };
-        }
-        // 与后端 ComputeOutcome 一致：已有上游任务号的失败任务先免费查询原任务；已取消任务不再自动取回，需核对确认后再重生成。
-        if (typeof record.providerRequestId === "string" && record.providerRequestId.trim()) {
-            if (status === "cancelled") {
-                return cancelledResultUnconfirmedTaskOutcome();
-            }
-            if (status === "failed") {
-                return { phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" };
-            }
-        }
-        if (errorCode === "request_not_sent" || status === "cancelled") {
-            return notChargedTaskOutcome();
-        }
-        if (status === "text_replay") {
-            return { phase: "failed", regenerate: "confirm", reason: "task_failed" };
-        }
-        return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
+        return readLegacyTerminalOutcome({
+            status: status || "failed",
+            stage,
+            errorCode,
+            providerRequestId,
+        });
     }
     return undefined;
 }
@@ -227,38 +246,43 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
     const explicit = normalizeTaskOutcome(metadata.taskOutcome);
     if (explicit) return explicit;
 
-    if (metadata.generationSubmissionState === "unknown" || metadata.taskStage === "submission_unknown") {
-        return metadata.taskStatus === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : submissionUnknownTaskOutcome();
+    const taskStatus = typeof metadata.taskStatus === "string" ? metadata.taskStatus.trim() : "";
+    const taskStage = typeof metadata.taskStage === "string" ? metadata.taskStage.trim() : "";
+    const errorCode = typeof metadata.generationErrorCode === "string" ? metadata.generationErrorCode.trim() : "";
+    const providerRequestId =
+        (typeof metadata.taskProviderRequestId === "string" && metadata.taskProviderRequestId.trim()) ||
+        (typeof metadata.providerRequestId === "string" && metadata.providerRequestId.trim()) ||
+        "";
+
+    if (metadata.generationSubmissionState === "unknown" || taskStage === "submission_unknown") {
+        return taskStatus === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : submissionUnknownTaskOutcome();
     }
     if (metadata.status === "success" && Boolean(metadata.content || metadata.storageKey)) {
         return readyTaskOutcome();
     }
-    if (metadata.status === "loading" || metadata.taskStatus === "queued" || metadata.taskStatus === "running") {
-        if (metadata.taskStatus === "succeeded" || metadata.taskStage === "正在取回生成结果") {
+    if (taskStatus === "cancelled") {
+        return readLegacyTerminalOutcome({
+            status: taskStatus,
+            stage: taskStage,
+            errorCode,
+            providerRequestId,
+        });
+    }
+    if (metadata.status === "loading" || taskStatus === "queued" || taskStatus === "running") {
+        if (taskStatus === "succeeded" || taskStage === "正在取回生成结果") {
             return fetchingTaskOutcome();
         }
         return runningTaskOutcome();
     }
-    const errorCode = typeof metadata.generationErrorCode === "string" ? metadata.generationErrorCode.trim() : "";
-    if (metadata.status === "error" || metadata.taskStatus === "failed" || metadata.taskStatus === "cancelled" || metadata.taskStatus === "text_replay" || errorCode || metadata.errorDetails) {
-        if (errorCode === "result_target_unavailable") {
-            return resultTargetUnavailableTaskOutcome();
-        }
-        if (LEGACY_RETRIEVABLE_ERROR_CODES.has(errorCode)) {
-            return metadata.taskStatus === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : deliveryPendingTaskOutcome();
-        }
-        if (LEGACY_INPUT_REJECTED_ERROR_CODES.has(errorCode)) {
-            return { phase: "failed", regenerate: "confirm", reason: "input_rejected" };
-        }
-        if (errorCode === "request_not_sent" || metadata.taskStatus === "cancelled") {
-            return notChargedTaskOutcome();
-        }
-        if (metadata.taskStatus === "text_replay") {
-            return { phase: "failed", regenerate: "confirm", reason: "task_failed" };
-        }
-        return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
+    if (metadata.status === "error" || taskStatus === "failed" || taskStatus === "text_replay" || errorCode || metadata.errorDetails) {
+        return readLegacyTerminalOutcome({
+            status: taskStatus || "failed",
+            stage: taskStage,
+            errorCode,
+            providerRequestId,
+        });
     }
-    if (metadata.taskStatus === "succeeded") {
+    if (taskStatus === "succeeded") {
         return fetchingTaskOutcome();
     }
     return undefined;

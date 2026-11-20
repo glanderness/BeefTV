@@ -337,3 +337,46 @@ func TestActiveOnlyTasksEndpointIncludesOutcomeActiveTasksBeyondFirstPage(t *tes
 		t.Fatalf("cancelled detail outcome=%+v, want %+v", detailEnv.Data.Outcome, wantOutcome)
 	}
 }
+
+func TestActiveOnlyTasksEndpointRetainsCancelledTaskWhenEvidenceUnreadable(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	task := model.Task{
+		ID:        "cancelled-unreadable",
+		UserID:    owner.ID,
+		ProjectID: "unreadable-canvas",
+		Type:      "canvas_image",
+		Status:    model.TaskStatusCancelled,
+		Stage:     "任务已取消",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := h.db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.Exec("DROP TABLE route_attempts").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	resp := h.do(t, http.MethodGet, "/api/tasks?projectId=unreadable-canvas&pageSize=20&activeOnly=true", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var env struct {
+		Data []model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if len(env.Data) != 1 || env.Data[0].ID != task.ID {
+		t.Fatalf("activeOnly unreadable tasks=%+v, want [%s]", env.Data, task.ID)
+	}
+	wantOutcome := model.TaskOutcome{Phase: "retrievable", Regenerate: "blocked", Reason: "evidence_unavailable"}
+	if env.Data[0].Outcome == nil || *env.Data[0].Outcome != wantOutcome {
+		t.Fatalf("unreadable outcome=%+v, want %+v", env.Data[0].Outcome, wantOutcome)
+	}
+}

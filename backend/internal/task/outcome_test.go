@@ -54,12 +54,42 @@ func TestComputeOutcome(t *testing.T) {
 			t.ProviderRequestID = "vid-cancelled-completed"
 			t.BeefUsageState = &u
 		}), "", OutcomeFacts{}, want("failed", "confirm", "charged_result_unrecoverable")},
+		{"取消后BeefTV视频已确认扣费优先于未清零的reserved计费状态", with(func(t *model.Task) {
+			u := "completed"
+			b := "reserved"
+			t.Type = "canvas_video"
+			t.Status = model.TaskStatusCancelled
+			t.ProviderRequestID = "vid-cancelled-completed-reserved"
+			t.BeefUsageState = &u
+			t.BeefBillingState = &b
+		}), "", OutcomeFacts{}, want("failed", "confirm", "charged_result_unrecoverable")},
+		{"取消后BeefTV视频已确认扣费优先于空串计费状态", with(func(t *model.Task) {
+			u := "completed"
+			b := ""
+			t.Type = "canvas_video"
+			t.Status = model.TaskStatusCancelled
+			t.ProviderRequestID = "vid-cancelled-completed-empty"
+			t.BeefUsageState = &u
+			t.BeefBillingState = &b
+		}), "", OutcomeFacts{}, want("failed", "confirm", "charged_result_unrecoverable")},
 		{"取消后BeefTV图片已确认扣费保留已扣费结论并退出活跃轮询", with(func(t *model.Task) {
 			b := "settled"
 			t.Status = model.TaskStatusCancelled
 			t.ImageJobID = "img-cancelled-settled"
 			t.BeefBillingState = &b
 		}), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "charged_result_unrecoverable")},
+		{"取消后BeefTV已结算优先于未清零的pending用量状态", with(func(t *model.Task) {
+			u := "pending"
+			b := "settled"
+			t.Type = "canvas_video"
+			t.Status = model.TaskStatusCancelled
+			t.ProviderRequestID = "vid-cancelled-settled-pending"
+			t.BeefUsageState = &u
+			t.BeefBillingState = &b
+		}), "", OutcomeFacts{}, want("failed", "confirm", "charged_result_unrecoverable")},
+		{"视频已接受尚无ProviderRequestID失败后等待上游结果取回", with(func(t *model.Task) {
+			t.Type = "canvas_video"
+		}), "", OutcomeFacts{DispatchState: "accepted"}, want("retrievable", "blocked", "provider_result_pending")},
 		{"取消后BeefTV待结算继续阻塞重生成并透传截止时间", with(func(t *model.Task) {
 			u := "pending"
 			dl := "2026-04-20T12:00:00Z"
@@ -245,10 +275,28 @@ func TestCancelledMediaResultUnconfirmed(t *testing.T) {
 				t.Fatal("unconfirmed cancellation must remain confirm-regenerable instead of bricking the node")
 			}
 		})
+		t.Run(kind+"-accepted-without-provider-id", func(t *testing.T) {
+			task := model.Task{Type: kind, Status: model.TaskStatusCancelled}
+			got := ComputeOutcome(task, "", OutcomeFacts{DispatchState: "accepted"})
+			if got != (Outcome{Phase: "failed", Regenerate: "confirm", Reason: "cancelled_result_unconfirmed"}) {
+				t.Fatalf("cancelled accepted %s outcome = %+v", kind, got)
+			}
+		})
 	}
 	task := model.Task{Type: "canvas_image", Model: "topaz-standard-v2", Status: model.TaskStatusCancelled, ProviderRequestID: "upscale-original"}
 	got := ComputeOutcome(task, "", OutcomeFacts{})
 	if got.Phase != "failed" || got.Reason != "cancelled_result_unconfirmed" || got.Regenerate != "confirm" {
 		t.Fatalf("cancelled upscale outcome = %+v", got)
+	}
+	upscaleAccepted := ComputeOutcome(model.Task{Type: "canvas_image", Model: "topaz-standard-v2", Status: model.TaskStatusCancelled}, "", OutcomeFacts{DispatchState: "accepted"})
+	if upscaleAccepted != (Outcome{Phase: "failed", Regenerate: "confirm", Reason: "cancelled_result_unconfirmed"}) {
+		t.Fatalf("cancelled accepted upscale outcome = %+v", upscaleAccepted)
+	}
+	unreadable := ComputeOutcome(model.Task{Type: "canvas_image", Status: model.TaskStatusCancelled}, "", OutcomeFacts{Unreadable: true})
+	if unreadable != (Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "evidence_unavailable"}) {
+		t.Fatalf("cancelled unreadable outcome = %+v", unreadable)
+	}
+	if !isActiveTaskSummary(Summary{Status: model.TaskStatusCancelled, Outcome: &unreadable}) {
+		t.Fatal("cancelled unreadable task must remain active until evidence can be read")
 	}
 }
