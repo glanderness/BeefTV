@@ -778,6 +778,7 @@ test("topup info failure blocks unverified payment submission until retried; car
         expect(mobileFooterOverflow).toEqual({ scrollOverflow: false, outsideBounds: false });
         await page.setViewportSize({ width: 960, height: 760 });
         await checkoutDialog.getByRole("button", { name: "重新打开支付页" }).click();
+        await checkoutDialog.getByText("已在系统浏览器打开支付收银台，完成付款后将自动刷新账户余额。").waitFor();
         expect(checkoutCalls).toEqual([
             { paymentMethod: "card", amountUsd: "10.00" },
             { paymentMethod: "card", tradeNo: "ORD-TEST-100" },
