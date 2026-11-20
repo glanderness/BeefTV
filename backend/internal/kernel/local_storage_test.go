@@ -9,13 +9,22 @@ import (
 )
 
 func TestDiskFullErrorPreservesCauseWithoutPath(t *testing.T) {
-	for _, cause := range []error{&os.PathError{Op: "write", Path: "/private/user/video", Err: syscall.ENOSPC}, errors.New("There is not enough space on the disk"), errors.New("database or disk is full")} {
+	for _, cause := range []error{
+		&os.PathError{Op: "write", Path: "/private/user/video", Err: syscall.ENOSPC},
+		errors.New("There is not enough space on the disk"),
+		errors.New("not enough space"),
+		errors.New("database or disk is full"),
+		errors.New("write C:\\Users\\private\\file: 磁盘空间不足。"),
+	} {
+		if !IsDiskFullError(cause) {
+			t.Fatalf("IsDiskFullError(%v) = false", cause)
+		}
 		got := DiskFullError(cause)
-		if got == nil || got.Reason != "local_disk_full" || got.Cause != cause || strings.Contains(got.Message, "/private") {
+		if got == nil || got.Reason != "local_disk_full" || got.Cause != cause || strings.Contains(got.Message, "/private") || strings.Contains(got.Message, "private") {
 			t.Fatalf("wrong mapping: %#v", got)
 		}
 	}
-	if DiskFullError(os.ErrPermission) != nil {
-		t.Fatal("permission error misclassified")
+	if DiskFullError(os.ErrPermission) != nil || IsDiskFullError(os.ErrPermission) || IsDiskFullError(nil) {
+		t.Fatal("non-disk-full error misclassified")
 	}
 }

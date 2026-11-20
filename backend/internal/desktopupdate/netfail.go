@@ -159,20 +159,3 @@ func networkSentinel(err error) error {
 	}
 	return nil
 }
-
-// Distinguish actionable local installation failures from transfer failures.
-func publicInstallError(err error) string {
-	if errors.Is(err, ErrPreparationTimeout) {
-		return ErrPreparationTimeout.Error()
-	}
-	if errors.Is(err, os.ErrPermission) {
-		return "无法写入应用安装目录，请检查目录权限后重试安装。"
-	}
-	if strings.Contains(strings.ToLower(err.Error()), "no space left") {
-		return "磁盘空间不足，请释放空间后重试安装。"
-	}
-	if errors.Is(err, ErrTampered) || errors.Is(err, ErrInvalidArchive) {
-		return publicError(err)
-	}
-	return "安装准备失败，已保留下载内容，请重试安装。"
-}

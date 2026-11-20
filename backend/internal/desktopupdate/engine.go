@@ -93,8 +93,11 @@ type Engine struct {
 	verified            *verifiedUpdate
 	staged              *stagedUpdate
 	helperProc          *os.Process
-	helperDone          <-chan error
+	helperWait          *helperWaiter
+	helperWorkDir       string
 	dataDir             string
+	removeWorkDir       func(string) error
+	waitPreparedTimeout time.Duration
 }
 
 func New(host Host) *Engine {
@@ -441,7 +444,7 @@ func (e *Engine) InstallUpdate(ctx context.Context) error {
 	})
 	if err := e.prepareAndStartHelper(ctx, staged); err != nil {
 		state := e.snapshot()
-		e.logf("install failure phase=%s completedFiles=%d totalFiles=%d timeout=%t", state.Phase, state.CompletedFiles, state.TotalFiles, errors.Is(err, ErrPreparationTimeout))
+		e.logf("install failure phase=%s completedFiles=%d totalFiles=%d timeout=%t%s", state.Phase, state.CompletedFiles, state.TotalFiles, isPreparationTimedOut(err), formatInstallFailureMeta(err))
 		e.logf("install preparation failed: %v", err)
 		message := publicInstallError(err)
 		if errors.Is(err, ErrPreparationTimeout) {
@@ -469,39 +472,62 @@ func (e *Engine) InstallUpdate(ctx context.Context) error {
 func (e *Engine) killHelper() {
 	e.mu.Lock()
 	proc := e.helperProc
-	done := e.helperDone
+	waiter := e.helperWait
+	workDir := e.helperWorkDir
 	e.helperProc = nil
-	e.helperDone = nil
+	e.helperWait = nil
+	e.helperWorkDir = ""
 	e.mu.Unlock()
+	if workDir != "" && !hasRecoveryBackup(filepath.Join(workDir, "backup")) {
+		_ = writeAtomicFile(filepath.Join(workDir, abortedMarkerName), []byte("aborted\n"), 0o600)
+	}
 	if proc != nil {
-		_ = proc.Kill()
-		if done != nil {
-			<-done
-		}
+		_, exited := terminateHelperWaiter(proc.Kill, waiter, helperKillWaitTimeout, e.logf)
+		e.reclaimAbandonedWorkDir(workDir, exited)
+		return
+	}
+	if workDir != "" {
+		e.reclaimAbandonedWorkDir(workDir, true)
 	}
 }
 
 func (e *Engine) monitorHelper() {
 	e.mu.Lock()
-	done := e.helperDone
+	waiter := e.helperWait
 	e.mu.Unlock()
-	if done != nil {
+	if waiter != nil {
 		go func() {
-			helperErr := <-done
-			e.logf("install helper stopped: %v", helperErr)
+			helperErr := waiter.Wait()
 			// Normally this UI process has exited before the helper completes.
 			// If still alive, quit was vetoed or the helper failed: permit retry.
+			var abandonedDir string
 			e.mu.Lock()
-			defer e.mu.Unlock()
-			if e.helperDone == done {
+			if e.helperWait == waiter {
+				abandonedDir = e.helperWorkDir
 				e.helperProc = nil
-				e.helperDone = nil
+				e.helperWait = nil
+				e.helperWorkDir = ""
 				if e.state.Status == StatusInstalling {
 					e.state.Status = StatusError
 					e.state.InstallPrepared = false
 					e.state.Error = "应用未能退出或安装程序已停止，请重试更新。"
 				}
 			}
+			e.mu.Unlock()
+			if abandonedDir != "" {
+				if meta := formatHelperStoppedMeta(helperErr, filepath.Join(abandonedDir, "result.json"), filepath.Join(abandonedDir, "helper.log")); meta != "" {
+					if helperErr != nil {
+						e.logf("install helper stopped: %s: %v", meta, helperErr)
+					} else {
+						e.logf("install helper stopped: %s", meta)
+					}
+				} else {
+					e.logf("install helper stopped: %v", helperErr)
+				}
+				e.reclaimAbandonedWorkDir(abandonedDir, true)
+				return
+			}
+			e.logf("install helper stopped: %v", helperErr)
 		}()
 	}
 }

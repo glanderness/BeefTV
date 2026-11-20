@@ -120,6 +120,11 @@ func restoreWindows(req HelperRequest) error {
 			failures = append(failures, fmt.Errorf("还原随包资源 %s 失败: %w", name, err))
 		}
 	}
+	if len(failures) == 0 {
+		// Remove the backup directory once all files have been restored so an
+		// empty directory cannot be mistaken for an un-restored recovery copy.
+		_ = os.Remove(req.BackupPath)
+	}
 	return errors.Join(failures...)
 }
 

@@ -1,12 +1,15 @@
 package desktopupdate
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+var errLayoutFileMissing = errors.New("更新包缺少可执行文件")
 
 func validateExtractedLayout(root, platform string) error {
 	root, err := filepath.Abs(root)
@@ -69,7 +72,13 @@ func validateLinuxLayout(root string) error {
 func validateDarwinLayout(root string) error {
 	bundle := filepath.Join(root, appBundleName)
 	info, err := os.Lstat(bundle)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("无法读取 BeefTV.app: %w", err)
+		}
+		return fmt.Errorf("更新包缺少 BeefTV.app")
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("更新包缺少 BeefTV.app")
 	}
 	exe := filepath.Join(bundle, "Contents", "MacOS", "BeefTV")
@@ -123,14 +132,23 @@ func validateWindowsLayout(root string) error {
 		}
 	}
 	if err := requireRegularFile(exe, false); err != nil {
-		return fmt.Errorf("更新包缺少 BeefTV.exe")
+		if errors.Is(err, errLayoutFileMissing) {
+			return fmt.Errorf("更新包缺少 BeefTV.exe")
+		}
+		return err
 	}
 	if err := requireRegularFile(filepath.Join(root, cliDirName, windowsCLIName), false); err != nil {
 		return fmt.Errorf("更新包缺少随包 beeftv CLI: %w", err)
 	}
 	plugins := filepath.Join(root, pluginDirName)
 	info, err := os.Lstat(plugins)
-	if err != nil || !info.IsDir() {
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("无法读取 plugin-packages: %w", err)
+		}
+		return fmt.Errorf("更新包缺少 plugin-packages")
+	}
+	if !info.IsDir() {
 		return fmt.Errorf("更新包缺少 plugin-packages")
 	}
 	entries, err := os.ReadDir(plugins)
@@ -184,14 +202,17 @@ func validateAgentHost(root, node string, executable bool) error {
 func requireRegularFile(path string, executable bool) error {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return fmt.Errorf("更新包缺少可执行文件")
+		if errors.Is(err, fs.ErrNotExist) {
+			return errLayoutFileMissing
+		}
+		return fmt.Errorf("无法读取更新包文件: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return fmt.Errorf("更新包可执行文件无效")
 	}
 	if executable && info.Mode()&0o111 == 0 {
 		if err := os.Chmod(path, info.Mode().Perm()|0o755); err != nil {
-			return fmt.Errorf("无法设置可执行权限")
+			return fmt.Errorf("无法设置可执行权限: %w", err)
 		}
 	}
 	return nil

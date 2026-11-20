@@ -31,3 +31,20 @@ func TestInstallLockPreservesPendingLegacyHelper(t *testing.T) {
 		t.Fatal("new helper overlapped a pending legacy helper")
 	}
 }
+
+func TestUnixErrnoCollisionGuardAndNoHelperStartRetry(t *testing.T) {
+	for _, code := range []syscall.Errno{syscall.Errno(112), syscall.Errno(39)} {
+		if got := classifyPlatformErrno(code); got != "" {
+			t.Fatalf("classifyPlatformErrno(%d) = %q, want empty on unix", code, got)
+		}
+	}
+	for _, code := range []syscall.Errno{syscall.Errno(32), syscall.Errno(33), syscall.Errno(5), syscall.EACCES} {
+		if isRetryableHelperStartError(code) {
+			t.Fatalf("isRetryableHelperStartError(%d) = true on unix", code)
+		}
+	}
+}
+
+func expectedLockBusyErrno() uint32 {
+	return uint32(syscall.EWOULDBLOCK)
+}

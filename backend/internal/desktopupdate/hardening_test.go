@@ -2,12 +2,16 @@ package desktopupdate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"infinite-canvas/backend/internal/kernel"
 )
 
 func TestStagingNeverDeletesAnotherDownload(t *testing.T) {
@@ -136,7 +140,8 @@ func TestWindowsInstallRejectsCollocatedUserData(t *testing.T) {
 
 func TestHelperExitWhileParentAliveMakesInstallRetryable(t *testing.T) {
 	done := make(chan error, 1)
-	e := &Engine{state: UpdateState{Status: StatusInstalling}, helperDone: done}
+	waiter := startHelperWaiter(func() error { return <-done })
+	e := &Engine{state: UpdateState{Status: StatusInstalling}, helperWait: waiter}
 	e.monitorHelper()
 	done <- errors.New("等待应用退出超时")
 	deadline := time.Now().Add(time.Second)
@@ -150,4 +155,113 @@ func TestHelperExitWhileParentAliveMakesInstallRetryable(t *testing.T) {
 		t.Fatalf("retry blocked: %v", err)
 	}
 	e.end()
+	// A concurrent/late killHelper observing the same completed helperWaiter must
+	// never deadlock even after monitorHelper already consumed the completion.
+	if err, exited := terminateHelperWaiter(nil, waiter, time.Second, nil); !exited || err == nil {
+		t.Fatalf("terminateHelperWaiter on completed waiter = (%v, %t), want (err, true)", err, exited)
+	}
+}
+
+func TestPostPrepareAbandonedWorkDirReclaimedOnQuitFailAndHelperStop(t *testing.T) {
+	t.Run("quit-fail-kills-helper-and-reclaims-workdir", func(t *testing.T) {
+		root := t.TempDir()
+		platform, targetPath, archive, data := writeNativeSubprocessFixture(t, root)
+		sum := sha256.Sum256(data)
+
+		engine := &Engine{
+			enabled:        true,
+			currentVersion: "v2.3.2",
+			logPath:        filepath.Join(t.TempDir(), "update.log"),
+			parentPID:      os.Getpid(),
+			staged: &stagedUpdate{
+				version:  "v2.3.3",
+				archive:  archive,
+				platform: platform,
+				artifact: PlatformArtifact{Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])},
+			},
+			locate: func() (Target, error) {
+				return Target{Path: targetPath, Platform: platform}, nil
+			},
+			quit: func() error {
+				return errors.New("quit vetoed")
+			},
+		}
+
+		if err := engine.InstallUpdate(context.Background()); err == nil {
+			t.Fatal("expected quit failure")
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), ".beeftv-update-") {
+				t.Fatalf("workDir leaked after quit failure: %s", entry.Name())
+			}
+		}
+	})
+
+	t.Run("monitor-reclaims-without-backup-and-preserves-with-backup", func(t *testing.T) {
+		noBackupDir := filepath.Join(t.TempDir(), ".beeftv-update-nobackup")
+		if err := os.MkdirAll(filepath.Join(noBackupDir, "payload"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeCleanupJSON(t, filepath.Join(noBackupDir, "result.json"), RecoveryState{
+			Status:        "failed",
+			Phase:         "wait_parent",
+			FailureStep:   prepStepWaitPrepared,
+			FailureReason: kernel.UpdateReasonTimeout,
+			ErrorCode:     kernel.Win32ErrorSharingViolation,
+			Error:         "等待应用退出超时",
+		})
+		logPath := filepath.Join(t.TempDir(), "update.log")
+		done1 := make(chan error, 1)
+		e1 := &Engine{
+			currentVersion: "v2.3.2",
+			logPath:        logPath,
+			state:          UpdateState{Status: StatusInstalling},
+			helperWait:     startHelperWaiter(func() error { return <-done1 }),
+			helperWorkDir:  noBackupDir,
+		}
+		e1.monitorHelper()
+		done1 <- errors.New("等待应用退出超时")
+		deadline := time.Now().Add(2 * time.Second)
+		for pathExists(noBackupDir) && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if pathExists(noBackupDir) {
+			t.Fatalf("abandoned workDir without backup was not reclaimed: %s", noBackupDir)
+		}
+		rawLog, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(rawLog), "install helper stopped: step=wait_prepared reason=timeout errno=32:") {
+			t.Fatalf("monitorHelper lost structured result.json metadata before cleanup:\n%s", rawLog)
+		}
+
+		withBackupDir := filepath.Join(t.TempDir(), ".beeftv-update-withbackup")
+		backupMarker := filepath.Join(withBackupDir, "backup", "old-program")
+		if err := os.MkdirAll(filepath.Dir(backupMarker), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(backupMarker, []byte("recovery"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		done2 := make(chan error, 1)
+		e2 := &Engine{
+			state:         UpdateState{Status: StatusInstalling},
+			helperWait:    startHelperWaiter(func() error { return <-done2 }),
+			helperWorkDir: withBackupDir,
+		}
+		e2.monitorHelper()
+		done2 <- nil
+		deadline = time.Now().Add(2 * time.Second)
+		for e2.Status().Status == StatusInstalling && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !pathExists(backupMarker) {
+			t.Fatal("monitorHelper must never delete a workDir that holds a recovery backup")
+		}
+	})
 }
