@@ -163,7 +163,7 @@ export function openLocalCanvasProject(id: string) {
  *
  * 依次检查三个真实状态的证据，任何一项不成立都按「有未确认编辑」处理，
  * 因为这里判错的代价是覆盖用户正在编辑的内容：
- * 1. HTTP 待提交/正在提交，或上一次提交被拒；
+ * 1. HTTP 待提交/正在提交；
  * 2. 与服务端确认快照的文档内容不同；
  * 3. 没有服务端确认基线时，退回本机已落盘快照；两者都没有则保守判为有编辑。
  */
@@ -174,7 +174,7 @@ export function hasUnconfirmedCanvasEdits(id: string) {
 function readCanvasUnconfirmedState(id: string): CanvasUnconfirmedState {
     const scope = getActiveUserScope();
     const live = openLocalCanvasProject(id) ?? undefined;
-    const state: CanvasUnconfirmedState = { live, pending: false, blocked: false, inFlight: false, pendingProjection: false };
+    const state: CanvasUnconfirmedState = { live, pending: false, inFlight: false, pendingProjection: false };
     if (!live) return state;
     state.pending = canvasBackendSubmitPending(id, scope);
     if (state.pending) return state;

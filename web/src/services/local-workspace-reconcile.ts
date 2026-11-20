@@ -41,6 +41,7 @@ export function alignLiveAfterConfirmedRemote(input: {
             viewport: live.viewport || input.remote.viewport,
             appearance: live.appearance || input.remote.appearance,
             backgroundMode: live.backgroundMode || input.remote.backgroundMode,
+            showImageInfo: live.showImageInfo ?? input.remote.showImageInfo,
         };
         applyLiveCanvasProject(input.id, applied, true);
         invokeProjectionListener(input.onApplied, applied, live);

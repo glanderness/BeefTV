@@ -30,7 +30,7 @@ type UseCanvasLibTvVisualFixturesParams = {
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
     setViewport: Dispatch<SetStateAction<ViewportTransform>>;
-    saveCanvasProject: (options?: { requireRemote?: boolean }) => Promise<boolean>;
+    saveCanvasProject: () => Promise<boolean>;
 };
 
 export function useCanvasLibTvVisualFixtures({
@@ -147,7 +147,7 @@ export function useCanvasLibTvVisualFixtures({
         selectedNodeIdsRef.current = selectedFixtureNodes;
         pageUi.getState().setSelectedNodeIds(selectedFixtureNodes);
         focusFixtureOnNarrowViewport(fixtureNodes);
-        void saveCanvasProject({ requireRemote: false });
+        void saveCanvasProject();
     }, [pageUi, focusFixtureOnNarrowViewport, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes, selectedNodeIdsRef]);
 
     useEffect(() => {
@@ -159,7 +159,7 @@ export function useCanvasLibTvVisualFixtures({
         nodesRef.current = nextNodes;
         setNodes(nextNodes);
         focusFixtureOnNarrowViewport(fixtureNodes);
-        void saveCanvasProject({ requireRemote: false });
+        void saveCanvasProject();
     }, [focusFixtureOnNarrowViewport, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes]);
 
     useEffect(() => {
@@ -172,7 +172,7 @@ export function useCanvasLibTvVisualFixtures({
         setNodes(nextNodes);
         setConnections((current) => [...current, fixture.connection]);
         focusFixtureOnNarrowViewport(fixture.nodes);
-        void saveCanvasProject({ requireRemote: false });
+        void saveCanvasProject();
     }, [connectionsRef, focusFixtureOnNarrowViewport, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setConnections, setNodes]);
 
     useEffect(() => {
@@ -184,7 +184,7 @@ export function useCanvasLibTvVisualFixtures({
         nodesRef.current = nextNodes;
         setNodes(nextNodes);
         focusFixtureOnNarrowViewport(fixtureNodes);
-        void saveCanvasProject({ requireRemote: false });
+        void saveCanvasProject();
     }, [focusFixtureOnNarrowViewport, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes]);
 
     useEffect(() => {
@@ -196,7 +196,7 @@ export function useCanvasLibTvVisualFixtures({
         nodesRef.current = nextNodes;
         setNodes(nextNodes);
         focusFixtureOnNarrowViewport(fixtureNodes);
-        void saveCanvasProject({ requireRemote: false });
+        void saveCanvasProject();
     }, [focusFixtureOnNarrowViewport, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes]);
 
     useEffect(() => {
@@ -210,7 +210,7 @@ export function useCanvasLibTvVisualFixtures({
         focusFixtureOnNarrowViewport(fixtureNodes);
         // Visual audit fixtures are ephemeral; avoid showing the local-save
         // toast over the LibTV reference screenshot when chrome mode is on.
-        if (searchParams.get("libtvChrome") !== "1") void saveCanvasProject({ requireRemote: false });
+        if (searchParams.get("libtvChrome") !== "1") void saveCanvasProject();
     }, [focusFixtureOnNarrowViewport, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes]);
 
     useEffect(() => {
@@ -222,7 +222,7 @@ export function useCanvasLibTvVisualFixtures({
         nodesRef.current = nextNodes;
         setNodes(nextNodes);
         focusFixtureOnNarrowViewport(fixtureNodes);
-        void saveCanvasProject({ requireRemote: false });
+        void saveCanvasProject();
         // Local runtime normally converts stale loading snapshots to an error
         // immediately after a refresh. The fixture intentionally re-enters the
         // running state after that guard so the visual contract can be audited

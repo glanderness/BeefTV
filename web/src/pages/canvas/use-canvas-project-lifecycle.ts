@@ -723,7 +723,7 @@ export function useCanvasProjectLifecycle({
         });
     }, [persistLocalEdits]);
 
-    const saveCanvasProject = useCallback(async (_options: { requireRemote?: boolean } = {}): Promise<boolean> => {
+    const saveCanvasProject = useCallback(async (): Promise<boolean> => {
         try {
             await persistLocalEdits();
         } catch {

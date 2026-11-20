@@ -17,7 +17,7 @@ Wails
 本地模式由 `Service.NewLocal` 和 `isLocalWorkspaceMode()` 共同确定。它必须满足：
 
 - 不注册登录、支付、财务、对象存储、SaaS 模型目录和云端分享路由。
-- 不建立远程用户数据同步会话；`saveRemoteUserDataNow` 在本地模式直接返回。
+- 不建立远程用户数据同步会话；桌面工作区所有画布与素材均由本地后端持久化。
 - 计费采用 no-op lifecycle；任务成功、失败、取消和重试都不读取或修改计费订单。
 - 素材优先写入 Go 本地资源目录；浏览器 IndexedDB 只作为服务不可用时的降级缓存。
 - 本地素材选择器不枚举或写入外部插件素材源；外部模型调用仍只有在用户主动生成时发生。
@@ -40,7 +40,6 @@ Wails
 - `backend/internal/app`：迁移期兼容适配器；新本地功能不得继续扩大这个单体入口。
 - `backend/internal/repository`：SQLite 数据访问，不承载云端同步语义。
 - `web/src/services/*-repository`：前端本地持久化入口。
-- `web/src/services/user-data-sync.ts`：仅供 hosted profile 使用；任何调用方必须经过 `isLocalWorkspaceMode()`/`hasRemoteUserDataSyncSession()` 守卫。
 - `web/src/hooks/use-external-asset-sources.ts`：本地 profile 直接返回空外部来源，防止 Eagle 等插件在素材选择器打开时发起远程读取。
 
 ## 修改守则

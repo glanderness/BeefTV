@@ -26,7 +26,7 @@ export function useCanvasImport({ projectId, document, saveCanvasProject }: Opti
             connectionsRef.current = next.connections;
             setNodes(next.nodes);
             setConnections(next.connections);
-            const saved = await saveCanvasProject({ requireRemote: false });
+            const saved = await saveCanvasProject();
             if (!operation.isCurrent()) throw new CanvasOwnerAbandonedError();
             if (!saved) {
                 nodesRef.current = previous.nodes;

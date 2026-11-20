@@ -1,4 +1,4 @@
-import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { clearCanvasDocumentBase, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { http } from "@/services/api/request";
 import { beginCanvasHydration, finishCanvasHydration } from "./canvas-hydration-health";
 import { restoreCanvasHistory } from "@/services/api/workspace-data";
@@ -9,12 +9,14 @@ import { normalizeCanvasProjectGraph } from "@/lib/canvas/canvas-content";
 import { applyBackendCanvasRead, replayPendingCanvasProjection } from "./local-workspace-reconcile";
 import {
     applyLiveCanvasProject,
+    canvasBackendSubmitPending,
     CanvasProjectionError,
     canvasDeleting,
     openLocalCanvasProject,
     recordServerConfirmedCanvas,
     runProjectionStoreFlush,
     saveKey,
+    serverConfirmedCanvasSnapshots,
     withCanvasProjection,
 } from "./local-workspace-state";
 
@@ -42,7 +44,28 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
             summaries.push(...batch);
             page += 1;
         }
-        if (summaries.length === 0) return false;
+        const backendIds = new Set(summaries.map((summary) => summary.id));
+        const prunedIds = new Set(
+            useCanvasStore.getState().projects
+                .filter((project) => previouslyLoadedIds.has(project.id)
+                    && (project.revision ?? 0) > 0
+                    && !backendIds.has(project.id)
+                    && !canvasBackendSubmitPending(project.id, scope))
+                .map((project) => project.id),
+        );
+        if (prunedIds.size > 0) {
+            for (const id of prunedIds) {
+                clearCanvasDocumentBase(id, scope);
+                serverConfirmedCanvasSnapshots.delete(saveKey(scope, id));
+            }
+            useCanvasStore.setState((state) => ({
+                projects: state.projects.filter((project) => !prunedIds.has(project.id)),
+            }));
+        }
+        if (summaries.length === 0) {
+            if (prunedIds.size > 0) await flushCanvasStorePersistence();
+            return false;
+        }
         const projects = (await Promise.all(summaries.map(async (summary) => {
             const detail = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(summary.id)}`);
             if (!detail.project) throw new Error("项目内容未返回");

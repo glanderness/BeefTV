@@ -239,15 +239,6 @@ test("a referenced asset changing during confirmation still blocks generation", 
     }))).toBe("content_mismatch");
 });
 
-test("a paused conflict reports recovery instead of waiting for a nonexistent save", async () => {
-    const live = { ...fixture(), canvasHasUnconfirmedEdits: true, canvasUnconfirmedReason: "blocked" };
-    let slept = 0;
-    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => fixture(), {
-        sleep: async (ms) => { slept += ms; },
-    }))).toBe("canvas_conflict");
-    expect(slept).toBe(0);
-});
-
 test("unsaved generation settings fail at once without waiting", async () => {
     const live = fixture();
     live.modelConfigHasUnconfirmedEdits = true;

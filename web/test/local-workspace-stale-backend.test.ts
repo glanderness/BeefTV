@@ -314,4 +314,17 @@ describe("local workspace stale backend protection", () => {
         expect(await repository.openLocalCanvasProjectFromBackend(local.id)).toEqual(remote);
         expect(projects[0].nodes).toEqual([{ id: "remote-node" }]);
     });
+
+    it("prunes cached server-backed canvases deleted on backend while retaining unsaved local drafts", async () => {
+        const kept = project({ id: "canvas-kept", revision: 2 });
+        const deletedGhost = project({ id: "canvas-deleted-elsewhere", revision: 4 });
+        const unsavedDraft = project({ id: "canvas-unsaved-draft", revision: 0 });
+        resetProjects([kept, deletedGhost, unsavedDraft]);
+        bases.set(deletedGhost.id, { revision: 4, snapshot: deletedGhost });
+        setRemoteProject(kept);
+
+        expect(await repository.hydrateLocalCanvasProjectsFromBackend()).toBe(true);
+        expect(projects.map((item) => item.id).sort()).toEqual(["canvas-kept", "canvas-unsaved-draft"]);
+        expect(bases.has(deletedGhost.id)).toBe(false);
+    });
 });

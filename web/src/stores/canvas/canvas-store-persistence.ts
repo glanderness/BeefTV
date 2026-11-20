@@ -2,7 +2,7 @@ import type { PersistStorage, StorageValue } from "zustand/middleware";
 
 import { sameCanvasContent } from "@/lib/canvas/canvas-content";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
-import { parseCanvasStorageDocument, serializeCanvasStorageDocument, type CanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
+import { mergeCanvasStorageProjects, parseCanvasStorageDocument, serializeCanvasStorageDocument, type CanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { isDesktopShellOrigin } from "@/lib/desktop-shell";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -59,12 +59,15 @@ export type PersistedCanvasState = { projects: CanvasProject[] };
 type QueuedCanvasPersist = {
     name: string;
     scope: string;
+    baseProjects: CanvasProject[];
+    baseRevision: number;
     state: PersistedCanvasState;
     token: number;
 };
 
 type ObservedCanvasPersist = {
     projects: CanvasProject[];
+    localProjects: CanvasProject[];
     revision: number;
 };
 
@@ -92,6 +95,7 @@ const canvasPersistTokens = new Map<string, number>();
 const canvasStorageTails = new Map<string, Promise<void>>();
 const canvasDocumentBases = new Map<string, CanvasDocumentBase>();
 const desktopDraftsPersistedScopes = new Set<string>();
+const ignoredDeletedCanvasIds = new Map<string, Set<string>>();
 
 function isDesktopSingleSourceMode(): boolean {
     return typeof window !== "undefined" && isDesktopShellOrigin(window.location) && !usesBrowserLocalResourceStore();
@@ -156,9 +160,14 @@ export function clearCanvasDocumentBase(projectId: string, scope = getActiveUser
     canvasDocumentBases.delete(canvasDocumentBaseKey(scope, projectId));
 }
 
-export function recordCanvasStorageDocument(scope: string, document: CanvasStorageDocument) {
+export function recordCanvasStorageDocument(
+    scope: string,
+    document: CanvasStorageDocument,
+    localProjects: CanvasProject[] = document.state.projects,
+) {
     observedCanvasPersists.set(scope, {
         projects: document.state.projects,
+        localProjects,
         revision: document.storageRevision,
     });
 }
@@ -171,6 +180,73 @@ function selectUnsavedDesktopDrafts(scope: string, projects: CanvasProject[]): C
         }
         return !sameCanvasContent(project, base.snapshot);
     });
+}
+
+function collectConfirmedGenerationKeys(durable: CanvasProject | undefined, confirmed: CanvasProject | undefined) {
+    const nodeKeys = new Map<string, Set<string>>();
+    const sessionKeys = new Map<string, Set<string>>();
+    for (const source of [durable, confirmed]) {
+        for (const node of source?.nodes || []) {
+            const keys = node.metadata?.generationEffectKeys;
+            if (!keys?.length) continue;
+            const set = nodeKeys.get(node.id) ?? new Set<string>();
+            for (const key of keys) set.add(key);
+            nodeKeys.set(node.id, set);
+        }
+        for (const session of source?.chatSessions || []) {
+            const keys = session.generationEffectKeys;
+            if (!keys?.length) continue;
+            const set = sessionKeys.get(session.id) ?? new Set<string>();
+            for (const key of keys) set.add(key);
+            sessionKeys.set(session.id, set);
+        }
+    }
+    return { nodeKeys, sessionKeys };
+}
+
+/**
+ * Strip unconfirmed generationEffectKeys before writing to IndexedDB/drafts so
+ * optimistic continuation stamps never skip post-crash result recovery before
+ * the backend confirms them.
+ */
+function stripUnconfirmedGenerationKeys(scope: string, state: PersistedCanvasState, durableProjects: CanvasProject[]): PersistedCanvasState {
+    const durableById = new Map(durableProjects.map((project) => [project.id, project]));
+    let anyChanged = false;
+    const projects = state.projects.map((project) => {
+        const hasKeys = project.nodes.some((node) => Boolean(node.metadata?.generationEffectKeys?.length))
+            || (project.chatSessions || []).some((session) => Boolean(session.generationEffectKeys?.length));
+        if (!hasKeys) return project;
+        const { nodeKeys, sessionKeys } = collectConfirmedGenerationKeys(durableById.get(project.id), canvasDocumentBase(project.id, scope)?.snapshot);
+        let changed = false;
+        const nodes = project.nodes.map((node) => {
+            const localKeys = node.metadata?.generationEffectKeys;
+            if (!localKeys?.length) return node;
+            const allowed = nodeKeys.get(node.id);
+            const filtered = allowed ? localKeys.filter((key) => allowed.has(key)) : [];
+            if (filtered.length === localKeys.length) return node;
+            changed = true;
+            const metadata = { ...node.metadata };
+            if (filtered.length) metadata.generationEffectKeys = filtered;
+            else delete metadata.generationEffectKeys;
+            return { ...node, metadata };
+        });
+        const chatSessions = (project.chatSessions || []).map((session) => {
+            const localKeys = session.generationEffectKeys;
+            if (!localKeys?.length) return session;
+            const allowed = sessionKeys.get(session.id);
+            const filtered = allowed ? localKeys.filter((key) => allowed.has(key)) : [];
+            if (filtered.length === localKeys.length) return session;
+            changed = true;
+            const nextSession = { ...session };
+            if (filtered.length) nextSession.generationEffectKeys = filtered;
+            else delete nextSession.generationEffectKeys;
+            return nextSession;
+        });
+        if (!changed) return project;
+        anyChanged = true;
+        return { ...project, nodes, chatSessions };
+    });
+    return anyChanged ? { projects } : state;
 }
 
 export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
@@ -206,14 +282,23 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
                 recordCanvasStorageDocument(scope, { ...doc, state: { projects: queued.state.projects } });
             }
         } else {
-            const nextDoc: CanvasStorageDocument = {
-                state: { projects: queued.state.projects },
-                version: 0,
-                storageRevision: nextRevision,
-            };
-            await storage.setItem(queued.name, serializeCanvasStorageDocument(nextDoc));
-            committed = nextDoc;
-            recordCanvasStorageDocument(scope, nextDoc);
+            const durable = parseCanvasStorageDocument(await storage.getItem(queued.name), queued.baseProjects);
+            const ignored = ignoredDeletedCanvasIds.get(scope);
+            const merged = mergeCanvasStorageProjects({
+                durable,
+                baseProjects: queued.baseProjects,
+                localProjects: queued.state.projects,
+                baseRevision: queued.baseRevision,
+                ignoredDeletedIds: ignored,
+            });
+            if (merged.droppedDeletedIds.length > 0) {
+                const nextIgnored = ignored ?? new Set<string>();
+                for (const id of merged.droppedDeletedIds) nextIgnored.add(id);
+                ignoredDeletedCanvasIds.set(scope, nextIgnored);
+            }
+            await storage.setItem(queued.name, serializeCanvasStorageDocument(merged.document));
+            committed = merged.document;
+            recordCanvasStorageDocument(scope, merged.document, queued.state.projects);
         }
 
         const latest = queuedCanvasPersists.get(scope);
@@ -221,6 +306,8 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
             if (latest?.token === queued.token) queuedCanvasPersists.delete(scope);
             return committed;
         }
+        latest.baseProjects = queued.state.projects;
+        latest.baseRevision = Math.min(latest.baseRevision, queued.baseRevision);
     }
 }
 
@@ -251,6 +338,7 @@ export function createCanvasPersistStorage<TStore extends { projects: CanvasProj
         getItem: async (name) => {
             const scope = getActiveUserScope();
             const storage = localForageStorageForScope(scope);
+            ignoredDeletedCanvasIds.delete(scope);
             if (isDesktopSingleSourceMode()) {
                 const draftRaw = await storage.getItem(CANVAS_DRAFTS_KEY);
                 const legacyRaw = draftRaw ? null : await storage.getItem(name);
@@ -258,7 +346,7 @@ export function createCanvasPersistStorage<TStore extends { projects: CanvasProj
                 if (!raw) {
                     desktopDraftsPersistedScopes.delete(scope);
                     canvasMemoryStates.set(scope, { projects: [] });
-                    observedCanvasPersists.set(scope, { projects: [], revision: 0 });
+                    observedCanvasPersists.set(scope, { projects: [], localProjects: [], revision: 0 });
                     return null;
                 }
                 desktopDraftsPersistedScopes.add(scope);
@@ -271,7 +359,7 @@ export function createCanvasPersistStorage<TStore extends { projects: CanvasProj
             const value = await storage.getItem(name);
             if (!value) {
                 canvasMemoryStates.set(scope, { projects: [] });
-                observedCanvasPersists.set(scope, { projects: [], revision: 0 });
+                observedCanvasPersists.set(scope, { projects: [], localProjects: [], revision: 0 });
                 return null;
             }
             const document = parseCanvasStorageDocument(value);
@@ -298,12 +386,27 @@ export function createCanvasPersistStorage<TStore extends { projects: CanvasProj
                 return;
             }
 
+            const ignored = ignoredDeletedCanvasIds.get(scope);
+            if (ignored) {
+                const liveIds = new Set(nextState.projects.map((project) => project.id));
+                for (const id of ignored) {
+                    if (!liveIds.has(id)) ignored.delete(id);
+                }
+                if (ignored.size === 0) ignoredDeletedCanvasIds.delete(scope);
+            }
+
+            const existing = queuedCanvasPersists.get(scope);
+            const observed = observedCanvasPersists.get(scope);
             const token = (canvasPersistTokens.get(scope) || 0) + 1;
             canvasPersistTokens.set(scope, token);
+            const baseProjects = existing?.baseProjects ?? observed?.localProjects ?? [];
+            const durableProjects = observed?.projects ?? baseProjects;
             queuedCanvasPersists.set(scope, {
                 name,
                 scope,
-                state: nextState,
+                baseProjects,
+                baseRevision: existing?.baseRevision ?? observed?.revision ?? 0,
+                state: stripUnconfirmedGenerationKeys(scope, nextState, durableProjects),
                 token,
             });
             clearCanvasSaveTimer(scope);

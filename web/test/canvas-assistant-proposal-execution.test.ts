@@ -51,7 +51,6 @@ test("a revoked continuation intent asks for a fresh proposal without submitting
 
 const blockedCopy: [AssistantProposalBlockedReason, string][] = [
     ["canvas_saving", "画布还在保存。稍等几秒再点生成。"],
-    ["canvas_conflict", "画布有未解决的版本冲突。请在顶部保存状态中使用最新版本，再让助手重新提出方案。"],
     ["settings_unsaved", "生成设置还没保存。保存后再点生成。"],
     ["canvas_changed", "画布在提出方案后改过。请让助手重新提出方案。"],
     ["settings_changed", "生成设置在提出方案后改过。请让助手重新提出方案。"],

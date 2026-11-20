@@ -289,4 +289,31 @@ describe("画布刷新接缝（服务端基线）", () => {
         expect(useCanvasStore.getState().projects[0].title).toBe("本地新标题");
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(true);
     });
+
+    test("外部刷新采纳远端文档内容时保留本地视口与画布视图偏好（含 showImageInfo）", async () => {
+        await establishConfirmedBaseline();
+        useCanvasStore.getState().updateProject("c1", {
+            viewport: { x: 180, y: -64, k: 0.75 },
+            appearance: { theme: "dark" } as never,
+            backgroundMode: "dots",
+            showImageInfo: true,
+        });
+        replaceServerDocument(canvas(3, {
+            title: "远端新标题",
+            nodes: [{ id: "n1", type: "image", title: "远端镜头", position: { x: 10, y: 20 }, width: 320, height: 220, metadata: { prompt: "远端提示" } }],
+            viewport: { x: 0, y: 0, k: 1 },
+            appearance: undefined,
+            backgroundMode: "grid",
+            showImageInfo: false,
+        }));
+
+        const applied = await refreshLocalCanvasProjectIfChanged("c1");
+        expect(applied?.title).toBe("远端新标题");
+        expect(applied?.revision).toBe(3);
+        expect(applied?.nodes[0]?.title).toBe("远端镜头");
+        expect(applied?.viewport).toEqual({ x: 180, y: -64, k: 0.75 });
+        expect(applied?.appearance).toEqual({ theme: "dark" } as never);
+        expect(applied?.backgroundMode).toBe("dots");
+        expect(applied?.showImageInfo).toBe(true);
+    });
 });

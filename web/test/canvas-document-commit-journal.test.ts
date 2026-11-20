@@ -381,6 +381,64 @@ describe("画布文档提交日记", () => {
         expect(peekCanvasOperationJournal("c1")?.confirmedRevision).toBe(77);
     });
 
+    test("unconfirmed generationEffectKeys are stripped from cache writes while confirmed keys and manual deletions survive", async () => {
+        await useCanvasStore.persist.rehydrate();
+        const nodes = [
+            node("n1", "One", { metadata: { generationEffectKeys: ["confirmed-key"] } }),
+            node("n2", "Two"),
+        ];
+        await seedConfirmed(canvas("基线", 1, { nodes, connections: [connection("e", "n1", "n2")] }));
+        await flushCanvasStorePersistence();
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [
+                { ...nodes[0]!, metadata: { generationEffectKeys: ["confirmed-key", "not-confirmed"] } },
+                { ...nodes[1]!, metadata: { generationEffectKeys: ["also-unconfirmed"] } },
+            ] as never,
+            connections: [],
+        });
+        await flushCanvasStorePersistence();
+        const durable = canvasDurableSnapshot(activeScope, "c1");
+        expect(durable?.connections).toEqual([]);
+        expect(durable?.nodes[0]?.metadata?.generationEffectKeys).toEqual(["confirmed-key"]);
+        expect(durable?.nodes[1]?.metadata?.generationEffectKeys).toBeUndefined();
+    });
+
+    test("non-desktop browser cache writes preserve concurrent tab edits and deletions without resurrecting deleted canvases", async () => {
+        await useCanvasStore.persist.rehydrate();
+        const c1 = canvas("画布 1", 1);
+        const c2 = { ...canvas("画布 2", 1), id: "c2" };
+        const c3 = { ...canvas("画布 3", 1), id: "c3" };
+        useCanvasStore.setState({ projects: [c1, c2, c3] });
+        await flushCanvasStorePersistence();
+
+        // Simulate Tab B directly updating IndexedDB: edits c2, deletes c3, adds c4.
+        const storageKey = `${activeScope}:${CANVAS_STORE_KEY}`;
+        const raw = stored.get(storageKey);
+        expect(raw).toBeTruthy();
+        const tabBDoc = JSON.parse(raw!);
+        tabBDoc.storageRevision = (tabBDoc.storageRevision ?? 0) + 1;
+        tabBDoc.deletedProjectIds = { ...(tabBDoc.deletedProjectIds ?? {}), c3: tabBDoc.storageRevision };
+        tabBDoc.state.projects = [
+            c1,
+            { ...c2, title: "Tab B 改过的画布 2" },
+            { ...canvas("Tab B 新建的画布 4", 1), id: "c4" },
+        ];
+        stored.set(storageKey, JSON.stringify(tabBDoc));
+
+        // Stale Tab A edits c1 twice while still holding c3 in React memory.
+        useCanvasStore.getState().updateProject("c1", { title: "Tab A 改名 1" });
+        await flushCanvasStorePersistence();
+        useCanvasStore.getState().updateProject("c1", { title: "Tab A 改名 2" });
+        await flushCanvasStorePersistence();
+
+        const finalDoc = JSON.parse(stored.get(storageKey)!);
+        expect(finalDoc.state.projects.map((p: { id: string; title: string }) => `${p.id}:${p.title}`)).toEqual([
+            "c1:Tab A 改名 2",
+            "c2:Tab B 改过的画布 2",
+            "c4:Tab B 新建的画布 4",
+        ]);
+    });
+
     test("首次保存 200 但缺少画布回执不能确认成功，草稿保留可重试", async () => {
         clearCanvasDocumentBase("c1");
         useCanvasStore.setState({ projects: [canvas("新画布", 0)] });

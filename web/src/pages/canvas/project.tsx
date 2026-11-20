@@ -294,11 +294,11 @@ function InfiniteCanvasPage() {
         versions.close();
         assistant.setOpen(true);
     }, [assistant, exitFocusMode, versions]);
-    // 修复素材关联仍遵守当前画布版本，不能替用户确认覆盖云端的新内容。
+    // 修复素材关联并重新核对画布媒体绑定。
     const confirmForceSaveCanvas = useCallback(() => {
         modal.confirm({
             title: "修复素材关联并保存？",
-            content: "核对画布媒体与素材库的关联，补齐缺失素材后保存。若云端已有新版本，会保留本地草稿并提示加载最新版。",
+            content: "核对画布媒体与素材库的关联，补齐缺失素材并保存到本地工作区。",
             okText: "修复并保存",
             cancelText: "取消",
             onOk: () => forceSaveCanvasProject(),
@@ -367,7 +367,7 @@ function InfiniteCanvasPage() {
         connectionsRef,
         setConnections,
         getCanvasCenter,
-        persist: () => saveCanvasProject({ requireRemote: false }),
+        persist: () => saveCanvasProject(),
         focusNode: (node) => {
             const k = Math.min(1, (size.width - 96) / node.width, (size.height - 160) / node.height);
             const next = { x: size.width / 2 - (node.position.x + node.width / 2) * k, y: size.height / 2 - (node.position.y + node.height / 2) * k, k };

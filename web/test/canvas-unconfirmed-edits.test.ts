@@ -4,11 +4,11 @@ import { canvasUnconfirmedDiagnostic, canvasUnconfirmedReason, type CanvasUnconf
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
 const base = { id: "c", title: "private title", nodes: [{ id: "NODE-ID-MUST-NOT-LEAK", type: "image", metadata: { content: "private resource", storageKey: "resource:private" } }], connections: [], chatSessions: [], activeChatId: null } as unknown as CanvasProject;
-const clean: CanvasUnconfirmedState = { live: base, confirmed: base, pending: false, blocked: false, inFlight: false, pendingProjection: false };
+const clean: CanvasUnconfirmedState = { live: base, confirmed: base, pending: false, inFlight: false, pendingProjection: false };
 
 test("dirty classification preserves every blocking state and confirmed baseline precedence", () => {
     expect(canvasUnconfirmedReason(clean)).toBeUndefined();
-    for (const reason of ["pending", "blocked", "inFlight", "pendingProjection"] as const) {
+    for (const reason of ["pending", "inFlight", "pendingProjection"] as const) {
         expect(canvasUnconfirmedReason({ ...clean, [reason]: true })).toBe(reason);
         expect(canvasUnconfirmedReason({ ...clean, live: undefined, [reason]: true })).toBeUndefined();
     }
