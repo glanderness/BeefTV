@@ -165,7 +165,7 @@ export async function applyBackendCanvasRead(
         const chosen = selectPreferredCanvasProject(currentLocal, backend, scope);
         traceCanvasGraph("repository.read.select", { local: currentLocal, backend, base: canvasDocumentBase(backend.id, scope)?.snapshot, chosen });
         const journal = peekCanvasOperationJournal(backend.id, scope);
-        if (!currentLocal || (!journal?.inFlight && (chosen === backend || sameCanvasDocument(chosen, backend)))) {
+        if (!currentLocal || currentLocal.summaryOnly || (!journal?.inFlight && (chosen === backend || sameCanvasDocument(chosen, backend)))) {
             const base = journal?.pendingProjection?.base
                 ?? journal?.confirmedSnapshot
                 ?? canvasDocumentBase(backend.id, scope)?.snapshot
@@ -174,10 +174,22 @@ export async function applyBackendCanvasRead(
             try {
                 confirmed = await confirmRemoteDocument(backend, scope);
             } catch {
+                if (!currentLocal || currentLocal.summaryOnly) {
+                    applyLiveCanvasProject(backend.id, backend, false);
+                    return backend;
+                }
                 return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
             }
             if ((backend.revision ?? 0) < confirmed.confirmedRevision) {
-                return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
+                const live = openLocalCanvasProject(backend.id);
+                if (!live || live.summaryOnly) {
+                    const fullFallback = confirmed.confirmedSnapshot && !confirmed.confirmedSnapshot.summaryOnly
+                        ? confirmed.confirmedSnapshot
+                        : backend;
+                    applyLiveCanvasProject(backend.id, fullFallback, true);
+                    return fullFallback;
+                }
+                return live;
             }
             const aligned = alignLiveAfterConfirmedRemote({
                 id: backend.id,

@@ -37,6 +37,7 @@ func TestUserCanvasProjectsPageReturnsSummaryMetadataForLazyHydration(t *testing
 		"workspaceProjectId": "workspace-root",
 		"folderId":           "folder-a",
 		"title":              "第二幕分镜",
+		"canvasTitle":        "镜头二·夜景",
 		"nodes": []map[string]any{
 			{"id": "t-1", "type": "text", "metadata": map[string]any{"content": "旁白"}},
 			{"id": "i-1", "type": "image", "width": 640, "height": 360, "metadata": map[string]any{"storageKey": "image:cover-1", "content": "/api/resources/cover-1/file"}},
@@ -55,8 +56,8 @@ func TestUserCanvasProjectsPageReturnsSummaryMetadataForLazyHydration(t *testing
 		t.Fatalf("unexpected page counts: total=%d len=%d", page.Total, len(page.Projects))
 	}
 	summary := page.Projects[0]
-	if summary.ID != "canvas-child" || summary.WorkspaceProjectID != "workspace-root" || summary.FolderID != "folder-a" {
-		t.Fatalf("unexpected summary grouping: %+v", summary)
+	if summary.ID != "canvas-child" || summary.WorkspaceProjectID != "workspace-root" || summary.FolderID != "folder-a" || summary.CanvasTitle != "镜头二·夜景" {
+		t.Fatalf("unexpected summary grouping/title: %+v", summary)
 	}
 	if summary.NodeCount != 3 || summary.Revision != 1 {
 		t.Fatalf("unexpected nodeCount/revision: %+v", summary)

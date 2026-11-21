@@ -17,6 +17,7 @@ type CanvasLibrarySummary struct {
 	ProjectID          string           `json:"projectId,omitempty"`
 	FolderID           string           `json:"folderId,omitempty"`
 	Title              string           `json:"title"`
+	CanvasTitle        string           `json:"canvasTitle,omitempty"`
 	Revision           int64            `json:"revision"`
 	CreatedAt          time.Time        `json:"createdAt"`
 	UpdatedAt          time.Time        `json:"updatedAt"`
@@ -53,6 +54,7 @@ func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, 
 	for _, project := range projects {
 		var document struct {
 			WorkspaceProjectID string           `json:"workspaceProjectId"`
+			CanvasTitle        string           `json:"canvasTitle"`
 			Nodes              []map[string]any `json:"nodes"`
 		}
 		if err := json.Unmarshal([]byte(project.PayloadJSON), &document); err != nil {
@@ -65,6 +67,7 @@ func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, 
 			ProjectID:          project.ProjectID,
 			FolderID:           project.LibraryFolderID,
 			Title:              project.Title,
+			CanvasTitle:        strings.TrimSpace(document.CanvasTitle),
 			Revision:           project.Revision,
 			CreatedAt:          project.CreatedAt,
 			UpdatedAt:          project.UpdatedAt,

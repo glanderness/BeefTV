@@ -23,7 +23,7 @@ import {
     withCanvasProjection,
 } from "./local-workspace-state";
 
-function isNotFoundApiError(error: unknown): boolean {
+export function isNotFoundApiError(error: unknown): boolean {
     if (!error || typeof error !== "object") return false;
     const candidate = error as { name?: unknown; status?: unknown };
     return (error instanceof ApiError || candidate.name === "ApiError") && candidate.status === 404;
@@ -98,6 +98,7 @@ function canvasProjectFromLibrarySummary(summary: RawCanvasLibrarySummary): Canv
         projectId: summary.projectId || undefined,
         folderId: summary.folderId || undefined,
         title: summary.title || "未命名画布",
+        canvasTitle: summary.canvasTitle?.trim() || undefined,
         createdAt: summary.createdAt || now,
         updatedAt: summary.updatedAt || summary.createdAt || now,
         nodes: previewNodes,
@@ -297,7 +298,11 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
             useCanvasStore.setState((state) => state.projects.some((item) => item.id === id) ? state : { projects: [...state.projects, project] });
         }
         await flushCanvasStorePersistence();
-        return openLocalCanvasProject(id) ?? project;
+        const resolved = openLocalCanvasProject(id) ?? project;
+        if (resolved?.summaryOnly) {
+            throw new Error("画布正在同步，请稍后重试");
+        }
+        return resolved;
     } catch (error) {
         if (isNotFoundApiError(error)) {
             const evicted = await evictDeletedCanvasIfClean(id, scope, { allowOpenEditor: true });

@@ -288,12 +288,14 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
                 recordCanvasStorageDocument(scope, { ...doc, state: { projects: queued.state.projects } });
             }
         } else {
-            const durable = parseCanvasStorageDocument(await storage.getItem(queued.name), queued.baseProjects);
+            const fullBaseProjects = queued.baseProjects.filter((project) => !project.summaryOnly);
+            const fullLocalProjects = queued.state.projects.filter((project) => !project.summaryOnly);
+            const durable = parseCanvasStorageDocument(await storage.getItem(queued.name), fullBaseProjects);
             const ignored = ignoredDeletedCanvasIds.get(scope);
             const merged = mergeCanvasStorageProjects({
                 durable,
-                baseProjects: queued.baseProjects,
-                localProjects: queued.state.projects,
+                baseProjects: fullBaseProjects,
+                localProjects: fullLocalProjects,
                 baseRevision: queued.baseRevision,
                 ignoredDeletedIds: ignored,
             });
@@ -304,7 +306,7 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
             }
             await storage.setItem(queued.name, serializeCanvasStorageDocument(merged.document));
             committed = merged.document;
-            recordCanvasStorageDocument(scope, merged.document, queued.state.projects);
+            recordCanvasStorageDocument(scope, merged.document, fullLocalProjects);
         }
 
         const latest = queuedCanvasPersists.get(scope);

@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import { parseAssetRecord } from "@/lib/asset-record";
 import { rebaseAssetSnapshot, serializeAssetStorageDocument, type AssetStorageDocument } from "@/lib/asset-storage-revision";
 import { parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
-import { localForageStorageForScope } from "@/lib/localforage-storage";
+import { IMAGE_FILES_STORE_NAME, MEDIA_FILES_STORE_NAME, localForageInstance, localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { parseWorkspaceAssetPayloads } from "@/lib/workspace-asset-normalize";
 import { lookupWorkspaceAssetsByIds } from "@/services/api/workspace-assets";
@@ -318,17 +318,46 @@ export const useAssetStore = create<AssetStore>()(
                         withGenerationArtifactCommitLock(scope, async () => {
                             const storage = localForageStorageForScope(scope);
                             const syncDrafts = await readAllCanvasSyncDrafts(scope);
+                            const summaryIdsAtStart = scope === getActiveUserScope()
+                                ? useCanvasStore.getState().projects.filter((project) => project.summaryOnly).map((project) => project.id)
+                                : [];
+                            const resolvedSummaryProjects = new Map<string, ReturnType<typeof useCanvasStore.getState>["projects"][number]>();
+                            const deletedSummaryIds = new Set<string>();
+                            if (summaryIdsAtStart.length > 0) {
+                                // Only resolve unopened summary canvases if this scope actually holds local
+                                // IndexedDB blobs that could be eligible for garbage collection.
+                                if (!(await hasLocalScopedMediaBlobs(scope))) return;
+                                const { isNotFoundApiError, readLocalCanvasProjectFromBackend } = await import("@/services/local-workspace-hydration");
+                                for (const id of summaryIdsAtStart) {
+                                    try {
+                                        resolvedSummaryProjects.set(id, await readLocalCanvasProjectFromBackend(id));
+                                    } catch (error) {
+                                        if (isNotFoundApiError(error)) {
+                                            deletedSummaryIds.add(id);
+                                        } else {
+                                            throw error;
+                                        }
+                                    }
+                                }
+                            }
                             // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
                             const canvasReferences = await withCanvasStorePersistenceLock(scope, async () => {
                                 await commitPendingCanvasStorePersistenceLocked(scope);
                                 const durableCanvas = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY));
                                 const durableCanvasDrafts = parseCanvasStorageDocument(await storage.getItem(CANVAS_DRAFTS_KEY));
                                 const liveProjects = scope === getActiveUserScope() ? useCanvasStore.getState().projects : [];
-                                if (liveProjects.some((project) => project.summaryOnly)) {
-                                    return null;
+                                const fullLiveProjects: typeof liveProjects = [];
+                                for (const project of liveProjects) {
+                                    if (!project.summaryOnly) {
+                                        fullLiveProjects.push(project);
+                                    } else if (resolvedSummaryProjects.has(project.id)) {
+                                        fullLiveProjects.push(resolvedSummaryProjects.get(project.id)!);
+                                    } else if (!deletedSummaryIds.has(project.id)) {
+                                        return null;
+                                    }
                                 }
                                 return [
-                                    ...liveProjects,
+                                    ...fullLiveProjects,
                                     ...(pendingCanvasStorePersistence(scope)?.projects ?? []),
                                     ...durableCanvas.state.projects,
                                     ...durableCanvasDrafts.state.projects,
@@ -375,6 +404,19 @@ export const useAssetStore = create<AssetStore>()(
         },
     ),
 );
+
+async function hasLocalScopedMediaBlobs(scope: string): Promise<boolean> {
+    const imagePrefixes = [`image:${scope}:`, `generation-image:${scope}:`];
+    const [imageKeys, mediaKeys] = await Promise.all([
+        localForageInstance(IMAGE_FILES_STORE_NAME).keys().catch(() => [] as string[]),
+        localForageInstance(MEDIA_FILES_STORE_NAME).keys().catch(() => [] as string[]),
+    ]);
+    if (imageKeys.some((key) => imagePrefixes.some((prefix) => key.startsWith(prefix)))) return true;
+    return mediaKeys.some((key) => {
+        const parts = key.split(":");
+        return parts.length >= 3 && parts[1] === scope;
+    });
+}
 
 bindAssetDraftStoreHooks({
     readAssets: () => useAssetStore.getState().assets,

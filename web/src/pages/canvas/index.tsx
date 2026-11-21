@@ -123,24 +123,34 @@ export default function CanvasPage() {
         });
     };
     const duplicateCanvasProject = useCallback(async (project: CanvasLibrarySummary) => {
-        const sourceCanvases = listCanvasWorkspaceProjectCanvases(localProjects, project.id);
-        let copiedWorkspaceProjectId: string | undefined;
-        for (const [index, summaryOrFull] of sourceCanvases.entries()) {
-            const source = summaryOrFull.summaryOnly
-                ? await loadCanvasProjectForEditing(summaryOrFull.id)
-                : summaryOrFull;
-            if (!source) throw new Error("项目不存在");
-            const copy = await createWorkspaceCanvasProject(index === 0 ? `${project.title || "未命名项目"} 副本` : source.title, source.projectId, {
-                nodes: source.nodes,
-                connections: source.connections,
-                chatSessions: source.chatSessions,
-                activeChatId: source.activeChatId,
-            }, copiedWorkspaceProjectId);
-            copiedWorkspaceProjectId ||= copy.id;
+        try {
+            const sourceCanvases = listCanvasWorkspaceProjectCanvases(localProjects, project.id);
+            if (!sourceCanvases.length) throw new Error("项目不存在");
+            // Preload every canvas in the workspace project before creating any copy
+            // so a failed read never leaves partial duplicate canvases behind.
+            const loadedSources = await Promise.all(sourceCanvases.map(async (summaryOrFull) => {
+                const source = summaryOrFull.summaryOnly
+                    ? await loadCanvasProjectForEditing(summaryOrFull.id)
+                    : summaryOrFull;
+                if (!source || source.summaryOnly) throw new Error("项目不存在或读取未完成");
+                return source;
+            }));
+            let copiedWorkspaceProjectId: string | undefined;
+            for (const [index, source] of loadedSources.entries()) {
+                const copy = await createWorkspaceCanvasProject(index === 0 ? `${project.title || "未命名项目"} 副本` : source.title, source.projectId, {
+                    nodes: source.nodes,
+                    connections: source.connections,
+                    chatSessions: source.chatSessions,
+                    activeChatId: source.activeChatId,
+                }, copiedWorkspaceProjectId);
+                copiedWorkspaceProjectId ||= copy.id;
+            }
+            if (!copiedWorkspaceProjectId) throw new Error("项目不存在");
+            message.success(`项目副本已创建，共 ${loadedSources.length} 张画布`);
+            enterProject(copiedWorkspaceProjectId);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "复制项目失败，请重试");
         }
-        if (!copiedWorkspaceProjectId) throw new Error("项目不存在");
-        message.success(`项目副本已创建，共 ${sourceCanvases.length} 张画布`);
-        enterProject(copiedWorkspaceProjectId);
     }, [enterProject, localProjects, message]);
     const filteredProjects = useMemo(() => {
         const query = keyword.trim().toLowerCase();

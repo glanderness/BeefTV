@@ -20,6 +20,7 @@ export async function loadCanvasProjectForEditing(
         return restored;
     }
     const project = await openLocalCanvasProjectFromBackend(id);
+    if (project?.summaryOnly) throw new Error("画布尚未完整加载，请重试");
     if (project) options.onLoad?.(project);
     return project || undefined;
 }

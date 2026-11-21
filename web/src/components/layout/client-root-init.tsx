@@ -105,7 +105,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         if (localMediaCleanupScope.current === scope) return;
         localMediaCleanupScope.current = scope;
         void useAssetStore.getState().cleanupImages().catch((error) => {
-            // Cache cleanup is best effort; it must never block opening the local workspace.
+            // Cache cleanup is best effort; allow retry if summary resolution failed transiently.
+            if (localMediaCleanupScope.current === scope) localMediaCleanupScope.current = "";
             console.warn("本地媒体缓存清理失败，已保留当前工作区", { scope, error });
         });
     }, [assetsHydrated, canvasHydrated]);

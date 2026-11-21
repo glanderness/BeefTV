@@ -14,6 +14,7 @@ import { settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-re
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import {
     hydrateLocalCanvasProjectsFromBackend,
+    isNotFoundApiError,
     openLocalCanvasProjectFromBackend,
     readLocalCanvasProjectFromBackend,
     restoreLocalCanvasProjectFromHistory,
@@ -630,9 +631,22 @@ async function waitForCanvasBackendIdle(id: string, scope: string) {
 export async function deleteLocalCanvasProjects(ids: readonly string[]) {
     const scope = getActiveUserScope();
     const selected = [...new Set(ids)];
-    const snapshots = selected
-        .map((id) => useCanvasStore.getState().openProject(id))
-        .filter((project): project is CanvasProject => Boolean(project));
+    const snapshots: CanvasProject[] = [];
+    for (const id of selected) {
+        const current = useCanvasStore.getState().openProject(id);
+        if (!current) continue;
+        if (current.summaryOnly) {
+            try {
+                snapshots.push(await readLocalCanvasProjectFromBackend(id));
+            } catch (error) {
+                if (!isNotFoundApiError(error)) {
+                    throw error;
+                }
+            }
+        } else {
+            snapshots.push(current);
+        }
+    }
     for (const id of selected) canvasDeleting.add(saveKey(scope, id));
     try {
         await Promise.all(selected.map((id) => waitForCanvasBackendIdle(id, scope)));
@@ -659,7 +673,7 @@ export async function deleteLocalCanvasProjects(ids: readonly string[]) {
         }
         if (deleted.length) {
             useCanvasStore.getState().deleteProjects(deleted);
-            const removed = snapshots.filter((item) => deleted.includes(item.id));
+            const removed = snapshots.filter((item) => deleted.includes(item.id) && !item.summaryOnly);
             if (removed.length) useCanvasHistoryStore.getState().recordDeletedProjects(removed);
             await flushCanvasStorePersistence().catch((error) => {
                 console.error("画布本地缓存写入失败，已从桌面数据库删除", { ids: deleted, error });

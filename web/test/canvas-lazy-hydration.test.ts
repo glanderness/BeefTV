@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
-import { mergeCanvasStorageProjects, type CanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
+import { mergeCanvasStorageProjects, parseCanvasStorageDocument, type CanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 
 let projects: any[] = [];
+let recordedDeletedProjects: any[] = [];
 const bases = new Map<string, { revision: number; snapshot: any }>();
 const journalMemory = new Map<string, any>();
 let remotePages: any[][] = [];
@@ -64,7 +65,13 @@ mock.module("@/stores/canvas/use-canvas-store", () => ({
 }));
 
 mock.module("@/stores/canvas/use-canvas-history-store", () => ({
-    useCanvasHistoryStore: { getState: () => ({ recordDeletedProjects: () => {} }) },
+    useCanvasHistoryStore: {
+        getState: () => ({
+            recordDeletedProjects: (items: any[]) => {
+                recordedDeletedProjects.push(...items);
+            },
+        }),
+    },
 }));
 
 mock.module("@/services/local-workspace-sync", () => ({
@@ -246,6 +253,7 @@ mock.module("@/services/canvas-operation-journal", () => {
 
 const repository = await import("@/services/local-workspace-repository");
 const repair = await import("@/services/canvas-asset-repair");
+const { exportCanvasProjects } = await import("@/lib/canvas/canvas-export");
 
 function summaryItem(index: number) {
     const id = `canvas-${index}`;
@@ -254,6 +262,7 @@ function summaryItem(index: number) {
         workspaceProjectId: index % 2 === 0 ? `ws-${index}` : `ws-${index - 1}`,
         folderId: index < 10 ? "folder-1" : undefined,
         title: `画布 ${index}`,
+        canvasTitle: `分镜 ${index}`,
         revision: 2,
         createdAt: "2026-04-01T00:00:00.000Z",
         updatedAt: `2026-04-02T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
@@ -295,6 +304,7 @@ function fullProject(id: string, overrides: Record<string, unknown> = {}) {
 describe("canvas lazy hydration", () => {
     beforeEach(() => {
         projects = [];
+        recordedDeletedProjects = [];
         bases.clear();
         journalMemory.clear();
         remotePages = [];
@@ -307,7 +317,7 @@ describe("canvas lazy hydration", () => {
     it("hydrates 64 paginated canvases with zero per-canvas detail GETs and loads full on demand", async () => {
         const summaries = Array.from({ length: 64 }, (_, index) => summaryItem(index));
         remotePages = [summaries.slice(0, 50), summaries.slice(50)];
-        remoteDetailsById.set("canvas-5", fullProject("canvas-5", { workspaceProjectId: "ws-4", title: "画布 5" }));
+        remoteDetailsById.set("canvas-5", fullProject("canvas-5", { workspaceProjectId: "ws-4", title: "画布 5", canvasTitle: "分镜 5" }));
 
         expect(await repository.hydrateLocalCanvasProjectsFromBackend()).toBe(true);
         expect(detailGetIds).toEqual([]);
@@ -317,6 +327,7 @@ describe("canvas lazy hydration", () => {
             id: "canvas-5",
             workspaceProjectId: "ws-4",
             folderId: "folder-1",
+            canvasTitle: "分镜 5",
             summaryOnly: true,
             summaryNodeCount: 12,
         });
@@ -328,6 +339,67 @@ describe("canvas lazy hydration", () => {
         expect(opened?.connections).toHaveLength(1);
         expect(projects.filter((item) => !item.summaryOnly).map((item) => item.id)).toEqual(["canvas-5"]);
         expect(projects.filter((item) => item.summaryOnly === true)).toHaveLength(63);
+    });
+
+    it("never returns a summaryOnly preview when opening a canvas with an in-flight journal or higher confirmed revision", async () => {
+        remotePages = [[summaryItem(0), summaryItem(1)]];
+        const full0 = fullProject("canvas-0", { revision: 2 });
+        const full1 = fullProject("canvas-1", { revision: 2 });
+        const confirmed1 = fullProject("canvas-1", { revision: 4, title: "更高已确认版本" });
+        remoteDetailsById.set("canvas-0", full0);
+        remoteDetailsById.set("canvas-1", full1);
+
+        await repository.hydrateLocalCanvasProjectsFromBackend();
+        journalMemory.set("canvas-0", {
+            ...emptyJournal("canvas-0"),
+            confirmedRevision: 1,
+            inFlight: { operationId: "op-crash", baseRevision: 1 },
+        });
+        journalMemory.set("canvas-1", {
+            ...emptyJournal("canvas-1"),
+            confirmedRevision: 4,
+            confirmedSnapshot: confirmed1,
+        });
+
+        const opened0 = await repository.openLocalCanvasProjectFromBackend("canvas-0");
+        expect(opened0?.summaryOnly).toBeUndefined();
+        expect(opened0?.nodes).toHaveLength(2);
+        expect(opened0?.connections).toHaveLength(1);
+
+        const opened1 = await repository.openLocalCanvasProjectFromBackend("canvas-1");
+        expect(opened1?.summaryOnly).toBeUndefined();
+        expect(opened1?.title).toBe("更高已确认版本");
+        expect(opened1?.connections).toHaveLength(1);
+    });
+
+    it("loads full documents into recycle bin before deleting summaryOnly canvases and restores full content cleanly", async () => {
+        remotePages = [[summaryItem(0), summaryItem(1)]];
+        const full0 = fullProject("canvas-0", { revision: 2 });
+        remoteDetailsById.set("canvas-0", full0);
+        remoteDetailsById.set("canvas-1", "500");
+
+        await repository.hydrateLocalCanvasProjectsFromBackend();
+        expect(projects[0]?.summaryOnly).toBe(true);
+
+        // Non-404 preload error aborts deletion before issuing DELETE.
+        await expect(repository.deleteLocalCanvasProjects(["canvas-1"])).rejects.toThrow("后端暂时不可用");
+        expect(writeRequests).toEqual([]);
+        expect(projects.some((item) => item.id === "canvas-1")).toBe(true);
+
+        await repository.deleteLocalCanvasProjects(["canvas-0"]);
+        expect(writeRequests).toEqual([{ method: "DELETE", path: "/canvas-projects/canvas-0" }]);
+        expect(recordedDeletedProjects).toHaveLength(1);
+        expect(recordedDeletedProjects[0]?.summaryOnly).toBeUndefined();
+        expect(recordedDeletedProjects[0]?.nodes).toHaveLength(2);
+        expect(recordedDeletedProjects[0]?.connections).toHaveLength(1);
+
+        // Restore from recycle bin and open even after server returns 404 for the deleted ID.
+        remoteDetailsById.set("canvas-0", "404");
+        projects = [recordedDeletedProjects[0], ...projects];
+        const reopened = await repository.openLocalCanvasProjectFromBackend("canvas-0");
+        expect(reopened?.summaryOnly).toBeUndefined();
+        expect(reopened?.nodes).toHaveLength(2);
+        expect(reopened?.connections).toHaveLength(1);
     });
 
     it("rethrows non-404 read errors instead of opening a summaryOnly preview as editable", async () => {
@@ -395,5 +467,15 @@ describe("canvas lazy hydration", () => {
         expect(merged.document.state.projects).toHaveLength(1);
         expect(merged.document.state.projects[0]?.summaryOnly).toBeUndefined();
         expect(merged.document.state.projects[0]?.connections).toHaveLength(1);
+
+        const parsed = parseCanvasStorageDocument(JSON.stringify({
+            state: { projects: [projects[0], durableFull] },
+            version: 0,
+            storageRevision: 5,
+        }));
+        expect(parsed.state.projects).toHaveLength(1);
+        expect(parsed.state.projects[0]?.summaryOnly).toBeUndefined();
+
+        await expect(exportCanvasProjects([projects[0]])).rejects.toThrow("画布尚未完整加载");
     });
 });

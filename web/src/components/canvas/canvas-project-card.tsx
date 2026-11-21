@@ -129,7 +129,19 @@ export function CanvasProjectCard({ project, projectName, variant = "library", r
                                 menu={{
                                     onClick: ({ domEvent }) => domEvent.stopPropagation(),
                                     items: [
-                                        { key: "export", icon: <Download className="size-3.5" />, label: "导出画布", onClick: () => void reportOwnedMediaSave(message, exportCanvasProjects([project], project.title || "画布")) },
+                                        {
+                                            key: "export",
+                                            icon: <Download className="size-3.5" />,
+                                            label: "导出画布",
+                                            onClick: () => void reportOwnedMediaSave(
+                                                message,
+                                                (async () => {
+                                                    const full = project.summaryOnly ? await loadCanvasProjectForEditing(project.id) : project;
+                                                    if (!full || full.summaryOnly) throw new Error("画布尚未完整加载，请重试");
+                                                    return exportCanvasProjects([full], full.title || "画布");
+                                                })(),
+                                            ),
+                                        },
                                         { type: "divider" },
                                         { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除", onClick: () => setDeleteIds([project.id]) },
                                     ],
@@ -259,7 +271,10 @@ export function projectPreviewMediaCandidates(nodes: CanvasNodeData[], preferLat
             };
             if (node.type === CanvasNodeType.Video) {
                 const poster = metadata?.videoPreview;
-                if (poster?.content && poster.content !== metadata?.content) pushSource("image", resolveBackendApiUrl(poster.content), poster.storageKey);
+                const posterContent = poster?.content && poster.content !== metadata?.content ? resolveBackendApiUrl(poster.content) : "";
+                const posterResourceId = resourceIdFromStorageKey(poster?.storageKey);
+                const posterUrl = posterContent || (posterResourceId ? resourceFileUrl(posterResourceId) : "");
+                if (posterUrl || poster?.storageKey) pushSource("image", posterUrl, poster?.storageKey);
             }
             const kind = node.type === CanvasNodeType.Video ? "video" : "image";
             const resourceId = resourceIdFromStorageKey(metadata?.storageKey);
