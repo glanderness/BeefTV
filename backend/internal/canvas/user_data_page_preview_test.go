@@ -130,4 +130,24 @@ func TestScanLocalMediaStorageKeysStreamingEdgeCases(t *testing.T) {
 	if err != nil || emptyParsed.localMediaKeys != nil || len(emptyParsed.nodes) != 1 {
 		t.Fatalf("expected nil localMediaKeys and 1 node, got %+v err=%v", emptyParsed, err)
 	}
+
+	// Non-string workspaceProjectId/canvasTitle and mixed media prefixes must never fail summary listing.
+	nonStringParsed, err := parseCanvasSummaryPayload(`{
+		"workspaceProjectId": 12345,
+		"canvasTitle": {"nested": true},
+		"nodes": [
+			{"id":"n1","type":"image","metadata":{"storageKey":"generation-image:u1:gen-1"}},
+			{"id":"n2","type":"video","metadata":{"storageKey":"external-video:u1:ext-1"}}
+		]
+	}`)
+	if err != nil {
+		t.Fatalf("non-string metadata should not fail summary parse: %v", err)
+	}
+	if nonStringParsed.workspaceProjectID != "" || nonStringParsed.canvasTitle != "" || len(nonStringParsed.nodes) != 2 {
+		t.Fatalf("unexpected nonStringParsed: %+v", nonStringParsed)
+	}
+	wantMixed := []string{"external-video:u1:ext-1", "generation-image:u1:gen-1"}
+	if len(nonStringParsed.localMediaKeys) != len(wantMixed) || nonStringParsed.localMediaKeys[0] != wantMixed[0] || nonStringParsed.localMediaKeys[1] != wantMixed[1] {
+		t.Fatalf("nonStringParsed.localMediaKeys = %#v, want %#v", nonStringParsed.localMediaKeys, wantMixed)
+	}
 }

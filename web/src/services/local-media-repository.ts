@@ -46,7 +46,7 @@ export async function deleteLocalMedia(keys: Iterable<string>) {
 export async function cleanupLocalMedia(
     usedKeys: Set<string>,
     scope = getActiveUserScope(),
-    options?: { shouldAbort?: (opts?: { checkCrossTab?: boolean }) => boolean },
+    options?: { shouldAbort?: () => boolean },
 ) {
     const unused: string[] = [];
     await store.iterate((_value, key) => {
@@ -55,18 +55,9 @@ export async function cleanupLocalMedia(
     });
     for (const key of unused) {
         if (options?.shouldAbort?.()) return;
-        const blob = await store.getItem<Blob>(key);
-        if (!blob) continue;
-        if (options?.shouldAbort?.()) return;
-        await store.removeItem(key);
-        if (options?.shouldAbort?.({ checkCrossTab: true })) {
-            if (!(await store.getItem<Blob>(key))) {
-                await store.setItem(key, blob);
-            }
-            return;
-        }
         const url = objectUrls.get(key);
         if (url) URL.revokeObjectURL(url);
         objectUrls.delete(key);
+        await store.removeItem(key);
     }
 }

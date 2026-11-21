@@ -8,8 +8,6 @@ import {
     resetLocalForageDatabaseForTests,
 } from "@/lib/localforage-storage";
 import { getActiveUserScope, scopedStorageKey, setActiveUserScope } from "@/lib/user-scope";
-import { MEDIA_GC_EPOCH_KEY } from "@/lib/media-gc-epoch";
-import { prepareRestoredDeletedCanvas } from "@/components/canvas/recycle-bin-dialog";
 import {
     beginCanvasHydration,
     finishCanvasHydration,
@@ -20,7 +18,8 @@ import {
     updateCanvasOperationJournal,
 } from "@/services/canvas-operation-journal";
 import { setMediaBlob } from "@/services/file-storage";
-import { setImageBlob } from "@/services/image-storage";
+import { getImageBlob, setImageBlob } from "@/services/image-storage";
+import { prepareRestoredDeletedCanvas } from "@/services/workspace-project-repository";
 import { CANVAS_DRAFTS_KEY, CANVAS_HISTORY_STORE_KEY } from "@/stores/canvas/canvas-store-persistence";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { flushCanvasStorePersistence, useCanvasStore, withCanvasStorePersistenceSuppressed, type CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -413,54 +412,57 @@ describe("lazy hydration GC reference completeness", () => {
         }
     });
 
-    it("aborts remaining per-key deletions inside the delete loop when asset/image/media writes or another tab mutate mid-delete", async () => {
-        const localStorageMap = new Map<string, string>();
-        Object.defineProperty(globalThis, "window", {
-            configurable: true,
-            value: {
-                setTimeout: globalThis.setTimeout.bind(globalThis),
-                clearTimeout: globalThis.clearTimeout.bind(globalThis),
-                location: { protocol: "http:", host: "127.0.0.1:8080", pathname: "/", hash: "" },
-                localStorage: {
-                    getItem: (key: string) => localStorageMap.get(key) ?? null,
-                    setItem: (key: string, value: string) => localStorageMap.set(key, value),
-                    removeItem: (key: string) => localStorageMap.delete(key),
+    it("aborts remaining per-key deletions inside the delete loop on single-tab asset/image/media writes and never clobbers a same-key rewrite", async () => {
+        // 1. Same-key rewrite during sweep must abort and keep the rewritten bytes intact (no stale rollback).
+        const rewrittenKey = `image:${scope}:same-key-rewrite`;
+        let rewroteOnce = false;
+        installLocalForageStoreFactoryForTests(
+            createMemoryForageFactory({
+                onIterate: async (storeName) => {
+                    if (storeName === IMAGE_FILES_STORE_NAME && !rewroteOnce) {
+                        rewroteOnce = true;
+                        await setImageBlob(rewrittenKey, new Blob(["fresh-rewritten-bytes"]));
+                    }
                 },
-            },
-        });
+            }),
+        );
+        const rewriteStore = localForageInstance(IMAGE_FILES_STORE_NAME);
+        await rewriteStore.setItem(rewrittenKey, new Blob(["old-bytes"]));
+        let attempt = beginCanvasHydration();
+        finishCanvasHydration(attempt, "");
+        await useAssetStore.getState().cleanupImages();
+        expect(rewroteOnce).toBe(true);
+        const survivingBlob = await getImageBlob(rewrittenKey);
+        expect(survivingBlob).not.toBeNull();
+        expect(await survivingBlob!.text()).toBe("fresh-rewritten-bytes");
 
-        const deleteLoopScenarios: Array<{ name: string; mutateDuringRemove: (currentKey: string) => void | Promise<void> }> = [
+        // 2. Per-key pre-delete check aborts remaining keys after an intervening single-tab mutation.
+        const deleteLoopScenarios: Array<{ name: string; mutateAfterFirstDelete: (secondKey: string) => void | Promise<void> }> = [
             {
-                name: "useAssetStore.addAsset referencing current key mid-remove",
-                mutateDuringRemove: (currentKey) => {
+                name: "useAssetStore.addAsset mid-delete",
+                mutateAfterFirstDelete: (secondKey) => {
                     useAssetStore.getState().addAsset({
                         kind: "image",
-                        title: "并发新增素材指向当前 key",
+                        title: "并发新增素材",
                         coverUrl: "",
                         tags: [],
                         category: "other",
                         status: "confirmed",
                         source: "手动添加",
-                        data: { dataUrl: "", storageKey: currentKey, width: 100, height: 100, bytes: 4, mimeType: "image/png" },
+                        data: { dataUrl: "", storageKey: secondKey, width: 100, height: 100, bytes: 4, mimeType: "image/png" },
                     });
                 },
             },
             {
-                name: "direct setImageBlob write mid-remove",
-                mutateDuringRemove: async () => {
+                name: "direct setImageBlob write mid-delete",
+                mutateAfterFirstDelete: async () => {
                     await setImageBlob(`image:${scope}:direct-upload`, new Blob(["upload"]));
                 },
             },
             {
-                name: "direct setMediaBlob write mid-remove",
-                mutateDuringRemove: async () => {
+                name: "direct setMediaBlob write mid-delete",
+                mutateAfterFirstDelete: async () => {
                     await setMediaBlob(`audio:${scope}:direct-audio`, new Blob(["audio"]));
-                },
-            },
-            {
-                name: "cross-tab localStorage epoch bump mid-remove",
-                mutateDuringRemove: () => {
-                    localStorageMap.set(scopedStorageKey(MEDIA_GC_EPOCH_KEY, scope), "other-tab-write-999");
                 },
             },
         ];
@@ -474,7 +476,7 @@ describe("lazy hydration GC reference completeness", () => {
                     onRemove: async (storeName, key) => {
                         if (storeName === IMAGE_FILES_STORE_NAME && key === firstKey && !triggered) {
                             triggered = true;
-                            await scenario.mutateDuringRemove(firstKey);
+                            await scenario.mutateAfterFirstDelete(secondKey);
                         }
                     },
                 }),
@@ -490,16 +492,37 @@ describe("lazy hydration GC reference completeness", () => {
             await imageStore.setItem(firstKey, new Blob(["first"]));
             await imageStore.setItem(secondKey, new Blob([scenario.name]));
 
-            const attempt = beginCanvasHydration();
+            attempt = beginCanvasHydration();
             finishCanvasHydration(attempt, "");
             await useAssetStore.getState().cleanupImages();
 
-            // After firstKey's removal triggers a mutation (even pointing to firstKey itself),
-            // two-phase post-delete rollback restores firstKey AND aborts before secondKey!
             expect(triggered).toBe(true);
-            expect(await imageStore.getItem(firstKey)).not.toBeNull();
+            expect(await imageStore.getItem(firstKey)).toBeNull();
             expect(await imageStore.getItem(secondKey)).not.toBeNull();
         }
+    });
+
+    it("fails closed and deletes zero blobs when persisted Recycle Bin history or an operation journal is corrupt", async () => {
+        const appState = localForageInstance(APP_STATE_STORE_NAME);
+        const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
+        const keptImg = `image:${scope}:kept-on-corrupt-refs`;
+        await imageStore.setItem(keptImg, new Blob(["kept"]));
+
+        const attempt = beginCanvasHydration();
+        finishCanvasHydration(attempt, "");
+
+        // 1. Corrupt Recycle Bin JSON -> cleanupImages rejects and deletes zero blobs.
+        await appState.setItem(scopedStorageKey(CANVAS_HISTORY_STORE_KEY, scope), "{corrupt-history-json");
+        await expect(useAssetStore.getState().cleanupImages()).rejects.toThrow();
+        expect(await imageStore.getItem(keptImg)).not.toBeNull();
+        await appState.removeItem(scopedStorageKey(CANVAS_HISTORY_STORE_KEY, scope));
+
+        // 2. Corrupt operation journal in app_state -> cleanupImages rejects and deletes zero blobs.
+        await appState.setItem(scopedStorageKey("canvas-document-journal:corrupt-canvas", scope), "{corrupt-journal");
+        resetCanvasOperationJournalMemory();
+        await expect(useAssetStore.getState().cleanupImages()).rejects.toThrow();
+        expect(await imageStore.getItem(keptImg)).not.toBeNull();
+        await appState.removeItem(scopedStorageKey("canvas-document-journal:corrupt-canvas", scope));
     });
 
     it("completes GC without self-aborting when cold hydrateAssetStoreDrafts projects persisted asset drafts during sweep", async () => {

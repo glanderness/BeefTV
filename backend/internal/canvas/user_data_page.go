@@ -167,17 +167,17 @@ func parseCanvasSummaryPayload(payloadJSON string) (parsedCanvasSummaryPayload, 
 		}
 		switch key {
 		case "workspaceProjectId":
-			var value string
-			if err := dec.Decode(&value); err != nil {
+			value, err := readOptionalSummaryString(dec, scanKeys, &seen)
+			if err != nil {
 				return parsedCanvasSummaryPayload{}, err
 			}
-			out.workspaceProjectID = strings.TrimSpace(value)
+			out.workspaceProjectID = value
 		case "canvasTitle":
-			var value string
-			if err := dec.Decode(&value); err != nil {
+			value, err := readOptionalSummaryString(dec, scanKeys, &seen)
+			if err != nil {
 				return parsedCanvasSummaryPayload{}, err
 			}
-			out.canvasTitle = strings.TrimSpace(value)
+			out.canvasTitle = value
 		case "nodes":
 			if err := dec.Decode(&out.nodes); err != nil {
 				return parsedCanvasSummaryPayload{}, err
@@ -230,6 +230,22 @@ func collectStorageKeysFromValue(value any, seen *map[string]struct{}) {
 			collectStorageKeysFromValue(item, seen)
 		}
 	}
+}
+
+func readOptionalSummaryString(dec *json.Decoder, capture bool, seen *map[string]struct{}) (string, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return "", err
+	}
+	if str, ok := tok.(string); ok {
+		return strings.TrimSpace(str), nil
+	}
+	if delim, ok := tok.(json.Delim); ok {
+		if err := scanDelimitedForLocalMediaKeys(dec, delim, capture, seen); err != nil {
+			return "", err
+		}
+	}
+	return "", nil
 }
 
 func scanValueForLocalMediaKeys(dec *json.Decoder, capture bool, seen *map[string]struct{}) error {

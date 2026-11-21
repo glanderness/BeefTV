@@ -210,7 +210,7 @@ async function readJournalUnlocked(canvasId: string, scope: string): Promise<Can
 
 async function writeJournalUnlocked(journal: CanvasOperationJournal) {
     const scope = journal.userScope || getActiveUserScope();
-    bumpMediaReferenceEpoch(scope);
+    bumpMediaReferenceEpoch();
     const validated = parseCanvasOperationJournal(journal, scope, journal.canvasId);
     if (validated.confirmedSnapshot && validated.confirmedSnapshot.revision !== validated.confirmedRevision) {
         validated.confirmedSnapshot = { ...validated.confirmedSnapshot, revision: validated.confirmedRevision };
@@ -347,7 +347,7 @@ export async function abandonCanvasInFlight(canvasId: string, scope = getActiveU
 
 export async function clearCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
     return withJournal(scope, canvasId, async () => {
-        bumpMediaReferenceEpoch(scope);
+        bumpMediaReferenceEpoch();
         await journalStorageDelay?.beforeSet?.();
         await localForageStorageForScope(scope).removeItem(journalName(canvasId));
         memory.delete(cacheKey(scope, canvasId));
@@ -369,17 +369,15 @@ export async function readAllCanvasOperationJournals(scope = getActiveUserScope(
             const prefix = `${JOURNAL_PREFIX}:`;
             const suffix = `:user:${scope}`;
             const store = storageModule.localForageInstance(storageModule.APP_STATE_STORE_NAME);
-            const keys = await store.keys().catch(() => [] as string[]);
+            // Fail closed: propagate storage/parse errors so callers (such as media GC)
+            // abort instead of deleting blobs under incomplete reference knowledge.
+            const keys = await store.keys();
             for (const key of keys) {
                 if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
                 const canvasId = key.slice(prefix.length, key.length - suffix.length);
                 if (!canvasId || byId.has(canvasId)) continue;
-                try {
-                    const journal = await loadCanvasOperationJournal(canvasId, scope);
-                    byId.set(canvasId, journal);
-                } catch {
-                    // Ignore corrupted/unreadable journal during best-effort reference scan.
-                }
+                const journal = await loadCanvasOperationJournal(canvasId, scope);
+                byId.set(canvasId, journal);
             }
         }
     }

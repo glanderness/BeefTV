@@ -1,7 +1,9 @@
 import { listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
-import { beginLocalCanvasProject, createLocalCanvasProject, deleteLocalCanvasProjects } from "@/services/local-workspace-repository";
+import { beginLocalCanvasProject, createLocalCanvasProject, deleteLocalCanvasProjects, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { loadCanvasProjectForEditing } from "@/services/local-workspace-sync";
-import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
+import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 
 type InitialCanvasContent = Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">>;
 
@@ -78,4 +80,83 @@ export async function duplicateWorkspaceCanvasProject(
         }
         throw error;
     }
+}
+
+export function prepareRestoredDeletedCanvas(project: CanvasProject): CanvasProject {
+    const {
+        summaryOnly: _summaryOnly,
+        summaryNodeCount: _summaryNodeCount,
+        summaryMediaKeys: _summaryMediaKeys,
+        remoteContentHash: _remoteContentHash,
+        ...rest
+    } = project;
+    return {
+        ...rest,
+        revision: 0,
+        updatedAt: new Date().toISOString(),
+    };
+}
+
+export async function restoreDeletedCanvasProjects(
+    ids: readonly string[],
+): Promise<{ restoredIds: string[]; failedIds: string[]; firstError?: unknown }> {
+    const historyState = useCanvasHistoryStore.getState();
+    const canvasState = useCanvasStore.getState();
+    const candidates: CanvasProject[] = [];
+    const skippedSummaryIds: string[] = [];
+    for (const id of ids) {
+        const item = historyState.deletedProjects.find((entry) => entry.id === id);
+        if (!item) continue;
+        if (!item.project || item.project.summaryOnly) {
+            skippedSummaryIds.push(item.id);
+            continue;
+        }
+        const restored = prepareRestoredDeletedCanvas(item.project);
+        canvasState.restoreProject(restored);
+        candidates.push(restored);
+    }
+    const summaryError = skippedSummaryIds.length > 0
+        ? new Error("部分历史记录仅包含摘要，无法直接恢复")
+        : undefined;
+    if (candidates.length === 0) {
+        return { restoredIds: [], failedIds: skippedSummaryIds, firstError: summaryError };
+    }
+    try {
+        await flushCanvasStorePersistence();
+    } catch (error) {
+        useCanvasStore.getState().deleteProjects(candidates.map((item) => item.id));
+        return {
+            restoredIds: [],
+            failedIds: [...candidates.map((item) => item.id), ...skippedSummaryIds],
+            firstError: error,
+        };
+    }
+    const restoredIds: string[] = [];
+    const failedIds: string[] = [];
+    let firstError: unknown;
+    if (isLocalWorkspaceMode()) {
+        for (const restored of candidates) {
+            try {
+                await syncLocalCanvasProjectToBackend(restored.id);
+                restoredIds.push(restored.id);
+            } catch (error) {
+                failedIds.push(restored.id);
+                if (firstError === undefined) firstError = error;
+            }
+        }
+        if (failedIds.length > 0) {
+            await deleteLocalCanvasProjects(failedIds, { recordHistory: false }).catch(() => {
+                useCanvasStore.getState().deleteProjects(failedIds);
+            });
+        }
+    } else {
+        restoredIds.push(...candidates.map((item) => item.id));
+    }
+    const removeDeletedItem = useCanvasHistoryStore.getState().removeDeletedHistoryItem;
+    for (const id of restoredIds) removeDeletedItem(id);
+    if (skippedSummaryIds.length > 0) {
+        failedIds.push(...skippedSummaryIds);
+        if (firstError === undefined) firstError = summaryError;
+    }
+    return { restoredIds, failedIds, firstError };
 }

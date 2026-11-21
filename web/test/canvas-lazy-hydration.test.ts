@@ -324,7 +324,7 @@ const repository = await import("@/services/local-workspace-repository");
 const workspaceProjects = await import("@/services/workspace-project-repository");
 const repair = await import("@/services/canvas-asset-repair");
 const { exportCanvasProjects } = await import("@/lib/canvas/canvas-export");
-const { prepareRestoredDeletedCanvas, restoreDeletedCanvasProjects } = await import("@/components/canvas/recycle-bin-dialog");
+const { prepareRestoredDeletedCanvas, restoreDeletedCanvasProjects } = workspaceProjects;
 
 function summaryItem(index: number) {
     const id = `canvas-${index}`;

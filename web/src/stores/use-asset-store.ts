@@ -323,16 +323,33 @@ export const useAssetStore = create<AssetStore>()(
                             const hydration = getCanvasHydrationHealth();
                             if (hydration.loading || Boolean(hydration.error)) return;
                             const journalModule = await import("@/services/canvas-operation-journal");
-                            const startEpoch = readMediaReferenceEpoch(scope, { checkStorage: true });
-                            const shouldAbortSweep = (opts?: { checkCrossTab?: boolean }) => {
+                            const startEpoch = readMediaReferenceEpoch();
+                            const shouldAbortSweep = () => {
                                 const currentHealth = getCanvasHydrationHealth();
-                                if (currentHealth.loading || Boolean(currentHealth.error)) return true;
-                                const current = readMediaReferenceEpoch(scope, { checkStorage: opts?.checkCrossTab === true });
-                                if (current.local !== startEpoch.local) return true;
-                                return opts?.checkCrossTab === true && current.crossTab !== startEpoch.crossTab;
+                                return currentHealth.loading
+                                    || Boolean(currentHealth.error)
+                                    || readMediaReferenceEpoch() !== startEpoch;
                             };
                             const storage = localForageStorageForScope(scope);
                             const syncDrafts = await readAllCanvasSyncDrafts(scope);
+                            // 在画布持久化锁外读取提交日记与回收站快照，避免拖慢 pagehide/切页落盘；
+                            // 读取或解析失败时 fail-closed 向上抛错，绝不在不完整引用下删媒体。
+                            const journals = typeof journalModule.readAllCanvasOperationJournals === "function"
+                                ? await journalModule.readAllCanvasOperationJournals(scope)
+                                : [];
+                            const journalDocuments = journals.flatMap((journal) => [
+                                ...(journal.confirmedSnapshot ? [journal.confirmedSnapshot] : []),
+                                ...(journal.inFlight?.payload?.document ? [journal.inFlight.payload.document] : []),
+                                ...(journal.pendingProjection?.remote ? [journal.pendingProjection.remote] : []),
+                                ...(journal.pendingProjection?.base ? [journal.pendingProjection.base] : []),
+                            ]);
+                            const liveDeletedEntries = scope === getActiveUserScope()
+                                ? (useCanvasHistoryStore.getState?.()?.deletedProjects ?? [])
+                                : [];
+                            const liveDeletedProjects = liveDeletedEntries
+                                .map((item) => item.project)
+                                .filter((project): project is CanvasProject => Boolean(project && !project.summaryOnly));
+                            const durableDeletedProjects = parseDeletedHistoryProjects(await storage.getItem(CANVAS_HISTORY_STORE_KEY));
                             // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
                             const canvasReferences = await withCanvasStorePersistenceLock(scope, async () => {
                                 await commitPendingCanvasStorePersistenceLocked(scope);
@@ -340,22 +357,6 @@ export const useAssetStore = create<AssetStore>()(
                                 const durableCanvasDrafts = parseCanvasStorageDocument(await storage.getItem(CANVAS_DRAFTS_KEY));
                                 const liveProjects = scope === getActiveUserScope() ? useCanvasStore.getState().projects : [];
                                 const pendingProjects = pendingCanvasStorePersistence(scope)?.projects ?? [];
-                                const liveDeletedEntries = scope === getActiveUserScope()
-                                    ? (useCanvasHistoryStore.getState?.()?.deletedProjects ?? [])
-                                    : [];
-                                const liveDeletedProjects = liveDeletedEntries
-                                    .map((item) => item.project)
-                                    .filter((project): project is CanvasProject => Boolean(project && !project.summaryOnly));
-                                const durableDeletedProjects = parseDeletedHistoryProjects(await storage.getItem(CANVAS_HISTORY_STORE_KEY));
-                                const journals = typeof journalModule.readAllCanvasOperationJournals === "function"
-                                    ? await journalModule.readAllCanvasOperationJournals(scope)
-                                    : [];
-                                const journalDocuments = journals.flatMap((journal) => [
-                                    ...(journal.confirmedSnapshot ? [journal.confirmedSnapshot] : []),
-                                    ...(journal.inFlight?.payload?.document ? [journal.inFlight.payload.document] : []),
-                                    ...(journal.pendingProjection?.remote ? [journal.pendingProjection.remote] : []),
-                                    ...(journal.pendingProjection?.base ? [journal.pendingProjection.base] : []),
-                                ]);
                                 const summaryMediaRefs = [...liveProjects, ...pendingProjects].flatMap((project) =>
                                     project.summaryOnly && project.summaryMediaKeys?.length
                                         ? project.summaryMediaKeys.map((storageKey) => ({ storageKey }))
@@ -390,13 +391,13 @@ export const useAssetStore = create<AssetStore>()(
                                 };
                                 const imageKeys = new Set([...frozenExtraImageKeys, ...collectImageStorageKeys(references)]);
                                 const mediaKeys = new Set([...frozenExtraMediaKeys, ...collectMediaStorageKeys(references)]);
-                                if (shouldAbortSweep({ checkCrossTab: true })) return;
+                                if (shouldAbortSweep()) return;
                                 await cleanupUnusedImages(
                                     [...imageKeys].map((storageKey) => ({ storageKey })),
                                     scope,
                                     { shouldAbort: shouldAbortSweep },
                                 );
-                                if (shouldAbortSweep({ checkCrossTab: true })) return;
+                                if (shouldAbortSweep()) return;
                                 await cleanupUnusedMedia(
                                     [...mediaKeys].map((storageKey) => ({ storageKey })),
                                     scope,
@@ -459,14 +460,27 @@ if (typeof useAssetStore.subscribe === "function") {
 
 function parseDeletedHistoryProjects(raw: string | null): CanvasProject[] {
     if (!raw) return [];
-    try {
-        const parsed = JSON.parse(raw) as { state?: { deletedProjects?: Array<{ project?: CanvasProject }> } };
-        const items = parsed?.state?.deletedProjects;
-        if (!Array.isArray(items)) return [];
-        return items
-            .map((item) => item?.project)
-            .filter((project): project is CanvasProject => Boolean(project && typeof project === "object" && !project.summaryOnly));
-    } catch {
-        return [];
+    const parsed = JSON.parse(raw) as { state?: { deletedProjects?: unknown } };
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("回收站本地记录损坏，已中止媒体清理");
     }
+    const items = parsed.state?.deletedProjects;
+    if (items === undefined) return [];
+    if (!Array.isArray(items)) {
+        throw new Error("回收站项目列表格式异常，已中止媒体清理");
+    }
+    const projects: CanvasProject[] = [];
+    for (const item of items) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+            throw new Error("回收站记录项格式异常，已中止媒体清理");
+        }
+        const project = (item as { project?: unknown }).project;
+        if (project === undefined || project === null) continue;
+        if (typeof project !== "object" || Array.isArray(project)) {
+            throw new Error("回收站画布快照格式异常，已中止媒体清理");
+        }
+        const typed = project as CanvasProject;
+        if (!typed.summaryOnly) projects.push(typed);
+    }
+    return projects;
 }
