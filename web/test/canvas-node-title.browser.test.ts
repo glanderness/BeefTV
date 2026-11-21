@@ -26,7 +26,7 @@ beforeAll(async () => {
     page.on("pageerror", (error) => console.error(error.message));
     await page.route("https://beeftv-title.test/**", (route) => route.fulfill(new URL(route.request().url()).pathname === "/app.js"
         ? { contentType: "text/javascript", body: script }
-        : { contentType: "text/html", body: '<style>.canvas-node-shell{height:100%}</style><div id="root"></div><script type="module">import { mountNodeTitleHarness } from "/app.js"; const options = new URLSearchParams(location.search); mountNodeTitleHarness(document.getElementById("root"), {image: options.has("image"), maskEditActive: options.has("mask")});</script>' }));
+        : { contentType: "text/html", body: '<style>.canvas-node-shell{height:100%}</style><div id="root"></div><script type="module">import { mountNodeTitleHarness } from "/app.js"; const options = new URLSearchParams(location.search); mountNodeTitleHarness(document.getElementById("root"), {image: options.has("image"), maskEditActive: options.has("mask"), x: options.has("x") ? Number(options.get("x")) : undefined});</script>' }));
 }, 30_000);
 
 afterAll(async () => { await browser?.close(); });
@@ -69,9 +69,13 @@ test("image titles expand in place on double click and stay editable on one line
     const editorBox = (await editor.boundingBox())!;
     expect(Math.abs(editorBox.y + editorBox.height / 2 - labelBox.y - labelBox.height / 2)).toBeLessThan(2);
     expect(Math.abs(editorBox.x - labelBox.x)).toBeLessThan(4);
-    const longTitle = "雨夜街景的高清参考图，路灯倒映在湿润的路面上，远处建筑只剩下轮廓与窗边的暖光";
+    const longTitle = "雨夜街景的高清参考图，路灯倒映在湿润的路面上，远处建筑只剩下轮廓与窗边的暖光 - Night Street Reference 01";
     await editor.fill(longTitle);
-    expect((await editor.boundingBox())!.width).toBeGreaterThan(320);
+    const expandedBox = (await editor.boundingBox())!;
+    expect(expandedBox.width).toBeGreaterThan(320);
+    expect(expandedBox.width).toBeGreaterThan(editorBox.width + 120);
+    expect(Math.abs(expandedBox.height - editorBox.height)).toBeLessThan(2);
+    expect(await editor.evaluate((element) => (element as HTMLInputElement).scrollWidth <= element.clientWidth + 2)).toBe(true);
     await editor.press("Enter");
     expect(await page.getByTestId("saved-title").innerText()).toBe(longTitle);
     expect(await page.getByTestId("commits").innerText()).toBe("1");
@@ -82,6 +86,25 @@ test("image titles expand in place on double click and stay editable on one line
     await editor.press("Escape");
     expect(await page.getByTestId("commits").innerText()).toBe("1");
     expect(await editor.count()).toBe(0);
+
+    // Clicking the visible pencil icon on hover enters edit directly.
+    await page.getByRole("button", { name: `编辑节点名称：${longTitle}`, exact: true }).hover();
+    await page.locator(".canvas-node-title-edit-icon").click();
+    expect(await editor.inputValue()).toBe(longTitle);
+    await editor.press("Escape");
+    expect(await editor.count()).toBe(0);
+}, 15000);
+
+test("image title editor clamps within the viewport right edge", async () => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto("https://beeftv-title.test/?image&x=960");
+    await page.addStyleTag({ content: await compileAppGlobalsStyles() });
+    await page.getByRole("button", { name: "编辑节点名称：原名称", exact: true }).dblclick();
+    const editor = page.getByRole("textbox", { name: "节点名称", exact: true });
+    await editor.fill("Very Long Title Near Right Edge - ".repeat(6));
+    const editorBox = (await editor.boundingBox())!;
+    expect(editorBox.x + editorBox.width).toBeLessThanOrEqual(1280);
+    expect(editorBox.width).toBeGreaterThanOrEqual(160);
 }, 15000);
 
 test("local repaint keeps the image title and rename editor clear of its controls", async () => {

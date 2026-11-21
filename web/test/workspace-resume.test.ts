@@ -106,3 +106,63 @@ test("blur and disposal cancel queued refreshes", () => {
     app.advance(500);
     expect(app.count()).toBe(0);
 });
+
+test("multiple subscribers share one listener set and detach wheel/keydown when idle", () => {
+    const activeListeners = new Map<string, number>();
+    const foreground = new EventTarget();
+    const origAdd = foreground.addEventListener.bind(foreground);
+    const origRemove = foreground.removeEventListener.bind(foreground);
+    foreground.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions) => {
+        activeListeners.set(type, (activeListeners.get(type) ?? 0) + 1);
+        return origAdd(type, listener, options);
+    }) as typeof foreground.addEventListener;
+    foreground.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions) => {
+        activeListeners.set(type, Math.max(0, (activeListeners.get(type) ?? 0) - 1));
+        return origRemove(type, listener, options);
+    }) as typeof foreground.removeEventListener;
+
+    const visibility = Object.assign(new EventTarget(), { hidden: false });
+    let now = 0;
+    let serial = 0;
+    const timers = new Map<number, { at: number; run: () => void }>();
+    const clock = Object.assign(foreground, {
+        setTimeout(run: () => void, delay = 0) {
+            const id = ++serial;
+            timers.set(id, { at: now + delay, run });
+            return id;
+        },
+        clearTimeout(id: number) { timers.delete(id); },
+    });
+    const targets = { window: clock as unknown as Window, document: visibility };
+
+    let a = 0;
+    let b = 0;
+    const stopA = subscribeWorkspaceResume(() => { a++; }, targets);
+    const stopB = subscribeWorkspaceResume(() => { b++; }, targets);
+
+    expect(activeListeners.get("focus")).toBe(1);
+    expect(activeListeners.get("pointerdown")).toBe(1);
+    expect(activeListeners.get("wheel") ?? 0).toBe(0);
+    expect(activeListeners.get("keydown") ?? 0).toBe(0);
+
+    foreground.dispatchEvent(new Event("focus"));
+    expect(activeListeners.get("wheel")).toBe(1);
+    expect(activeListeners.get("keydown")).toBe(1);
+
+    now += 500;
+    for (const [id, timer] of timers) {
+        if (timer.at > now) continue;
+        timers.delete(id);
+        timer.run();
+    }
+    expect(a).toBe(1);
+    expect(b).toBe(1);
+    expect(activeListeners.get("wheel")).toBe(0);
+    expect(activeListeners.get("keydown")).toBe(0);
+
+    stopA();
+    expect(activeListeners.get("focus")).toBe(1);
+    stopB();
+    expect(activeListeners.get("focus")).toBe(0);
+    expect(activeListeners.get("pointerdown")).toBe(0);
+});

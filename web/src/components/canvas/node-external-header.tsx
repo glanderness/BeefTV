@@ -21,10 +21,13 @@ export function NodeExternalHeader({ node, scale, dimensionLabel, active, editab
     onCommit: () => void;
     onCancel: () => void;
 }) {
+    const headerRef = useRef<HTMLDivElement>(null);
     const titleInputRef = useRef<HTMLInputElement>(null);
     const canceledRef = useRef(false);
+    const isImage = node.type === CanvasNodeType.Image;
     useEffect(() => {
         if (!editing) return;
+        canceledRef.current = false;
         const commitOutsideInput = (event: PointerEvent) => {
             const input = titleInputRef.current;
             if (!input || !(event.target instanceof Node) || input.contains(event.target)) return;
@@ -34,20 +37,40 @@ export function NodeExternalHeader({ node, scale, dimensionLabel, active, editab
         window.addEventListener("pointerdown", commitOutsideInput, true);
         return () => window.removeEventListener("pointerdown", commitOutsideInput, true);
     }, [editing]);
+    useEffect(() => {
+        const header = headerRef.current;
+        if (!editing || !isImage || !header) {
+            header?.style.removeProperty("--canvas-title-editor-max-width");
+            return;
+        }
+        const updateMaxWidth = () => {
+            const rect = header.getBoundingClientRect();
+            const viewportRight = header.closest("[data-canvas-viewport]")?.getBoundingClientRect().right ?? window.innerWidth;
+            const available = Math.max(160, Math.floor(viewportRight - rect.left - 16));
+            header.style.setProperty("--canvas-title-editor-max-width", `${available}px`);
+        };
+        updateMaxWidth();
+        window.addEventListener("resize", updateMaxWidth);
+        return () => {
+            window.removeEventListener("resize", updateMaxWidth);
+            header.style.removeProperty("--canvas-title-editor-max-width");
+        };
+    }, [editing, isImage]);
     const inverseScale = 1 / Math.max(scale, 0.05);
-    const isImage = node.type === CanvasNodeType.Image;
     const isDirectorNode = node.type === CanvasNodeType.Director || Boolean(node.metadata?.directorSceneId);
     const Icon = isDirectorNode ? Move3d : nodeTypeIcon(node.type);
     const editorProps = {
         ref: titleInputRef,
         autoFocus: true,
         value: draft,
+        "data-canvas-no-zoom": "",
         onChange: (event: ChangeEvent<HTMLInputElement>) => onDraftChange(event.target.value),
         onFocus: (event: FocusEvent<HTMLInputElement>) => {
             canceledRef.current = false;
             event.currentTarget.select();
         },
         onBlur: () => { if (!canceledRef.current) onCommit(); },
+        onDoubleClick: (event: MouseEvent<HTMLInputElement>) => event.stopPropagation(),
         onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {
             if (event.nativeEvent.isComposing || (event.key !== "Enter" && event.key !== "Escape")) return;
             event.preventDefault();
@@ -64,6 +87,7 @@ export function NodeExternalHeader({ node, scale, dimensionLabel, active, editab
 
     return (
         <div
+            ref={headerRef}
             className="canvas-node-external-header absolute bottom-full left-0 z-[var(--node-z-overlay)] flex min-h-6 items-center gap-1"
             data-canvas-live-scale
             data-compact-title={isImage ? "true" : undefined}
@@ -112,11 +136,11 @@ export function NodeExternalHeader({ node, scale, dimensionLabel, active, editab
                 </button>
                 <Icon className="canvas-node-title-type-icon size-3 shrink-0" strokeWidth={1.8} data-node-header-icon={isDirectorNode ? "director" : undefined} />
                 {editing && isImage ? (
-                    <span className="canvas-image-title-editor text-xs font-medium" data-title-draft={draft}>
+                    <span className="canvas-image-title-editor text-xs font-medium">
+                        <span aria-hidden="true" className="canvas-image-title-sizer">{draft}{"\u00a0"}</span>
                         <input
                             {...editorProps}
                             size={1}
-                            data-canvas-no-zoom
                             className="h-6 w-full min-w-0 rounded bg-transparent outline-none focus-visible:outline focus-visible:outline-1"
                             style={{ background: theme.node.fill, color: theme.node.text, outlineColor: theme.node.muted }}
                         />
@@ -132,7 +156,11 @@ export function NodeExternalHeader({ node, scale, dimensionLabel, active, editab
                         type="button"
                         className="group flex min-w-0 flex-1 items-center gap-1 rounded px-0.5 text-left text-xs font-medium outline-none transition-opacity hover:opacity-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1"
                         style={{ opacity: active ? 1 : 0.78, outlineColor: theme.node.muted }}
-                        onClick={isImage ? (event) => { if (event.detail === 0) onEdit(); } : onEdit}
+                        onClick={isImage ? (event) => {
+                            if (event.detail === 0 || (event.target instanceof Element && Boolean(event.target.closest(".canvas-node-title-edit-icon")))) {
+                                onEdit();
+                            }
+                        } : onEdit}
                         onDoubleClick={isImage ? onEdit : undefined}
                         title={isImage ? undefined : node.title}
                         aria-label={`编辑节点名称：${node.title}`}

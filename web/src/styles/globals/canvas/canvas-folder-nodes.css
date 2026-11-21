@@ -530,26 +530,28 @@
 
     .canvas-node-external-header[data-compact-title][data-editing="true"] {
         width: max-content;
-        max-width: calc(100vw - 24px);
+        max-width: var(--canvas-title-editor-max-width, calc(100vw - 24px));
     }
 
     .canvas-image-title-editor {
         display: inline-grid;
         grid-template-columns: minmax(0, 1fr);
         min-width: 80px;
+        max-width: 100%;
     }
 
     .canvas-image-title-editor > input,
-    .canvas-image-title-editor::after {
+    .canvas-image-title-sizer {
         grid-area: 1 / 1;
         padding-inline: 2px;
     }
 
-    .canvas-image-title-editor::after {
-        /* 内容决定编辑宽度，兼容不支持 field-sizing 的系统 WebView。 */
-        content: attr(data-title-draft) "\00a0" / "";
+    .canvas-image-title-sizer {
+        /* 隐藏镜像节点撑开编辑宽度，兼容所有系统 WebView 且不向读屏重复播报。 */
         visibility: hidden;
         white-space: pre;
+        overflow: hidden;
+        pointer-events: none;
     }
 
     @media (min-width: 1024px) {

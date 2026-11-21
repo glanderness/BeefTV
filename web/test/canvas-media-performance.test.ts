@@ -1,8 +1,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import { describe, expect, test } from "bun:test";
 
+import { NodeExternalHeader } from "../src/components/canvas/node-external-header";
+import { canvasThemes } from "../src/lib/canvas-theme";
 import { canvasNodeRenderPadding, resolveActiveCanvasMediaNodeId } from "../src/lib/canvas/canvas-performance-mode";
 import { canvasGestureRenderPadding, shouldRefreshCanvasVirtualization } from "../src/lib/canvas/canvas-viewport-render-sync";
 import { videoMetadata } from "../src/lib/canvas/canvas-generation-task-sync";
@@ -48,7 +52,23 @@ describe("canvas media activation", () => {
 
 describe("canvas dimension header rendering", () => {
     test("tracks live viewport scale without React width commits", () => {
-        expect(canvasNodeSource).toContain("var(--canvas-live-scale,");
+        const headerMarkup = renderToStaticMarkup(createElement(NodeExternalHeader, {
+            node: node("image", CanvasNodeType.Image),
+            scale: 0.5,
+            dimensionLabel: null,
+            active: false,
+            editable: true,
+            editing: false,
+            draft: "image",
+            theme: canvasThemes.dark,
+            onDraftChange: () => {},
+            onEdit: () => {},
+            onCommit: () => {},
+            onCancel: () => {},
+        }));
+        expect(headerMarkup).toContain("data-canvas-live-scale");
+        expect(headerMarkup).toContain("var(--canvas-live-scale, 0.5)");
+        expect(headerMarkup).toContain("var(--canvas-live-inverse-scale, 2)");
         expect(globalStylesSource).toContain("width: var(--canvas-node-header-width)");
         expect(globalStylesSource).toContain("calc(var(--canvas-node-width) * var(--canvas-live-scale, 1))");
     });

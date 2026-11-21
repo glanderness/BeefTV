@@ -209,9 +209,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     }, [isEditingContent]);
 
     useEffect(() => {
-        if (imageToolActive) setIsEditingTitle(false);
-        if (!isEditingTitle || imageToolActive) setTitleDraft(data.title);
-    }, [data.title, imageToolActive, isEditingTitle]);
+        if (imageToolActive || !canEditTitle) setIsEditingTitle(false);
+        if (!isEditingTitle || imageToolActive || !canEditTitle) setTitleDraft(data.title);
+    }, [canEditTitle, data.title, imageToolActive, isEditingTitle]);
 
     useEffect(() => {
         if (!isEditingContent) return;
@@ -408,7 +408,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 dimensionLabel={null}
                 active={isSelected || isFocusRelated || hovered || Boolean(lodPinned)}
                 editable={canEditTitle}
-                editing={isEditingTitle}
+                editing={isEditingTitle && canEditTitle}
                 draft={titleDraft}
                 theme={theme}
                 onDraftChange={setTitleDraft}
@@ -440,16 +440,18 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onToggleBatch?.(data.id);
                         return;
                     }
-                    if (data.type === CanvasNodeType.Image && canEditTitle) {
+                    if (data.type === CanvasNodeType.Image) {
                         if ((event.target as Element).closest("button, a, input, textarea, [data-canvas-no-zoom]")) return;
-                        event.stopPropagation();
-                        setIsEditingTitle(true);
-                        return;
-                    }
-                    if (data.type === CanvasNodeType.Image && (hasImageContent || hasImageHistory)) {
-                        event.stopPropagation();
-                        onViewImage?.(data);
-                        return;
+                        if (canEditTitle) {
+                            event.stopPropagation();
+                            setIsEditingTitle(true);
+                            return;
+                        }
+                        if (hasImageContent || hasImageHistory) {
+                            event.stopPropagation();
+                            onViewImage?.(data);
+                            return;
+                        }
                     }
                     if (data.metadata?.directorSceneId) {
                         event.stopPropagation();

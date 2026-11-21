@@ -30,6 +30,7 @@ import { syncPartnerCatalogFromBackend, syncPluginsFromBackend } from "@/service
 import "@/styles/workspace-product.css";
 
 const workspaceTheme = getWorkspaceAntThemeConfig();
+const isCanvasProjectPath = (path: string) => /^\/canvas\/[^/]+(?:\/|$)/.test(path);
 
 export default function UserLayout({ children }: { children: ReactNode }) {
     const { pathname } = useLocation();
@@ -47,7 +48,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
         return () => clearTimeout(timer);
     }, [dismissWorkspaceNotice, workspaceNotices]);
     const spatialWorkbench = isSpatialWorkbenchPath(pathname);
-    const productWorkspace = !/^\/canvas\/[^/]+(?:\/|$)/.test(pathname);
+    const productWorkspace = !isCanvasProjectPath(pathname);
     useWorkspaceButtonFeedback(productWorkspace);
 
     useLayoutEffect(() => {
@@ -99,7 +100,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
         const refreshProjects = () => {
             // The mounted canvas owns its revision stream and refresh. Reading
             // every project here competes with the first drag after activation.
-            if (document.hidden || /^\/canvas\/[^/]+(?:\/|$)/.test(appPathname())) return;
+            if (document.hidden || isCanvasProjectPath(appPathname())) return;
             void hydrateLocalCanvasProjectsFromBackend();
         };
         return subscribeWorkspaceResume(refreshProjects);

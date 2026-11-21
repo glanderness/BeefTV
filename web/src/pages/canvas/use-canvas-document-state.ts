@@ -127,6 +127,9 @@ export function useCanvasDocumentState(projectId: string) {
                 }
                 return;
             }
+            if (pollTimer === null) {
+                scheduleFallbackPoll();
+            }
         };
         const unsubscribeResume = subscribeWorkspaceResume(() => {
             sync();
