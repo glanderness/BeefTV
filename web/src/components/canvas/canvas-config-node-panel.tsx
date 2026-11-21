@@ -2,8 +2,7 @@ import { Button, Segmented, Select } from "antd";
 import type { CSSProperties } from "react";
 import { ChevronDown, Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Sparkles, Video } from "lucide-react";
 
-import { modelCapabilityConfigFor, videoSupportsTaskTypeConstraints } from "@/lib/model-capabilities";
-import { isH3Model } from "@/lib/h3-video";
+import { modelCapabilityConfigFor, videoSupportsAdvancedControls, videoSupportsTaskTypeConstraints } from "@/lib/model-capabilities";
 import { CanvasH3Controls, CanvasH3UnsupportedFrames } from "./canvas-h3-controls";
 import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
 import { resolveVideoReferenceCapabilities } from "@/lib/canvas/video-reference-mode";
@@ -78,6 +77,11 @@ export function CanvasConfigNodePanel({ config: configProp, node, isRunning, inp
     const simpleMode = workspaceMode === "simple";
     const requirements = buildCanvasGenerationRequirements(globalConfig, node, mode, inputSummary);
     const config = buildNodeConfig(globalConfig, node, mode, requirements);
+    const videoProfile = mode === "video" ? modelCapabilityConfigFor(config, config.model).video : undefined;
+    const videoRefCaps = mode === "video"
+        ? resolveVideoReferenceCapabilities(config.model, videoProfile, hasDeclaredModelCapability(config, config.model, "video"), isBeefTVModelRoute(config.model, config))
+        : undefined;
+    const controlsSupported = videoSupportsAdvancedControls(videoProfile);
     const chipStyle = { background: theme.node.fill, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount || inputSummary.characterCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
@@ -161,11 +165,22 @@ export function CanvasConfigNodePanel({ config: configProp, node, isRunning, inp
 
             {mode === "video" && !simpleMode ? (
                 <div className="cursor-default" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-                    {(videoSupportsTaskTypeConstraints(modelCapabilityConfigFor(config, config.model).video) || isH3Model(config.model)) ? (
+                    {(videoSupportsTaskTypeConstraints(videoProfile) || controlsSupported) ? (
                         <Select
                             aria-label="视频生成模式"
                             className="w-full"
-                            value={resolveVideoOperation(inputSummary, node.metadata?.videoEditOperation, declaredOrOmniVideoCapability(config, config.model), config.model, isBeefTVModelRoute(config.model, config))}
+                            value={resolveVideoOperation(
+                                inputSummary,
+                                node.metadata?.videoEditOperation,
+                                declaredOrOmniVideoCapability(config, config.model),
+                                {
+                                    hasExplicitFrame: Boolean(
+                                        node.metadata?.videoStartFrameNodeId ||
+                                            node.metadata?.videoEndFrameNodeId ||
+                                            node.metadata?.videoMiddleFrameNodeId,
+                                    ),
+                                },
+                            )}
                             options={buildConfigNodeVideoOperationOptions(config, inputSummary)}
                             onChange={(value) => onConfigChange(node.id, { videoEditOperation: value as CanvasVideoEditOperation })}
                         />
@@ -176,23 +191,31 @@ export function CanvasConfigNodePanel({ config: configProp, node, isRunning, inp
                             title="已连接的图片、视频和音频会自动传给模型"
                         >
                             <ImageIcon className="size-3.5 shrink-0 opacity-75" />
-                            <span className="shrink-0 font-medium">{modelCapabilityConfigFor(config, config.model).video?.operations.includes("reference_to_video") ? "参考生成" : "图片生成"}</span>
+                            <span className="shrink-0 font-medium">{videoProfile?.operations.includes("reference_to_video") ? "参考生成" : "图片生成"}</span>
                             <span className="min-w-0 truncate opacity-60">已连接媒体自动映射</span>
                         </div>
                     )}
                 </div>
             ) : null}
 
-            {mode === "video" && !simpleMode && isH3Model(config.model) ? (
+            {mode === "video" && !simpleMode && (controlsSupported || videoProfile?.duration.continuous) ? (
                 <CanvasH3Controls
-                    model={config.model}
+                    controls={videoProfile?.controls}
+                    durationConfig={videoProfile?.duration}
                     value={node.metadata?.videoH3Options}
                     duration={config.videoSeconds}
                     onDurationChange={(seconds) => onConfigChange(node.id, { seconds })}
                     onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })}
                 />
             ) : null}
-            {mode === "video" && isH3Model(config.model) ? (() => { const caps = resolveVideoReferenceCapabilities(config.model, modelCapabilityConfigFor(config, config.model).video, hasDeclaredModelCapability(config, config.model, "video"), isBeefTVModelRoute(config.model, config)); return <CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} middleFrameSupported={caps.middleFrameSupported} endFrameSupported={caps.endFrameSupported} onChange={(patch) => onConfigChange(node.id, patch)} />; })() : null}
+            {mode === "video" && videoRefCaps ? (
+                <CanvasH3UnsupportedFrames
+                    metadata={node.metadata}
+                    middleFrameSupported={videoRefCaps.middleFrameSupport !== "unsupported"}
+                    endFrameSupported={videoRefCaps.endFrameSupported}
+                    onChange={(patch) => onConfigChange(node.id, patch)}
+                />
+            ) : null}
 
             {simpleMode ? (
                 <div className="rounded-lg px-3 py-2.5 text-[var(--fs-label)]" style={{ background: theme.node.fill, color: theme.node.muted }}>

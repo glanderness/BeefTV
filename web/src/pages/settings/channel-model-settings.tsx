@@ -7,7 +7,6 @@ import { ModelEditorModal } from "@/components/model-editor-modal";
 import { ModelProtocolBrowser } from "@/components/model-protocol-browser";
 import { builtinPresetForProtocol } from "@/lib/builtin-service-presets";
 import { testChannelModelConnection } from "@/lib/model-connection-test";
-import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { capabilityForAssignedProtocol, defaultModelCapabilityConfig, hasUserModelCapability } from "@/lib/model-capabilities";
@@ -193,7 +192,7 @@ export function ChannelModelSettings({
         const inferredCapability = profile?.capability || inferProtocolCapabilityFromModel(model);
         const protocol = profile ? canonicalModelProtocol(profile.protocol, availableProtocols) || resolveChannelProtocol(inferredCapability) || "" : (inferredCapability === "video" ? resolveChannelProtocol("video") || "" : defaultProtocolForModel(model, availableProtocols));
         const capability = profile?.capability || modelProtocolCapability(protocol, availableProtocols) || inferredCapability;
-        return { model, profile, protocol, capability, displayName: seedancePortraitLabel(model) || profile?.displayName?.trim() || model };
+        return { model, profile, protocol, capability, displayName: profile?.displayName?.trim() || model };
     });
     // 文本模型展示的是后端实际请求的地址；其他能力仍展示接口格式自带的路径。
     const textRequestUrl = (model: string) => requestUrls?.text[effectiveTextProtocol(channel, model)];

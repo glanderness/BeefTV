@@ -3,7 +3,7 @@ import { modelProtocolCapability, protocolForModelCatalog, protocolForBeefTVCata
 import type { ModelChannel } from "@/stores/use-config-store";
 import { isBeefTVEndpoint } from "@/lib/beeftv-video-contracts";
 import { beefTVImageContract } from "@/lib/beeftv-image-contracts";
-import { sanitizeVideoPriceQuote, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
+import { sanitizeVideoPriceQuote, type VideoPriceQuote } from "@/lib/video-pricing";
 import { sanitizeMediaCapabilities, type MediaCapabilities } from "@/lib/media-capabilities";
 
 export type ChannelModelCatalogOption = { value: string; label?: string };
@@ -63,7 +63,7 @@ export function sanitizeChannelModelCatalogItem(value: unknown): ChannelModelCat
     return compactCatalogItem({
         id,
         displayName: stringValue(record.displayName),
-        ...(record.videoPricing !== undefined || seedancePortraitModel(id) ? { videoPricing: sanitizeVideoPriceQuote(record.videoPricing) } : {}),
+        ...(record.videoPricing !== undefined ? { videoPricing: sanitizeVideoPriceQuote(record.videoPricing) } : {}),
         modelType: ["text", "image", "video", "audio"].includes(modelType) ? (modelType as ChannelModelCatalogItem["modelType"]) : undefined,
         supportedEndpointTypes: stringArray(record.supportedEndpointTypes),
         ...(imageCapabilities && stringValue(record.imageCapabilitiesVersion) ? { imageCapabilities, imageCapabilitiesVersion: stringValue(record.imageCapabilitiesVersion) } : {}),
@@ -201,7 +201,7 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
             next.push({
                 ...existing,
                 ...(existing.imageCapabilitiesVersion !== undefined ? { imageCapabilitiesVersion: "", capabilityConfig: undefined } : {}),
-                ...(item.videoPricing !== undefined || existing.videoPricing !== undefined || seedancePortraitModel(item.id) ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
+                ...(item.videoPricing !== undefined || existing.videoPricing !== undefined ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
                 ...(item.displayName ? { displayName: item.displayName } : {}),
                 capability,
                 ...(protocol ? { protocol } : {}),
@@ -225,7 +225,7 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
         next.push({
             model: item.id,
             ...(sourcedImage ? { imageCapabilitiesVersion: item.imageCapabilitiesVersion } : {}),
-            ...(item.videoPricing !== undefined || seedancePortraitModel(item.id) ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
+            ...(item.videoPricing !== undefined ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
             ...(item.displayName ? { displayName: item.displayName } : {}),
             capability,
             protocol,
@@ -266,10 +266,9 @@ export function applyFetchedChannelModelCatalog(
             if ((hasServerCapability || isModuleWorkflowRefresh) && (!hasUserModelCapability(previous) || previous.capability !== profile.capability)) {
                 return profile;
             }
-            if (seedancePortraitModel(profile.model)) return { ...previous, videoPricing: profile.videoPricing ?? null };
-            return profile.videoPricing ? { ...previous, videoPricing: profile.videoPricing } : previous;
+            return profile.videoPricing !== undefined ? { ...previous, videoPricing: profile.videoPricing } : previous;
         }).concat((channel.modelProfiles || []).filter((profile) => !profiles.some((item) => item.model === profile.model))
-            .map((profile) => seedancePortraitModel(profile.model) ? { ...profile, videoPricing: null } : profile)),
+            .map((profile) => profile.videoPricing ? { ...profile, videoPricing: null } : profile)),
     };
 }
 
@@ -349,7 +348,7 @@ function compactCatalogItem(item: ChannelModelCatalogItem): ChannelModelCatalogI
     const options = item.options && Object.values(item.options).some((values) => values?.length) ? item.options : undefined;
     return {
         id: item.id,
-        ...(item.videoPricing !== undefined || seedancePortraitModel(item.id) ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
+        ...(item.videoPricing !== undefined ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
         ...(item.displayName ? { displayName: item.displayName } : {}),
         ...(item.modelType ? { modelType: item.modelType } : {}),
         ...(item.supportedEndpointTypes?.length ? { supportedEndpointTypes: item.supportedEndpointTypes } : {}),

@@ -466,7 +466,7 @@ export type CanvasNodeMetadata = {
     videoEndFrameNodeId?: string;
     videoMiddleFrameNodeId?: string;
     videoMiddleFrameTime?: number;
-    videoH3Options?: import("@/lib/h3-video").H3VideoOptions;
+    videoH3Options?: import("@/lib/model-capabilities").VideoGenerationControls;
     videoReferenceOrder?: string[];
     videoFrameSourceNodeId?: string;
     videoFrameTimeMs?: number;

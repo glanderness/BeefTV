@@ -1,9 +1,8 @@
 import { configuredModelMatchesCapability, defaultConfig, normalizeModelOptionValue, type AiConfig } from "@/stores/use-config-store";
 import { resolveAudioSpeechSettings } from "@/lib/audio-generation";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
-import { isH3Model, isH3Style } from "@/lib/h3-video";
-import { seedancePortraitModel } from "@/lib/seedance-portrait";
-import { declaredOrOmniVideoCapability, isBeefTVModelRoute, modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveModelVideoBooleanOptions, type ModelGenerationDefaults, type ModelInputSummary, type ModelRequirements } from "@/lib/model-selection";
+import { modelCapabilityConfigFor, videoPrefersReferenceMode } from "@/lib/model-capabilities";
+import { declaredOrOmniVideoCapability, modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveModelVideoBooleanOptions, type ModelGenerationDefaults, type ModelInputSummary, type ModelRequirements } from "@/lib/model-selection";
 import { mediaGeneratorMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { savedVideoSettings, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoReferenceMode } from "@/types/canvas";
@@ -34,21 +33,21 @@ export function buildCanvasGenerationRequirements(config: AiConfig, node: Canvas
 
 export function supportsCanvasVideoReferenceModes(config: AiConfig, model: string) {
     const operations = declaredOrOmniVideoCapability(config, model)?.operations;
-    return Boolean(operations?.includes("image_to_video") && operations.includes("reference_to_video")
-        && !(isBeefTVModelRoute(model, config) && isH3Style(model)));
+    return Boolean(operations?.includes("image_to_video") && operations.includes("reference_to_video"));
 }
 
 export function canvasVideoOperationPreference(config: AiConfig, node: CanvasNodeData | undefined, input: ModelInputSummary, preferredMode?: CanvasVideoReferenceMode, model = config.model) {
     const metadata = node?.metadata;
     if (metadata?.videoEditOperation) return metadata.videoEditOperation;
-    if (node?.type !== CanvasNodeType.Video || preferredMode !== "all"
+    const prefersReference = preferredMode === "all" || videoPrefersReferenceMode(declaredOrOmniVideoCapability(config, model));
+    if (node?.type !== CanvasNodeType.Video || !prefersReference
         || metadata?.videoStartFrameNodeId || metadata?.videoEndFrameNodeId
         || !(input.imageCount || input.characterCount || input.videoCount)) return undefined;
     return supportsCanvasVideoReferenceModes(config, model) ? "reference_to_video" : undefined;
 }
 
 export function resolvedCanvasGenerationRequirements(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasGenerationMode, input: ModelInputSummary, preferredReferenceMode?: CanvasVideoReferenceMode): ModelRequirements {
-    const videoOperation = mode === "video" && preferredReferenceMode
+    const videoOperation = mode === "video"
         ? canvasVideoOperationPreference(config, node, input, preferredReferenceMode,
             resolveCanvasGenerationModel(config, node?.metadata?.model, mode)
             || resolveCanvasGenerationModel(config, config.videoModel, mode)
@@ -79,7 +78,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         seedreamOutputFormat: node?.metadata?.seedreamOutputFormat ?? config.seedreamOutputFormat,
         seedreamOptimize: node?.metadata?.seedreamOptimize ?? config.seedreamOptimize,
         seedreamWatermark: node?.metadata?.seedreamWatermark ?? config.seedreamWatermark ?? defaultConfig.seedreamWatermark,
-        videoSeconds: !isH3Model(preferredModel)
+        videoSeconds: !modelCapabilityConfigFor(config, preferredModel).video?.duration.continuous
             ? normalizeVideoDuration(node?.metadata?.seconds ?? config.videoSeconds ?? defaultConfig.videoSeconds)
             : String(node?.metadata?.seconds ?? config.videoSeconds ?? defaultConfig.videoSeconds),
         vquality: normalizeVideoResolution(node?.metadata?.vquality ?? config.vquality ?? defaultConfig.vquality),
@@ -154,9 +153,6 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 export function resolveCanvasGenerationModel(config: AiConfig, model: string | undefined, mode: CanvasGenerationMode): string {
     if (!model) return "";
     const normalized = normalizeModelOptionValue(model, config.channels);
-    // Keep an explicit paid-tier choice when its catalog entry disappears.
-    // Validation will report unavailable instead of choosing a standard default.
-    if (mode === "video" && seedancePortraitModel(model)) return normalized || model;
     if (!normalized) return "";
     return configuredModelMatchesCapability(config, normalized, mode) ? normalized : "";
 }

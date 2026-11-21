@@ -90,6 +90,19 @@ const (
 	ImageResponseFormatURL = "url"
 )
 
+type VideoGenerationControlsCapability struct {
+	Seed                 *bool    `json:"seed,omitempty"`
+	PromptExpansionModes []string `json:"promptExpansionModes,omitempty"`
+	DamageLevels         []string `json:"damageLevels,omitempty"`
+}
+
+func (c *VideoGenerationControlsCapability) HasAny() bool {
+	if c == nil {
+		return false
+	}
+	return (c.Seed != nil && *c.Seed) || len(c.PromptExpansionModes) > 0 || len(c.DamageLevels) > 0
+}
+
 type VideoCapabilityConfig struct {
 	References          VideoReferenceConfig                `json:"references"`
 	OperationReferences map[string]VideoOperationReferences `json:"operationReferences,omitempty"`
@@ -107,6 +120,9 @@ type VideoCapabilityConfig struct {
 	DefaultOperation    string                              `json:"defaultOperation"`
 	TaskTypeConstraints bool                                `json:"taskTypeConstraints,omitempty"`
 	MiddleFrame         *bool                               `json:"middleFrame,omitempty"`
+	ReferenceOrder      *bool                               `json:"referenceOrder,omitempty"`
+	PreferReferenceMode *bool                               `json:"preferReferenceMode,omitempty"`
+	Controls            *VideoGenerationControlsCapability  `json:"controls,omitempty"`
 }
 
 // Nil inherits the model-wide count; a declared zero forbids that media kind.

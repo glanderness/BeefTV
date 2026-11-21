@@ -8,7 +8,7 @@ import { submitGenerationCommand } from "./generation-submission";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { isArkPlanBaseUrl } from "@/lib/seedance-video";
 import { seedreamFamily } from "@/lib/seedream-image";
-import { declaredOrOmniVideoCapability, isBeefTVModelRoute, portraitGenerationError, resolveVideoOperation } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, resolveVideoOperation } from "@/lib/model-selection";
 import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -217,6 +217,11 @@ export async function runBackendGenerationTaskBatch(options: BackendGenerationTa
 
 function generationOperation(options: BackendGenerationTaskOptions) {
     if (options.mode !== "video") return options.mode;
+    const hasExplicitFrame = Boolean(
+        options.metadata?.videoStartFrameNodeId ||
+            options.metadata?.videoEndFrameNodeId ||
+            options.metadata?.videoMiddleFrameNodeId,
+    );
     return resolveVideoOperation(
         {
             textCount: 0,
@@ -227,8 +232,7 @@ function generationOperation(options: BackendGenerationTaskOptions) {
         },
         options.metadata?.videoEditOperation as string | undefined,
         declaredOrOmniVideoCapability(options.config, options.config.model),
-        options.config.model,
-        isBeefTVModelRoute(options.config.model, options.config),
+        { hasExplicitFrame },
     );
 }
 
@@ -254,8 +258,6 @@ async function prepareGenerationReferences({
     referenceAudios = [],
     mask,
 }: Pick<BackendGenerationTaskOptions, "config" | "mode" | "referenceImages" | "referenceVideos" | "referenceAudios" | "mask">): Promise<PreparedGenerationReferences> {
-    const portraitError = mode === "video" ? portraitGenerationError(config, config.model, config.vquality) : "";
-    if (portraitError) throw new Error(portraitError);
     // asset:// 仅视频生成可用；Agent Plan Seedream 与 Seedance 共用 /api/plan/v3，不能按 BaseURL 误判。
     const preferArkAssetUrl = mode === "video" && usesArkVideoAssetReference(config);
     const preparedImages = await Promise.all(referenceImages.map((image) => prepareBackendImageReference(image, preferArkAssetUrl)));

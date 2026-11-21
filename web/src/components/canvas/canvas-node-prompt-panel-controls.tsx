@@ -175,7 +175,7 @@ export function CanvasNodePromptFooterControls({
     autoLinkLabel,
     pickConnectActive,
     isRunning,
-    h3Model,
+    controlsSupported,
     middleFrameSupported,
     endFrameSupported,
     theme,
@@ -199,7 +199,7 @@ export function CanvasNodePromptFooterControls({
     autoLinkLabel: string;
     pickConnectActive: boolean;
     isRunning: boolean;
-    h3Model: boolean;
+    controlsSupported: boolean;
     middleFrameSupported: boolean;
     endFrameSupported: boolean;
     theme: CanvasTheme;
@@ -295,12 +295,15 @@ export function CanvasNodePromptFooterControls({
                 onConfigChange(node.id, videoConfigPatch(key, value));
             }}
         >
-            {h3Model ? (
-                <>
-                    <CanvasH3Controls model={config.model} value={node.metadata?.videoH3Options} onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })} />
-                    <CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} middleFrameSupported={middleFrameSupported} endFrameSupported={endFrameSupported} onChange={(patch) => onConfigChange(node.id, patch)} />
-                </>
-            ) : (requirements.input?.videoCount || 0) > 0 && (videoCapabilities?.operations.includes("extend") || videoCapabilities?.operations.includes("inpaint")) ? (
+            {controlsSupported ? (
+                <CanvasH3Controls
+                    controls={videoCapabilities?.controls}
+                    durationConfig={videoCapabilities?.duration}
+                    value={node.metadata?.videoH3Options}
+                    onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })}
+                />
+            ) : null}
+            {(requirements.input?.videoCount || 0) > 0 && (videoCapabilities?.operations.includes("extend") || videoCapabilities?.operations.includes("inpaint")) ? (
                 <div className="space-y-1.5 border-t pt-2.5" style={{ borderColor: theme.toolbar.border }}>
                     <div style={{ color: theme.node.muted }}>参考视频模式</div>
                     <div className="grid grid-cols-3 gap-1.5">
@@ -326,6 +329,12 @@ export function CanvasNodePromptFooterControls({
                     </div>
                 </div>
             ) : null}
+            <CanvasH3UnsupportedFrames
+                metadata={node.metadata}
+                middleFrameSupported={middleFrameSupported}
+                endFrameSupported={endFrameSupported}
+                onChange={(patch) => onConfigChange(node.id, patch)}
+            />
         </CanvasVideoSettingsPopover>
     ) : mode === "audio" ? (
         <CanvasAudioSettingsPopover

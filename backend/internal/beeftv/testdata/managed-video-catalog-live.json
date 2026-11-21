@@ -420,6 +420,14 @@
       ],
       "video_capabilities_version": "b6d8208aa50102bd27d2f227bd712977276e9ba58dcf0740ecab325e2612578f",
       "video_capabilities": {
+        "controls": {
+          "promptExpansionModes": [
+            "disabled",
+            "balanced",
+            "quality"
+          ],
+          "seed": true
+        },
         "defaultOperation": "text_to_video",
         "defaultRatio": "16:9",
         "defaultResolution": "768p",
@@ -435,11 +443,20 @@
           "default": true,
           "supported": false
         },
+        "middleFrame": false,
+        "operationReferences": {
+          "image_to_video": {
+            "maxAudios": 1,
+            "maxImages": 2,
+            "maxVideos": 0
+          }
+        },
         "operations": [
           "text_to_video",
           "image_to_video",
           "audio_to_video"
         ],
+        "preferReferenceMode": false,
         "ratios": [
           "16:9",
           "9:16",
@@ -448,6 +465,7 @@
           "4:3",
           "3:4"
         ],
+        "referenceOrder": true,
         "references": {
           "maxAudioBytes": 15000000,
           "maxAudioDurationSeconds": 0,
@@ -578,6 +596,15 @@
       ],
       "video_capabilities_version": "6e94089aeb39041ca7ef2673c2cf6d51c58f37f25832134e196b0f4627236e1c",
       "video_capabilities": {
+        "controls": {
+          "promptExpansionModes": [
+            "disabled",
+            "fast",
+            "balanced",
+            "quality"
+          ],
+          "seed": true
+        },
         "defaultOperation": "text_to_video",
         "defaultRatio": "16:9",
         "defaultResolution": "2k",
@@ -593,12 +620,21 @@
           "default": true,
           "supported": false
         },
+        "middleFrame": false,
+        "operationReferences": {
+          "image_to_video": {
+            "maxAudios": 1,
+            "maxImages": 2,
+            "maxVideos": 0
+          }
+        },
         "operations": [
           "text_to_video",
           "image_to_video",
           "audio_to_video",
           "reference_to_video"
         ],
+        "preferReferenceMode": true,
         "ratios": [
           "16:9",
           "9:16",
@@ -608,6 +644,7 @@
           "3:4",
           "adaptive"
         ],
+        "referenceOrder": false,
         "references": {
           "maxAudioBytes": 15000000,
           "maxAudioDurationSeconds": 15,
@@ -746,6 +783,14 @@
       ],
       "video_capabilities_version": "b6d8208aa50102bd27d2f227bd712977276e9ba58dcf0740ecab325e2612578f",
       "video_capabilities": {
+        "controls": {
+          "promptExpansionModes": [
+            "disabled",
+            "balanced",
+            "quality"
+          ],
+          "seed": true
+        },
         "defaultOperation": "text_to_video",
         "defaultRatio": "16:9",
         "defaultResolution": "768p",
@@ -761,11 +806,20 @@
           "default": true,
           "supported": false
         },
+        "middleFrame": true,
+        "operationReferences": {
+          "image_to_video": {
+            "maxAudios": 1,
+            "maxImages": 2,
+            "maxVideos": 0
+          }
+        },
         "operations": [
           "text_to_video",
           "image_to_video",
           "audio_to_video"
         ],
+        "preferReferenceMode": false,
         "ratios": [
           "16:9",
           "9:16",
@@ -774,6 +828,7 @@
           "4:3",
           "3:4"
         ],
+        "referenceOrder": true,
         "references": {
           "maxAudioBytes": 15000000,
           "maxAudioDurationSeconds": 0,

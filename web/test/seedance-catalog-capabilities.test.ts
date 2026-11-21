@@ -4,7 +4,7 @@ import axios from "axios";
 import { applyFetchedChannelModelCatalog, mergeFetchedChannelModelProfiles, sanitizeChannelModelCatalogItem } from "../src/lib/channel-model-catalog";
 import { modelCapabilityConfigFor, sanitizeServerVideoCapability, type VideoCapabilityConfig } from "../src/lib/model-capabilities";
 import { mergeManagedBeefTVCatalog } from "../src/pages/settings/channel-settings-pane";
-import { modelCompatibilityError, portraitGenerationError } from "../src/lib/model-selection";
+import { modelCompatibilityError } from "../src/lib/model-selection";
 import { fetchChannelModels } from "../src/services/api/image-models";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot } from "../src/stores/use-config-store";
 
@@ -61,15 +61,20 @@ function legacyZeroVideo(model: string) {
     });
 }
 
-test("fresh generic OpenAI catalog entries retain real portrait quotes through refresh and reload", () => {
+test("fresh generic OpenAI catalog entries retain video quotes through refresh and reload", () => {
     const channel = createModelChannel({ id: "beeftv", baseUrl: "https://beeftv.app", models: ["seedance-2.0-fast"] });
-    const catalog = ["seedance-2.0-portrait", "seedance-2.5-portrait", "seedance-2.0-fast"].map((id, index) => ({
+    const catalog = ["seedance-2.0", "seedance-2.5", "seedance-2.0-fast"].map((id, index) => ({
         id,
         // Actual gateway shape: video contract and quote, no modelType.
         supportedEndpointTypes: ["openai"],
         videoCapabilities: sampleVideo(3, 3),
         videoCapabilitiesVersion: `catalog-${index}`,
-        videoPricing: { currency: "CNY" as const, mode: "tokens" as const, rates: { "720p": { output: 69 + index, reference_video: 42 + index } } },
+        videoPricing: {
+            currency: "CNY" as const,
+            mode: "tokens" as const,
+            rates: { "720p": { output: 69 + index, reference_video: 42 + index } },
+            display_lines: [`720p：¥${69 + index} / 百万 Token`],
+        },
     }));
     const refreshed = applyFetchedChannelModelCatalog(channel, { models: catalog.map((item) => item.id), catalog });
     const reloaded = normalizeConfigSnapshot(JSON.parse(JSON.stringify({ config: { ...defaultConfig, channels: [refreshed] } }))).config;
@@ -80,13 +85,13 @@ test("fresh generic OpenAI catalog entries retain real portrait quotes through r
         expect(profile.videoPricing).toEqual(item.videoPricing);
         expect(profile.videoCapabilitiesVersion).toBe(item.videoCapabilitiesVersion);
         expect(modelCompatibilityError(reloaded, `beeftv::${item.id}`, { capability: "video", input: { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 } })).toBe("");
-        expect(portraitGenerationError(reloaded, `beeftv::${item.id}`, "720p")).toBe("");
     }
     const missingPrice = applyFetchedChannelModelCatalog(refreshed, { models: catalog.map((item) => item.id), catalog: catalog.map((item) => ({ ...item, videoPricing: null })) });
-    const unavailable = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [missingPrice] } }).config;
-    expect(portraitGenerationError(unavailable, "beeftv::seedance-2.0-portrait")).toContain("价格暂不可用");
-    expect(portraitGenerationError(unavailable, "beeftv::seedance-2.5-portrait")).toContain("价格暂不可用");
-    expect(portraitGenerationError(unavailable, "beeftv::seedance-2.0-fast")).toBe("");
+    const cleared = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [missingPrice] } }).config;
+    for (const item of catalog) {
+        expect(cleared.channels[0]!.modelProfiles!.find((profile) => profile.model === item.id)?.videoPricing).toBeNull();
+        expect(modelCompatibilityError(cleared, `beeftv::${item.id}`, { capability: "video" })).toBe("");
+    }
 });
 
 test("generic endpoints and prices alone do not classify an unknown catalog model as video", () => {

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { sanitizeVideoPriceQuote } from "../src/lib/seedance-portrait";
+import { sanitizeVideoPriceQuote } from "../src/lib/video-pricing";
 import { sanitizeServerVideoCapability } from "../src/lib/model-capabilities";
 import type { ChannelModelCatalogItem } from "../src/lib/channel-model-catalog";
 

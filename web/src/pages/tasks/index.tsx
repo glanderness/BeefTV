@@ -12,7 +12,6 @@ import { WorkspaceState } from "@/components/layout/workspace-state";
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
 import { explainGenerationError } from "@/lib/generation-error";
 import { seedanceTaskRetryWarning } from "@/lib/seedance-channel-warning";
-import { portraitTaskRetryError } from "@/lib/seedance-portrait";
 import { formatTaskKind, generationTaskStatusLabel, operationOptions } from "@/lib/generation-task-display";
 import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
@@ -394,8 +393,6 @@ export default function TasksPage() {
                 message.warning(route.message);
                 return;
             }
-            const portraitError = portraitTaskRetryError(detail.inputJson, detail.model);
-            if (portraitError) throw new Error(portraitError);
             const warning = seedanceTaskRetryWarning(detail.inputJson, detail.model);
             if (warning && !(await new Promise<boolean>((resolve) => {
                 modal.confirm({ ...warning, centered: true, onOk: () => resolve(true), onCancel: () => resolve(false), afterClose: () => resolve(false) });

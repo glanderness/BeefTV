@@ -134,3 +134,64 @@ func TestWan30VideoAndMossImageDefaultCapabilitiesAndQualityAliases(t *testing.T
 		t.Fatalf("gpt-image-2 should accept 2k quality alias: %v", err)
 	}
 }
+
+func TestVideoCapabilityPreservesDeclarativeControlFieldsAcrossRoundTrip(t *testing.T) {
+	version := "server-v3"
+	enabled := true
+	disabled := false
+	profile := DefaultModelCapabilityConfigForModel("openai-videos", "opaque-future-video")
+	profile.Video.MiddleFrame = &enabled
+	profile.Video.ReferenceOrder = &disabled
+	profile.Video.PreferReferenceMode = &enabled
+	profile.Video.Controls = &VideoGenerationControlsCapability{
+		Seed:                 &enabled,
+		PromptExpansionModes: []string{"balanced", "quality", "fast", "disabled"},
+		DamageLevels:         []string{"light", "medium", "heavy"},
+	}
+	draft, err := NormalizeModelCapabilityDraft(ModelCapabilityDraft{
+		ChannelID:                "beeftv",
+		BaseURL:                  "https://beeftv.app",
+		Protocol:                 "openai-videos",
+		Model:                    "opaque-future-video",
+		Capability:               "video",
+		CapabilityConfig:         profile,
+		VideoCapabilitiesVersion: &version,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeModelCapabilityDraft failed: %v", err)
+	}
+	mapped, err := ModelCapabilityConfigToMap(draft)
+	if err != nil {
+		t.Fatalf("ModelCapabilityConfigToMap failed: %v", err)
+	}
+	videoMap, _ := mapped["video"].(map[string]any)
+	if videoMap["middleFrame"] != true || videoMap["referenceOrder"] != false || videoMap["preferReferenceMode"] != true {
+		t.Fatalf("flags lost in map projection: %#v", videoMap)
+	}
+	controlsMap, _ := videoMap["controls"].(map[string]any)
+	if controlsMap["seed"] != true {
+		t.Fatalf("controls lost in map projection: %#v", videoMap["controls"])
+	}
+	encoded, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeModelCapabilityConfig(string(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Video == nil || decoded.Video.MiddleFrame == nil || !*decoded.Video.MiddleFrame || decoded.Video.ReferenceOrder == nil || *decoded.Video.ReferenceOrder || decoded.Video.PreferReferenceMode == nil || !*decoded.Video.PreferReferenceMode || !decoded.Video.Controls.HasAny() {
+		t.Fatalf("decoded declarative fields mismatch: %#v", decoded.Video)
+	}
+
+	invalidExpansion := *profile.Video
+	invalidExpansion.Controls = &VideoGenerationControlsCapability{PromptExpansionModes: []string{"invalid"}}
+	if err := ValidateVideoCapabilityConfig(&invalidExpansion); err == nil {
+		t.Fatal("invalid promptExpansionModes accepted")
+	}
+	invalidDamage := *profile.Video
+	invalidDamage.Controls = &VideoGenerationControlsCapability{DamageLevels: []string{"extreme"}}
+	if err := ValidateVideoCapabilityConfig(&invalidDamage); err == nil {
+		t.Fatal("invalid damageLevels accepted")
+	}
+}

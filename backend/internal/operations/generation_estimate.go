@@ -1,9 +1,11 @@
 package operations
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/beeftv"
@@ -11,6 +13,15 @@ import (
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/pricing"
 )
+
+// ServerPricingEstimator calls the authoritative BeefTV pricing estimate API
+// when a live BeefTV connection is active. Callers that do not implement it
+// fall back to local catalog pricing.
+type ServerPricingEstimator interface {
+	EstimateServerPricing(ctx context.Context, req beeftv.PricingEstimateRequest) (beeftv.PricingEstimateResponse, error)
+}
+
+const serverPricingEstimateTimeout = 3 * time.Second
 
 // EstimateTarget is one planned generation as the canvas would submit it.
 type EstimateTarget struct {
@@ -30,7 +41,7 @@ type GenerationEstimate struct {
 const maxEstimateTargets = 2000
 
 func registerGenerationEstimateOp(r *Registry) {
-	r.Register(Op{ID: "generation.estimate", Summary: "按已保存的价格目录估算一组生成的费用；不联网、不写入、不建任务，没有价格的项目会写明原因", ReadOnly: true, Scope: ScopeWorkspaceRead,
+	r.Register(Op{ID: "generation.estimate", Summary: "估算一组生成的费用（官方渠道优先使用服务端估价接口，离线或自建渠道回退到本地目录）；不写入、不建任务，没有价格的项目会写明原因", ReadOnly: true, Scope: ScopeWorkspaceRead,
 		Params: json.RawMessage(`{"type":"object","properties":{"targets":{"type":"array","minItems":1,"maxItems":2000,"items":{"type":"object","properties":{"modelKey":{"type":"string"},"kind":{"type":"string","enum":["image","video","audio"]},"parameters":{"type":"object","additionalProperties":{"type":"string"},"description":"与节点相同的生成参数，如 size、quality、count、vquality、seconds"},"referenceImages":{"type":"integer","minimum":0},"referenceVideos":{"type":"integer","minimum":0},"text":{"type":"string","description":"配音台词"}},"required":["modelKey","kind"]}}},"required":["targets"]}`),
 		Handler: func(ctx *Context, raw json.RawMessage) (any, error) {
 			var args struct {
@@ -54,34 +65,96 @@ func registerGenerationEstimateOp(r *Registry) {
 		}})
 }
 
-// EstimateGenerationCost prices planned targets from the saved model catalog.
-// It reads no network, writes nothing and creates no task.
+type preparedEstimateTarget struct {
+	channelID string
+	shortKey  string
+	model     modelcatalog.PublicChannelModel
+	found     bool
+	request   pricing.Target
+}
+
+// EstimateGenerationCost prices planned targets. For official BeefTV channel
+// targets it prefers the authoritative server POST /v1/pricing/estimate API
+// when available, falling back seamlessly to the saved local catalog when
+// offline, unconfigured, or for BYOK channels.
 func EstimateGenerationCost(domain Domain, targets []EstimateTarget) GenerationEstimate {
 	var catalog *modelcatalog.CatalogResponse
 	if reader, ok := domain.(ModelCatalogReader); ok {
 		catalog, _ = reader.AgentModelCatalog()
 	}
-	items := make([]pricing.Estimate, 0, len(targets))
-	for _, target := range targets {
-		items = append(items, estimateTarget(catalog, target))
+	prepared := make([]preparedEstimateTarget, len(targets))
+	serverIndices := make([]int, 0, len(targets))
+	serverTargets := make([]beeftv.PricingEstimateTarget, 0, len(targets))
+	for i, target := range targets {
+		item := prepareEstimateTarget(catalog, target)
+		prepared[i] = item
+		managedBeefTV := item.channelID == beeftv.ChannelID
+		if item.found && item.model.ManagedBeefTV != nil {
+			managedBeefTV = *item.model.ManagedBeefTV
+		}
+		if managedBeefTV && item.shortKey != "" && (catalog == nil || item.found) {
+			modelKey := item.shortKey
+			if item.found && strings.TrimSpace(item.model.ModelKey) != "" {
+				_, key := splitEstimateModelKey(item.model.ModelKey)
+				if key != "" {
+					modelKey = key
+				}
+			}
+			serverIndices = append(serverIndices, i)
+			serverTargets = append(serverTargets, beeftv.PricingEstimateTarget{
+				Model:           modelKey,
+				Kind:            item.request.Kind,
+				Size:            item.request.Size,
+				Quality:         item.request.Quality,
+				Layers:          item.request.Layers,
+				Count:           max(item.request.Count, 1),
+				ReferenceImages: item.request.ReferenceImages,
+				ReferenceVideos: item.request.ReferenceVideos,
+				Resolution:      item.request.Resolution,
+				Seconds:         item.request.Seconds,
+				Characters:      item.request.Characters,
+			})
+		}
+	}
+
+	items := make([]pricing.Estimate, len(targets))
+	pricedByServer := make([]bool, len(targets))
+	var serverSummary *pricing.Summary
+	if len(serverTargets) > 0 {
+		if estimator, ok := domain.(ServerPricingEstimator); ok && estimator != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), serverPricingEstimateTimeout)
+			resp, err := estimator.EstimateServerPricing(ctx, beeftv.PricingEstimateRequest{Targets: serverTargets})
+			cancel()
+			if err == nil && len(resp.Items) == len(serverIndices) {
+				for j, idx := range serverIndices {
+					items[idx] = resp.Items[j]
+					pricedByServer[idx] = true
+				}
+				if len(serverIndices) == len(targets) && strings.TrimSpace(resp.Summary.Text) != "" && resp.Summary.Priced+resp.Summary.Unknown == len(targets) {
+					summary := resp.Summary
+					serverSummary = &summary
+				}
+			}
+		}
+	}
+
+	for i, item := range prepared {
+		if pricedByServer[i] {
+			continue
+		}
+		items[i] = estimatePreparedTarget(item)
+	}
+	if serverSummary != nil {
+		return GenerationEstimate{Items: items, Summary: *serverSummary}
 	}
 	return GenerationEstimate{Items: items, Summary: pricing.Summarize(items)}
 }
 
-func estimateTarget(catalog *modelcatalog.CatalogResponse, target EstimateTarget) pricing.Estimate {
-	channelID, model, ok := findEstimateModel(catalog, target.ModelKey)
-	if !ok {
-		return pricing.Unknown("找不到这个模型，暂无价格")
-	}
-	table := model.Pricing
-	if table == nil && target.Kind == "video" {
-		table = pricing.FromVideoQuote(model.VideoPricing)
-	}
-	if table == nil {
-		if channelID != beeftv.ChannelID {
-			return pricing.Unknown("自带 Key 的渠道暂无价格，按该渠道实际计费")
-		}
-		return pricing.Unknown("这个模型暂无价格")
+func prepareEstimateTarget(catalog *modelcatalog.CatalogResponse, target EstimateTarget) preparedEstimateTarget {
+	channelID, shortKey := splitEstimateModelKey(target.ModelKey)
+	foundChannelID, model, found := findEstimateModel(catalog, target.ModelKey)
+	if found {
+		channelID = foundChannelID
 	}
 	params := target.Parameters
 	count, _ := strconv.Atoi(strings.TrimSpace(params["count"]))
@@ -109,22 +182,50 @@ func estimateTarget(catalog *modelcatalog.CatalogResponse, target EstimateTarget
 				seconds = strconv.Itoa(capability.Video.Duration.Default)
 			}
 		}
-		request.Resolution = resolution
+		request.Resolution = strings.TrimSpace(resolution)
 		request.Seconds, _ = strconv.ParseFloat(strings.TrimSpace(seconds), 64)
 	case "audio":
 		request.Characters = utf8.RuneCountInString(strings.TrimSpace(target.Text))
 	}
-	return pricing.Quote(table, request)
+	return preparedEstimateTarget{
+		channelID: channelID,
+		shortKey:  shortKey,
+		model:     model,
+		found:     found,
+		request:   request,
+	}
+}
+
+func estimatePreparedTarget(item preparedEstimateTarget) pricing.Estimate {
+	if !item.found {
+		return pricing.Unknown("找不到这个模型，暂无价格")
+	}
+	table := item.model.Pricing
+	if table == nil && item.request.Kind == "video" {
+		table = pricing.FromVideoQuote(item.model.VideoPricing)
+	}
+	if table == nil {
+		if item.channelID != beeftv.ChannelID {
+			return pricing.Unknown("自带 Key 的渠道暂无价格，按该渠道实际计费")
+		}
+		return pricing.Unknown("这个模型暂无价格")
+	}
+	return pricing.Quote(table, item.request)
+}
+
+func splitEstimateModelKey(modelKey string) (string, string) {
+	channelID, shortKey := "", strings.TrimSpace(modelKey)
+	if i := strings.Index(shortKey, "::"); i >= 0 {
+		channelID, shortKey = strings.TrimSpace(shortKey[:i]), strings.TrimSpace(shortKey[i+2:])
+	}
+	return channelID, shortKey
 }
 
 func findEstimateModel(catalog *modelcatalog.CatalogResponse, modelKey string) (string, modelcatalog.PublicChannelModel, bool) {
 	if catalog == nil {
 		return "", modelcatalog.PublicChannelModel{}, false
 	}
-	channelID, shortKey := "", strings.TrimSpace(modelKey)
-	if i := strings.Index(shortKey, "::"); i >= 0 {
-		channelID, shortKey = strings.TrimSpace(shortKey[:i]), strings.TrimSpace(shortKey[i+2:])
-	}
+	channelID, shortKey := splitEstimateModelKey(modelKey)
 	if channelID == "" || shortKey == "" {
 		return "", modelcatalog.PublicChannelModel{}, false
 	}

@@ -5,7 +5,7 @@ import * as projects from "../src/services/api/projects";
 import * as resources from "../src/services/api/resources";
 import { modelCapabilityConfigFor } from "../src/lib/model-capabilities";
 import * as imageStorage from "../src/services/image-storage";
-import { h3ResolvedReferenceOrder } from "../src/lib/h3-video";
+import { resolveVideoReferenceOrder } from "../src/lib/canvas/video-reference-mode";
 
 const seedanceConfig = { model: "native::seedance-2.0", videoEditOperation: "reference_to_video", channels: [{ id: "native", models: ["seedance-2.0"], modelProfiles: [{ model: "seedance-2.0", protocol: "volcengine-ark-video" }] }] } as AiConfig;
 
@@ -52,7 +52,7 @@ test("character images and voice retain the source card for H3 ordering", async 
         expect(hydrated.referenceImages).toHaveLength(2);
         expect(hydrated.referenceImages.every((image) => image.sourceNodeId === "character-node")).toBe(true);
         expect(hydrated.referenceAudios[0]?.sourceNodeId).toBe("character-node");
-        expect(h3ResolvedReferenceOrder(["character-node"], [...hydrated.referenceImages, ...hydrated.referenceAudios])).toEqual(["character-reference-1", "character-reference-2", "character-voice-character-1"]);
+        expect(resolveVideoReferenceOrder(["character-node"], [...hydrated.referenceImages, ...hydrated.referenceAudios])).toEqual(["character-reference-1", "character-reference-2", "character-voice-character-1"]);
     } finally {
         character.mockRestore();
         resource.mockRestore();

@@ -10,7 +10,7 @@ import { modelDisplayName, modelIcon, modelOptionName, resolveModelChannel, sele
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { ModelProviderMenu, modelMenuSurface } from "@/components/model-provider-menu";
 import { ModelLogo } from "@/components/model-logo";
-import { portraitPriceLines, seedancePortraitLabel, seedancePortraitModel } from "@/lib/seedance-portrait";
+import { videoPricingDisplayLines } from "@/lib/video-pricing";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -77,13 +77,12 @@ export function ModelPicker({
     // 旧画布可能保存过已下架或前端历史内置模型；它们不能重新进入当前可选目录。
     const current = options.includes(resolvedCurrent) ? resolvedCurrent : "";
     const currentCompatibilityError = current ? modelCompatibilityError(config, current, selectionRequirements) : "";
-    const portrait = seedancePortraitModel(current || storedCurrent);
-    const portraitQuote = current ? resolveModelChannel(config, current).modelProfiles?.find((item) => item.model === modelOptionName(current))?.videoPricing : undefined;
-    const priceLines = portraitPriceLines(portraitQuote);
+    const videoPricing = current ? resolveModelChannel(config, current).modelProfiles?.find((item) => item.model === modelOptionName(current))?.videoPricing : undefined;
+    const priceLines = videoPricingDisplayLines(videoPricing);
     const creationVariant = variant !== "default";
     const triggerLabel = current
         ? (creationVariant ? pickerModelDisplayName(config, current, showConfiguredModelName) : pickerModelOptionLabel(config, current, showConfiguredModelName))
-        : portrait ? `${seedancePortraitLabel(storedCurrent)}（不可用）` : placeholder;
+        : placeholder;
     const triggerTitle = current
         ? currentCompatibilityError
             ? `${pickerModelOptionLabel(config, current, showConfiguredModelName)} · ${currentCompatibilityError}`
@@ -300,13 +299,15 @@ export function ModelPicker({
                     <ChevronDown className={cn("canvas-model-picker-chevron", open && "is-open")} aria-hidden="true" />
                 </button>
             </Popover>
-            {showVideoPriceDetails && (portrait || priceLines.length > 0) ? <Popover trigger="click" placement="topLeft" content={
+            {showVideoPriceDetails && priceLines.length > 0 ? <Popover trigger="click" placement="topLeft" content={
                 <div className="max-w-[min(26rem,calc(100vw-3rem))] text-xs leading-relaxed" role="note">
-                    {priceLines.length ? <><p>视频参考单价</p>{priceLines.map((line) => <p key={line}>{line}</p>)}<p>实际费用见生成账单。素材仍需通过审核。</p></> : <p>价格暂不可用，请刷新模型列表后再生成。</p>}
+                    <p>视频参考单价</p>
+                    {priceLines.map((line) => <p key={line}>{line}</p>)}
+                    <p>实际费用见生成账单。素材仍需通过审核。</p>
                 </div>
             }>
-                <button type="button" className="shrink-0 rounded px-1 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ color: theme.node.muted }} aria-label="视频参考单价" title={priceLines.join("\n") || "价格暂不可用，请刷新模型列表后再生成。"}>
-                    {priceLines.length ? "价格" : "价格暂不可用"}
+                <button type="button" className="shrink-0 rounded px-1 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ color: theme.node.muted }} aria-label="视频参考单价" title={priceLines.join("\n")}>
+                    价格
                 </button>
             </Popover> : null}
         </div>

@@ -4,7 +4,7 @@ import type { App } from "antd";
 import type { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { explainGenerationError } from "@/lib/generation-error";
 import { normalizeImageValue, normalizeVideoValue, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
-import { declaredOrOmniVideoCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, resolveVideoOperation } from "@/lib/model-selection";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { NewAsset } from "@/stores/use-asset-store";
@@ -215,8 +215,6 @@ export async function executeCreateSubmit(params: ExecuteCreateSubmitParams) {
         { textCount: text ? 1 : 0, imageCount: referenceImages.length, videoCount: referenceVideos.length, audioCount: referenceAudios.length, characterCount: 0 },
         undefined,
         declaredOrOmniVideoCapability(config, selectedModel),
-        selectedModel,
-        isBeefTVModelRoute(selectedModel, config),
     );
     const skillReferences = references.flatMap((reference) => (reference.skill ? [reference.skill] : []));
     const runtime = await loadCreationRuntime();

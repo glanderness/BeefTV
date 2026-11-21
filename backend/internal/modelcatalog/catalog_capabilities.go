@@ -171,6 +171,27 @@ func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool)
 		}
 		video["middleFrame"] = enabled
 	}
+	if value, present := object["referenceOrder"]; present {
+		enabled, ok := value.(bool)
+		if !ok {
+			return nil, false
+		}
+		video["referenceOrder"] = enabled
+	}
+	if value, present := object["preferReferenceMode"]; present {
+		enabled, ok := value.(bool)
+		if !ok {
+			return nil, false
+		}
+		video["preferReferenceMode"] = enabled
+	}
+	if rawControls, present := object["controls"]; present {
+		controls, ok := normalizeCatalogVideoControls(rawControls)
+		if !ok {
+			return nil, false
+		}
+		video["controls"] = controls
+	}
 	if _, present := object["draft"]; present {
 		draft, ok := catalogBooleanConfig(object, "draft")
 		if !ok {
@@ -189,14 +210,51 @@ func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool)
 		}
 		video["returnLastFrame"] = returnLastFrame
 	}
-	if _, present := object["returnLastFrame"]; present {
-		returnLastFrame, ok := catalogBooleanConfig(object, "returnLastFrame")
+	return video, true
+}
+
+func normalizeCatalogVideoControls(raw any) (map[string]any, bool) {
+	object, ok := raw.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	controls := map[string]any{}
+	if value, present := object["seed"]; present {
+		enabled, ok := value.(bool)
 		if !ok {
 			return nil, false
 		}
-		video["returnLastFrame"] = returnLastFrame
+		controls["seed"] = enabled
 	}
-	return video, true
+	if value, present := object["promptExpansionModes"]; present {
+		modes, ok := catalogStringList(value, true)
+		if !ok {
+			return nil, false
+		}
+		for _, mode := range modes {
+			switch mode {
+			case "disabled", "fast", "balanced", "quality":
+			default:
+				return nil, false
+			}
+		}
+		controls["promptExpansionModes"] = modes
+	}
+	if value, present := object["damageLevels"]; present {
+		levels, ok := catalogStringList(value, true)
+		if !ok {
+			return nil, false
+		}
+		for _, level := range levels {
+			switch level {
+			case "light", "medium", "heavy":
+			default:
+				return nil, false
+			}
+		}
+		controls["damageLevels"] = levels
+	}
+	return controls, true
 }
 
 // Keep the existing capability JSON shape intact. Its server owns model limits;
@@ -291,10 +349,34 @@ func NormalizeCatalogImageCapability(raw json.RawMessage) (map[string]any, bool)
 	return value, true
 }
 
+const maxVideoPricingDisplayLines = 20
+
+func normalizeVideoPricingDisplayLines(raw []string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, min(len(raw), maxVideoPricingDisplayLines))
+	for _, line := range raw {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		lines = append(lines, trimmed)
+		if len(lines) >= maxVideoPricingDisplayLines {
+			break
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return lines
+}
+
 func NormalizeCatalogVideoPricing(raw json.RawMessage) (map[string]any, bool) {
 	var value struct {
 		Currency            string   `json:"currency"`
 		Mode                string   `json:"mode"`
+		DisplayLines        []string `json:"display_lines"`
 		ReferenceImage      *float64 `json:"reference_image"`
 		FreeReferenceImages *int     `json:"free_reference_images"`
 		ReferenceInvoice    *struct {
@@ -306,31 +388,44 @@ func NormalizeCatalogVideoPricing(raw json.RawMessage) (map[string]any, bool) {
 			ReferenceVideo float64 `json:"reference_video"`
 		} `json:"rates"`
 	}
-	if json.Unmarshal(raw, &value) != nil || value.Currency != "CNY" || value.Mode != "tokens" && value.Mode != "seconds" || len(value.Rates) == 0 {
+	if json.Unmarshal(raw, &value) != nil {
 		return nil, false
+	}
+	displayLines := normalizeVideoPricingDisplayLines(value.DisplayLines)
+	fallbackDisplayOnly := func() (map[string]any, bool) {
+		if len(displayLines) == 0 {
+			return nil, false
+		}
+		return map[string]any{"display_lines": displayLines}, true
+	}
+	if value.Currency != "CNY" || (value.Mode != "tokens" && value.Mode != "seconds") || len(value.Rates) == 0 {
+		return fallbackDisplayOnly()
 	}
 	rates := map[string]any{}
 	for resolution, rate := range value.Rates {
 		if resolution != "480p" && resolution != "720p" && resolution != "768p" && resolution != "1080p" && resolution != "2k" && resolution != "4k" {
-			return nil, false
+			return fallbackDisplayOnly()
 		}
 		if rate.Output <= 0 || value.Mode == "tokens" && rate.ReferenceVideo <= 0 || value.Mode == "seconds" && rate.ReferenceVideo != 0 || math.IsNaN(rate.Output) || math.IsInf(rate.Output, 0) || math.IsNaN(rate.ReferenceVideo) || math.IsInf(rate.ReferenceVideo, 0) {
-			return nil, false
+			return fallbackDisplayOnly()
 		}
 		rates[resolution] = map[string]any{"output": rate.Output, "reference_video": rate.ReferenceVideo}
 	}
 	result := map[string]any{"currency": "CNY", "mode": value.Mode, "rates": rates}
 	if invoice := value.ReferenceInvoice; invoice != nil {
 		if value.Mode != "seconds" || invoice.USDCNY < 5 || invoice.USDCNY > 10 || invoice.ReserveUSD <= 0 || invoice.ReserveUSD > 100 || math.IsNaN(invoice.USDCNY) || math.IsInf(invoice.USDCNY, 0) || math.IsNaN(invoice.ReserveUSD) || math.IsInf(invoice.ReserveUSD, 0) {
-			return nil, false
+			return fallbackDisplayOnly()
 		}
 		result["reference_invoice"] = map[string]any{"usd_cny": invoice.USDCNY, "reserve_usd": invoice.ReserveUSD}
 	}
 	if value.ReferenceImage != nil || value.FreeReferenceImages != nil {
 		if value.Mode != "seconds" || value.ReferenceImage == nil || value.FreeReferenceImages == nil || *value.ReferenceImage < 0 || math.IsNaN(*value.ReferenceImage) || math.IsInf(*value.ReferenceImage, 0) || *value.FreeReferenceImages < 0 || *value.FreeReferenceImages > 12 {
-			return nil, false
+			return fallbackDisplayOnly()
 		}
 		result["reference_image"], result["free_reference_images"] = *value.ReferenceImage, *value.FreeReferenceImages
+	}
+	if len(displayLines) > 0 {
+		result["display_lines"] = displayLines
 	}
 	return result, true
 }

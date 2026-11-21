@@ -1,11 +1,9 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { useEffect } from "react";
-import { isH3MaxFamilyModel } from "@/lib/h3-video";
 import type { NodeGenerationInput } from "./canvas-node-generation";
 import type { CanvasNodeMetadata } from "@/types/canvas";
 
-export function CanvasH3ReferenceOrder({ model, inputs, metadata, onChange }: { model: string; inputs: Array<Pick<NodeGenerationInput, "nodeId" | "type" | "title">>; metadata?: CanvasNodeMetadata; onChange: (patch: Partial<CanvasNodeMetadata>) => void }) {
-    const supported = isH3MaxFamilyModel(model);
+export function CanvasH3ReferenceOrder({ supported, inputs, metadata, onChange }: { supported: boolean; inputs: Array<Pick<NodeGenerationInput, "nodeId" | "type" | "title">>; metadata?: CanvasNodeMetadata; onChange: (patch: Partial<CanvasNodeMetadata>) => void }) {
     const frames = [metadata?.videoStartFrameNodeId, metadata?.videoEndFrameNodeId, metadata?.videoMiddleFrameNodeId];
     const rank = { image: 0, character: 0, video: 1, audio: 2, text: 3 };
     const refs = inputs.filter((i) => ["image", "character", "video", "audio"].includes(i.type) && !frames.includes(i.nodeId)).sort((a, b) => rank[a.type] - rank[b.type]);

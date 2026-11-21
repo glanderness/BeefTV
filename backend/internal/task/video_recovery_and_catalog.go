@@ -644,7 +644,6 @@ func SelectCatalogTask(
 func ValidateCatalogCapability(
 	input map[string]any,
 	validateCapability func(map[string]any) error,
-	validatePortraitQuote func(map[string]any) error,
 ) error {
 	config, _ := input["config"].(map[string]any)
 	if input["upscale"] != nil || generation.UpscaleMediaType(kernel.StringValue(config["model"])) != "" {
@@ -675,10 +674,7 @@ func ValidateCatalogCapability(
 		}
 		return generation.ValidateSubtitleEraseInput(prepared)
 	}
-	if err := validateCapability(input); err != nil {
-		return err
-	}
-	return validatePortraitQuote(input)
+	return validateCapability(input)
 }
 
 func ValidateTaskMediaTransport(

@@ -1,24 +1,24 @@
 import fs from "node:fs";
 import { expect, test } from "bun:test";
 import { beefTVVideoContract } from "../src/lib/beeftv-video-contracts";
-import { portraitPriceLines, sanitizeVideoPriceQuote } from "../src/lib/seedance-portrait";
+import { sanitizeVideoPriceQuote, videoPricingDisplayLines } from "../src/lib/video-pricing";
 import { SYSTEM_PROMPT } from "../../agent-host/system-prompt.mjs";
 
 test("H3 preserves CNY seconds and 768p without accepting unverified model aliases", () => {
     expect(beefTVVideoContract("minimax-h3-max-turbo")?.protocol).toBe("newapi-channel-2");
     expect(beefTVVideoContract("minimax-h3-max")?.protocol).toBe("newapi-channel-2");
-    expect(beefTVVideoContract("minimax-h3")?.maxReferences).toEqual({image: 9, video: 3, audio: 3});
+    expect(beefTVVideoContract("minimax-h3")?.protocol).toBe("newapi-channel-2");
     expect(beefTVVideoContract("minimax-h3-max-turbo-other")).toBeUndefined();
     const price = {currency: "CNY", mode: "seconds", rates: {"768p": {output: 0.2441304, reference_video: 0}}};
     expect(sanitizeVideoPriceQuote(price)).toEqual(price);
-    expect(portraitPriceLines(price)).toEqual(["768p：¥0.2441 / 秒"]);
+    expect(videoPricingDisplayLines(price)).toEqual(["768p：¥0.2441 / 秒"]);
     expect(sanitizeVideoPriceQuote({...price, currency: "USD"})).toBeNull();
 });
 
 test("H3 2K price includes the first-five-reference-image allowance", () => {
     const price = {currency: "CNY", mode: "seconds", rates: {"2k": {output: 1.322373, reference_video: 0}, "4k": {output: 1.627536, reference_video: 0}}, reference_image: 0.813768, free_reference_images: 5};
     expect(sanitizeVideoPriceQuote(price)).toEqual(price);
-    expect(portraitPriceLines(price)).toEqual(["2k：¥1.3224 / 秒", "4k：¥1.6275 / 秒", "前 5 张参考图免费，之后 ¥0.8138 / 张"]);
+    expect(videoPricingDisplayLines(price)).toEqual(["2k：¥1.3224 / 秒", "4k：¥1.6275 / 秒", "前 5 张参考图免费，之后 ¥0.8138 / 张"]);
     expect(sanitizeVideoPriceQuote({...price, free_reference_images: -1})).toBeNull();
     expect(sanitizeVideoPriceQuote({...price, reference_image: NaN})).toBeNull();
 });

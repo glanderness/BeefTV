@@ -125,6 +125,9 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 		"video": map[string]any{
 			"defaultOperation": "text_to_video",
 			"operations":       []string{"text_to_video", "image_to_video", "reference_to_video"},
+			"middleFrame":      false,
+			"referenceOrder":   false,
+			"controls":         map[string]any{},
 			"references":       map[string]any{"maxImages": 10, "maxVideos": 5, "maxAudios": 5},
 			"operationReferences": map[string]any{
 				"image_to_video":     map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 0},
@@ -153,12 +156,25 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 			"references":       map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 1},
 		},
 	}
+	hostedH3MidCap := map[string]any{
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video", "audio_to_video"},
+			"references":       map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 1},
+			"middleFrame":      true,
+		},
+	}
 	contractH3MaxCap := map[string]any{
 		"video": map[string]any{
 			"defaultOperation": "text_to_video",
 			"operations":       []string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"},
 			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
 			"middleFrame":      true,
+			"referenceOrder":   true,
+			"controls": map[string]any{
+				"seed":                 true,
+				"promptExpansionModes": []string{"balanced", "quality", "disabled"},
+			},
 			"operationReferences": map[string]any{
 				"image_to_video": map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 1},
 			},
@@ -169,6 +185,29 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 			"defaultOperation": "text_to_video",
 			"operations":       []string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"},
 			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+			"operationReferences": map[string]any{
+				"image_to_video": map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 1},
+			},
+		},
+	}
+	omniMidCap := map[string]any{
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"},
+			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+			"middleFrame":      true,
+			"referenceOrder":   true,
+			"controls":         map[string]any{"seed": true},
+		},
+	}
+	customControlsNoMidCap := map[string]any{
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"},
+			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+			"middleFrame":      false,
+			"referenceOrder":   true,
+			"controls":         map[string]any{"seed": true},
 		},
 	}
 	explicitNoMidH3MaxCap := map[string]any{
@@ -201,6 +240,9 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 		"video": map[string]any{
 			"defaultOperation": "text_to_video",
 			"operations":       []string{"text_to_video", "image_to_video"},
+			"middleFrame":      false,
+			"referenceOrder":   false,
+			"controls":         map[string]any{},
 			"references":       map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 0},
 		},
 	}
@@ -236,13 +278,13 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 		{
 			ID: "live",
 			Models: []modelcatalog.PublicChannelModel{
-				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: hostedH3Cap},
+				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: hostedH3MidCap},
 			},
 		},
 		{
 			ID: "beeftv-omni",
 			Models: []modelcatalog.PublicChannelModel{
-				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: versionedH3LiveCap},
+				{ID: "opaque-omni-mid", ModelKey: "opaque-omni-mid", Capability: "video", Available: true, ManagedBeefTV: &managedRoute, CapabilityConfig: omniMidCap},
 			},
 		},
 		{
@@ -267,7 +309,7 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 			ID: "custom",
 			Models: []modelcatalog.PublicChannelModel{
 				{ID: "opaque-video", ModelKey: "opaque-video", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityDeclared: &undeclared, CapabilityConfig: autoDefaultCustomCap},
-				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityConfig: versionedH3LiveCap},
+				{ID: "minimax-h3-max", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityConfig: customControlsNoMidCap},
 				{ID: "kling-video-v3", ModelKey: "kling-video-v3", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityConfig: customKlingTwoFrameCap},
 				{ID: "frame9-video", ModelKey: "frame9-video", Capability: "video", Available: true, ManagedBeefTV: &customRoute, CapabilityConfig: customFrame9Cap},
 			},
@@ -366,13 +408,15 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	liveH3MaxMid["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
 	liveH3MaxMid["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
 
-	omniH3MaxMid := imageNode("omni-h3max-mid", "beeftv-omni::minimax-h3-max")
+	omniH3MaxMid := imageNode("omni-h3max-mid", "beeftv-omni::opaque-omni-mid")
 	omniH3MaxMid["type"] = "video"
 	omniH3MaxMid["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
 	omniH3MaxMid["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
 	omniH3MaxMid["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
 	omniH3MaxMid["metadata"].(map[string]any)["videoEndFrameNodeId"] = "img-3"
 	omniH3MaxMid["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
+	omniH3MaxMid["metadata"].(map[string]any)["videoReferenceOrder"] = []any{"img-3", "img-1"}
+	omniH3MaxMid["metadata"].(map[string]any)["videoH3Options"] = map[string]any{"seed": float64(9)}
 
 	overrideH3MaxNoMid := imageNode("override-h3max-nomid", "override::minimax-h3-max")
 	overrideH3MaxNoMid["type"] = "video"
@@ -629,6 +673,12 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	if got := byID["omni-h3max-mid"].Metadata["videoMiddleFrameTime"]; got != 2.5 {
 		t.Fatalf("omni-h3max-mid videoMiddleFrameTime = %v, want 2.5", got)
 	}
+	if got := byID["omni-h3max-mid"].Metadata["videoReferenceOrder"]; got == nil {
+		t.Fatal("omni-h3max-mid lost videoReferenceOrder on opaque model declaring referenceOrder")
+	}
+	if got := byID["omni-h3max-mid"].Metadata["videoH3Options"]; got == nil {
+		t.Fatal("omni-h3max-mid lost videoH3Options on opaque model declaring controls")
+	}
 	if got := byID["override-h3max-nomid"].Metadata["videoEditOperation"]; got != "image_to_video" {
 		t.Fatalf("override-h3max-nomid videoEditOperation = %v, want image_to_video", got)
 	}
@@ -697,5 +747,177 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 	}
 	if _, err := GenerationTargets(probe, doc, []string{"frame9-over-limit"}); err == nil || !strings.Contains(err.Error(), "最多支持 2 张首尾帧参考图") {
 		t.Fatalf("frame9-over-limit expected frame image limit error, got %v", err)
+	}
+}
+
+func TestGenerationTargetsPreferReferenceModeDefaultsUntaggedImages(t *testing.T) {
+	capCfg := map[string]any{
+		"version": 1,
+		"video": map[string]any{
+			"defaultOperation":    "text_to_video",
+			"operations":          []string{"text_to_video", "image_to_video", "reference_to_video"},
+			"preferReferenceMode": true,
+			"references":          map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+			"operationReferences": map[string]any{
+				"image_to_video": map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 1},
+			},
+		},
+	}
+	catalog := modelcatalog.NewCatalogResponse(modelcatalog.CatalogSourceSystem, nil, []modelcatalog.PublicChannelCatalog{
+		{
+			ID: "studio",
+			Models: []modelcatalog.PublicChannelModel{
+				{ID: "opaque-prefer-ref", ModelKey: "opaque-prefer-ref", Capability: "video", Available: true, CapabilityConfig: capCfg},
+			},
+		},
+	})
+	img := imageNode("img-1", "image")
+	img["metadata"].(map[string]any)["storageKey"] = "resource:img-1"
+	untagged := imageNode("shot-untagged", "studio::opaque-prefer-ref")
+	untagged["type"] = "video"
+	taggedFrame := imageNode("shot-frame", "studio::opaque-prefer-ref")
+	taggedFrame["type"] = "video"
+	taggedFrame["metadata"].(map[string]any)["videoStartFrameNodeId"] = "img-1"
+	explicitI2V := imageNode("shot-i2v", "studio::opaque-prefer-ref")
+	explicitI2V["type"] = "video"
+	explicitI2V["metadata"].(map[string]any)["videoEditOperation"] = "image_to_video"
+	allNodes := []map[string]any{img, untagged, taggedFrame, explicitI2V}
+	doc := map[string]any{
+		"nodes": []any{img, untagged, taggedFrame, explicitI2V},
+		"connections": []any{
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "shot-untagged"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "shot-frame"},
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "shot-i2v"},
+		},
+	}
+	probe := &catalogGenerationProbe{
+		mixedGenerationProbe: mixedGenerationProbe{proposeProbe: proposeProbe{doc: proposeCanvas(t, allNodes)}},
+		catalog:              &catalog,
+	}
+	probe.resolve = func(_, selected string) (AssistantGenerationModel, error) {
+		return AssistantGenerationModel{ModelKey: selected, Display: selected}, nil
+	}
+	targets, err := GenerationTargets(probe, doc, []string{"shot-untagged", "shot-frame", "shot-i2v"})
+	if err != nil {
+		t.Fatalf("GenerationTargets failed: %v", err)
+	}
+	byID := map[string]GenerationTarget{}
+	for _, target := range targets {
+		byID[target.NodeID] = target
+	}
+	if got := byID["shot-untagged"].Metadata["videoEditOperation"]; got != "reference_to_video" {
+		t.Fatalf("shot-untagged videoEditOperation = %v, want reference_to_video", got)
+	}
+	if got := byID["shot-frame"].Metadata["videoEditOperation"]; got != nil {
+		t.Fatalf("shot-frame videoEditOperation = %v, want nil", got)
+	}
+	if got := byID["shot-i2v"].Metadata["videoEditOperation"]; got != "image_to_video" {
+		t.Fatalf("shot-i2v videoEditOperation = %v, want image_to_video", got)
+	}
+}
+
+func TestGenerationTargetsOmittedFlagsStayOpaqueAndControlsNormalizeStaleOptions(t *testing.T) {
+	declaredTrue := true
+	omittedFlagsCap := map[string]any{
+		"version": 1,
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video", "reference_to_video"},
+			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+		},
+	}
+	strictControlsCap := map[string]any{
+		"version": 1,
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video", "reference_to_video"},
+			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+			"controls": map[string]any{
+				"seed":                 true,
+				"promptExpansionModes": []string{"disabled", "balanced", "quality"},
+			},
+		},
+	}
+	catalog := modelcatalog.NewCatalogResponse(modelcatalog.CatalogSourceSystem, nil, []modelcatalog.PublicChannelCatalog{
+		{
+			ID: "beeftv",
+			Models: []modelcatalog.PublicChannelModel{
+				{ID: "legacy-cached-video", ModelKey: "legacy-cached-video", Capability: "video", Available: true, CapabilityDeclared: &declaredTrue, CapabilityConfig: omittedFlagsCap},
+				{ID: "strict-controls-video", ModelKey: "strict-controls-video", Capability: "video", Available: true, CapabilityDeclared: &declaredTrue, CapabilityConfig: strictControlsCap},
+			},
+		},
+	})
+	img1 := imageNode("img-1", "image")
+	img1["metadata"].(map[string]any)["storageKey"] = "resource:img-1"
+	img2 := imageNode("img-2", "image")
+	img2["metadata"].(map[string]any)["storageKey"] = "resource:img-2"
+
+	legacyShot := imageNode("legacy-shot", "beeftv::legacy-cached-video")
+	legacyShot["type"] = "video"
+	legacyShot["metadata"].(map[string]any)["videoEditOperation"] = "reference_to_video"
+	legacyShot["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
+	legacyShot["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
+	legacyShot["metadata"].(map[string]any)["videoReferenceOrder"] = []any{"img-2", "img-1"}
+	legacyShot["metadata"].(map[string]any)["videoH3Options"] = map[string]any{"seed": float64(7), "prompt_expansion_mode": "fast"}
+
+	strictPartialShot := imageNode("strict-partial", "beeftv::strict-controls-video")
+	strictPartialShot["type"] = "video"
+	strictPartialShot["metadata"].(map[string]any)["videoH3Options"] = map[string]any{
+		"seed":                  float64(42),
+		"prompt_expansion_mode": "fast",
+		"damage_level":          "heavy",
+	}
+
+	strictDroppedShot := imageNode("strict-dropped", "beeftv::strict-controls-video")
+	strictDroppedShot["type"] = "video"
+	strictDroppedShot["metadata"].(map[string]any)["videoH3Options"] = map[string]any{
+		"prompt_expansion_mode": "fast",
+		"damage_level":          "light",
+	}
+
+	allNodes := []map[string]any{img1, img2, legacyShot, strictPartialShot, strictDroppedShot}
+	doc := map[string]any{
+		"nodes": []any{img1, img2, legacyShot, strictPartialShot, strictDroppedShot},
+		"connections": []any{
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "legacy-shot"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "legacy-shot"},
+		},
+	}
+	probe := &catalogGenerationProbe{
+		mixedGenerationProbe: mixedGenerationProbe{proposeProbe: proposeProbe{doc: proposeCanvas(t, allNodes)}},
+		catalog:              &catalog,
+	}
+	probe.resolve = func(_, selected string) (AssistantGenerationModel, error) {
+		return AssistantGenerationModel{ModelKey: selected, Display: selected}, nil
+	}
+	targets, err := GenerationTargets(probe, doc, []string{"legacy-shot", "strict-partial", "strict-dropped"})
+	if err != nil {
+		t.Fatalf("GenerationTargets failed: %v", err)
+	}
+	byID := map[string]GenerationTarget{}
+	for _, target := range targets {
+		byID[target.NodeID] = target
+	}
+	// Omitted flags on a declared model stay opaque and never wipe saved parameters.
+	if got := byID["legacy-shot"].Parameters["videoMiddleFrameNodeId"]; got != "img-2" {
+		t.Fatalf("legacy-shot wiped middleFrame: %q", got)
+	}
+	if got := byID["legacy-shot"].Metadata["videoMiddleFrameTime"]; got != 2.5 {
+		t.Fatalf("legacy-shot wiped middleFrameTime: %v", got)
+	}
+	if got := byID["legacy-shot"].Metadata["videoReferenceOrder"]; got == nil {
+		t.Fatal("legacy-shot wiped videoReferenceOrder")
+	}
+	if got := byID["legacy-shot"].Metadata["videoH3Options"]; got == nil {
+		t.Fatal("legacy-shot wiped videoH3Options")
+	}
+	// Strict controls strip unsupported prompt_expansion_mode ("fast") and damage_level ("heavy") while retaining supported seed.
+	partialOpts, ok := byID["strict-partial"].Metadata["videoH3Options"].(map[string]any)
+	if !ok || partialOpts["seed"] != float64(42) || partialOpts["prompt_expansion_mode"] != nil || partialOpts["damage_level"] != nil {
+		t.Fatalf("strict-partial normalized videoH3Options = %#v, want only seed=42", byID["strict-partial"].Metadata["videoH3Options"])
+	}
+	// When all fields are unsupported, videoH3Options is removed entirely.
+	if got := byID["strict-dropped"].Metadata["videoH3Options"]; got != nil {
+		t.Fatalf("strict-dropped should remove empty videoH3Options, got %#v", got)
 	}
 }

@@ -13,7 +13,6 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasPromptFontControl } from "./canvas-prompt-font-control";
 import { DEFAULT_PROMPT_FONT_SIZE, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { isNodeRegenerateBlocked } from "@/lib/task-outcome";
-import { isH3MaxFamilyModel, isH3Model, isH3Style } from "@/lib/h3-video";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasPromptOptimizerDrawer } from "./canvas-prompt-optimizer-drawer";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
@@ -144,16 +143,44 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
     const { config, requirements, priceChannel, currentModelCompatibilityError, livePreflightError } = preview;
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = useMemo(() => resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl })), [resolvedMentionReferences]);
-    const h3Model = isH3Model(config.model);
     const isBeefTVRoute = isBeefTVModelRoute(config.model, config);
     const videoProfile = mode === "video" ? modelCapabilityConfigFor(config, config.model).video : undefined;
     const preferredReferenceMode = useCreationPreferencesStore((state) => state.preferences.videoReferenceMode ?? "all");
     const effectiveVideoOperation = mode === "video" && requirements.input
-        ? resolveVideoOperation(requirements.input, canvasVideoOperationPreference(config, node, requirements.input, preferredReferenceMode), declaredOrOmniVideoCapability(config, config.model), config.model, isBeefTVRoute)
+        ? resolveVideoOperation(
+              requirements.input,
+              canvasVideoOperationPreference(config, node, requirements.input, preferredReferenceMode),
+              declaredOrOmniVideoCapability(config, config.model),
+              {
+                  hasExplicitFrame: Boolean(
+                      node.metadata?.videoStartFrameNodeId ||
+                          node.metadata?.videoEndFrameNodeId ||
+                          node.metadata?.videoMiddleFrameNodeId,
+                  ),
+              },
+          )
         : undefined;
-    const { endFrameSupported, referenceVideoSupported, maxFrameAudios, middleFrameSupported } = mode === "video"
+    const {
+        endFrameSupported,
+        referenceVideoSupported,
+        maxFrameAudios,
+        middleFrameSupport,
+        middleFrameSupported,
+        referenceOrderSupported,
+        controlsSupported,
+        preferReferenceMode,
+    } = mode === "video"
         ? resolveVideoReferenceCapabilities(config.model, videoProfile, hasDeclaredModelCapability(config, config.model, "video"), isBeefTVRoute)
-        : { endFrameSupported: false, referenceVideoSupported: false, maxFrameAudios: 0, middleFrameSupported: false };
+        : {
+              endFrameSupported: false,
+              referenceVideoSupported: false,
+              maxFrameAudios: 0,
+              middleFrameSupport: "unsupported" as const,
+              middleFrameSupported: false,
+              referenceOrderSupported: false,
+              controlsSupported: false,
+              preferReferenceMode: false,
+          };
     const hasVisualOrVideoReference = activeReferences.some((item) => item.kind === "image" || item.kind === "character" || item.kind === "video");
     const videoModeState = useMemo(() => {
         if (mode !== "video" || simpleMode || !hasVisualOrVideoReference || ["extend", "inpaint"].includes(effectiveVideoOperation || "")) return undefined;
@@ -163,22 +190,21 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
             references: resolvedMentionReferences,
             endFrameSupported,
             referenceVideoSupported,
-            h3Model: isBeefTVRoute && h3Model,
-            h3Style: isBeefTVRoute && isH3Style(config.model),
             maxFrameAudios,
+            preferReferenceMode,
             prompt,
         });
-    }, [config.model, effectiveVideoOperation, endFrameSupported, h3Model, hasVisualOrVideoReference, isBeefTVRoute, maxFrameAudios, mode, node.metadata, prompt, referenceVideoSupported, resolvedMentionReferences, simpleMode]);
+    }, [effectiveVideoOperation, endFrameSupported, hasVisualOrVideoReference, maxFrameAudios, mode, node.metadata, preferReferenceMode, prompt, referenceVideoSupported, resolvedMentionReferences, simpleMode]);
     const videoReferenceInputs = useMemo(() => activeReferences.flatMap((reference) => reference.kind === "skill" ? [] : [{ nodeId: reference.nodeId, type: reference.kind, title: reference.title }]), [activeReferences]);
-    const h3SelectedFrames = [node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId, node.metadata?.videoMiddleFrameNodeId];
-    const hasH3ReferenceOrder = isH3MaxFamilyModel(config.model) && videoReferenceInputs.some((input) => ["image", "character", "video", "audio"].includes(input.type) && !h3SelectedFrames.includes(input.nodeId));
-    const hasVideoPromptTools = mode === "video" && !simpleMode && ((middleFrameSupported && videoFrameOptions.length > 0) || hasH3ReferenceOrder);
+    const selectedVideoFrames = [node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId, node.metadata?.videoMiddleFrameNodeId];
+    const hasReferenceOrder = referenceOrderSupported && videoReferenceInputs.some((input) => ["image", "character", "video", "audio"].includes(input.type) && !selectedVideoFrames.includes(input.nodeId));
+    const hasVideoPromptTools = mode === "video" && !simpleMode && ((middleFrameSupported && videoFrameOptions.length > 0) || hasReferenceOrder);
     const renderVideoPromptTools = () => (
         <CanvasNodePromptVideoToolsSection
             node={node}
-            config={config}
             middleFrameSupported={middleFrameSupported}
             endFrameSupported={endFrameSupported}
+            referenceOrderSupported={referenceOrderSupported}
             videoFrameOptions={videoFrameOptions}
             videoReferenceInputs={videoReferenceInputs}
             referenceSummary={requirements.input}
@@ -352,8 +378,8 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
             autoLinkLabel={autoLinkLabel}
             pickConnectActive={pickConnectActive}
             isRunning={isRunning}
-            h3Model={h3Model}
-            middleFrameSupported={middleFrameSupported}
+            controlsSupported={controlsSupported}
+            middleFrameSupported={middleFrameSupport !== "unsupported"}
             endFrameSupported={endFrameSupported}
             theme={theme}
             onAutoMention={() => updatePrompt(autoMentionedPrompt)}

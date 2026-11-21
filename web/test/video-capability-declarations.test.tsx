@@ -31,7 +31,21 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
         const wanItem = managedVideoCatalogItem("wan3.0-video");
         const h3MaxOffItem = {
             ...managedVideoCatalogItem("minimax-h3-max"),
-            videoCapabilities: { ...managedVideoCatalogItem("minimax-h3-max").videoCapabilities!, middleFrame: false },
+            videoCapabilities: {
+                ...managedVideoCatalogItem("minimax-h3-max").videoCapabilities!,
+                middleFrame: false,
+                referenceOrder: false,
+                controls: { seed: true, promptExpansionModes: ["balanced", "quality", "disabled"] as const },
+            },
+        };
+        const h3MaxOnItem = {
+            ...managedVideoCatalogItem("minimax-h3-max"),
+            videoCapabilities: {
+                ...managedVideoCatalogItem("minimax-h3-max").videoCapabilities!,
+                middleFrame: true,
+                referenceOrder: true,
+                controls: { seed: true, promptExpansionModes: ["balanced", "quality", "disabled"] as const },
+            },
         };
         const agnesMidItem = {
             ...wanItem,
@@ -39,10 +53,22 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
             videoCapabilities: {
                 ...wanItem.videoCapabilities!,
                 middleFrame: true,
+                referenceOrder: true,
+                controls: { seed: true, promptExpansionModes: ["balanced", "fast", "disabled"] as const },
                 operationReferences: { image_to_video: { maxImages: 2, maxVideos: 0, maxAudios: 1 } },
             },
         };
-        const h3StyleItem = { id: "minimax-h3-max-style-vhs", supportedEndpointTypes: ["openai-video"] };
+        const styleSingleFrameItem = {
+            id: "opaque-style-vhs",
+            supportedEndpointTypes: ["openai-video"],
+            videoCapabilitiesVersion: "fixture-style-v1",
+            videoCapabilities: {
+                ...managedVideoCatalogItem("kling-video-v3").videoCapabilities!,
+                operations: ["text_to_video", "image_to_video"],
+                references: { ...managedVideoCatalogItem("kling-video-v3").videoCapabilities!.references, maxImages: 1, maxVideos: 0, maxAudios: 0 },
+                controls: { seed: true, damageLevels: ["light", "medium", "heavy"] as const },
+            },
+        };
         const channel = createModelChannel({
             id: "beeftv",
             name: "BeefTV",
@@ -50,14 +76,14 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
             pinned: true,
             credentialRef: "beeftv",
             baseUrl: "https://beeftv.app/v1",
-            models: ["seedream-5.0", "wan3.0-video", "minimax-h3-max", "omni-video", "minimax-h3-max-style-vhs"],
+            models: ["seedream-5.0", "wan3.0-video", "minimax-h3-max", "omni-video", "opaque-style-vhs"],
         });
         channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [
             { id: "seedream-5.0", supportedEndpointTypes: ["openai-image"] },
             wanItem,
             h3MaxOffItem,
             agnesMidItem,
-            h3StyleItem,
+            styleSingleFrameItem,
         ]);
         const nextConfig = normalizeConfigSnapshot({
             config: {
@@ -180,19 +206,19 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
         expect(agnesMidPromptPanelHtml).not.toContain("写入提示词首帧");
 
         const styleSingleImgOptions = buildConfigNodeVideoOperationOptions(
-            { ...nextConfig, model: "beeftv::minimax-h3-max-style-vhs" },
+            { ...nextConfig, model: "beeftv::opaque-style-vhs" },
             { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 },
         );
         expect(styleSingleImgOptions.find((item) => item.value === "image_to_video")?.disabled).toBe(false);
 
         const styleTwoImgOptions = buildConfigNodeVideoOperationOptions(
-            { ...nextConfig, model: "beeftv::minimax-h3-max-style-vhs" },
+            { ...nextConfig, model: "beeftv::opaque-style-vhs" },
             { textCount: 1, imageCount: 2, videoCount: 0, audioCount: 0, characterCount: 0 },
         );
         expect(styleTwoImgOptions.find((item) => item.value === "image_to_video")?.disabled).toBe(true);
 
         const styleOneAudioOptions = buildConfigNodeVideoOperationOptions(
-            { ...nextConfig, model: "beeftv::minimax-h3-max-style-vhs" },
+            { ...nextConfig, model: "beeftv::opaque-style-vhs" },
             { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 1, characterCount: 0 },
         );
         expect(styleOneAudioOptions.find((item) => item.value === "image_to_video")?.disabled).toBe(true);
@@ -214,8 +240,6 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
                 { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 2, characterCount: 0 },
                 "image_to_video",
                 { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, operationReferences: { image_to_video: { maxImages: 2 } } },
-                "beeftv::minimax-h3",
-                true,
             ),
         ).toBe("image_to_video");
         expect(
@@ -223,19 +247,22 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
                 { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 2, characterCount: 0 },
                 "image_to_video",
                 { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, operationReferences: {} },
-                "beeftv::minimax-h3",
-                true,
             ),
         ).toBe("image_to_video");
         expect(
             resolveVideoOperation(
                 { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 1, characterCount: 0 },
                 "image_to_video",
-                managedVideoCatalogItem("minimax-h3").videoCapabilities!,
-                "custom::minimax-h3",
-                false,
+                { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, operationReferences: undefined },
             ),
         ).toBe("reference_to_video");
+        expect(
+            resolveVideoOperation(
+                { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 1, characterCount: 0 },
+                "image_to_video",
+                managedVideoCatalogItem("minimax-h3").videoCapabilities!,
+            ),
+        ).toBe("image_to_video");
 
         const customDupChannel = createModelChannel({
             id: "custom-dup",
@@ -319,14 +346,13 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
             config: { ...defaultConfig, channels: [frame9Channel], model: "custom-frame9::frame9-video", videoModel: "custom-frame9::frame9-video" },
         }).config;
         const threeImagesInput = { textCount: 1, imageCount: 3, videoCount: 0, audioCount: 0, characterCount: 0 };
-        expect(resolveVideoOperation(threeImagesInput, undefined, frameOnlyMax9Cap.video, "custom-frame9::frame9-video", false)).toBe("reference_to_video");
-        expect(resolveVideoOperation(threeImagesInput, "reference_to_video", frameOnlyMax9Cap.video, "beeftv::minimax-h3-max-turbo", true)).toBe("reference_to_video");
+        expect(resolveVideoOperation(threeImagesInput, undefined, frameOnlyMax9Cap.video)).toBe("reference_to_video");
+        expect(resolveVideoOperation(threeImagesInput, "reference_to_video", frameOnlyMax9Cap.video)).toBe("reference_to_video");
         expect(modelCompatibilityError(frame9Config, "custom-frame9::frame9-video", { capability: "video", input: threeImagesInput })).toBe("最多支持 2 张参考图");
 
         expect(
             renderToStaticMarkup(
                 <CanvasH3UnsupportedFrames
-                    model="beeftv::minimax-h3-max"
                     metadata={{ videoMiddleFrameNodeId: "img-2", videoMiddleFrameTime: 2.5 }}
                     middleFrameSupported
                     endFrameSupported
@@ -337,7 +363,6 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
         expect(
             renderToStaticMarkup(
                 <CanvasH3UnsupportedFrames
-                    model="beeftv::minimax-h3-max"
                     metadata={{ videoMiddleFrameNodeId: "img-2", videoMiddleFrameTime: 2.5 }}
                     middleFrameSupported={false}
                     endFrameSupported
@@ -355,7 +380,7 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
             baseUrl: "https://beeftv.app/v1",
             models: ["minimax-h3-max"],
         });
-        liveH3MaxChannel.modelProfiles = mergeFetchedChannelModelProfiles(liveH3MaxChannel, [managedVideoCatalogItem("minimax-h3-max")]);
+        liveH3MaxChannel.modelProfiles = mergeFetchedChannelModelProfiles(liveH3MaxChannel, [h3MaxOnItem]);
         const liveH3MaxConfig = normalizeConfigSnapshot({
             config: { ...defaultConfig, channels: [liveH3MaxChannel], model: "beeftv::minimax-h3-max", videoModel: "beeftv::minimax-h3-max", videoSeconds: "5" },
         }).config;

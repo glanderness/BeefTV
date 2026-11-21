@@ -89,8 +89,9 @@ test("actual prompt panel updates keyframe hints, reconnects and changes H3 mode
         await selectScenario(page, "minimax-h3-max");
         await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
         await selectScenario(page, "minimax-h3");
-        await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
+        await page.getByRole("button", { name: /高级设置：.*16:9/ }).waitFor();
         await selectScenario(page, "指定首帧");
+        await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
         await selectScenario(page, "加入角色卡");
         await assertCharacterWarning(page);
         await selectScenario(page, "只用尾帧");
@@ -134,7 +135,7 @@ test("Max and Turbo reference ratios remain editable alongside H3 advanced contr
             await panel.getByRole("button", { name: "16:9", exact: true }).click();
             expect(await page.getByTestId("saved-size").textContent()).toBe("16:9");
             await panel.getByRole("button", { name: "9:16", exact: true }).click();
-            await panel.getByText("MiniMax H3 高级设置", { exact: true }).click();
+            await panel.getByText("高级参数", { exact: true }).click();
             const seed = panel.getByRole("spinbutton", { name: "随机种子", exact: true });
             await seed.fill("42");
             await seed.press("Tab");
