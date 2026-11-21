@@ -628,14 +628,15 @@ async function waitForCanvasBackendIdle(id: string, scope: string) {
     if (timer) publishCanvasSaveProgress(id, scope, true);
 }
 
-export async function deleteLocalCanvasProjects(ids: readonly string[]) {
+export async function deleteLocalCanvasProjects(ids: readonly string[], options: { recordHistory?: boolean } = {}) {
     const scope = getActiveUserScope();
+    const recordHistory = options.recordHistory !== false;
     const selected = [...new Set(ids)];
     const snapshots: CanvasProject[] = [];
     for (const id of selected) {
         const current = useCanvasStore.getState().openProject(id);
         if (!current) continue;
-        if (current.summaryOnly) {
+        if (current.summaryOnly && recordHistory) {
             try {
                 snapshots.push(await readLocalCanvasProjectFromBackend(id));
             } catch (error) {
@@ -673,8 +674,10 @@ export async function deleteLocalCanvasProjects(ids: readonly string[]) {
         }
         if (deleted.length) {
             useCanvasStore.getState().deleteProjects(deleted);
-            const removed = snapshots.filter((item) => deleted.includes(item.id) && !item.summaryOnly);
-            if (removed.length) useCanvasHistoryStore.getState().recordDeletedProjects(removed);
+            if (recordHistory) {
+                const removed = snapshots.filter((item) => deleted.includes(item.id) && !item.summaryOnly);
+                if (removed.length) useCanvasHistoryStore.getState().recordDeletedProjects(removed);
+            }
             await flushCanvasStorePersistence().catch((error) => {
                 console.error("画布本地缓存写入失败，已从桌面数据库删除", { ids: deleted, error });
             });

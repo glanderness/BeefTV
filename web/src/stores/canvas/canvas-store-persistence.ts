@@ -45,6 +45,7 @@ export type CanvasProject = {
      */
     summaryOnly?: true;
     summaryNodeCount?: number;
+    summaryMediaKeys?: string[];
 };
 
 export type CanvasFolder = {
@@ -288,14 +289,12 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
                 recordCanvasStorageDocument(scope, { ...doc, state: { projects: queued.state.projects } });
             }
         } else {
-            const fullBaseProjects = queued.baseProjects.filter((project) => !project.summaryOnly);
-            const fullLocalProjects = queued.state.projects.filter((project) => !project.summaryOnly);
-            const durable = parseCanvasStorageDocument(await storage.getItem(queued.name), fullBaseProjects);
+            const durable = parseCanvasStorageDocument(await storage.getItem(queued.name), queued.baseProjects);
             const ignored = ignoredDeletedCanvasIds.get(scope);
             const merged = mergeCanvasStorageProjects({
                 durable,
-                baseProjects: fullBaseProjects,
-                localProjects: fullLocalProjects,
+                baseProjects: queued.baseProjects,
+                localProjects: queued.state.projects,
                 baseRevision: queued.baseRevision,
                 ignoredDeletedIds: ignored,
             });
@@ -306,7 +305,7 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
             }
             await storage.setItem(queued.name, serializeCanvasStorageDocument(merged.document));
             committed = merged.document;
-            recordCanvasStorageDocument(scope, merged.document, fullLocalProjects);
+            recordCanvasStorageDocument(scope, merged.document, queued.state.projects);
         }
 
         const latest = queuedCanvasPersists.get(scope);

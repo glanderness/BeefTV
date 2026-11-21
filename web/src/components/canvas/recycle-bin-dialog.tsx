@@ -5,8 +5,25 @@ import { RotateCcw, Trash2, X } from "lucide-react";
 
 import { ProjectPreview } from "@/components/canvas/canvas-project-card";
 import { cn } from "@/lib/utils";
-import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
+
+export function prepareRestoredDeletedCanvas(project: CanvasProject): CanvasProject {
+    const {
+        summaryOnly: _summaryOnly,
+        summaryNodeCount: _summaryNodeCount,
+        summaryMediaKeys: _summaryMediaKeys,
+        remoteContentHash: _remoteContentHash,
+        ...rest
+    } = project;
+    return {
+        ...rest,
+        revision: 0,
+        updatedAt: new Date().toISOString(),
+    };
+}
 
 export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
     const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -47,13 +64,21 @@ export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: ()
     if (!open || typeof document === "undefined") return null;
 
     const restoreSelectedProjects = async () => {
+        const restoredIds: string[] = [];
         for (const id of selectedDeleted) {
             const item = deletedProjects.find((entry) => entry.id === id);
-            if (item?.project) restoreProject(item.project);
-            removeDeletedItem(id);
+            if (item?.project && !item.project.summaryOnly) {
+                const restored = prepareRestoredDeletedCanvas(item.project);
+                restoreProject(restored);
+                restoredIds.push(restored.id);
+            }
         }
         await flushCanvasStorePersistence();
+        for (const id of restoredIds) removeDeletedItem(id);
         setSelectedDeleted([]);
+        if (isLocalWorkspaceMode() && restoredIds.length > 0) {
+            await Promise.allSettled(restoredIds.map((id) => syncLocalCanvasProjectToBackend(id)));
+        }
     };
 
     const permanentlyDeleteProjects = (ids: string[]) => {

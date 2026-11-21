@@ -40,8 +40,13 @@ func TestUserCanvasProjectsPageReturnsSummaryMetadataForLazyHydration(t *testing
 		"canvasTitle":        "镜头二·夜景",
 		"nodes": []map[string]any{
 			{"id": "t-1", "type": "text", "metadata": map[string]any{"content": "旁白"}},
-			{"id": "i-1", "type": "image", "width": 640, "height": 360, "metadata": map[string]any{"storageKey": "image:cover-1", "content": "/api/resources/cover-1/file"}},
-			{"id": "v-1", "type": "video", "metadata": map[string]any{"storageKey": "video:clip-1", "videoPreview": map[string]any{"storageKey": "image:poster-1", "content": "/api/resources/poster-1/file"}}},
+			{"id": "i-1", "type": "image", "width": 640, "height": 360, "metadata": map[string]any{"storageKey": "resource:cover-1", "content": "/api/resources/cover-1/file"}},
+			{"id": "v-1", "type": "video", "metadata": map[string]any{"storageKey": "video:u1:clip-1", "videoPreview": map[string]any{"storageKey": "image:u1:poster-1", "content": "/api/resources/poster-1/file"}}},
+		},
+		"timeline": map[string]any{
+			"clips": []map[string]any{
+				{"id": "clip-1", "directMedia": map[string]any{"storageKey": "audio:u1:bgm-1"}},
+			},
 		},
 	})
 	if _, err := svc.UpsertUserCanvasProject(userID, canvasRaw); err != nil {
@@ -67,7 +72,16 @@ func TestUserCanvasProjectsPageReturnsSummaryMetadataForLazyHydration(t *testing
 	}
 	videoMeta, _ := summary.PreviewNodes[1]["metadata"].(map[string]any)
 	videoPreview, _ := videoMeta["videoPreview"].(map[string]any)
-	if videoPreview["storageKey"] != "image:poster-1" || videoPreview["content"] != "/api/resources/poster-1/file" {
+	if videoPreview["storageKey"] != "image:u1:poster-1" || videoPreview["content"] != "/api/resources/poster-1/file" {
 		t.Fatalf("videoPreview lost storageKey/content: %#v", videoPreview)
+	}
+	wantLocalKeys := []string{"audio:u1:bgm-1", "image:u1:poster-1", "video:u1:clip-1"}
+	if len(summary.LocalMediaKeys) != len(wantLocalKeys) {
+		t.Fatalf("LocalMediaKeys = %#v, want %#v", summary.LocalMediaKeys, wantLocalKeys)
+	}
+	for i, want := range wantLocalKeys {
+		if summary.LocalMediaKeys[i] != want {
+			t.Fatalf("LocalMediaKeys[%d] = %q, want %q", i, summary.LocalMediaKeys[i], want)
+		}
 	}
 }

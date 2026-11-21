@@ -76,6 +76,7 @@ mock.module("@/stores/canvas/use-canvas-history-store", () => ({
 
 mock.module("@/services/local-workspace-sync", () => ({
     notifyCanvasRefresh: () => {},
+    loadCanvasProjectForEditing: async () => undefined,
 }));
 
 class MockCanvasBackendSubmitPausedError extends Error {
@@ -164,9 +165,10 @@ mock.module("@/services/api/request", () => ({
             }
             throw new Error(`unexpected GET ${path}`);
         },
-        put: async (path: string) => {
+        put: async (path: string, body?: { project?: { id?: string } }) => {
             writeRequests.push({ method: "PUT", path });
-            return {};
+            const id = body?.project?.id || decodeURIComponent(path.slice("/canvas-projects/".length));
+            return { project: { id, revision: 1, updatedAt: "2026-04-03T00:00:00.000Z" } };
         },
         patch: async (path: string) => {
             writeRequests.push({ method: "PATCH", path });
@@ -254,6 +256,7 @@ mock.module("@/services/canvas-operation-journal", () => {
 const repository = await import("@/services/local-workspace-repository");
 const repair = await import("@/services/canvas-asset-repair");
 const { exportCanvasProjects } = await import("@/lib/canvas/canvas-export");
+const { prepareRestoredDeletedCanvas } = await import("@/components/canvas/recycle-bin-dialog");
 
 function summaryItem(index: number) {
     const id = `canvas-${index}`;
@@ -264,6 +267,7 @@ function summaryItem(index: number) {
         title: `画布 ${index}`,
         canvasTitle: `分镜 ${index}`,
         revision: 2,
+        localMediaKeys: index === 0 ? ["image:guest:local-1", "audio:guest:bgm-1"] : undefined,
         createdAt: "2026-04-01T00:00:00.000Z",
         updatedAt: `2026-04-02T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
         nodeCount: 12,
@@ -341,42 +345,84 @@ describe("canvas lazy hydration", () => {
         expect(projects.filter((item) => item.summaryOnly === true)).toHaveLength(63);
     });
 
-    it("never returns a summaryOnly preview when opening a canvas with an in-flight journal or higher confirmed revision", async () => {
-        remotePages = [[summaryItem(0), summaryItem(1)]];
-        const full0 = fullProject("canvas-0", { revision: 2 });
+    it("preserves real journal.inFlight.payload.document edits on open (200 and 500) and never returns summaryOnly", async () => {
+        remotePages = [[summaryItem(0), summaryItem(1), summaryItem(2)]];
+        const staleBackend0 = fullProject("canvas-0", { revision: 2, title: "服务端旧版本" });
+        const pendingInFlightDoc0 = fullProject("canvas-0", {
+            revision: 2,
+            title: "崩溃前未确认编辑",
+            nodes: [
+                { id: "n1", type: "text", position: { x: 0, y: 0 }, metadata: { content: "本地未确认节点" } },
+                { id: "n2", type: "image", position: { x: 100, y: 0 }, metadata: { content: "/api/resources/full/file" } },
+                { id: "n3", type: "text", position: { x: 200, y: 0 }, metadata: { content: "新增第三节点" } },
+            ],
+        });
+        const pendingInFlightDoc2 = fullProject("canvas-2", { revision: 2, title: "离线恢复中的未确认编辑" });
         const full1 = fullProject("canvas-1", { revision: 2 });
         const confirmed1 = fullProject("canvas-1", { revision: 4, title: "更高已确认版本" });
-        remoteDetailsById.set("canvas-0", full0);
+        remoteDetailsById.set("canvas-0", staleBackend0);
         remoteDetailsById.set("canvas-1", full1);
+        remoteDetailsById.set("canvas-2", "500");
 
         await repository.hydrateLocalCanvasProjectsFromBackend();
+        expect(projects[0]?.summaryMediaKeys).toEqual(["image:guest:local-1", "audio:guest:bgm-1"]);
+
         journalMemory.set("canvas-0", {
             ...emptyJournal("canvas-0"),
-            confirmedRevision: 1,
-            inFlight: { operationId: "op-crash", baseRevision: 1 },
+            confirmedRevision: 2,
+            confirmedSnapshot: staleBackend0,
+            inFlight: {
+                operationId: "op-crash-0",
+                expectedRevision: 2,
+                payload: {
+                    canvasId: "canvas-0",
+                    expectedRevision: 2,
+                    document: pendingInFlightDoc0,
+                },
+            },
         });
         journalMemory.set("canvas-1", {
             ...emptyJournal("canvas-1"),
             confirmedRevision: 4,
             confirmedSnapshot: confirmed1,
         });
+        journalMemory.set("canvas-2", {
+            ...emptyJournal("canvas-2"),
+            confirmedRevision: 2,
+            inFlight: {
+                operationId: "op-crash-2",
+                expectedRevision: 2,
+                payload: {
+                    canvasId: "canvas-2",
+                    expectedRevision: 2,
+                    document: pendingInFlightDoc2,
+                },
+            },
+        });
 
         const opened0 = await repository.openLocalCanvasProjectFromBackend("canvas-0");
         expect(opened0?.summaryOnly).toBeUndefined();
-        expect(opened0?.nodes).toHaveLength(2);
-        expect(opened0?.connections).toHaveLength(1);
+        expect(opened0?.title).toBe("崩溃前未确认编辑");
+        expect(opened0?.nodes).toHaveLength(3);
 
         const opened1 = await repository.openLocalCanvasProjectFromBackend("canvas-1");
         expect(opened1?.summaryOnly).toBeUndefined();
         expect(opened1?.title).toBe("更高已确认版本");
         expect(opened1?.connections).toHaveLength(1);
+
+        // Even when backend returns 500 during open, in-flight document recovers cleanly instead of deadlocking.
+        const opened2 = await repository.openLocalCanvasProjectFromBackend("canvas-2");
+        expect(opened2?.summaryOnly).toBeUndefined();
+        expect(opened2?.title).toBe("离线恢复中的未确认编辑");
     });
 
-    it("loads full documents into recycle bin before deleting summaryOnly canvases and restores full content cleanly", async () => {
-        remotePages = [[summaryItem(0), summaryItem(1)]];
-        const full0 = fullProject("canvas-0", { revision: 2 });
+    it("loads full documents into recycle bin before deleting, restores at revision 0 via PUT, and supports history-free rollback deletes", async () => {
+        remotePages = [[summaryItem(0), summaryItem(1), summaryItem(2)]];
+        const full0 = fullProject("canvas-0", { revision: 2, remoteContentHash: "old-hash" });
+        const full2 = fullProject("canvas-2", { revision: 1 });
         remoteDetailsById.set("canvas-0", full0);
         remoteDetailsById.set("canvas-1", "500");
+        remoteDetailsById.set("canvas-2", full2);
 
         await repository.hydrateLocalCanvasProjectsFromBackend();
         expect(projects[0]?.summaryOnly).toBe(true);
@@ -386,20 +432,32 @@ describe("canvas lazy hydration", () => {
         expect(writeRequests).toEqual([]);
         expect(projects.some((item) => item.id === "canvas-1")).toBe(true);
 
+        // History-free rollback deletion removes without polluting recycle bin.
+        await repository.deleteLocalCanvasProjects(["canvas-2"], { recordHistory: false });
+        expect(recordedDeletedProjects).toHaveLength(0);
+
         await repository.deleteLocalCanvasProjects(["canvas-0"]);
-        expect(writeRequests).toEqual([{ method: "DELETE", path: "/canvas-projects/canvas-0" }]);
+        expect(writeRequests).toEqual([
+            { method: "DELETE", path: "/canvas-projects/canvas-2" },
+            { method: "DELETE", path: "/canvas-projects/canvas-0" },
+        ]);
         expect(recordedDeletedProjects).toHaveLength(1);
         expect(recordedDeletedProjects[0]?.summaryOnly).toBeUndefined();
         expect(recordedDeletedProjects[0]?.nodes).toHaveLength(2);
         expect(recordedDeletedProjects[0]?.connections).toHaveLength(1);
 
-        // Restore from recycle bin and open even after server returns 404 for the deleted ID.
-        remoteDetailsById.set("canvas-0", "404");
-        projects = [recordedDeletedProjects[0], ...projects];
-        const reopened = await repository.openLocalCanvasProjectFromBackend("canvas-0");
-        expect(reopened?.summaryOnly).toBeUndefined();
-        expect(reopened?.nodes).toHaveLength(2);
-        expect(reopened?.connections).toHaveLength(1);
+        // Restore via prepareRestoredDeletedCanvas resets revision to 0 and clears remoteContentHash
+        // so desktop draft persistence retains it and syncLocalCanvasProjectToBackend recreates it via PUT.
+        const restored = prepareRestoredDeletedCanvas(recordedDeletedProjects[0]);
+        expect(restored.revision).toBe(0);
+        expect(restored.remoteContentHash).toBeUndefined();
+        expect(restored.summaryOnly).toBeUndefined();
+        projects = [restored, ...projects];
+        writeRequests.length = 0;
+
+        await repository.syncLocalCanvasProjectToBackend(restored.id);
+        expect(writeRequests).toEqual([{ method: "PUT", path: "/canvas-projects/canvas-0" }]);
+        expect(projects.find((item) => item.id === "canvas-0")?.revision).toBe(1);
     });
 
     it("rethrows non-404 read errors instead of opening a summaryOnly preview as editable", async () => {
@@ -475,6 +533,26 @@ describe("canvas lazy hydration", () => {
         }));
         expect(parsed.state.projects).toHaveLength(1);
         expect(parsed.state.projects[0]?.summaryOnly).toBeUndefined();
+
+        // Deleting a summaryOnly canvas still tombstones and evicts a prior full durable entry in IndexedDB.
+        const deletedMerge = mergeCanvasStorageProjects({
+            durable,
+            baseProjects: projects,
+            localProjects: [],
+            baseRevision: 4,
+        });
+        expect(deletedMerge.document.state.projects).toEqual([]);
+        expect(deletedMerge.document.deletedProjectIds?.["canvas-0"]).toBeGreaterThan(4);
+
+        // Unopened summaryOnly canvas with no prior durable entry is never serialized into IndexedDB.
+        const emptyDurable: CanvasStorageDocument = { state: { projects: [] }, version: 0, storageRevision: 1, deletedProjectIds: {} };
+        const summaryOnlyWrite = mergeCanvasStorageProjects({
+            durable: emptyDurable,
+            baseProjects: [],
+            localProjects: projects,
+            baseRevision: 1,
+        });
+        expect(summaryOnlyWrite.document.state.projects).toEqual([]);
 
         await expect(exportCanvasProjects([projects[0]])).rejects.toThrow("画布尚未完整加载");
     });

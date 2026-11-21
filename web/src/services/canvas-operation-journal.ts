@@ -355,6 +355,34 @@ export function newCanvasCommitOperationId() {
     return `canvas-commit-${nanoid()}`;
 }
 
+export async function readAllCanvasOperationJournals(scope = getActiveUserScope()): Promise<CanvasOperationJournal[]> {
+    const byId = new Map<string, CanvasOperationJournal>();
+    for (const journal of memory.values()) {
+        if (journal.userScope === scope) byId.set(journal.canvasId, cloneJournal(journal));
+    }
+    if (typeof window !== "undefined") {
+        const storageModule = await import("@/lib/localforage-storage");
+        if (typeof storageModule.localForageInstance === "function" && typeof storageModule.APP_STATE_STORE_NAME === "string") {
+            const prefix = `${JOURNAL_PREFIX}:`;
+            const suffix = `:user:${scope}`;
+            const store = storageModule.localForageInstance(storageModule.APP_STATE_STORE_NAME);
+            const keys = await store.keys().catch(() => [] as string[]);
+            for (const key of keys) {
+                if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+                const canvasId = key.slice(prefix.length, key.length - suffix.length);
+                if (!canvasId || byId.has(canvasId)) continue;
+                try {
+                    const journal = await loadCanvasOperationJournal(canvasId, scope);
+                    byId.set(canvasId, journal);
+                } catch {
+                    // Ignore corrupted/unreadable journal during best-effort reference scan.
+                }
+            }
+        }
+    }
+    return [...byId.values()];
+}
+
 export function resetCanvasOperationJournalMemory() {
     memory.clear();
     journalLocks.clear();

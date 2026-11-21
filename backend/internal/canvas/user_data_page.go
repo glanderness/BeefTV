@@ -3,6 +3,7 @@ package canvas
 import (
 	"encoding/json"
 	"infinite-canvas/backend/internal/kernel"
+	"sort"
 	"strings"
 	"time"
 )
@@ -23,6 +24,7 @@ type CanvasLibrarySummary struct {
 	UpdatedAt          time.Time        `json:"updatedAt"`
 	NodeCount          int              `json:"nodeCount"`
 	PreviewNodes       []map[string]any `json:"previewNodes"`
+	LocalMediaKeys     []string         `json:"localMediaKeys,omitempty"`
 }
 
 type CanvasLibraryPage struct {
@@ -73,6 +75,7 @@ func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, 
 			UpdatedAt:          project.UpdatedAt,
 			NodeCount:          len(document.Nodes),
 			PreviewNodes:       preview,
+			LocalMediaKeys:     collectLocalMediaStorageKeys(project.PayloadJSON),
 		})
 	}
 	return result, nil
@@ -128,4 +131,44 @@ func canvasLibraryPreviewNodes(nodes []map[string]any) []map[string]any {
 
 func safeCanvasPreviewURL(value string) bool {
 	return len(value) <= 2048 && (strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "/api/") || strings.HasPrefix(value, "/resources/"))
+}
+
+func collectLocalMediaStorageKeys(payloadJSON string) []string {
+	if !strings.Contains(payloadJSON, `"storageKey"`) {
+		return nil
+	}
+	var raw any
+	if err := json.Unmarshal([]byte(payloadJSON), &raw); err != nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	walkLocalMediaStorageKeys(raw, seen)
+	if len(seen) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func walkLocalMediaStorageKeys(value any, seen map[string]struct{}) {
+	switch typed := value.(type) {
+	case map[string]any:
+		if rawKey, ok := typed["storageKey"].(string); ok {
+			key := strings.TrimSpace(rawKey)
+			if len(key) > 0 && len(key) <= 512 && strings.Contains(key, ":") && !strings.HasPrefix(key, "resource:") {
+				seen[key] = struct{}{}
+			}
+		}
+		for _, child := range typed {
+			walkLocalMediaStorageKeys(child, seen)
+		}
+	case []any:
+		for _, item := range typed {
+			walkLocalMediaStorageKeys(item, seen)
+		}
+	}
 }

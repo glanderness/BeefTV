@@ -111,6 +111,7 @@ function canvasProjectFromLibrarySummary(summary: RawCanvasLibrarySummary): Canv
         directorScenes: [],
         summaryOnly: true,
         summaryNodeCount: nodeCount,
+        summaryMediaKeys: Array.isArray(summary.localMediaKeys) && summary.localMediaKeys.length ? summary.localMediaKeys : undefined,
     };
 }
 
@@ -313,6 +314,12 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
         }
         const fallback = openLocalCanvasProject(id);
         if (fallback && !fallback.summaryOnly) return fallback;
+        const inFlightDocument = peekCanvasOperationJournal(id, scope)?.inFlight?.payload?.document;
+        if (inFlightDocument && !inFlightDocument.summaryOnly) {
+            const recovered = normalizeCanvasProjectGraph(inFlightDocument);
+            applyLiveCanvasProject(id, recovered, false);
+            return recovered;
+        }
         throw error;
     }
 }

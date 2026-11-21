@@ -115,8 +115,10 @@ export function mergeCanvasStorageProjects(input: {
             continue;
         }
         seen.add(local.id);
-        if (local.summaryOnly && durable && !durable.summaryOnly) {
-            projects.push(durable);
+        if (local.summaryOnly) {
+            if (durable && !durable.summaryOnly) {
+                projects.push(durable);
+            }
             continue;
         }
         if (base && durable && sameCanvasDocument(local, base)) {

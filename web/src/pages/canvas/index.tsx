@@ -123,6 +123,7 @@ export default function CanvasPage() {
         });
     };
     const duplicateCanvasProject = useCallback(async (project: CanvasLibrarySummary) => {
+        const createdIds: string[] = [];
         try {
             const sourceCanvases = listCanvasWorkspaceProjectCanvases(localProjects, project.id);
             if (!sourceCanvases.length) throw new Error("项目不存在");
@@ -143,12 +144,16 @@ export default function CanvasPage() {
                     chatSessions: source.chatSessions,
                     activeChatId: source.activeChatId,
                 }, copiedWorkspaceProjectId);
+                createdIds.push(copy.id);
                 copiedWorkspaceProjectId ||= copy.id;
             }
             if (!copiedWorkspaceProjectId) throw new Error("项目不存在");
             message.success(`项目副本已创建，共 ${loadedSources.length} 张画布`);
             enterProject(copiedWorkspaceProjectId);
         } catch (error) {
+            if (createdIds.length > 0) {
+                await deleteLocalCanvasProjects(createdIds, { recordHistory: false }).catch(() => undefined);
+            }
             message.error(error instanceof Error ? error.message : "复制项目失败，请重试");
         }
     }, [enterProject, localProjects, message]);

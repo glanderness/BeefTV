@@ -1,7 +1,7 @@
 import { canvasDocumentBase, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { clearCanvasPendingProjection, loadCanvasOperationJournal, peekCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
+import { normalizeCanvasProjectGraph, sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import {
@@ -160,11 +160,16 @@ export async function applyBackendCanvasRead(
     return withCanvasProjection(scope, backend.id, async () => {
         await replayPendingCanvasProjection(backend.id, scope);
         const liveNow = openLocalCanvasProject(backend.id);
-        const currentLocal = liveNow ?? local;
+        let currentLocal = liveNow ?? local;
         const hadLive = Boolean(liveNow) || hadLiveAtStart;
+        const journal = peekCanvasOperationJournal(backend.id, scope);
+        if ((!currentLocal || currentLocal.summaryOnly) && journal?.inFlight?.payload?.document && !journal.inFlight.payload.document.summaryOnly) {
+            const recoveredInFlight = normalizeCanvasProjectGraph(journal.inFlight.payload.document);
+            applyLiveCanvasProject(backend.id, recoveredInFlight, false);
+            currentLocal = recoveredInFlight;
+        }
         const chosen = selectPreferredCanvasProject(currentLocal, backend, scope);
         traceCanvasGraph("repository.read.select", { local: currentLocal, backend, base: canvasDocumentBase(backend.id, scope)?.snapshot, chosen });
-        const journal = peekCanvasOperationJournal(backend.id, scope);
         if (!currentLocal || currentLocal.summaryOnly || (!journal?.inFlight && (chosen === backend || sameCanvasDocument(chosen, backend)))) {
             const base = journal?.pendingProjection?.base
                 ?? journal?.confirmedSnapshot

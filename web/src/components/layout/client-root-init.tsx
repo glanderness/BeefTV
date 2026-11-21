@@ -11,6 +11,7 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { confirmDesktopUpdateStartup } from "@/services/desktop-update-startup";
+import { getCanvasHydrationHealth, subscribeCanvasHydrationHealth } from "@/services/canvas-hydration-health";
 import { runStartupEnvironmentCheck } from "@/services/diagnostics/environment-startup";
 import { getDesktopAppBinding, getDesktopBootSnapshot, subscribeDesktopBootSnapshot } from "@/services/desktop-runtime";
 import { appHref } from "@/lib/app-routing";
@@ -20,6 +21,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const userId = useUserStore((state) => state.user?.id || "");
     const assetsHydrated = useAssetStore((state) => state.hydrated);
     const canvasHydrated = useCanvasStore((state) => state.hydrated);
+    const canvasHealth = useSyncExternalStore(subscribeCanvasHydrationHealth, getCanvasHydrationHealth, getCanvasHydrationHealth);
     const bootSnapshot = useSyncExternalStore(subscribeDesktopBootSnapshot, getDesktopBootSnapshot, getDesktopBootSnapshot);
     const [fallbackNoticeDismissed, setFallbackNoticeDismissed] = useState(false);
     const { message } = App.useApp();
@@ -101,15 +103,16 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         if (!assetsHydrated || !canvasHydrated) return;
+        if (canvasHealth.started && (canvasHealth.loading || Boolean(canvasHealth.error))) return;
         const scope = getActiveUserScope();
         if (localMediaCleanupScope.current === scope) return;
         localMediaCleanupScope.current = scope;
         void useAssetStore.getState().cleanupImages().catch((error) => {
-            // Cache cleanup is best effort; allow retry if summary resolution failed transiently.
+            // Cache cleanup is best effort; allow retry if cleanup failed transiently.
             if (localMediaCleanupScope.current === scope) localMediaCleanupScope.current = "";
             console.warn("本地媒体缓存清理失败，已保留当前工作区", { scope, error });
         });
-    }, [assetsHydrated, canvasHydrated]);
+    }, [assetsHydrated, canvasHydrated, canvasHealth.error, canvasHealth.loading, canvasHealth.started]);
 
     useEffect(() => {
         setDiagnosticUserScope(userId);
