@@ -20,5 +20,5 @@ export default function HomePage() {
             previewNodes: previewNodesForWorkspaceProject(localProjects, project.id),
         })), [localProjects]);
 
-    return <HomeDashboard projects={projects} loading={!sessionHydrated || !localHydrated} error={false} onRetry={() => undefined} />;
+    return <HomeDashboard projects={projects} loading={!sessionHydrated || !localHydrated} />;
 }

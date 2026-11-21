@@ -33,6 +33,21 @@ import { canvasIdsForWorkspaceProjects, canvasWorkspaceProjectId, listCanvasWork
 
 const CanvasDeleteProjectsDialog = lazy(() => import("@/components/canvas/canvas-delete-projects-dialog").then((module) => ({ default: module.CanvasDeleteProjectsDialog })));
 
+export function canAutoOpenCanvasEntry(input: {
+    hydrated: boolean;
+    alreadyOpened: boolean;
+    mode: string | null;
+    canvasHealth: { loading: boolean; error: string };
+}) {
+    if (!input.hydrated || input.alreadyOpened) return false;
+    if (input.mode !== "new" && input.mode !== "recent" && input.mode !== "handoff") return false;
+    // A new local canvas can be created while older projects are still
+    // hydrating. Waiting for every historical canvas leaves this route on
+    // the loading screen when one large project or cache write is slow.
+    if (input.mode !== "new" && (input.canvasHealth.loading || input.canvasHealth.error)) return false;
+    return true;
+}
+
 export default function CanvasPage() {
     const canvasHealth = useSyncExternalStore(subscribeCanvasHydrationHealth, getCanvasHydrationHealth);
     const { message } = App.useApp();
@@ -42,8 +57,6 @@ export default function CanvasPage() {
     const inputRef = useRef<HTMLInputElement>(null);
     const autoOpenRef = useRef(false);
     const [keyword, setKeyword] = useState("");
-    const [sort] = useState<"updated" | "name" | "nodes">("updated");
-    const [projectFilter] = useState("all");
     const [folderFilter, setFolderFilter] = useState("all");
     const [folderDialogOpen, setFolderDialogOpen] = useState(false);
     const [folderName, setFolderName] = useState("");
@@ -130,11 +143,11 @@ export default function CanvasPage() {
         // The root library represents uncategorized work alongside folder tiles.
         // Categorized projects must disappear from the root after being moved and
         // only reappear when their folder is opened.
-        const scoped = projects.filter((project) => (projectFilter === "all" || (projectFilter === "independent" ? !project.projectId : project.projectId === projectFilter)) && (folderFilter === "all" ? !project.folderId : project.folderId === folderFilter));
+        const scoped = projects.filter((project) => (folderFilter === "all" ? !project.folderId : project.folderId === folderFilter));
         const values = query ? scoped.filter((project) => project.title.toLowerCase().includes(query)) : [...scoped];
-        values.sort((a, b) => (sort === "name" ? a.title.localeCompare(b.title, "zh-CN") : sort === "nodes" ? b.nodeCount - a.nodeCount : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()));
+        values.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
         return values;
-    }, [folderFilter, keyword, projectFilter, projects, sort]);
+    }, [folderFilter, keyword, projects]);
     const visibleProjects = filteredProjects.slice(0, loadedProjectCount);
     const hasMore = visibleProjects.length < filteredProjects.length;
     // Folder tiles belong to the root library only. Once a folder is opened,
@@ -155,7 +168,7 @@ export default function CanvasPage() {
     };
     useEffect(() => {
         setLoadedProjectCount(50);
-    }, [folderFilter, keyword, projectFilter, sort]);
+    }, [folderFilter, keyword]);
     useEffect(() => {
         const node = loadMoreRef.current;
         if (!node || !hasMore) return;
@@ -246,11 +259,7 @@ export default function CanvasPage() {
     };
 
     useEffect(() => {
-        if (!hydrated || autoOpenRef.current || (mode !== "new" && mode !== "recent" && mode !== "handoff")) return;
-        // A new local canvas can be created while older projects are still
-        // hydrating. Waiting for every historical canvas leaves this route on
-        // the loading screen when one large project or cache write is slow.
-        if (mode !== "new" && (canvasHealth.loading || canvasHealth.error)) return;
+        if (!canAutoOpenCanvasEntry({ hydrated, alreadyOpened: autoOpenRef.current, mode, canvasHealth })) return;
         autoOpenRef.current = true;
         if (mode === "recent" && projects[0]?.id) {
             enterProject(projects[0].id);
@@ -311,7 +320,7 @@ export default function CanvasPage() {
                 {canvasHealth.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm"><span>{canvasHealth.error}</span><Button loading={canvasHealth.loading} onClick={() => void hydrateLocalCanvasProjectsFromBackend()}>重试加载</Button></div> : null}
                 {!hydrated ? (
                     <WorkspaceLoadingState label="正在恢复画布" detail="读取本地工作区画布" />
-                ) : visibleProjects.length || (!keyword && projectFilter === "all") ? (
+                ) : visibleProjects.length || !keyword ? (
                     <CollectionGrid className="canvas-collection-grid">
                         <div className="libtv-create-project-entry">
                             <article className="libtv-create-project-card" role="button" tabIndex={0} onClick={createAndEnter} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); createAndEnter(); } }}>
@@ -333,7 +342,6 @@ export default function CanvasPage() {
                                 key={project.id}
                                 project={project}
                                 onCoverError={(error) => setCoverError(error && `「${project.title}」：${error}`)}
-                                projectName={project.projectId ? "未同步项目" : undefined}
                                 folders={folders}
                                 onMoveToFolder={async (folderId) => {
                                     try {
@@ -370,7 +378,7 @@ export default function CanvasPage() {
                         ))}
                     </CollectionGrid>
                 ) : (
-                    <WorkspaceState icon="canvas" title={canvasHealth.error ? "项目暂时无法加载" : keyword || projectFilter !== "all" || folderFilter !== "all" ? "没有匹配的项目" : "让第一个想法落在画布上"} description={canvasHealth.error || (keyword || projectFilter !== "all" || folderFilter !== "all" ? "换一个名称或重置筛选条件。" : "图片、分镜和灵感，都可以在这里自由组织。")} action={canvasHealth.error ? <Button loading={canvasHealth.loading} onClick={() => void hydrateLocalCanvasProjectsFromBackend()}>重试加载</Button> : !keyword && projectFilter === "all" && folderFilter === "all" ? <Button type="primary" icon={<Plus />} disabled={!hydrated} onClick={createAndEnter}>新建项目</Button> : undefined} />
+                    <WorkspaceState icon="canvas" title={canvasHealth.error ? "项目暂时无法加载" : keyword || folderFilter !== "all" ? "没有匹配的项目" : "让第一个想法落在画布上"} description={canvasHealth.error || (keyword || folderFilter !== "all" ? "换一个名称或重置筛选条件。" : "图片、分镜和灵感，都可以在这里自由组织。")} action={canvasHealth.error ? <Button loading={canvasHealth.loading} onClick={() => void hydrateLocalCanvasProjectsFromBackend()}>重试加载</Button> : !keyword && folderFilter === "all" ? <Button type="primary" icon={<Plus />} disabled={!hydrated} onClick={createAndEnter}>新建项目</Button> : undefined} />
                 )}
                 {hydrated && visibleProjects.length && hasMore ? (
                     <div ref={loadMoreRef} className="library-load-more" aria-live="polite">

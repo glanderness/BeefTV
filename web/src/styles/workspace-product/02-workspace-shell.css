@@ -57,8 +57,7 @@
 .app-user-workspace.app-product-workspace .app-workspace-update-progress-bar.is-paused > span {
     background: var(--user-ink-soft);
 }
-.app-user-workspace.app-product-workspace .app-workspace-sidebar-checkin,
-.app-user-workspace.app-product-workspace .app-workspace-sidebar-storage { display:none; }
+.app-user-workspace.app-product-workspace .app-workspace-sidebar-checkin { display:none; }
 .app-user-workspace.app-product-workspace .app-workspace-sidebar-profile { color:var(--user-ink-muted); }
 .app-user-workspace.app-product-workspace .app-workspace-topbar { height: 89px; min-height: 89px; padding: 0 34px; border-bottom: 0; background:var(--user-page-bg); }
 .app-user-workspace.app-product-workspace .app-workspace-topbar-spacer { margin-right:auto; }
@@ -301,7 +300,6 @@
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-nav-link .app-workspace-nav-main > svg { width: 18px !important; height: 18px !important; flex: 0 0 18px; }
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-sidebar-account { width: 100%; align-items: center; }
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-sidebar-checkin { width: 48px; }
-.app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-sidebar-storage { width: 40px; }
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-sidebar-profile-row { width: 100%; justify-content: center; }
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-sidebar-profile { width: 48px; min-width: 48px; flex: 0 0 48px; margin-inline: auto; }
 .app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-sidebar-notification-spacer { display: none; }

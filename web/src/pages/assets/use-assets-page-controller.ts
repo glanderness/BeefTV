@@ -19,7 +19,6 @@ import {
     usesWorkspaceAssetFolderApi,
 } from "@/services/workspace-asset-folders";
 import { uploadWorkspaceAssetFiles } from "@/services/workspace-asset-upload";
-import { workspaceCapabilities } from "@/services/workspace-mode";
 import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCategory, type AssetKind } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { AssetFolder } from "@/services/api/workspace-data";
@@ -52,7 +51,6 @@ export function useAssetsPageController() {
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const userId = useUserStore((state) => state.user?.id || "");
     const sessionHydrated = useUserStore((state) => state.hydrated);
-    const localWorkspace = workspaceCapabilities().local;
     const canonicalReads = usesWorkspaceAssetLibraryApi();
     const folderApi = usesWorkspaceAssetFolderApi();
     const [keyword, setKeyword] = useState("");
@@ -295,7 +293,7 @@ export function useAssetsPageController() {
     };
 
     const uploadFiles = async (files: File[], folderId: string) => {
-        const hideLoading = message.loading(assetUploadLoadingCopy(false), 0);
+        const hideLoading = message.loading(assetUploadLoadingCopy(), 0);
         try {
             const result = await uploadWorkspaceAssetFiles(files, folderId);
             if (result.persistenceError) message.warning(localSavedRemotePendingMessage("部分素材已保存在本地", result.persistenceError));
@@ -311,16 +309,13 @@ export function useAssetsPageController() {
 
     const uploadModelFile = (file?: File) =>
         saveUploadedModelFile(file, {
-            localWorkspace,
             addAsset,
             invalidateAssetLibrary,
-            queryClient,
             message,
         });
 
     const importAssetArchive = async (file?: File) => {
         const ok = await importAssetArchiveFile(file, {
-            localWorkspace,
             addAsset,
             message,
             resetInput: () => {

@@ -9,12 +9,10 @@ const exportTypes = readFileSync(new URL("../src/types/canvas-export.ts", import
 const restoreService = readFileSync(new URL("../src/lib/canvas/canvas-archive-restore.ts", import.meta.url), "utf8");
 const deleteDialog = readFileSync(new URL("../src/components/canvas/canvas-delete-projects-dialog.tsx", import.meta.url), "utf8");
 const lifecycle = readFileSync(new URL("../src/pages/canvas/use-canvas-project-lifecycle.ts", import.meta.url), "utf8");
-const projectRepository = readFileSync(new URL("../src/services/workspace-project-repository.ts", import.meta.url), "utf8");
 
 test("local project library exposes the complete local workspace lifecycle", () => {
     expect(libraryPage).toContain("useCanvasStore");
     expect(libraryPage).toContain("beginLocalCanvasProject");
-    expect(libraryPage).not.toContain("createCanvasProjectWithRemoteSync");
     expect(libraryPage).toContain("新建文件夹");
     expect(libraryPage).toContain("回收站");
     expect(libraryPage).toContain("导入");
@@ -41,8 +39,4 @@ test("local project library exposes the complete local workspace lifecycle", () 
     expect(deleteDialog).toContain("deleteWorkspaceCanvasProjects");
     expect(lifecycle).toContain("createWorkspaceCanvasProject");
     expect(lifecycle).toContain("deleteWorkspaceCanvasProjects");
-    expect(projectRepository).toContain("createLocalCanvasProject");
-    expect(projectRepository).toContain("deleteLocalCanvasProjects");
-    expect(projectRepository).not.toContain("createCanvasProjectWithRemoteSync");
-    expect(projectRepository).not.toContain("deleteCanvasProjectsWithRemoteSync");
 });

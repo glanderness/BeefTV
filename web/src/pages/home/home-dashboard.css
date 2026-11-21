@@ -57,7 +57,6 @@ body:has(.ant-modal-wrap:not([style*="display: none"])) .beeftv-home-dot-flow { 
 .beeftv-recent-card:hover .beeftv-recent-arrow { opacity: 1; transform: translateX(2px); }
 .beeftv-recent-card.is-loading { background: linear-gradient(100deg,var(--user-surface) 30%,var(--user-surface-hover) 50%,var(--user-surface) 70%); background-size: 200% 100%; animation: beeftv-shimmer 1.4s linear infinite; }
 .beeftv-recent-card.is-empty { color:inherit; cursor:pointer; }
-.beeftv-home-error { display: flex; width: 100%; height: 86px; align-items: center; justify-content: center; gap: 10px; border: 1px solid var(--home-border); border-radius: 18px; background: var(--user-surface); color: var(--user-ink-muted); cursor: pointer; }
 @keyframes beeftv-dot-ripple { 0% { opacity:0; transform:scale(.18); } 30% { opacity:.32; } 100% { opacity:.18; transform:scale(1); } }
 @keyframes beeftv-shimmer { to { background-position: -200% 0; } }
 @media (max-width: 1500px) { .beeftv-home{padding:64px 40px 60px}.beeftv-capabilities{gap:8px;margin-inline:0} }

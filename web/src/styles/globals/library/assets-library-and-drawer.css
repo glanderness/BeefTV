@@ -177,47 +177,9 @@
 }
 .assets-header-actions { display: flex; max-width: 100%; flex-direction: column; align-items: flex-end; gap: 8px; }
 .assets-header-action-buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-.assets-header-actions .assets-storage-usage { justify-content: flex-end; }
-.assets-storage-usage {
-    display: flex;
-    width: min(100%, 380px);
-    min-height: 24px;
-    align-items: center;
-    gap: 8px;
-    color: color-mix(in srgb, var(--foreground) 48%, transparent);
-}
-.assets-storage-usage-icon {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    color: color-mix(in srgb, var(--foreground) 44%, transparent);
-}
-.assets-storage-usage-icon svg { width: 14px; height: 14px; }
-.assets-storage-usage-title { flex: none; color: color-mix(in srgb, var(--foreground) 62%, transparent); font-size: var(--fs-label); font-weight: 560; }
-.assets-storage-usage-value { flex: none; color: color-mix(in srgb, var(--foreground) 76%, transparent); font-size: var(--fs-label); font-variant-numeric: tabular-nums; }
-.assets-storage-usage-track {
-    display: block;
-    flex: 1 1 96px;
-    min-width: 48px;
-    max-width: 120px;
-    height: 4px;
-    overflow: hidden;
-    border-radius: var(--progress-bar-radius);
-    background: color-mix(in srgb, var(--foreground) 9%, transparent);
-}
-.assets-storage-usage-track > span { display: block; height: 100%; border-radius: inherit; background: var(--workspace-accent); transition: width var(--motion-state) var(--motion-ease-out); }
-.assets-storage-usage.has-usage .assets-storage-usage-track > span { min-width: 2px; }
-.assets-storage-usage.is-full .assets-storage-usage-track > span { background: var(--progress-bar-fill-error); }
-.assets-storage-usage-percent { min-width: 38px; flex: none; font-size: var(--fs-tiny); font-variant-numeric: tabular-nums; text-align: right; }
-.assets-storage-usage-status { min-width: 0; font-size: var(--fs-label); }
-.assets-storage-usage-status button { margin-left: 6px; color: var(--foreground); text-decoration: underline; text-underline-offset: 2px; }
-.assets-storage-usage-status button:focus-visible { outline: 2px solid var(--control-focus-ring); outline-offset: 2px; }
 @media (max-width: 639px) {
     .assets-header-actions { width: 100%; align-items: stretch; }
-    .assets-header-action-buttons,
-    .assets-header-actions .assets-storage-usage { justify-content: flex-start; }
-    .assets-storage-usage { width: 100%; }
-    .assets-storage-usage-track { min-width: 32px; }
+    .assets-header-action-buttons { justify-content: flex-start; }
 }
 /* 筛选胶囊：激活态 accent 反白 + 计数徽章反白 */
 .assets-filter-item {

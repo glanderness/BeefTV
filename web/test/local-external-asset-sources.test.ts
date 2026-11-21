@@ -1,32 +1,26 @@
 import { describe, expect, test } from "bun:test";
 
-import { externalAssetSyncFailures, uploadGeneratedAssetToConfiguredSources } from "@/services/external-asset-sources";
-import type { Asset } from "@/stores/use-asset-store";
+import { createLocalExternalAssetSourceState } from "@/hooks/use-external-asset-sources";
 
 describe("local external asset sources", () => {
-    test("uploadGeneratedAssetToConfiguredSources never uploads generated assets and preserves historical sync records", async () => {
-        const asset = {
-            id: "asset-1",
-            kind: "image",
-            title: "镜头",
-            coverUrl: "",
-            tags: [],
-            status: "confirmed",
-            source: "生成任务",
-            createdAt: "2026-10-01T00:00:00.000Z",
-            updatedAt: "2026-10-01T00:00:00.000Z",
-            data: { dataUrl: "", width: 100, height: 100 },
-            metadata: {
-                externalSync: [
-                    { sourceId: "legacy-cloud", sourceName: "Legacy", status: "failed", error: "offline", updatedAt: "2026-10-01T00:00:00.000Z" },
-                ],
-            },
-        } as Asset;
+    test("returns empty collections and rejects external import or upload in local workspaces", async () => {
+        const state = createLocalExternalAssetSourceState();
+        expect(state.items).toEqual([]);
+        expect(state.folders).toEqual([]);
+        expect(state.categoryLabels).toEqual({});
+        expect(state.loading).toBe(false);
+        expect(state.error).toBe("");
 
-        const result = await uploadGeneratedAssetToConfiguredSources(asset);
-        expect(result.uploaded).toEqual([]);
-        expect(result.failures).toEqual([]);
-        expect(result.records).toHaveLength(1);
-        expect(externalAssetSyncFailures(asset)).toHaveLength(1);
+        await expect(
+            state.importExternalAsset({
+                sourceId: "plugin:cloud",
+                sourceName: "Cloud Drive",
+                item: { id: "ext-1", kind: "image", title: "Demo", url: "https://example.com/a.png" },
+            } as never),
+        ).rejects.toThrow("本地工作区仅支持本地素材");
+
+        await expect(
+            state.uploadExternalFiles([new File(["img"], "demo.png", { type: "image/png" })]),
+        ).rejects.toThrow("本地工作区仅支持本地素材");
     });
 });
