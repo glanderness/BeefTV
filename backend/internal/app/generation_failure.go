@@ -27,24 +27,15 @@ func persistedFailureBlocksRetry(message, stage, errorCode string) bool {
 	return generation.PersistedFailureBlocksRetry(message, stage, errorCode)
 }
 
-// InterceptResponseText normalizes user-facing provider text without altering raw upstream payloads.
-func (s *Service) InterceptResponseText(raw string) string {
-	return strings.TrimSpace(raw)
-}
-
 // UserFacingErrorMessage projects a user-visible error message without altering stored upstream diagnostics.
 func (s *Service) UserFacingErrorMessage(err error) string {
 	var upstream providerHTTPError
 	if errors.As(err, &upstream) {
-		return s.InterceptResponseText(providerUserFacingErrorMessage(err))
+		return strings.TrimSpace(providerUserFacingErrorMessage(err))
 	}
-	return s.InterceptResponseText(taskFailureMessage(err))
+	return strings.TrimSpace(taskFailureMessage(err))
 }
 
 func (s *Service) UserFacingProviderHTTPError(status int, statusText string, body string) string {
-	message := generation.ClassifyHTTP(status, statusText, body).UserMessage()
-	if s == nil {
-		return message
-	}
-	return s.InterceptResponseText(message)
+	return strings.TrimSpace(generation.ClassifyHTTP(status, statusText, body).UserMessage())
 }
