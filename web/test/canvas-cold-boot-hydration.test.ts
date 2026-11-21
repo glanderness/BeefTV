@@ -233,6 +233,13 @@ describe("desktop cold-boot canvas hydration", () => {
             return envelope({ assets: [] });
         };
 
+        // Before any hydration completes (initial loading state), retry must hydrate
+        setCanvasHydrationHealth({ error: "", loading: true });
+        expect(shouldHydrateCanvasProjects({ embedded: false, isRetry: true })).toBe(true);
+        expect(shouldHydrateCanvasProjects({ embedded: true, isRetry: true })).toBe(true);
+        expect(shouldHydrateCanvasProjects({ embedded: false, isRetry: false })).toBe(false);
+        expect(shouldHydrateCanvasProjects({ embedded: true, isRetry: false })).toBe(true);
+
         // Initial cold boot: draft rehydrated, SQLite list fails
         await useCanvasStore.persist.rehydrate();
         expect(await hydrateLocalCanvasProjectsFromBackend()).toBe(false);
