@@ -238,7 +238,7 @@ export async function deleteStoredMedia(keys: Iterable<string>) {
 export async function cleanupUnusedMedia(
     usedData: unknown,
     scope = getActiveUserScope(),
-    options?: { shouldAbort?: () => boolean },
+    options?: { shouldAbort?: (opts?: { checkCrossTab?: boolean }) => boolean },
 ) {
     const usedKeys = collectMediaStorageKeys(usedData);
     const currentScope = scope;

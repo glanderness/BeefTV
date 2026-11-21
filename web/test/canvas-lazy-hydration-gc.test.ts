@@ -24,7 +24,7 @@ import { setImageBlob } from "@/services/image-storage";
 import { CANVAS_DRAFTS_KEY, CANVAS_HISTORY_STORE_KEY } from "@/stores/canvas/canvas-store-persistence";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { flushCanvasStorePersistence, useCanvasStore, withCanvasStorePersistenceSuppressed, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { useAssetStore } from "@/stores/use-asset-store";
+import { ASSET_STORE_DRAFTS_KEY, unloadAssetStoreDraftsForTests, useAssetStore } from "@/stores/use-asset-store";
 
 function createMemoryForageFactory(hooks?: {
     onIterate?: (storeName: string) => void | Promise<void>;
@@ -429,37 +429,37 @@ describe("lazy hydration GC reference completeness", () => {
             },
         });
 
-        const deleteLoopScenarios: Array<{ name: string; mutateAfterFirstDelete: (secondKey: string) => void | Promise<void> }> = [
+        const deleteLoopScenarios: Array<{ name: string; mutateDuringRemove: (currentKey: string) => void | Promise<void> }> = [
             {
-                name: "useAssetStore.addAsset mid-delete",
-                mutateAfterFirstDelete: (secondKey) => {
+                name: "useAssetStore.addAsset referencing current key mid-remove",
+                mutateDuringRemove: (currentKey) => {
                     useAssetStore.getState().addAsset({
                         kind: "image",
-                        title: "并发新增素材",
+                        title: "并发新增素材指向当前 key",
                         coverUrl: "",
                         tags: [],
                         category: "other",
                         status: "confirmed",
                         source: "手动添加",
-                        data: { dataUrl: "", storageKey: secondKey, width: 100, height: 100, bytes: 4, mimeType: "image/png" },
+                        data: { dataUrl: "", storageKey: currentKey, width: 100, height: 100, bytes: 4, mimeType: "image/png" },
                     });
                 },
             },
             {
-                name: "direct setImageBlob write mid-delete",
-                mutateAfterFirstDelete: async () => {
+                name: "direct setImageBlob write mid-remove",
+                mutateDuringRemove: async () => {
                     await setImageBlob(`image:${scope}:direct-upload`, new Blob(["upload"]));
                 },
             },
             {
-                name: "direct setMediaBlob write mid-delete",
-                mutateAfterFirstDelete: async () => {
+                name: "direct setMediaBlob write mid-remove",
+                mutateDuringRemove: async () => {
                     await setMediaBlob(`audio:${scope}:direct-audio`, new Blob(["audio"]));
                 },
             },
             {
-                name: "cross-tab localStorage epoch bump mid-delete",
-                mutateAfterFirstDelete: () => {
+                name: "cross-tab localStorage epoch bump mid-remove",
+                mutateDuringRemove: () => {
                     localStorageMap.set(scopedStorageKey(MEDIA_GC_EPOCH_KEY, scope), "other-tab-write-999");
                 },
             },
@@ -474,7 +474,7 @@ describe("lazy hydration GC reference completeness", () => {
                     onRemove: async (storeName, key) => {
                         if (storeName === IMAGE_FILES_STORE_NAME && key === firstKey && !triggered) {
                             triggered = true;
-                            await scenario.mutateAfterFirstDelete(secondKey);
+                            await scenario.mutateDuringRemove(firstKey);
                         }
                     },
                 }),
@@ -494,10 +494,59 @@ describe("lazy hydration GC reference completeness", () => {
             finishCanvasHydration(attempt, "");
             await useAssetStore.getState().cleanupImages();
 
-            // After firstKey's removal triggers a mutation, per-key shouldAbort stops before deleting secondKey.
+            // After firstKey's removal triggers a mutation (even pointing to firstKey itself),
+            // two-phase post-delete rollback restores firstKey AND aborts before secondKey!
             expect(triggered).toBe(true);
-            expect(await imageStore.getItem(firstKey)).toBeNull();
+            expect(await imageStore.getItem(firstKey)).not.toBeNull();
             expect(await imageStore.getItem(secondKey)).not.toBeNull();
         }
+    });
+
+    it("completes GC without self-aborting when cold hydrateAssetStoreDrafts projects persisted asset drafts during sweep", async () => {
+        const appState = localForageInstance(APP_STATE_STORE_NAME);
+        const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
+        const draftImg = `image:${scope}:cold-asset-draft-img`;
+        const orphanImg = `image:${scope}:cold-asset-orphan-img`;
+        await imageStore.setItem(draftImg, new Blob(["draft-img"]));
+        await imageStore.setItem(orphanImg, new Blob(["orphan-img"]));
+
+        // Seed persisted ASSET_STORE_DRAFTS_KEY and unload in-memory draft state so cleanupImages'
+        // own hydrateAssetStoreDrafts(scope) must project the draft into useAssetStore.
+        unloadAssetStoreDraftsForTests(scope);
+        useAssetStore.setState({ assets: [] });
+        await appState.setItem(
+            scopedStorageKey(ASSET_STORE_DRAFTS_KEY, scope),
+            JSON.stringify({
+                drafts: {
+                    "cold-draft-1": {
+                        kind: "upsert",
+                        version: 1,
+                        asset: {
+                            id: "cold-draft-1",
+                            kind: "image",
+                            title: "未提交冷启动素材草稿",
+                            coverUrl: "",
+                            tags: [],
+                            category: "other",
+                            status: "confirmed",
+                            source: "手动添加",
+                            createdAt: "2026-04-01T00:00:00.000Z",
+                            updatedAt: "2026-04-01T00:00:00.000Z",
+                            data: { dataUrl: "", storageKey: draftImg, width: 100, height: 100, bytes: 9, mimeType: "image/png" },
+                        },
+                    },
+                },
+                clocks: { "cold-draft-1": 1 },
+            }),
+        );
+
+        const attempt = beginCanvasHydration();
+        finishCanvasHydration(attempt, "");
+        await useAssetStore.getState().cleanupImages();
+
+        // Draft-referenced blob is protected AND orphan blob is genuinely reclaimed (no self-abort!).
+        expect(await imageStore.getItem(draftImg)).not.toBeNull();
+        expect(await imageStore.getItem(orphanImg)).toBeNull();
+        unloadAssetStoreDraftsForTests(scope);
     });
 });

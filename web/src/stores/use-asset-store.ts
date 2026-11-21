@@ -323,12 +323,13 @@ export const useAssetStore = create<AssetStore>()(
                             const hydration = getCanvasHydrationHealth();
                             if (hydration.loading || Boolean(hydration.error)) return;
                             const journalModule = await import("@/services/canvas-operation-journal");
-                            const startEpoch = readMediaReferenceEpoch(scope);
-                            const shouldAbortSweep = () => {
+                            const startEpoch = readMediaReferenceEpoch(scope, { checkStorage: true });
+                            const shouldAbortSweep = (opts?: { checkCrossTab?: boolean }) => {
                                 const currentHealth = getCanvasHydrationHealth();
-                                return currentHealth.loading
-                                    || Boolean(currentHealth.error)
-                                    || readMediaReferenceEpoch(scope) !== startEpoch;
+                                if (currentHealth.loading || Boolean(currentHealth.error)) return true;
+                                const current = readMediaReferenceEpoch(scope, { checkStorage: opts?.checkCrossTab === true });
+                                if (current.local !== startEpoch.local) return true;
+                                return opts?.checkCrossTab === true && current.crossTab !== startEpoch.crossTab;
                             };
                             const storage = localForageStorageForScope(scope);
                             const syncDrafts = await readAllCanvasSyncDrafts(scope);
@@ -389,13 +390,13 @@ export const useAssetStore = create<AssetStore>()(
                                 };
                                 const imageKeys = new Set([...frozenExtraImageKeys, ...collectImageStorageKeys(references)]);
                                 const mediaKeys = new Set([...frozenExtraMediaKeys, ...collectMediaStorageKeys(references)]);
-                                if (shouldAbortSweep()) return;
+                                if (shouldAbortSweep({ checkCrossTab: true })) return;
                                 await cleanupUnusedImages(
                                     [...imageKeys].map((storageKey) => ({ storageKey })),
                                     scope,
                                     { shouldAbort: shouldAbortSweep },
                                 );
-                                if (shouldAbortSweep()) return;
+                                if (shouldAbortSweep({ checkCrossTab: true })) return;
                                 await cleanupUnusedMedia(
                                     [...mediaKeys].map((storageKey) => ({ storageKey })),
                                     scope,
@@ -419,29 +420,41 @@ export const useAssetStore = create<AssetStore>()(
     ),
 );
 
+let suppressingInternalAssetDraftEpoch = false;
+
 bindAssetDraftStoreHooks({
     readAssets: () => useAssetStore.getState().assets,
     applyDrafts: (updater) => {
-        withAssetStorePersistenceSuppressed(() => {
-            useAssetStore.setState((state) => ({ assets: updater(state.assets) }));
-        });
+        suppressingInternalAssetDraftEpoch = true;
+        try {
+            withAssetStorePersistenceSuppressed(() => {
+                useAssetStore.setState((state) => ({ assets: updater(state.assets) }));
+            });
+        } finally {
+            suppressingInternalAssetDraftEpoch = false;
+        }
     },
     trackOperation: trackAssetOperation,
     clearDesktopLegacyScopes: clearDesktopLegacyAssetCacheScopesForTests,
     readLegacyDeletedGenerationIds: readLegacyDeletedGenerationIdsForScope,
 });
 
-const onReferenceStoreMutated = () => {
-    bumpMediaReferenceEpoch();
-};
 if (typeof useCanvasStore.subscribe === "function") {
-    useCanvasStore.subscribe(onReferenceStoreMutated);
+    useCanvasStore.subscribe((next, prev) => {
+        if (next.projects !== prev.projects) bumpMediaReferenceEpoch();
+    });
 }
 if (typeof useCanvasHistoryStore.subscribe === "function") {
-    useCanvasHistoryStore.subscribe(onReferenceStoreMutated);
+    useCanvasHistoryStore.subscribe((next, prev) => {
+        if (next.deletedProjects !== prev.deletedProjects) bumpMediaReferenceEpoch();
+    });
 }
 if (typeof useAssetStore.subscribe === "function") {
-    useAssetStore.subscribe(onReferenceStoreMutated);
+    useAssetStore.subscribe((next, prev) => {
+        if (!suppressingInternalAssetDraftEpoch && next.assets !== prev.assets) {
+            bumpMediaReferenceEpoch();
+        }
+    });
 }
 
 function parseDeletedHistoryProjects(raw: string | null): CanvasProject[] {

@@ -211,7 +211,7 @@ export async function deleteStoredImages(keys: Iterable<string>) {
 export async function cleanupUnusedImages(
     usedData: unknown,
     scope = getActiveUserScope(),
-    options?: { shouldAbort?: () => boolean },
+    options?: { shouldAbort?: (opts?: { checkCrossTab?: boolean }) => boolean },
 ) {
     const usedKeys = collectImageStorageKeys(usedData);
     const currentPrefixes = [`image:${scope}:`, `generation-image:${scope}:`];
@@ -221,7 +221,19 @@ export async function cleanupUnusedImages(
     });
     for (const key of unused) {
         if (options?.shouldAbort?.()) return;
-        await deleteStoredImages([key]);
+        const blob = await store.getItem<Blob>(key);
+        if (!blob) continue;
+        if (options?.shouldAbort?.()) return;
+        await store.removeItem(key);
+        if (options?.shouldAbort?.({ checkCrossTab: true })) {
+            if (!(await store.getItem<Blob>(key))) {
+                await store.setItem(key, blob);
+            }
+            return;
+        }
+        const url = objectUrls.get(key);
+        if (url) URL.revokeObjectURL(url);
+        objectUrls.delete(key);
     }
 }
 
