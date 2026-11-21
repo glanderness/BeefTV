@@ -38,9 +38,6 @@ export type CanvasSaveSummary = Pick<CanvasProject, "id" | "title" | "createdAt"
 
 export const backendSaveTails = new Map<string, Promise<void>>();
 export const backendSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
-export const activeCanvasBackendCommits = new Map<string, Set<Promise<void>>>();
-export const canvasSaveGcBarriers = new Map<string, Promise<void>>();
-export const canvasSaveGcQueue = new Map<string, Promise<void>>();
 export const canvasProjectionLocks = new Map<string, Promise<void>>();
 export const canvasDeleting = new Set<string>();
 export const pendingForceHistorySnapshotEpochs = new Map<string, number>();
@@ -141,50 +138,6 @@ export function invokeProjectionListener(
 export function canvasBackendSubmitPending(id: string, scope: string) {
     const key = saveKey(scope, id);
     return backendSaveTails.has(key) || backendSaveTimers.has(key);
-}
-
-/** 等待该作用域正在进行的媒体 GC 屏障释放，再启动新的画布后端提交。 */
-export async function waitForCanvasSaveGcBarrier(scope = getActiveUserScope()) {
-    while (canvasSaveGcBarriers.has(scope)) {
-        await canvasSaveGcBarriers.get(scope);
-    }
-}
-
-/**
- * 媒体 GC 与画布后端保存的静默屏障：
- * 1. 先按作用域串行占位并阻挡新启动的提交（含 500ms 节流定时器触发的提交）；
- * 2. 在锁外等待进入屏障前已在执行中的 activeCanvasBackendCommits 结束（不与冲突草稿锁互相等待）；
- * 3. 屏障持有期间执行 GC 扫描与清理，结束后统一放行排队的保存。
- */
-export async function withCanvasSaveGcBarrier<T>(scope: string, fn: () => Promise<T>): Promise<T> {
-    const previous = canvasSaveGcQueue.get(scope);
-    let releaseQueue!: () => void;
-    const queueTail = new Promise<void>((resolve) => {
-        releaseQueue = resolve;
-    });
-    canvasSaveGcQueue.set(scope, queueTail);
-    if (previous) {
-        await previous.catch(() => undefined);
-    }
-
-    let releaseBarrier!: () => void;
-    const barrier = new Promise<void>((resolve) => {
-        releaseBarrier = resolve;
-    });
-    canvasSaveGcBarriers.set(scope, barrier);
-    try {
-        for (;;) {
-            const active = activeCanvasBackendCommits.get(scope);
-            if (!active || active.size === 0) break;
-            await Promise.allSettled([...active]);
-        }
-        return await fn();
-    } finally {
-        if (canvasSaveGcBarriers.get(scope) === barrier) canvasSaveGcBarriers.delete(scope);
-        releaseBarrier();
-        if (canvasSaveGcQueue.get(scope) === queueTail) canvasSaveGcQueue.delete(scope);
-        releaseQueue();
-    }
 }
 
 /** 把保存链的真实状态发布到同步进度：排队、提交中、已被接受或失败。 */

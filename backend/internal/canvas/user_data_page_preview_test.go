@@ -88,6 +88,11 @@ func TestUserCanvasProjectsPageReturnsSummaryMetadataForLazyHydration(t *testing
 
 func TestScanLocalMediaStorageKeysStreamingEdgeCases(t *testing.T) {
 	payload, err := json.Marshal(map[string]any{
+		"workspaceProjectId": "ws-stream",
+		"canvasTitle":        "单遍流式测试",
+		"nodes": []map[string]any{
+			{"id": "n1", "type": "image", "metadata": map[string]any{"storageKey": "image:u1:node-1"}},
+		},
 		"chatSessions": []map[string]any{
 			{
 				"id":   "s1",
@@ -105,17 +110,24 @@ func TestScanLocalMediaStorageKeysStreamingEdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	got := scanLocalMediaStorageKeys(string(payload))
-	want := []string{"audio:u1:nested-1", "image:u1:chat-1"}
-	if len(got) != len(want) {
-		t.Fatalf("scanLocalMediaStorageKeys = %#v, want %#v", got, want)
+	parsed, err := parseCanvasSummaryPayload(string(payload))
+	if err != nil {
+		t.Fatalf("parseCanvasSummaryPayload: %v", err)
+	}
+	if parsed.workspaceProjectID != "ws-stream" || parsed.canvasTitle != "单遍流式测试" || len(parsed.nodes) != 1 {
+		t.Fatalf("unexpected parsed metadata: %+v", parsed)
+	}
+	want := []string{"audio:u1:nested-1", "image:u1:chat-1", "image:u1:node-1"}
+	if len(parsed.localMediaKeys) != len(want) {
+		t.Fatalf("localMediaKeys = %#v, want %#v", parsed.localMediaKeys, want)
 	}
 	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("scanLocalMediaStorageKeys[%d] = %q, want %q", i, got[i], want[i])
+		if parsed.localMediaKeys[i] != want[i] {
+			t.Fatalf("localMediaKeys[%d] = %q, want %q", i, parsed.localMediaKeys[i], want[i])
 		}
 	}
-	if empty := scanLocalMediaStorageKeys(`{"nodes":[{"id":"n1","type":"text"}]}`); empty != nil {
-		t.Fatalf("expected nil when no storageKey present, got %#v", empty)
+	emptyParsed, err := parseCanvasSummaryPayload(`{"nodes":[{"id":"n1","type":"text"}]}`)
+	if err != nil || emptyParsed.localMediaKeys != nil || len(emptyParsed.nodes) != 1 {
+		t.Fatalf("expected nil localMediaKeys and 1 node, got %+v err=%v", emptyParsed, err)
 	}
 }

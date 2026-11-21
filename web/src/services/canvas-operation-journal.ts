@@ -55,6 +55,11 @@ export class CanvasJournalError extends Error {
 
 const memory = new Map<string, CanvasOperationJournal>();
 const journalLocks = new Map<string, Promise<void>>();
+let journalMutationEpoch = 0;
+
+export function getCanvasOperationJournalMutationEpoch() {
+    return journalMutationEpoch;
+}
 
 type JournalStorageDelay = {
     beforeGet?: () => Promise<void>;
@@ -208,6 +213,7 @@ async function readJournalUnlocked(canvasId: string, scope: string): Promise<Can
 }
 
 async function writeJournalUnlocked(journal: CanvasOperationJournal) {
+    journalMutationEpoch += 1;
     const scope = journal.userScope || getActiveUserScope();
     const validated = parseCanvasOperationJournal(journal, scope, journal.canvasId);
     if (validated.confirmedSnapshot && validated.confirmedSnapshot.revision !== validated.confirmedRevision) {
@@ -345,6 +351,7 @@ export async function abandonCanvasInFlight(canvasId: string, scope = getActiveU
 
 export async function clearCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
     return withJournal(scope, canvasId, async () => {
+        journalMutationEpoch += 1;
         await journalStorageDelay?.beforeSet?.();
         await localForageStorageForScope(scope).removeItem(journalName(canvasId));
         memory.delete(cacheKey(scope, canvasId));

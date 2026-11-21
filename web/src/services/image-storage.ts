@@ -204,13 +204,18 @@ export async function deleteStoredImages(keys: Iterable<string>) {
     );
 }
 
-export async function cleanupUnusedImages(usedData: unknown, scope = getActiveUserScope()) {
+export async function cleanupUnusedImages(
+    usedData: unknown,
+    scope = getActiveUserScope(),
+    options?: { shouldAbort?: () => boolean },
+) {
     const usedKeys = collectImageStorageKeys(usedData);
     const currentPrefixes = [`image:${scope}:`, `generation-image:${scope}:`];
     const unused: string[] = [];
     await store.iterate((_value, key) => {
         if (currentPrefixes.some((prefix) => key.startsWith(prefix)) && !usedKeys.has(key)) unused.push(key);
     });
+    if (options?.shouldAbort?.()) return;
     await deleteStoredImages(unused);
 }
 

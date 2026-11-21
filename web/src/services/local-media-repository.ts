@@ -41,12 +41,17 @@ export async function deleteLocalMedia(keys: Iterable<string>) {
     );
 }
 
-export async function cleanupLocalMedia(usedKeys: Set<string>, scope = getActiveUserScope()) {
+export async function cleanupLocalMedia(
+    usedKeys: Set<string>,
+    scope = getActiveUserScope(),
+    options?: { shouldAbort?: () => boolean },
+) {
     const unused: string[] = [];
     await store.iterate((_value, key) => {
         const parts = key.split(":");
         if (parts.length >= 3 && parts[1] === scope && !usedKeys.has(key)) unused.push(key);
     });
+    if (options?.shouldAbort?.()) return;
     await Promise.all(unused.map(async (key) => {
         const url = objectUrls.get(key);
         if (url) URL.revokeObjectURL(url);

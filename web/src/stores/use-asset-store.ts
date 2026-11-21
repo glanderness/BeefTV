@@ -14,10 +14,9 @@ import { readAllCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { cleanupUnusedMedia, collectMediaStorageKeys } from "@/services/file-storage";
 import { insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
 import { cleanupUnusedImages, collectImageStorageKeys } from "@/services/image-storage";
-import { withCanvasSaveGcBarrier } from "@/services/local-workspace-state";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
 import { CANVAS_DRAFTS_KEY } from "@/stores/canvas/canvas-store-persistence";
-import { CANVAS_HISTORY_STORE_KEY, useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
+import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import {
     CANVAS_STORE_KEY,
     commitPendingCanvasStorePersistenceLocked,
@@ -319,78 +318,93 @@ export const useAssetStore = create<AssetStore>()(
                 const frozenExtraMediaKeys = collectMediaStorageKeys(extra);
                 await new Promise<void>((resolve, reject) => {
                     window.setTimeout(() =>
-                        withCanvasSaveGcBarrier(scope, async () => {
-                            await withGenerationArtifactCommitLock(scope, async () => {
-                                const hydration = getCanvasHydrationHealth();
-                                if (hydration.loading || Boolean(hydration.error)) return;
-                                const storage = localForageStorageForScope(scope);
-                                const syncDrafts = await readAllCanvasSyncDrafts(scope);
-                                // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
-                                const canvasReferences = await withCanvasStorePersistenceLock(scope, async () => {
-                                    await commitPendingCanvasStorePersistenceLocked(scope);
-                                    const durableCanvas = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY));
-                                    const durableCanvasDrafts = parseCanvasStorageDocument(await storage.getItem(CANVAS_DRAFTS_KEY));
-                                    const liveProjects = scope === getActiveUserScope() ? useCanvasStore.getState().projects : [];
-                                    const pendingProjects = pendingCanvasStorePersistence(scope)?.projects ?? [];
-                                    const liveDeletedProjects = scope === getActiveUserScope()
-                                        ? useCanvasHistoryStore.getState().deletedProjects
-                                            .map((item) => item.project)
-                                            .filter((project): project is CanvasProject => Boolean(project && !project.summaryOnly))
-                                        : [];
-                                    const durableDeletedProjects = parseDeletedHistoryProjects(await storage.getItem(CANVAS_HISTORY_STORE_KEY));
-                                    const journalModule = await import("@/services/canvas-operation-journal");
-                                    const journals = typeof journalModule.readAllCanvasOperationJournals === "function"
-                                        ? await journalModule.readAllCanvasOperationJournals(scope)
-                                        : [];
-                                    const journalDocuments = journals.flatMap((journal) => [
-                                        ...(journal.confirmedSnapshot ? [journal.confirmedSnapshot] : []),
-                                        ...(journal.inFlight?.payload?.document ? [journal.inFlight.payload.document] : []),
-                                        ...(journal.pendingProjection?.remote ? [journal.pendingProjection.remote] : []),
-                                        ...(journal.pendingProjection?.base ? [journal.pendingProjection.base] : []),
-                                    ]);
-                                    const summaryMediaRefs = [...liveProjects, ...pendingProjects].flatMap((project) =>
-                                        project.summaryOnly && project.summaryMediaKeys?.length
-                                            ? project.summaryMediaKeys.map((storageKey) => ({ storageKey }))
-                                            : [],
-                                    );
-                                    return {
-                                        projects: [
-                                            ...liveProjects,
-                                            ...pendingProjects,
-                                            ...durableCanvas.state.projects,
-                                            ...durableCanvasDrafts.state.projects,
-                                            ...liveDeletedProjects,
-                                            ...durableDeletedProjects,
-                                            ...journalDocuments,
-                                        ],
-                                        summaryMediaRefs,
-                                    };
-                                });
-                                await withGenerationAssetStorageLock(scope, async () => {
-                                    await commitPendingAssetStorePersistenceLocked(scope);
-                                    await hydrateAssetStoreDrafts(scope);
-                                    const durableAssets = (await readPersistedAssetDocumentForScope(scope)).state.assets;
-                                    const liveAssets = scope === getActiveUserScope() ? get().assets : [];
-                                    const draftAssets = readAssetStoreDraftsForScope(scope).upserts;
-                                    const references = {
-                                        projects: canvasReferences.projects,
-                                        summaryMediaRefs: canvasReferences.summaryMediaRefs,
-                                        assets: durableAssets,
-                                        liveAssets,
-                                        draftAssets,
-                                        syncDrafts,
-                                    };
-                                    const imageKeys = new Set([...frozenExtraImageKeys, ...collectImageStorageKeys(references)]);
-                                    const mediaKeys = new Set([...frozenExtraMediaKeys, ...collectMediaStorageKeys(references)]);
-                                    await cleanupUnusedImages(
-                                        [...imageKeys].map((storageKey) => ({ storageKey })),
-                                        scope,
-                                    );
-                                    await cleanupUnusedMedia(
-                                        [...mediaKeys].map((storageKey) => ({ storageKey })),
-                                        scope,
-                                    );
-                                });
+                        withGenerationArtifactCommitLock(scope, async () => {
+                            const hydration = getCanvasHydrationHealth();
+                            if (hydration.loading || Boolean(hydration.error)) return;
+                            const journalModule = await import("@/services/canvas-operation-journal");
+                            const readJournalEpoch = () =>
+                                typeof journalModule.getCanvasOperationJournalMutationEpoch === "function"
+                                    ? journalModule.getCanvasOperationJournalMutationEpoch()
+                                    : 0;
+                            const snapshotReferenceEpoch = () => `${canvasReferenceMutationEpoch}:${readJournalEpoch()}`;
+                            const startEpoch = snapshotReferenceEpoch();
+                            const shouldAbortSweep = () => {
+                                const currentHealth = getCanvasHydrationHealth();
+                                return currentHealth.loading
+                                    || Boolean(currentHealth.error)
+                                    || snapshotReferenceEpoch() !== startEpoch;
+                            };
+                            const storage = localForageStorageForScope(scope);
+                            const syncDrafts = await readAllCanvasSyncDrafts(scope);
+                            // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
+                            const canvasReferences = await withCanvasStorePersistenceLock(scope, async () => {
+                                await commitPendingCanvasStorePersistenceLocked(scope);
+                                const durableCanvas = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY));
+                                const durableCanvasDrafts = parseCanvasStorageDocument(await storage.getItem(CANVAS_DRAFTS_KEY));
+                                const liveProjects = scope === getActiveUserScope() ? useCanvasStore.getState().projects : [];
+                                const pendingProjects = pendingCanvasStorePersistence(scope)?.projects ?? [];
+                                const liveDeletedEntries = scope === getActiveUserScope()
+                                    ? (useCanvasHistoryStore.getState?.()?.deletedProjects ?? [])
+                                    : [];
+                                const liveDeletedProjects = liveDeletedEntries
+                                    .map((item) => item.project)
+                                    .filter((project): project is CanvasProject => Boolean(project && !project.summaryOnly));
+                                const durableDeletedProjects = parseDeletedHistoryProjects(await storage.getItem(CANVAS_HISTORY_STORE_KEY));
+                                const journals = typeof journalModule.readAllCanvasOperationJournals === "function"
+                                    ? await journalModule.readAllCanvasOperationJournals(scope)
+                                    : [];
+                                const journalDocuments = journals.flatMap((journal) => [
+                                    ...(journal.confirmedSnapshot ? [journal.confirmedSnapshot] : []),
+                                    ...(journal.inFlight?.payload?.document ? [journal.inFlight.payload.document] : []),
+                                    ...(journal.pendingProjection?.remote ? [journal.pendingProjection.remote] : []),
+                                    ...(journal.pendingProjection?.base ? [journal.pendingProjection.base] : []),
+                                ]);
+                                const summaryMediaRefs = [...liveProjects, ...pendingProjects].flatMap((project) =>
+                                    project.summaryOnly && project.summaryMediaKeys?.length
+                                        ? project.summaryMediaKeys.map((storageKey) => ({ storageKey }))
+                                        : [],
+                                );
+                                return {
+                                    projects: [
+                                        ...liveProjects,
+                                        ...pendingProjects,
+                                        ...durableCanvas.state.projects,
+                                        ...durableCanvasDrafts.state.projects,
+                                        ...liveDeletedProjects,
+                                        ...durableDeletedProjects,
+                                        ...journalDocuments,
+                                    ],
+                                    summaryMediaRefs,
+                                };
+                            });
+                            await withGenerationAssetStorageLock(scope, async () => {
+                                await commitPendingAssetStorePersistenceLocked(scope);
+                                await hydrateAssetStoreDrafts(scope);
+                                const durableAssets = (await readPersistedAssetDocumentForScope(scope)).state.assets;
+                                const liveAssets = scope === getActiveUserScope() ? get().assets : [];
+                                const draftAssets = readAssetStoreDraftsForScope(scope).upserts;
+                                const references = {
+                                    projects: canvasReferences.projects,
+                                    summaryMediaRefs: canvasReferences.summaryMediaRefs,
+                                    assets: durableAssets,
+                                    liveAssets,
+                                    draftAssets,
+                                    syncDrafts,
+                                };
+                                const imageKeys = new Set([...frozenExtraImageKeys, ...collectImageStorageKeys(references)]);
+                                const mediaKeys = new Set([...frozenExtraMediaKeys, ...collectMediaStorageKeys(references)]);
+                                if (shouldAbortSweep()) return;
+                                await cleanupUnusedImages(
+                                    [...imageKeys].map((storageKey) => ({ storageKey })),
+                                    scope,
+                                    { shouldAbort: shouldAbortSweep },
+                                );
+                                if (shouldAbortSweep()) return;
+                                await cleanupUnusedMedia(
+                                    [...mediaKeys].map((storageKey) => ({ storageKey })),
+                                    scope,
+                                    { shouldAbort: shouldAbortSweep },
+                                );
                             });
                         }).then(resolve, reject),
                     );
@@ -420,6 +434,18 @@ bindAssetDraftStoreHooks({
     clearDesktopLegacyScopes: clearDesktopLegacyAssetCacheScopesForTests,
     readLegacyDeletedGenerationIds: readLegacyDeletedGenerationIdsForScope,
 });
+
+const CANVAS_HISTORY_STORE_KEY = "infinite-canvas:deleted_history_store";
+let canvasReferenceMutationEpoch = 0;
+const bumpCanvasReferenceMutationEpoch = () => {
+    canvasReferenceMutationEpoch += 1;
+};
+if (typeof useCanvasStore.subscribe === "function") {
+    useCanvasStore.subscribe(bumpCanvasReferenceMutationEpoch);
+}
+if (typeof useCanvasHistoryStore.subscribe === "function") {
+    useCanvasHistoryStore.subscribe(bumpCanvasReferenceMutationEpoch);
+}
 
 function parseDeletedHistoryProjects(raw: string | null): CanvasProject[] {
     if (!raw) return [];

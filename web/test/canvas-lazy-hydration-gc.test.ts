@@ -18,13 +18,12 @@ import {
     resetCanvasOperationJournalMemory,
     updateCanvasOperationJournal,
 } from "@/services/canvas-operation-journal";
-import { withCanvasSaveGcBarrier } from "@/services/local-workspace-state";
 import { CANVAS_DRAFTS_KEY } from "@/stores/canvas/canvas-store-persistence";
 import { CANVAS_HISTORY_STORE_KEY, useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { flushCanvasStorePersistence, useCanvasStore, withCanvasStorePersistenceSuppressed, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 
-function createMemoryForageFactory() {
+function createMemoryForageFactory(hooks?: { onIterate?: (storeName: string) => void | Promise<void> }) {
     const stores = new Map<string, Map<string, unknown>>();
     return (storeName: string) => {
         let map = stores.get(storeName);
@@ -49,6 +48,7 @@ function createMemoryForageFactory() {
             },
             length: async () => map!.size,
             iterate: async <T, U>(iteratee: (value: T, key: string, index: number) => U) => {
+                await hooks?.onIterate?.(storeName);
                 let index = 1;
                 for (const [key, value] of [...map!.entries()]) {
                     iteratee(value as T, key, index);
@@ -326,34 +326,83 @@ describe("lazy hydration GC reference completeness", () => {
         expect(await mediaStore.getItem(binAudio)).toBeNull();
     });
 
-    it("holds new canvas saves behind the GC barrier and resumes them after GC finishes while protecting edited media", async () => {
-        const { waitForCanvasSaveGcBarrier } = await import("@/services/local-workspace-state");
-        const order: string[] = [];
-        let releaseBarrierInner!: () => void;
-        const barrierHolding = new Promise<void>((resolve) => {
-            releaseBarrierInner = resolve;
-        });
+    it("aborts a stale GC sweep without blocking writers when open/adopt/restore, delete-history, or journal commit mutates mid-sweep", async () => {
+        const scenarios: Array<{ name: string; mutate: (key: string) => void | Promise<void> }> = [
+            {
+                name: "concurrent canvas store write (open/adopt/restore)",
+                mutate: (key) => {
+                    withCanvasStorePersistenceSuppressed(() => {
+                        useCanvasStore.setState({
+                            projects: [
+                                makeCanvas("concurrent-open", {
+                                    nodes: [{ id: "n1", type: "image", title: "新打开", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { storageKey: key } } as never],
+                                }),
+                            ],
+                        });
+                    });
+                },
+            },
+            {
+                name: "concurrent recycle-bin history write (delete)",
+                mutate: (key) => {
+                    useCanvasHistoryStore.getState().recordDeletedProjects([
+                        makeCanvas("concurrent-del", {
+                            nodes: [{ id: "n2", type: "image", title: "新删入回收站", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { storageKey: key } } as never],
+                        }),
+                    ]);
+                },
+            },
+            {
+                name: "concurrent operation journal write (save timer)",
+                mutate: async (key) => {
+                    await updateCanvasOperationJournal("concurrent-save", scope, (current) => ({
+                        ...current,
+                        confirmedRevision: 1,
+                        inFlight: {
+                            operationId: "op-concurrent-save",
+                            expectedRevision: 1,
+                            payload: {
+                                canvasId: "concurrent-save",
+                                expectedRevision: 1,
+                                document: makeCanvas("concurrent-save", {
+                                    nodes: [{ id: "n3", type: "image", title: "定时保存", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { storageKey: key } } as never],
+                                }),
+                            },
+                        },
+                    }));
+                },
+            },
+        ];
 
-        const gcRun = withCanvasSaveGcBarrier(scope, async () => {
-            order.push("gc:start");
-            await barrierHolding;
-            order.push("gc:end");
-        });
+        for (const [index, scenario] of scenarios.entries()) {
+            const imgKey = `image:${scope}:mid-sweep-${index}`;
+            let mutatedOnce = false;
+            installLocalForageStoreFactoryForTests(
+                createMemoryForageFactory({
+                    onIterate: async (storeName) => {
+                        if (storeName === IMAGE_FILES_STORE_NAME && !mutatedOnce) {
+                            mutatedOnce = true;
+                            await scenario.mutate(imgKey);
+                        }
+                    },
+                }),
+            );
+            withCanvasStorePersistenceSuppressed(() => {
+                useCanvasStore.setState({ projects: [] });
+            });
+            useCanvasHistoryStore.setState({ deletedProjects: [] });
+            resetCanvasOperationJournalMemory();
 
-        // Wait one tick so the barrier is active, then simulate a firing 500ms save timer hitting the barrier.
-        await Promise.resolve();
-        const timerSave = (async () => {
-            order.push("save:queued");
-            await waitForCanvasSaveGcBarrier(scope);
-            order.push("save:started");
-        })();
+            const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
+            await imageStore.setItem(imgKey, new Blob([scenario.name]));
 
-        await Promise.resolve();
-        await Promise.resolve();
-        expect(order).toEqual(["gc:start", "save:queued"]);
+            const attempt = beginCanvasHydration();
+            finishCanvasHydration(attempt, "");
+            await useAssetStore.getState().cleanupImages();
 
-        releaseBarrierInner();
-        await Promise.all([gcRun, timerSave]);
-        expect(order).toEqual(["gc:start", "save:queued", "gc:end", "save:started"]);
+            // Sweep must detect the concurrent mutation and abort before deleting imgKey.
+            expect(mutatedOnce).toBe(true);
+            expect(await imageStore.getItem(imgKey)).not.toBeNull();
+        }
     });
 });

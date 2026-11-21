@@ -53,19 +53,28 @@ export async function duplicateWorkspaceCanvasProject(
         if (!copiedWorkspaceProjectId) throw new Error("项目不存在");
         return { workspaceProjectId: copiedWorkspaceProjectId, count: loadedSources.length };
     } catch (error) {
+        const rollbackErrors: unknown[] = [];
         if (unpersistedIds.length > 0) {
-            await deleteLocalCanvasProjects(unpersistedIds, { recordHistory: false }).catch(() => undefined);
+            try {
+                await deleteLocalCanvasProjects(unpersistedIds, { recordHistory: false });
+            } catch (rollbackError) {
+                rollbackErrors.push(rollbackError);
+            }
         }
         if (persistedIds.length > 0) {
             try {
                 await deleteLocalCanvasProjects(persistedIds, { recordHistory: false });
             } catch (rollbackError) {
-                const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "复制失败";
-                const rollbackDetail = rollbackError instanceof Error && rollbackError.message.trim()
-                    ? rollbackError.message.trim()
-                    : "后端不可用";
-                throw new Error(`${detail}（已创建的 ${persistedIds.length} 张副本回滚失败：${rollbackDetail}）`);
+                rollbackErrors.push(rollbackError);
             }
+        }
+        if (rollbackErrors.length > 0) {
+            const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "复制失败";
+            const firstRollback = rollbackErrors[0];
+            const rollbackDetail = firstRollback instanceof Error && firstRollback.message.trim()
+                ? firstRollback.message.trim()
+                : "后端不可用";
+            throw new Error(`${detail}（副本回滚清理未确认：${rollbackDetail}）`);
         }
         throw error;
     }

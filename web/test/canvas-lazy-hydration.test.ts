@@ -740,7 +740,7 @@ describe("canvas lazy hydration", () => {
         expect(deletedHistoryEntries).toHaveLength(0);
     });
 
-    it("cleans up failed revision-0 copy even under DELETE 500 and surfaces rollback error for already-persisted copies", async () => {
+    it("cleans up failed revision-0 copy even under DELETE 500 and surfaces rollback error for both persisted and uncertain unpersisted copies", async () => {
         remotePages = [[
             { ...summaryItem(0), id: "canvas-0", workspaceProjectId: "ws-multi" },
             { ...summaryItem(1), id: "canvas-1", workspaceProjectId: "ws-multi" },
@@ -754,11 +754,22 @@ describe("canvas lazy hydration", () => {
         delete500Ids.add("created-2");
         await expect(
             workspaceProjects.duplicateWorkspaceCanvasProject(projects, { id: "canvas-0", title: "主画布" }),
-        ).rejects.toThrow("回滚失败");
+        ).rejects.toThrow("回滚清理未确认");
 
         // Unpersisted revision-0 copy (created-2) must NEVER remain in active store even when DELETE returns 500.
         expect(projects.some((item) => item.id === "created-2")).toBe(false);
         expect(recordedDeletedProjects).toHaveLength(0);
+
+        // Single-canvas duplication with PUT 500 + DELETE 500 (response-lost uncertainty):
+        // removes local draft AND surfaces rollback warning instead of swallowing DELETE 500.
+        projects = [fullProject("solo-0", { workspaceProjectId: "ws-solo", title: "单画布" })];
+        failPutOnCall = 1;
+        putCallCount = 0;
+        delete500Ids = new Set(["created-3"]);
+        await expect(
+            workspaceProjects.duplicateWorkspaceCanvasProject(projects, { id: "solo-0", title: "单画布" }),
+        ).rejects.toThrow("回滚清理未确认");
+        expect(projects.map((item) => item.id)).toEqual(["solo-0"]);
     });
 
     it("handles flush failure cleanly without leaving restored drafts in store and reports summaryOnly recycle-bin entries", async () => {

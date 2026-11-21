@@ -27,15 +27,12 @@ import {
     selectPreferredCanvasProject,
 } from "./local-workspace-reconcile";
 import {
-    activeCanvasBackendCommits,
     applyLiveCanvasProject,
     backendSaveTails,
     backendSaveTimers,
     canvasDeleting,
     CanvasProjectionError,
     canvasProjectionLocks,
-    canvasSaveGcBarriers,
-    canvasSaveGcQueue,
     confirmRemoteDocument,
     flushAllPendingCanvasOverlapWrites,
     flushPendingCanvasOverlapWrite,
@@ -52,7 +49,6 @@ import {
     serverConfirmedCanvasSnapshots,
     setCanvasProjectionStoreFlushForTest,
     throwIfCanvasNotWritable,
-    waitForCanvasSaveGcBarrier,
     withCanvasProjection,
     type CanvasSaveSummary,
     type LocalCanvasContent,
@@ -115,23 +111,8 @@ function syncLocalCanvasProject(id: string): Promise<void> {
     }
     const previous = backendSaveTails.get(key) || Promise.resolve();
     const next = previous.catch(() => undefined).then(async () => {
-        await waitForCanvasSaveGcBarrier(scope);
         if (canvasDeleting.has(key)) throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
-        const commit = commitLiveCanvasDocument(id);
-        let running = activeCanvasBackendCommits.get(scope);
-        if (!running) {
-            running = new Set();
-            activeCanvasBackendCommits.set(scope, running);
-        }
-        running.add(commit);
-        try {
-            await commit;
-        } finally {
-            running.delete(commit);
-            if (running.size === 0 && activeCanvasBackendCommits.get(scope) === running) {
-                activeCanvasBackendCommits.delete(scope);
-            }
-        }
+        await commitLiveCanvasDocument(id);
     });
     const tail = next.finally(() => {
         if (backendSaveTails.get(key) === tail) backendSaveTails.delete(key);
@@ -551,9 +532,6 @@ export function resetLocalCanvasBackendSaveState() {
     for (const timer of backendSaveTimers.values()) clearTimeout(timer);
     backendSaveTimers.clear();
     backendSaveTails.clear();
-    activeCanvasBackendCommits.clear();
-    canvasSaveGcBarriers.clear();
-    canvasSaveGcQueue.clear();
     canvasProjectionLocks.clear();
     canvasDeleting.clear();
     pendingForceHistorySnapshotEpochs.clear();
@@ -694,13 +672,18 @@ export async function deleteLocalCanvasProjects(ids: readonly string[], options:
             const localOnlyRollback = !recordHistory
                 && (snapshot?.revision ?? 0) === 0
                 && !(peekCanvasOperationJournal(id, scope)?.confirmedRevision);
+            let backendDeleteWarning: unknown;
             try {
                 try {
                     await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
                 } catch (error) {
-                    // 未曾确认落库的 revision=0 回滚草稿，即使后端 DELETE 返回 500/404 也必须清掉本地残留；
-                    // 其它回滚或 revision=0 仅在明确 404 时视为后端已不存在。
-                    if (!localOnlyRollback && !(isNotFoundApiError(error) && (!recordHistory || (snapshot?.revision ?? 0) === 0))) {
+                    if (isNotFoundApiError(error) && (!recordHistory || (snapshot?.revision ?? 0) === 0)) {
+                        // 回滚或 revision=0 草稿后端明确返回 404，视为后端已不存在。
+                    } else if (localOnlyRollback) {
+                        // 未曾确认落库的 revision=0 回滚草稿，即使后端 DELETE 返回 5xx 也必须清掉本地残留，
+                        // 同时保留该后端错误上报给调用方，避免静默吞掉响应丢失导致的潜在远端残留。
+                        backendDeleteWarning = error;
+                    } else {
                         throw error;
                     }
                 }
@@ -711,6 +694,9 @@ export async function deleteLocalCanvasProjects(ids: readonly string[], options:
                 serverConfirmedCanvasSnapshots.delete(saveKey(scope, id));
                 clearCanvasBackendSaveProgress(id, scope);
                 deleted.push(id);
+                if (backendDeleteWarning !== undefined) {
+                    failures.push(backendDeleteWarning);
+                }
             } catch (error) {
                 console.error("画布后端删除失败", { id, error });
                 failures.push(error);
