@@ -136,7 +136,7 @@ function shouldFetchFullCanvasDuringHydration(
  */
 export async function hydrateLocalCanvasProjectsFromBackend() {
     const scope = getActiveUserScope();
-    const attempt = beginCanvasHydration(scope);
+    const attempt = beginCanvasHydration();
     const previouslyLoadedIds = new Set(useCanvasStore.getState().projects.map((project) => project.id));
     let failure = "";
     try {
@@ -268,7 +268,7 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
         failure = "项目暂时无法读取，现有数据已保留。请重试或在设置中导出问题记录。";
         return false;
     } finally {
-        finishCanvasHydration(attempt, failure, scope);
+        finishCanvasHydration(attempt, failure);
     }
 }
 

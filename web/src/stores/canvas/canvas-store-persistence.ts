@@ -449,11 +449,3 @@ export async function flushCanvasStorePersistence() {
 export function hasActiveCanvasStorePersistence() {
     return canvasStorageTails.size > 0 || canvasSaveTimers.size > 0;
 }
-
-export async function hasPersistedCanvasStorage(scope = getActiveUserScope()): Promise<boolean> {
-    const storage = localForageStorageForScope(scope);
-    if (isDesktopSingleSourceMode()) {
-        if (await storage.getItem(CANVAS_DRAFTS_KEY)) return true;
-    }
-    return Boolean(await storage.getItem(CANVAS_STORE_KEY));
-}

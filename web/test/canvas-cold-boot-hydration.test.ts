@@ -4,6 +4,7 @@ import localforage from "localforage";
 import { apiClient } from "@/services/api/request";
 import { getCanvasHydrationHealth, setCanvasHydrationHealth } from "@/services/canvas-hydration-health";
 import { hydrateLocalCanvasProjectsFromBackend } from "@/services/local-workspace-repository";
+import { shouldHydrateCanvasProjects } from "@/components/workspace/workspace-bootstrap-hydrator";
 import { applyUserSession } from "@/lib/user-session";
 import { getActiveUserScope, scopedStorageKey, setActiveUserScope, setWorkspaceStorageScope } from "@/lib/user-scope";
 import { CANVAS_DRAFTS_KEY, CANVAS_STORE_KEY, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -141,11 +142,13 @@ describe("desktop cold-boot canvas hydration", () => {
         expect(live[0]?.id).toBe("lazy-1");
         expect(live[0]?.summaryOnly).toBe(true);
         expect(live[0]?.summaryMediaKeys).toEqual([`image:${scope}:key-1`]);
-        expect(getCanvasHydrationHealth()).toEqual({ error: "", loading: false, scope });
+        expect(getCanvasHydrationHealth()).toEqual({ error: "", loading: false });
         expect(detailGets).toEqual([]);
+        expect(memory.has(scopedStorageKey(CANVAS_STORE_KEY, scope))).toBe(false);
+        expect(memory.has(scopedStorageKey(CANVAS_DRAFTS_KEY, scope))).toBe(false);
     });
 
-    test("preserves unsaved desktop CANVAS_DRAFTS_KEY projects across applyUserSession when CANVAS_STORE_KEY is absent", async () => {
+    test("preserves unsaved desktop CANVAS_DRAFTS_KEY projects across rehydrate, failed backend hydration, and applyUserSession when CANVAS_STORE_KEY is absent", async () => {
         installDesktopWindow();
         const scope = "desktop-unsaved-draft-scope";
         const memory = new Map<string, string>();
@@ -165,22 +168,38 @@ describe("desktop cold-boot canvas hydration", () => {
             memory.delete(String(key));
         }));
 
-        apiClient.defaults.adapter = async () => envelope({ assets: [] });
+        apiClient.defaults.adapter = async (config) => {
+            if (String(config.url || "") === "/canvas-projects") {
+                throw new Error("sqlite temporarily unavailable");
+            }
+            return envelope({ assets: [] });
+        };
 
-        // Simulate backend list hydration failure before applyUserSession runs
-        setCanvasHydrationHealth({ error: "项目暂时无法读取", loading: false });
+        // 1. Bootstrap rehydrates unsaved drafts from CANVAS_DRAFTS_KEY, then backend list fails
+        await useCanvasStore.persist.rehydrate();
+        expect(useCanvasStore.getState().projects.map((p) => p.id)).toEqual(["draft-only-1"]);
+        expect(await hydrateLocalCanvasProjectsFromBackend()).toBe(false);
+
+        // 2. WorkspaceBootstrapHydrator applies session without wiping drafts or resetting health
         await applyUserSession(makeWorkspacePayload(scope));
 
         expect(memory.has(scopedStorageKey(CANVAS_STORE_KEY, scope))).toBe(false);
+        expect(memory.has(scopedStorageKey(CANVAS_DRAFTS_KEY, scope))).toBe(true);
         expect(useCanvasStore.getState().projects.map((p) => p.id)).toEqual(["draft-only-1"]);
-        expect(getCanvasHydrationHealth().error).toBe("项目暂时无法读取");
+        expect(getCanvasHydrationHealth().loading).toBe(false);
+        expect(getCanvasHydrationHealth().error).toContain("现有数据已保留");
     });
 
-    test("resets projects and canvas hydration health when switching to an empty workspace scope", async () => {
+    test("bootstrap retry re-hydrates failed canvas projection alongside preserved drafts and skips duplicate fetches once healthy", async () => {
         installDesktopWindow();
-        const scopeA = "desktop-scope-a";
-        const scopeB = "desktop-scope-b";
+        const scope = "desktop-retry-recovery-scope";
         const memory = new Map<string, string>();
+        const draft = makeDraftCanvas("draft-retry-1", "重试保留草稿");
+        setWorkspaceStorageScope(scope);
+        memory.set(
+            scopedStorageKey(CANVAS_DRAFTS_KEY, scope),
+            serializeCanvasStorageDocument({ state: { projects: [draft] }, version: 0, storageRevision: 1 }),
+        );
 
         spies.push(spyOn(localforage, "getItem").mockImplementation(async (key) => memory.get(String(key)) ?? null));
         spies.push(spyOn(localforage, "setItem").mockImplementation(async (key, value) => {
@@ -191,18 +210,22 @@ describe("desktop cold-boot canvas hydration", () => {
             memory.delete(String(key));
         }));
 
+        let listAttempts = 0;
         apiClient.defaults.adapter = async (config) => {
             if (String(config.url || "") === "/canvas-projects") {
+                listAttempts += 1;
+                if (listAttempts === 1) throw new Error("transient boot failure");
                 return envelope({
                     projects: [{
-                        id: "canvas-in-a",
-                        workspaceProjectId: "canvas-in-a",
-                        title: "A 画布",
-                        revision: 1,
+                        id: "sqlite-recovered-1",
+                        workspaceProjectId: "sqlite-recovered-1",
+                        title: "恢复后的画布",
+                        revision: 2,
                         createdAt: "2026-11-21T10:00:00.000Z",
                         updatedAt: "2026-11-21T10:00:00.000Z",
-                        nodeCount: 1,
+                        nodeCount: 3,
                         previewNodes: [],
+                        localMediaKeys: [`image:${scope}:recovered-key-1`],
                     }],
                     hasMore: false,
                 });
@@ -210,13 +233,23 @@ describe("desktop cold-boot canvas hydration", () => {
             return envelope({ assets: [] });
         };
 
-        setWorkspaceStorageScope(scopeA);
+        // Initial cold boot: draft rehydrated, SQLite list fails
         await useCanvasStore.persist.rehydrate();
-        await hydrateLocalCanvasProjectsFromBackend();
-        expect(useCanvasStore.getState().projects.map((p) => p.id)).toEqual(["canvas-in-a"]);
+        expect(await hydrateLocalCanvasProjectsFromBackend()).toBe(false);
+        await applyUserSession(makeWorkspacePayload(scope));
 
-        await applyUserSession(makeWorkspacePayload(scopeB));
-        expect(useCanvasStore.getState().projects).toEqual([]);
-        expect(getCanvasHydrationHealth()).toEqual({ error: "", loading: true });
+        expect(shouldHydrateCanvasProjects({ embedded: false, isRetry: false })).toBe(false);
+        expect(shouldHydrateCanvasProjects({ embedded: false, isRetry: true })).toBe(true);
+
+        // Retry after backend recovers: restores SQLite summary without losing local draft
+        expect(await hydrateLocalCanvasProjectsFromBackend()).toBe(true);
+        const ids = useCanvasStore.getState().projects.map((p) => p.id).sort();
+        expect(ids).toEqual(["draft-retry-1", "sqlite-recovered-1"]);
+        expect(useCanvasStore.getState().projects.find((p) => p.id === "sqlite-recovered-1")?.summaryMediaKeys).toEqual([`image:${scope}:recovered-key-1`]);
+        expect(getCanvasHydrationHealth()).toEqual({ error: "", loading: false });
+
+        // Already hydrated cleanly -> further retries must not double-fetch canvases
+        expect(shouldHydrateCanvasProjects({ embedded: false, isRetry: true })).toBe(false);
+        expect(shouldHydrateCanvasProjects({ embedded: true, isRetry: true })).toBe(false);
     });
 });

@@ -1,9 +1,8 @@
 import { localForageStorage } from "@/lib/localforage-storage";
 import { normalizeLocalAsset, normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
-import { getActiveUserScope, scopedLocalStorage, setWorkspaceStorageScope } from "@/lib/user-scope";
-import { getCanvasHydrationHealth, setCanvasHydrationHealth } from "@/services/canvas-hydration-health";
+import { scopedLocalStorage, setWorkspaceStorageScope } from "@/lib/user-scope";
 import { CANVAS_HISTORY_STORE_KEY, useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
-import { flushCanvasStorePersistence, hasPersistedCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { ASSET_STORE_KEY, flushAssetStorePersistence, hydrateAssetStoreDrafts, useAssetStore, withAssetStorePersistenceSuppressed } from "@/stores/use-asset-store";
 import { preserveLegacyCacheOnlyAssetDrafts, usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
 import { CONFIG_STORE_KEY, defaultConfig, isSystemProxyBaseUrl, normalizeConfigSnapshot, useConfigStore, type AiConfig } from "@/stores/use-config-store";
@@ -32,23 +31,10 @@ async function hydrateLocalWorkspace(payload: WorkspaceBootstrapPayload) {
     });
 
     try {
-        const previousScope = getActiveUserScope();
-        const previousHealth = getCanvasHydrationHealth();
         await Promise.all([flushCanvasStorePersistence(), flushAssetStorePersistence()]);
         setWorkspaceStorageScope(payload.workspace.id);
-        const nextScope = getActiveUserScope();
-        const scopeChanged = previousScope !== nextScope;
-        const canvasAlreadyHydratedForScope = !scopeChanged
-            && useCanvasStore.persist.hasHydrated()
-            && !previousHealth.loading
-            && !previousHealth.error
-            && previousHealth.scope === nextScope;
-        if (scopeChanged) {
-            setCanvasHydrationHealth({ error: "", loading: true });
-        }
 
-        const [hasPersistedCanvas, persistedCanvasHistory, persistedAssets, persistedPlugins] = await Promise.all([
-            canvasAlreadyHydratedForScope ? Promise.resolve(true) : hasPersistedCanvasStorage(nextScope),
+        const [persistedCanvasHistory, persistedAssets, persistedPlugins] = await Promise.all([
             localForageStorage.getItem(CANVAS_HISTORY_STORE_KEY),
             localForageStorage.getItem(ASSET_STORE_KEY),
             localForageStorage.getItem(PLUGIN_STORE_KEY),
@@ -65,8 +51,10 @@ async function hydrateLocalWorkspace(payload: WorkspaceBootstrapPayload) {
         useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
         useUserStore.getState().setFeatures({ ...defaultFeatureAvailability, ...payload.features });
 
+        // Canvas store hydration (IndexedDB drafts + SQLite summary projection) is
+        // owned by workspace bootstrap (`ensureWorkspaceStorageHydrated` /
+        // `WorkspaceBootstrapHydrator`), never rehydrated or reset here.
         await Promise.all([
-            ...(canvasAlreadyHydratedForScope ? [] : [useCanvasStore.persist.rehydrate()]),
             useCanvasHistoryStore.persist.rehydrate(),
             useAssetStore.persist.rehydrate(),
             useConfigStore.persist.rehydrate(),
@@ -76,21 +64,13 @@ async function hydrateLocalWorkspace(payload: WorkspaceBootstrapPayload) {
         await hydrateAssetStoreDrafts(undefined, { reproject: true });
 
         useConfigStore.getState().replaceConfig(localWorkspaceConfig(useConfigStore.getState().config));
-        useCanvasStore.setState((state) => (
-            state.projects.some((project) => Boolean(project.remoteContentHash))
-                ? { projects: state.projects.map(normalizeLocalCanvasProject) }
-                : state
-        ));
+        if (useCanvasStore.getState().projects.some((project) => Boolean(project.remoteContentHash))) {
+            useCanvasStore.setState((state) => ({ projects: state.projects.map(normalizeLocalCanvasProject) }));
+        }
         useAssetStore.setState((state) => ({ assets: state.assets.map(normalizeLocalAsset) }));
 
         // Zustand keeps the previous in-memory value when a scoped snapshot is
         // absent, so every empty local namespace must be reset explicitly.
-        // In desktop SQLite single-source mode, clean canvases live in SQLite
-        // (already hydrated before React mounts) and unsaved drafts live under
-        // CANVAS_DRAFTS_KEY, never CANVAS_STORE_KEY.
-        if (!canvasAlreadyHydratedForScope && !hasPersistedCanvas) {
-            useCanvasStore.setState({ projects: [] });
-        }
         if (!persistedCanvasHistory) useCanvasHistoryStore.setState({ deletedProjects: [] });
         if (usesWorkspaceAssetLibraryApi()) {
             try {
