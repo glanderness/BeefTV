@@ -13,6 +13,6 @@ test("web does not keep a second package manager lockfile", () => {
 
 test("web package.json declares Bun as the package manager", async () => {
     const manifest = await Bun.file(new URL("../package.json", import.meta.url)).json();
-    expect(manifest.packageManager).toBe("bun@1.3.9");
+    expect(manifest.packageManager).toBe("bun@1.4.2");
     expect(manifest.pnpm).toBeUndefined();
 });
