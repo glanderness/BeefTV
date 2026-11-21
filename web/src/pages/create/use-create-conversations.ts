@@ -27,7 +27,6 @@ type ModalApi = ReturnType<typeof App.useApp>["modal"];
 
 interface UseCreateConversationsParams {
     demoConversation: boolean;
-    localMode: boolean;
     userId?: string;
     navigate: NavigateFunction;
     toast: MessageToast;
@@ -43,7 +42,6 @@ interface UseCreateConversationsParams {
 export function useCreateConversations(params: UseCreateConversationsParams) {
     const {
         demoConversation,
-        localMode,
         userId,
         navigate,
         toast,
@@ -263,7 +261,6 @@ export function useCreateConversations(params: UseCreateConversationsParams) {
             conversationsRef.current = next;
             setConversations(next);
             await saveCreationConversations(next);
-            if (result.syncError && !localMode) toastRef.current.warning("会话已保存在本机，云端同步尚未完成。");
             const params = new URLSearchParams({ conversation: result.sessionId });
             if (assetIds.length) {
                 params.set("mode", "handoff");

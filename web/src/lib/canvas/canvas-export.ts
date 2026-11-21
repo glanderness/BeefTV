@@ -7,7 +7,6 @@ import type { CanvasFolder, CanvasProject } from "@/stores/canvas/use-canvas-sto
 import { loadCanvasDrawing, loadCanvasDrawingPreview, loadCanvasDrawingRender } from "@/lib/canvas/canvas-drawing-storage";
 import type { CanvasDrawingExport } from "@/types/canvas-export";
 import { normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
 import { http } from "@/services/api/request";
 import { startOperation } from "@/stores/use-operation-progress";
@@ -212,7 +211,7 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
                 } satisfies CanvasDrawingExport;
             }))).filter((item): item is CanvasDrawingExport => item !== null);
             drawingDocuments.forEach((document) => zipFiles.push({ name: `projects/${project.id}/drawings/${safeFileName(document.drawingId)}.json`, data: JSON.stringify(document) }));
-            const normalizedProject = isLocalWorkspaceMode() ? normalizeLocalCanvasProject(project) : project;
+            const normalizedProject = normalizeLocalCanvasProject(project);
             const exportedProject = options.allowMissingMedia && (missingStorageKeys.size > 0 || missingDrawingIds.size > 0)
                 ? stripMissingArchiveReferences(normalizedProject, missingStorageKeys, missingDrawingIds)
                 : normalizedProject;

@@ -1,6 +1,6 @@
 import type { Asset } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { http, compactApiParams, type HttpRequestConfig } from "@/services/api/request";
+import { http, type HttpRequestConfig } from "@/services/api/request";
 
 export type AssetFolder = {
     id: string;
@@ -14,13 +14,6 @@ export type CanvasLibrarySummary = Pick<CanvasProject, "id" | "workspaceProjectI
     nodeCount: number;
     previewNodes: CanvasProject["nodes"];
 };
-
-export function listWorkspaceCanvasProjectsPage(options: { page: number; pageSize: number; projectId?: string; query?: string; sort?: string; signal?: AbortSignal }) {
-    return http.get<{ projects: CanvasLibrarySummary[]; page: number; pageSize: number; total: number; hasMore: boolean }>("/canvas-projects", {
-        signal: options.signal,
-        params: compactApiParams({ page: options.page, pageSize: options.pageSize, projectId: options.projectId, q: options.query, sort: options.sort }),
-    });
-}
 
 export function listAssetFolders(config?: HttpRequestConfig) {
     return http.get<{ folders: AssetFolder[] }>("/asset-folders", config);

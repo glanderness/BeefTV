@@ -1,4 +1,4 @@
-import { ArrowRight, Plus, RefreshCw } from "lucide-react";
+import { ArrowRight, Plus } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { isEmbeddedRuntime } from "@/lib/embedded-runtime";
 import type { CanvasLibrarySummary } from "@/services/api/workspace-data";
@@ -10,7 +10,7 @@ function formatDate(value: string) {
     return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(date).replaceAll("/", "-");
 }
 
-export function HomeDashboard({ projects, loading, error, onRetry }: { projects: CanvasLibrarySummary[]; loading: boolean; error: boolean; onRetry: () => void }) {
+export function HomeDashboard({ projects, loading }: { projects: CanvasLibrarySummary[]; loading: boolean }) {
     const navigate = useNavigate();
     return (
         <main className="beeftv-home" aria-label="BeefTV 首页">
@@ -42,19 +42,15 @@ export function HomeDashboard({ projects, loading, error, onRetry }: { projects:
 
             <section className="beeftv-home-section beeftv-recents">
                 <header className="beeftv-section-heading"><h2>最近项目</h2><Link to="/project">查看全部 <ArrowRight /></Link></header>
-                {error ? (
-                    <button className="beeftv-home-error" type="button" onClick={onRetry}><RefreshCw />画布读取失败，点击重试</button>
-                ) : (
-                    <div className="beeftv-recent-grid">
-                        {loading ? Array.from({ length: 4 }, (_, index) => <div className="beeftv-recent-card is-loading" key={index} />) : projects.length ? projects.map((project) => {
-                            return <Link to={`/canvas/${project.id}`} className="beeftv-recent-card" key={project.id}>
-                                <span className="beeftv-recent-preview"><ProjectPreview project={{ id: project.id, nodes: project.previewNodes }} emptyVariant="libtv" /></span>
-                                <span className="beeftv-recent-copy"><strong>{project.title || "未命名"}</strong><small>{formatDate(project.updatedAt)}</small></span>
-                                <ArrowRight className="beeftv-recent-arrow" />
-                            </Link>;
-                        }) : <button type="button" className="beeftv-recent-card is-empty" onClick={() => navigate("/canvas?mode=new")}><span className="beeftv-recent-preview"><Plus /></span><span className="beeftv-recent-copy"><strong>创建第一个画布</strong><small>让灵感有一个开始的地方</small></span></button>}
-                    </div>
-                )}
+                <div className="beeftv-recent-grid">
+                    {loading ? Array.from({ length: 4 }, (_, index) => <div className="beeftv-recent-card is-loading" key={index} />) : projects.length ? projects.map((project) => {
+                        return <Link to={`/canvas/${project.id}`} className="beeftv-recent-card" key={project.id}>
+                            <span className="beeftv-recent-preview"><ProjectPreview project={{ id: project.id, nodes: project.previewNodes }} emptyVariant="libtv" /></span>
+                            <span className="beeftv-recent-copy"><strong>{project.title || "未命名"}</strong><small>{formatDate(project.updatedAt)}</small></span>
+                            <ArrowRight className="beeftv-recent-arrow" />
+                        </Link>;
+                    }) : <button type="button" className="beeftv-recent-card is-empty" onClick={() => navigate("/canvas?mode=new")}><span className="beeftv-recent-preview"><Plus /></span><span className="beeftv-recent-copy"><strong>创建第一个画布</strong><small>让灵感有一个开始的地方</small></span></button>}
+                </div>
             </section>
         </main>
     );

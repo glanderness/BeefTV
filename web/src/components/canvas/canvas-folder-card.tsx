@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils";
 
 type CanvasFolderCardProps = {
     project: CanvasLibrarySummary;
-    projectName?: string;
     folders?: Array<{ id: string; name: string }>;
     onMoveToFolder?: (folderId?: string) => void;
     onDuplicate?: () => Promise<void>;
@@ -27,7 +26,7 @@ type CanvasFolderCardProps = {
 };
 
 /** 画布库中的文件夹封面：单一卡片表面承载预览和信息，避免相邻卡片互相侵入。 */
-export function CanvasFolderCard({ project, projectName, folders = [], onMoveToFolder, onDuplicate, onExport, onDelete, onClick, onCoverError, onPrefetch, opening = false }: CanvasFolderCardProps) {
+export function CanvasFolderCard({ project, folders = [], onMoveToFolder, onDuplicate, onExport, onDelete, onClick, onCoverError, onPrefetch, opening = false }: CanvasFolderCardProps) {
     const { message } = App.useApp();
     const renameProject = useCanvasStore((state) => state.renameProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);

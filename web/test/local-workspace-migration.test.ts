@@ -79,7 +79,6 @@ describe("local workspace migration", () => {
             const file = new File([exported], "assets.zip", { type: "application/zip" });
             const added: Array<Record<string, unknown>> = [];
             const ok = await importAssetArchiveFile(file, {
-                localWorkspace: true,
                 addAsset: (asset) => {
                     added.push(asset as unknown as Record<string, unknown>);
                     return "imported-1";

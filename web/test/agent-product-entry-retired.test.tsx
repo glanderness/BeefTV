@@ -96,7 +96,7 @@ describe("旧内置 Agent 页面入口退场", () => {
     test("首页不再提供 Agent 能力入口，手工创作入口仍然指向真实画布路径", () => {
         const markup = renderToStaticMarkup(
             <MemoryRouter>
-                <HomeDashboard projects={[]} loading={false} error={false} onRetry={() => {}} />
+                <HomeDashboard projects={[]} loading={false} />
             </MemoryRouter>,
         );
         expect(markup).not.toContain("BeefTV Agent");

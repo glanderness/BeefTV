@@ -10,7 +10,6 @@ import { FullScreenLoader, WorkspaceRouteLoader } from "@/components/ui/aceterni
 import { loadAgentsPage, loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadHomePage, loadProjectDetailPage } from "@/lib/workspace-route-modules";
 import { CanvasRefreshShell } from "@/pages/canvas/canvas-refresh-shell";
 import RouteErrorPage from "@/pages/route-error";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
 const AgentsPage = lazy(loadAgentsPage);
 const AssetsPage = lazy(loadAssetsPage);
@@ -53,8 +52,7 @@ function WorkspaceLayout() {
 
 function LocalAwareProjectRoute() {
     const { projectId } = useParams();
-    const localMode = isLocalWorkspaceMode();
-    if (localMode && projectId) return <Navigate to={`/canvas/${projectId}`} replace />;
+    if (projectId) return <Navigate to={`/canvas/${projectId}`} replace />;
     return deferred(<ProjectDetailPage />);
 }
 

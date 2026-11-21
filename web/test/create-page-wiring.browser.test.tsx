@@ -142,7 +142,6 @@ beforeAll(async () => {
 
             const state = useCreateConversations({
                 demoConversation: false,
-                localMode: true,
                 navigate: (() => undefined) as never,
                 toast,
                 modal,

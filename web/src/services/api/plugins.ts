@@ -40,10 +40,6 @@ export async function fetchPlugins() {
     return http.get<{ plugins: BackendPlugin[]; states: Record<string, PluginState> }>("/plugins");
 }
 
-export async function fetchPluginRuntimeState() {
-    return http.get<{ states: Record<string, PluginState> }>("/plugins/status");
-}
-
 // npm downloads a package and its dependencies; the backend allows up to three minutes.
 const PACKAGE_INSTALL_TIMEOUT_MS = 200_000;
 

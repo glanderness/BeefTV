@@ -1,5 +1,5 @@
 import { rebindInconsistentCanvasAssets, type CanvasAssetRebindResult } from "@/services/canvas-asset-repair";
-import { createLocalCanvasProject, deleteLocalCanvasProjects, openLocalCanvasProject, openLocalCanvasProjectFromBackend, persistCanvasDocument, restoreLocalCanvasProjectFromHistory } from "@/services/local-workspace-repository";
+import { openLocalCanvasProject, openLocalCanvasProjectFromBackend, persistCanvasDocument, restoreLocalCanvasProjectFromHistory } from "@/services/local-workspace-repository";
 import { flushAssetStorePersistence, useAssetStore } from "@/stores/use-asset-store";
 import {
     loadWorkspaceAssetLibraryPage,
@@ -7,8 +7,6 @@ import {
     type WorkspaceAssetLibraryPageOptions,
 } from "@/services/workspace-asset-read";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-
-export { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
 const canvasRefreshListeners = new Set<(project: CanvasProject, previous: CanvasProject | undefined) => void>();
 
@@ -66,18 +64,6 @@ export function loadAssetsForUse(ids: Iterable<string>) {
 export function localSavedRemotePendingMessage(localAction: string, error: unknown) {
     const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "未知错误";
     return `${localAction}失败：${detail}`;
-}
-
-export async function createCanvasProjectWithRemoteSync(
-    title: string,
-    projectId?: string,
-    initialContent?: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">>,
-): Promise<{ id: string; syncError?: unknown }> {
-    return { ...await createLocalCanvasProject(title, projectId, initialContent), syncError: undefined };
-}
-
-export function deleteCanvasProjectsWithRemoteSync(ids: string[]) {
-    return deleteLocalCanvasProjects(ids);
 }
 
 /** Flush local workspace persistence stores (canvas + assets). */

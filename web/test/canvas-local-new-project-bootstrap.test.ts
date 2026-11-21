@@ -1,15 +1,72 @@
-import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { describe, expect, test } from "bun:test";
 
-test("local new canvas waits for local-store hydration but not browser session hydration", () => {
-    const source = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/index.tsx"), "utf8");
-    expect(source).toContain("if (!hydrated || (remoteMode && (!sessionHydrated || !libraryQuery.isSuccess))");
-    expect(source).not.toContain("if (!hydrated || !sessionHydrated ||");
-});
+import { canAutoOpenCanvasEntry } from "@/pages/canvas";
 
-test("local canvas editor lifecycle does not disable persistence while browser stores hydrate", () => {
-    const source = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-project-lifecycle.ts"), "utf8");
-    expect(source).toContain("if (!localMode && (!hydrated || !sessionHydrated)) return;");
-    expect(source).not.toContain("if (!hydrated || !sessionHydrated) return;");
+describe("local new canvas entry bootstrap", () => {
+    test("mode=new waits for local-store hydration but proceeds while historical canvases are still loading", () => {
+        expect(
+            canAutoOpenCanvasEntry({
+                hydrated: false,
+                alreadyOpened: false,
+                mode: "new",
+                canvasHealth: { loading: false, error: "" },
+            }),
+        ).toBe(false);
+
+        expect(
+            canAutoOpenCanvasEntry({
+                hydrated: true,
+                alreadyOpened: false,
+                mode: "new",
+                canvasHealth: { loading: true, error: "" },
+            }),
+        ).toBe(true);
+
+        expect(
+            canAutoOpenCanvasEntry({
+                hydrated: true,
+                alreadyOpened: true,
+                mode: "new",
+                canvasHealth: { loading: false, error: "" },
+            }),
+        ).toBe(false);
+    });
+
+    test("mode=recent and handoff wait for canvas hydration health before auto-opening", () => {
+        expect(
+            canAutoOpenCanvasEntry({
+                hydrated: true,
+                alreadyOpened: false,
+                mode: "recent",
+                canvasHealth: { loading: true, error: "" },
+            }),
+        ).toBe(false);
+
+        expect(
+            canAutoOpenCanvasEntry({
+                hydrated: true,
+                alreadyOpened: false,
+                mode: "recent",
+                canvasHealth: { loading: false, error: "load failed" },
+            }),
+        ).toBe(false);
+
+        expect(
+            canAutoOpenCanvasEntry({
+                hydrated: true,
+                alreadyOpened: false,
+                mode: "recent",
+                canvasHealth: { loading: false, error: "" },
+            }),
+        ).toBe(true);
+
+        expect(
+            canAutoOpenCanvasEntry({
+                hydrated: true,
+                alreadyOpened: false,
+                mode: null,
+                canvasHealth: { loading: false, error: "" },
+            }),
+        ).toBe(false);
+    });
 });

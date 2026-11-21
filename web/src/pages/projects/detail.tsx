@@ -4,7 +4,7 @@ import { Alert, App } from "antd";
 import { ArrowLeft, Plus } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 
-import { getProjectCore, getProjectOverview, getProjectUnitWorkspace, linkCanvasUnit, listProjectUnits } from "@/services/api/projects";
+import { getProjectCore, getProjectOverview, getProjectUnitWorkspace, listProjectUnits } from "@/services/api/projects";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import type { ProjectDetail } from "@/services/api/projects";
@@ -12,7 +12,6 @@ import type { ProjectDetail } from "@/services/api/projects";
 import { WorkflowChapterNavigator } from "./detail/workflow-chapter-navigator";
 import { usePluginSlot } from "@/lib/plugins/slot-registry";
 import { createLocalCanvasProject } from "@/services/local-workspace-repository";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
 const ProjectAssetsView = lazy(() => import("./detail/assets"));
 const ProjectCanvasesView = lazy(() => import("./detail/canvases"));
@@ -87,41 +86,12 @@ export default function ProjectDetailPage() {
             : undefined;
         const shots = unit ? detail?.shots.filter((shot) => shot.unitId === unit.id) || [] : [];
         try {
-            const [{ createCanvasProjectWithRemoteSync }, storyboard] = await Promise.all([
-                import("@/services/local-workspace-sync"),
-                unit && shots.length ? import("@/lib/canvas/project-chapter-storyboard") : Promise.resolve(null),
-            ]);
+            const storyboard = unit && shots.length ? await import("@/lib/canvas/project-chapter-storyboard") : null;
             const seed = unit && shots.length ? storyboard?.upsertProjectChapterStoryboard([], [], { unit, shots }) : undefined;
             const initialContent = seed ? { nodes: seed.nodes, connections: seed.connections } : undefined;
             const title = unit ? `${unit.title} · ${shots.length ? "分镜画布" : "画布"}` : `${detail?.project.name || "项目"} · 新画布`;
-            // 本地 BeefTV 项目库不建立云端项目关联；章节/项目 API 仍可供
-            // 显式 hosted build 使用，但默认创建路径只写入本地画布存储。
-            // Use the central workspace capability boundary so a local
-            // session remains local even when the build also supports hosted
-            // mode or is still finishing session hydration.
-            if (isLocalWorkspaceMode()) {
-                const { id } = await createLocalCanvasProject(title, projectId, initialContent);
-                message.success(unit && shots.length ? `已创建本地章节画布并导入 ${shots.length} 个分镜` : "本地画布已创建");
-                navigate(`/canvas/${id}`);
-                return;
-            }
-            const { id, syncError } = await createCanvasProjectWithRemoteSync(title, projectId, initialContent);
-            if (syncError) {
-                message.warning(syncError instanceof Error ? `画布已保存在本地，项目关联稍后重试：${syncError.message}` : "画布已保存在本地，项目关联稍后重试");
-                navigate(`/canvas/${id}`);
-                return;
-            }
-            if (unit) {
-                try {
-                    await linkCanvasUnit(projectId, { canvasId: id, unitId: unit.id, role: "storyboard" });
-                } catch (error) {
-                    refreshProject();
-                    message.error(error instanceof Error ? `画布已创建，但章节关联失败：${error.message}` : "画布已创建，但章节关联失败");
-                    return;
-                }
-            }
-            refreshProject();
-            message.success(unit && shots.length ? `已创建章节画布并导入 ${shots.length} 个分镜` : unit ? "章节画布已创建并关联" : "项目画布已创建");
+            const { id } = await createLocalCanvasProject(title, projectId, initialContent);
+            message.success(unit && shots.length ? `已创建本地章节画布并导入 ${shots.length} 个分镜` : "本地画布已创建");
             navigate(`/canvas/${id}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "画布创建失败");

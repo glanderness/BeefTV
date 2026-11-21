@@ -1,4 +1,3 @@
-import { QueryClient } from "@tanstack/react-query";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -12,9 +11,8 @@ const localMediaRepository = readFileSync(resolve(import.meta.dir, "../src/servi
 const resourceStorageMode = readFileSync(resolve(import.meta.dir, "../src/services/workspace-resource-storage.ts"), "utf8");
 
 describe("local asset upload semantics", () => {
-    test("uses local copy while preserving remote upload wording", () => {
-        expect(assetUploadLoadingCopy(false)).toBe("正在保存素材…");
-        expect(assetUploadLoadingCopy(true)).toBe("正在上传素材…");
+    test("uses local persistence copy", () => {
+        expect(assetUploadLoadingCopy()).toBe("正在保存素材…");
         expect(localSavedRemotePendingMessage("部分素材已保存在本地", new Error("offline"))).toContain("部分素材已保存在本地");
     });
 
@@ -32,11 +30,10 @@ describe("local asset upload semantics", () => {
         expect(localMediaRepository).toContain("localForageInstance(MEDIA_FILES_STORE_NAME)");
     });
 
-    test("3D model fallback uses hosted-only remote wording", async () => {
+    test("3D model fallback keeps local-only wording without cloud-sync promises", async () => {
         const warnings: string[] = [];
         const modelFile = new File(["glb"], "hero.glb", { type: "model/gltf-binary" });
         await saveUploadedModelFile(modelFile, {
-            localWorkspace: false,
             addAsset: () => "model-1",
             persistChanges: async () => undefined,
             uploadFile: async () => ({
@@ -47,13 +44,13 @@ describe("local asset upload semantics", () => {
                 pendingRemoteUpload: true,
             }),
             invalidateAssetLibrary: async () => undefined,
-            queryClient: new QueryClient(),
             message: {
                 success: () => (() => undefined) as never,
                 warning: (content) => { warnings.push(String(content)); return (() => undefined) as never; },
             },
         });
-        expect(warnings.some((text) => text.includes("等待远端同步"))).toBe(true);
+        expect(warnings).toEqual(["3D 模型已保存在本机"]);
+        expect(warnings.some((text) => text.includes("等待远端同步"))).toBe(false);
         expect(warnings.some((text) => text.includes("尚未上传到服务器"))).toBe(false);
     });
 });

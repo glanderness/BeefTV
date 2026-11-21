@@ -1,4 +1,3 @@
-import type { QueryClient } from "@tanstack/react-query";
 import type { App } from "antd";
 
 import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
@@ -11,14 +10,13 @@ import { localSavedRemotePendingMessage } from "@/services/local-workspace-sync"
 import { persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
 import { flushAssetStorePersistence, type Asset, type NewAsset } from "@/stores/use-asset-store";
 import { startOperation } from "@/stores/use-operation-progress";
-import { assetStorageUsageQueryKey } from "./asset-storage-usage";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import type { LibraryAsset } from "./assets-shared";
 
 type MessageApi = ReturnType<typeof App.useApp>["message"];
 
-export function assetUploadLoadingCopy(remoteMode: boolean) {
-    return remoteMode ? "正在上传素材…" : "正在保存素材…";
+export function assetUploadLoadingCopy() {
+    return "正在保存素材…";
 }
 
 export function downloadLibraryAsset(asset: LibraryAsset, message: MessageApi) {
@@ -43,17 +41,15 @@ export async function exportLibraryAssets(assets: Asset[], message: MessageApi, 
 export async function saveUploadedModelFile(
     file: File | undefined,
     options: {
-        localWorkspace: boolean;
         addAsset: (asset: NewAsset) => string;
         persistChanges?: () => Promise<void>;
         uploadFile?: typeof uploadMediaFile;
         invalidateAssetLibrary: () => Promise<void>;
-        queryClient: QueryClient;
         message: Pick<MessageApi, "success" | "warning">;
     },
 ) {
     if (!file || !/\.(glb|gltf)$/i.test(file.name)) return false;
-    const { localWorkspace, addAsset, persistChanges = persistWorkspaceAssetChanges, uploadFile = uploadMediaFile, invalidateAssetLibrary, queryClient, message } = options;
+    const { addAsset, persistChanges = persistWorkspaceAssetChanges, uploadFile = uploadMediaFile, invalidateAssetLibrary, message } = options;
     try {
         const uploaded = await uploadFile(file, "model");
         addAsset({
@@ -66,15 +62,9 @@ export async function saveUploadedModelFile(
             metadata: { source: "manual" },
         });
         await persistChanges();
-        void queryClient.invalidateQueries({ queryKey: assetStorageUsageQueryKey });
         await invalidateAssetLibrary();
-        // Hosted mode may retry the remote copy; local mode intentionally keeps
-        // the browser fallback local and does not expose a cloud-upload warning.
         if (uploaded.pendingRemoteUpload) {
-            // The local workspace must never surface a cloud-sync promise, even
-            // if an upload result was created before the session mode finished
-            // hydrating. Hosted mode keeps the retry wording.
-            message.warning(localWorkspace ? "3D 模型已保存在本机" : `3D 模型已保存在本机，等待远端同步${uploaded.remoteUploadError ? `：${uploaded.remoteUploadError}` : ""}`);
+            message.warning("3D 模型已保存在本机");
         } else {
             message.success("3D 模型已保存");
         }
@@ -88,7 +78,6 @@ export async function saveUploadedModelFile(
 export async function importAssetArchiveFile(
     file: File | undefined,
     options: {
-        localWorkspace: boolean;
         addAsset: (asset: NewAsset) => string;
         flushPersistence?: () => Promise<void>;
         persistChanges?: () => Promise<void>;
@@ -98,7 +87,6 @@ export async function importAssetArchiveFile(
 ) {
     if (!file) return false;
     const {
-        localWorkspace,
         addAsset,
         flushPersistence = flushAssetStorePersistence,
         persistChanges = persistWorkspaceAssetChanges,
@@ -114,7 +102,7 @@ export async function importAssetArchiveFile(
             delete payload.id;
             delete payload.createdAt;
             delete payload.updatedAt;
-            addAsset((localWorkspace ? normalizeLocalAsset(payload) : payload) as NewAsset);
+            addAsset(normalizeLocalAsset(payload) as NewAsset);
         });
         await flushPersistence();
         const imported = importedAssets.length;

@@ -26,7 +26,6 @@ import {
     subscribeBuiltinPresets,
 } from "@/lib/builtin-service-presets";
 import { syncPartnerCatalogFromBackend, syncPluginsFromBackend } from "@/services/plugin-sync";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import "@/styles/workspace-product.css";
 
 const workspaceTheme = getWorkspaceAntThemeConfig();
@@ -98,7 +97,6 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     }, [partnerPresetsRev]);
 
     useEffect(() => {
-        if (!isLocalWorkspaceMode()) return;
         const refreshProjects = () => {
             if (document.hidden) return;
             void hydrateLocalCanvasProjectsFromBackend();

@@ -1,4 +1,4 @@
-import { Check, Clapperboard, CloudUpload, Download, FileText, Frame, HardDriveUpload, Image as ImageIcon, MoreHorizontal, Music2, Pencil, Plus, Settings2, Sparkles, Trash2, Video, Workflow, X } from "lucide-react";
+import { Check, Clapperboard, Download, FileText, Frame, HardDriveUpload, Image as ImageIcon, MoreHorizontal, Music2, Pencil, Plus, Settings2, Sparkles, Trash2, Video, Workflow, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { App, Dropdown, Input } from "antd";
@@ -9,13 +9,12 @@ import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { reportOwnedMediaSave } from "@/services/desktop-media-save";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { resolveBackendApiUrl } from "@/stores/use-config-store";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { MediaPlaceholder } from "@/components/ui/product/media-placeholder";
 import { cn } from "@/lib/utils";
-import { canvasSyncProgressKey, useSyncProgressStore } from "@/stores/use-sync-progress-store";
+import { canvasSyncProgressKey, useSyncProgressStore, type SyncProjectProgress } from "@/stores/use-sync-progress-store";
 
 type ProjectPreviewMedia = { node: CanvasNodeData; url: string; storageKey?: string; kind: "image" | "video" };
 const projectPreviewMediaCache = new WeakMap<CanvasNodeData[], { first: ProjectPreviewMedia[]; latest: ProjectPreviewMedia[] }>();
@@ -151,10 +150,6 @@ export function CanvasProjectCard({ project, projectName, variant = "library", r
 export function ProjectPreview({ project, preferLatestImage = false, emptyVariant = "default" }: { project: Pick<CanvasProject, "id" | "nodes">; preferLatestImage?: boolean; emptyVariant?: "default" | "libtv" }) {
     const syncProgress = useSyncProgressStore((state) => state.syncingProjects[canvasSyncProgressKey(project.id)]);
     const isSyncing = Boolean(syncProgress && (syncProgress.phase === "uploading" || syncProgress.phase === "saving"));
-    // The progress message can be stale while a canvas is rehydrating. Use the
-    // persistence boundary as the source of truth so local workspaces never
-    // render cloud-upload copy or a cloud icon during a local write.
-    const isLocalSave = isLocalWorkspaceMode() || syncProgress?.message?.includes("本地") === true;
     const [failedMedia, setFailedMedia] = useState<string[]>([]);
     const media = projectPreviewMediaCandidates(project.nodes, preferLatestImage).find((candidate) => !failedMedia.includes(`${candidate.node.id}:${candidate.kind}:${candidate.url}`));
     const failMedia = () => { if (media) setFailedMedia((current) => [...current, `${media.node.id}:${media.kind}:${media.url}`]); };
@@ -192,37 +187,41 @@ export function ProjectPreview({ project, preferLatestImage = false, emptyVarian
     return (
         <div className="relative size-full overflow-hidden">
             {content}
-            {isSyncing && syncProgress ? (
-                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-stone-950/75 p-3 text-center backdrop-blur-sm transition-all duration-300 pointer-events-none select-none" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1.5 text-amber-400">
-                        {isLocalSave ? <HardDriveUpload className="size-4 animate-bounce" /> : <CloudUpload className="size-4 animate-bounce" />}
-                        <span className="text-xs font-medium tracking-wide">{isLocalSave ? "本地保存中" : "云端同步中"}</span>
-                    </div>
-                    <div className="w-full max-w-[150px] space-y-1">
-                        {syncProgress.total > 0 ? (
-                            <>
-                                <div className="flex items-center justify-between text-[10px] text-white/80">
-                                    <span>{isLocalSave ? "媒体保存" : "媒体上传"}</span>
-                                    <span className="font-mono text-amber-300">
-                                        {syncProgress.completed}/{syncProgress.total}
-                                    </span>
-                                </div>
-                                <div className="h-1 w-full overflow-hidden rounded-full bg-white/20">
-                                    <div
-                                        className="h-full bg-gradient-to-r from-amber-400 to-orange-400 transition-all duration-200"
-                                        style={{
-                                            width: `${Math.max(8, Math.round((syncProgress.completed / syncProgress.total) * 100))}%`,
-                                        }}
-                                    />
-                                </div>
-                            </>
-                        ) : (
-                            <div className="text-[10px] text-white/80">{isLocalSave ? "正在写入本地结构..." : "正在写入云端结构..."}</div>
-                        )}
-                        <div className="text-[9px] text-white/60">请勿关闭或刷新浏览器</div>
-                    </div>
-                </div>
-            ) : null}
+            {isSyncing && syncProgress ? <ProjectSyncProgressOverlay syncProgress={syncProgress} /> : null}
+        </div>
+    );
+}
+
+export function ProjectSyncProgressOverlay({ syncProgress }: { syncProgress: SyncProjectProgress }) {
+    return (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-stone-950/75 p-3 text-center backdrop-blur-sm transition-all duration-300 pointer-events-none select-none" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-1.5 text-amber-400">
+                <HardDriveUpload className="size-4 animate-bounce" />
+                <span className="text-xs font-medium tracking-wide">本地保存中</span>
+            </div>
+            <div className="w-full max-w-[150px] space-y-1">
+                {syncProgress.total > 0 ? (
+                    <>
+                        <div className="flex items-center justify-between text-[10px] text-white/80">
+                            <span>媒体保存</span>
+                            <span className="font-mono text-amber-300">
+                                {syncProgress.completed}/{syncProgress.total}
+                            </span>
+                        </div>
+                        <div className="h-1 w-full overflow-hidden rounded-full bg-white/20">
+                            <div
+                                className="h-full bg-gradient-to-r from-amber-400 to-orange-400 transition-all duration-200"
+                                style={{
+                                    width: `${Math.max(8, Math.round((syncProgress.completed / syncProgress.total) * 100))}%`,
+                                }}
+                            />
+                        </div>
+                    </>
+                ) : (
+                    <div className="text-[10px] text-white/80">正在写入本地结构...</div>
+                )}
+                <div className="text-[9px] text-white/60">请勿关闭或刷新浏览器</div>
+            </div>
         </div>
     );
 }

@@ -11,7 +11,6 @@ import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-c
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
 import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
 import { withGenerationArtifactCommitLock } from "@/services/generation-asset-repository";
-import { uploadGeneratedAssetToConfiguredSources } from "@/services/external-asset-sources";
 import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
 import { generationArtifactStorageKey, loadOrStoreGenerationArtifact } from "@/services/generation-artifact-sink";
 import { createProviderNeutralGenerationTaskEffectStore } from "@/services/provider-neutral-generation-effects";
@@ -506,17 +505,6 @@ const materializeGenerationOutput: MaterializeGenerationTaskOutput = createIdemp
             },
             { requireCrossRealmLock: true },
         );
-        const storedAsset = useAssetStore.getState().assets.find((candidate) => candidate.id === assetId);
-        if (storedAsset) {
-            const syncResult = await uploadGeneratedAssetToConfiguredSources(storedAsset, input.signal);
-            throwIfAborted(input.signal);
-            if (syncResult.records.length) {
-                const currentAsset = useAssetStore.getState().assets.find((candidate) => candidate.id === assetId) || storedAsset;
-                useAssetStore.getState().updateAsset(assetId, {
-                    metadata: { ...currentAsset.metadata, externalSync: syncResult.records },
-                });
-            }
-        }
         return assetId;
     },
 });

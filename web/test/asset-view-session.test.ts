@@ -105,7 +105,6 @@ describe("asset page and picker wiring", () => {
         const order: string[] = [];
         const successes: string[] = [];
         const ok = await saveUploadedModelFile(new File(["glb"], "prop.glb", { type: "model/gltf-binary" }), {
-            localWorkspace: true,
             addAsset: () => { order.push("add"); return "m-1"; },
             persistChanges: async () => { order.push("persist"); },
             uploadFile: async () => ({
@@ -115,7 +114,6 @@ describe("asset page and picker wiring", () => {
                 mimeType: "model/gltf-binary",
             }),
             invalidateAssetLibrary: async () => { order.push("invalidate"); },
-            queryClient: new QueryClient(),
             message: {
                 success: (content) => { successes.push(String(content)); return (() => undefined) as never; },
                 warning: () => (() => undefined) as never,
