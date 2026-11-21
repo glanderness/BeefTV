@@ -110,7 +110,7 @@ function writeCanvasFolders(folders: CanvasFolder[]) {
     try {
         scopedLocalStorage.setItem(CANVAS_FOLDERS_KEY, JSON.stringify(persistable));
     } catch {
-        // Pending folder intents and covers live in IndexedDB (canvas_folder_pending).
+        // SQLite holds canonical folder records; localStorage is only a startup cache.
     }
 }
 

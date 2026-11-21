@@ -211,7 +211,7 @@ test("automatic canvas creation failure leaves the opening screen and shows a re
     } finally { await context.close(); }
 }, 15_000);
 
-test("fresh IndexedDB can initialize app_state and folder pending together", async () => {
+test("fresh IndexedDB can initialize app_state and image_files together", async () => {
     const context = await browser.newContext();
     try {
         const page = await context.newPage();
@@ -220,6 +220,6 @@ test("fresh IndexedDB can initialize app_state and folder pending together", asy
         const result = await page.evaluate(async () => (window as any).exportFixture.probeSharedStores());
         expect(result.error).toBeUndefined();
         expect(result.journal).toBe("{\"ok\":true}");
-        expect(result.pending).toEqual({ version: 1, intents: {}, highWater: {} });
+        expect(result.images).toEqual({ ok: true });
     } finally { await context.close(); }
 }, 15_000);

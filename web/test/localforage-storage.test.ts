@@ -3,7 +3,6 @@ import localforage from "localforage";
 
 import {
     APP_STATE_STORE_NAME,
-    CANVAS_FOLDER_PENDING_STORE_NAME,
     DRAWING_DOCUMENTS_STORE_NAME,
     DRAWING_GENERATION_RENDERS_STORE_NAME,
     DRAWING_PREVIEWS_STORE_NAME,
@@ -17,7 +16,6 @@ import {
     RESOURCE_BLOB_META_STORE_NAME,
     RESOURCE_BLOBS_STORE_NAME,
 } from "@/lib/localforage-storage";
-import { drawingPreviewStore, drawingRenderStore, drawingStore } from "@/lib/canvas/canvas-drawing-envelope";
 
 afterEach(() => {
     installLocalForageStoreFactoryForTests();
@@ -32,13 +30,13 @@ test("infinite-canvas stores use the shared facade instead of a private createIn
     });
 
     await import("@/lib/canvas/canvas-folder-storage");
+    await import("@/lib/canvas/canvas-drawing-storage");
     await import("@/services/image-storage");
     await import("@/services/local-media-repository");
     await import("@/services/resource-blob-cache");
 
     expect(INFINITE_CANVAS_OBJECT_STORES).toEqual([
         APP_STATE_STORE_NAME,
-        CANVAS_FOLDER_PENDING_STORE_NAME,
         IMAGE_FILES_STORE_NAME,
         MEDIA_FILES_STORE_NAME,
         RESOURCE_BLOBS_STORE_NAME,
@@ -48,9 +46,9 @@ test("infinite-canvas stores use the shared facade instead of a private createIn
         DRAWING_GENERATION_RENDERS_STORE_NAME,
     ]);
 
-    await drawingStore.getItem("missing-doc");
-    await drawingPreviewStore.getItem("missing-preview");
-    await drawingRenderStore.getItem("missing-render");
+    await localForageInstance(DRAWING_DOCUMENTS_STORE_NAME).getItem("missing-doc");
+    await localForageInstance(DRAWING_PREVIEWS_STORE_NAME).getItem("missing-preview");
+    await localForageInstance(DRAWING_GENERATION_RENDERS_STORE_NAME).getItem("missing-render");
     expect(createdStores).toContain(DRAWING_DOCUMENTS_STORE_NAME);
     expect(createdStores).toContain(DRAWING_PREVIEWS_STORE_NAME);
     expect(createdStores).toContain(DRAWING_GENERATION_RENDERS_STORE_NAME);

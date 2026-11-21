@@ -5,7 +5,6 @@ import { scopedStorageKey } from "@/lib/user-scope";
 
 export const INFINITE_CANVAS_DB_NAME = "infinite-canvas";
 export const APP_STATE_STORE_NAME = "app_state";
-export const CANVAS_FOLDER_PENDING_STORE_NAME = "canvas_folder_pending";
 export const IMAGE_FILES_STORE_NAME = "image_files";
 export const MEDIA_FILES_STORE_NAME = "media_files";
 export const RESOURCE_BLOBS_STORE_NAME = "resource_blobs";
@@ -16,7 +15,6 @@ export const DRAWING_GENERATION_RENDERS_STORE_NAME = "drawing_generation_renders
 
 export const INFINITE_CANVAS_OBJECT_STORES = [
     APP_STATE_STORE_NAME,
-    CANVAS_FOLDER_PENDING_STORE_NAME,
     IMAGE_FILES_STORE_NAME,
     MEDIA_FILES_STORE_NAME,
     RESOURCE_BLOBS_STORE_NAME,
