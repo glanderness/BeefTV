@@ -206,6 +206,7 @@ export function assistantProposalText(
     proposal: AssistantGenerationProposal,
     priceLines: string[] = [],
     awaitingConfirmation = true,
+    modelDisplayLabel?: string,
 ): string {
     const count = proposal.nodeIds?.length ?? 0;
     const productionParts = assistantProductionProposalParts(proposal, awaitingConfirmation);
@@ -213,7 +214,8 @@ export function assistantProposalText(
         return [productionParts.header, ...productionParts.targetLines, ...(productionParts.footer ? [productionParts.footer] : [])].join("\n\n");
     }
     const target = proposal.kind === "video" ? "视频" : proposal.kind === "audio" ? "音频" : "图片";
-    const title = `为 ${count} 个节点生成${target} · ${proposal.model}`;
+    const modelLabel = modelDisplayLabel?.trim() || proposal.model;
+    const title = `为 ${count} 个节点生成${target} · ${modelLabel}`;
     const prices = proposal.estimate?.text ? [proposal.estimate.text] : priceLines;
     return awaitingConfirmation ? `${title}\n${prices.length ? prices.join("\n") + "\n" : ""}确认后开始，按所选渠道计费。` : title;
 }

@@ -79,30 +79,30 @@ export function resolveVideoReferenceOrder(order: string[] | undefined, media: A
 export function resolveVideoMiddleFrameSupport(
     _model: string,
     videoProfile?: VideoCapabilityConfig | null,
-    hasDeclaredCapability = false,
+    _hasDeclaredCapability = false,
     _isBeefTVRoute?: boolean,
 ): VideoMiddleFrameSupport {
     if (videoProfile?.middleFrame === true) return "supported";
     if (videoProfile?.middleFrame === false) return "unsupported";
-    return hasDeclaredCapability ? "unsupported" : "opaque";
+    return "opaque";
 }
 
 export function resolveVideoReferenceOrderSupport(
     videoProfile?: VideoCapabilityConfig | null,
-    hasDeclaredCapability = false,
+    _hasDeclaredCapability = false,
 ): VideoCapabilityFlagSupport {
     if (videoProfile?.referenceOrder === true) return "supported";
     if (videoProfile?.referenceOrder === false) return "unsupported";
-    return hasDeclaredCapability ? "unsupported" : "opaque";
+    return "opaque";
 }
 
 export function resolveVideoControlsSupport(
     videoProfile?: VideoCapabilityConfig | null,
-    hasDeclaredCapability = false,
+    _hasDeclaredCapability = false,
 ): VideoCapabilityFlagSupport {
     if (videoSupportsAdvancedControls(videoProfile)) return "supported";
     if (videoProfile?.controls !== undefined) return "unsupported";
-    return hasDeclaredCapability ? "unsupported" : "opaque";
+    return "opaque";
 }
 
 export function resolveVideoReferenceCapabilities(

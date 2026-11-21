@@ -5,9 +5,14 @@ import { h3AspectConfig, h3Models, h3StyleModels } from "./fixtures/h3-aspect-co
 
 test("H3 base ordinary references retain an independent ratio", () => {
     const config = h3AspectConfig("minimax-h3");
+    // preferReferenceMode: true treats untagged 1-image input as reference_to_video (editable ratio)
+    expect(videoSettingsConstraints(config, { imageCount: 1 })).toEqual({});
     expect(videoSettingsConstraints(config, { imageCount: 1 }, { videoEditOperation: "reference_to_video" })).toEqual({});
     expect(videoSettingsConstraints(config, { imageCount: 1, videoCount: 1 })).toEqual({});
     expect(videoSettingsConstraints(config, { imageCount: 1, audioCount: 2 })).toEqual({});
+    // Explicit frame role or explicit image_to_video locks ratio to the keyframe
+    expect(videoSettingsConstraints(config, { imageCount: 1 }, { videoStartFrameNodeId: "frame" }).ratioLabel).toBe("随首帧图片");
+    expect(videoSettingsConstraints(config, { imageCount: 1 }, { videoEditOperation: "image_to_video" }).ratioLabel).toBe("随首帧图片");
 });
 
 test("Max and Turbo treat ordinary image inputs as keyframes", () => {
@@ -95,4 +100,56 @@ test("opaque non-H3 model IDs with declared controls and middleFrame use capabil
     const styleConfig = { ...config, model: "studio::opaque-style-only" };
     expect(videoSettingsConstraints(styleConfig, { imageCount: 1 }).ratioLabel).toBe("随首帧图片");
     expect(videoSettingsConstraints(styleConfig, { characterCount: 1 }).ratioHelp).toContain("所选比例只在没有参考图时生效");
+});
+
+test("videoSettingsConstraints does not use controls as a proxy for frame ratio semantics", () => {
+    const base = h3AspectConfig("minimax-h3-max");
+    const templateVideo = base.channels[0]!.modelProfiles!.find((p) => p.model === "minimax-h3-max")!.capabilityConfig!.video!;
+    const channel = createModelChannel({
+        id: "studio",
+        baseUrl: "https://studio.example/v1",
+        models: ["seedance-with-seed", "frame-oprefs-no-controls"],
+        modelProfiles: [
+            {
+                model: "seedance-with-seed",
+                capability: "video",
+                protocol: "newapi",
+                videoCapabilitiesVersion: "v1",
+                capabilityConfig: {
+                    version: 1,
+                    video: {
+                        ...structuredClone(templateVideo),
+                        taskTypeConstraints: true,
+                        controls: { seed: true },
+                    },
+                },
+            },
+            {
+                model: "frame-oprefs-no-controls",
+                capability: "video",
+                protocol: "openai-videos",
+                videoCapabilitiesVersion: "v1",
+                capabilityConfig: {
+                    version: 1,
+                    video: {
+                        ...structuredClone(templateVideo),
+                        taskTypeConstraints: false,
+                        controls: undefined,
+                        middleFrame: undefined,
+                        preferReferenceMode: undefined,
+                        operationReferences: { image_to_video: { maxImages: 2, maxVideos: 0, maxAudios: 1 } },
+                    },
+                },
+            },
+        ],
+    });
+    const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel], model: "studio::seedance-with-seed" } }).config;
+    // Seedance-like model with controls.seed still uses Seedance constraints, not H3 keyframe copy.
+    expect(videoSettingsConstraints(config, { imageCount: 1 }).ratioLabel).toBe("随首帧");
+    expect(videoSettingsConstraints(config, { videoCount: 1 }, { videoEditOperation: "inpaint" })).toEqual({ ratioLabel: "随原视频", durationLocked: true });
+
+    // A model declaring operationReferences.image_to_video without controls still gets keyframe ratio copy.
+    const noControlsConfig = { ...config, model: "studio::frame-oprefs-no-controls" };
+    expect(videoSettingsConstraints(noControlsConfig, { imageCount: 1 }).ratioLabel).toBe("随首帧图片");
+    expect(videoSettingsConstraints(noControlsConfig, { imageCount: 1, audioCount: 2 })).toEqual({});
 });

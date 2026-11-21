@@ -144,10 +144,10 @@ describe("resolveVideoReferenceModeState", () => {
             maxFrameAudios: 1,
             middleFrameSupport: "unsupported",
             middleFrameSupported: false,
-            referenceOrderSupport: "unsupported",
-            referenceOrderSupported: false,
-            controlsSupport: "unsupported",
-            controlsSupported: false,
+            referenceOrderSupport: "supported",
+            referenceOrderSupported: true,
+            controlsSupport: "supported",
+            controlsSupported: true,
             preferReferenceMode: false,
         });
 
@@ -218,22 +218,32 @@ describe("resolveVideoReferenceModeState", () => {
         expect(opaqueMidCaps.controlsSupported).toBe(true);
         const h3MaxOmittedMidCaps = resolveVideoReferenceCapabilities(
             "beeftv::minimax-h3-max",
-            managedVideoCatalogItem("minimax-h3-max").videoCapabilities,
+            { ...managedVideoCatalogItem("minimax-h3-max").videoCapabilities!, middleFrame: undefined, referenceOrder: undefined, controls: undefined },
             true,
         );
-        expect(h3MaxOmittedMidCaps.middleFrameSupport).toBe("unsupported");
+        expect(h3MaxOmittedMidCaps.middleFrameSupport).toBe("opaque");
         expect(h3MaxOmittedMidCaps.middleFrameSupported).toBe(false);
+        expect(h3MaxOmittedMidCaps.referenceOrderSupport).toBe("opaque");
+        expect(h3MaxOmittedMidCaps.referenceOrderSupported).toBe(false);
+        expect(h3MaxOmittedMidCaps.controlsSupport).toBe("opaque");
+        expect(h3MaxOmittedMidCaps.controlsSupported).toBe(false);
         const h3MaxExplicitOffCaps = resolveVideoReferenceCapabilities(
             "beeftv::minimax-h3-max",
-            { ...managedVideoCatalogItem("minimax-h3-max").videoCapabilities!, middleFrame: false },
+            { ...managedVideoCatalogItem("minimax-h3-max").videoCapabilities!, middleFrame: false, referenceOrder: false, controls: {} },
             true,
         );
         expect(h3MaxExplicitOffCaps.middleFrameSupport).toBe("unsupported");
         expect(h3MaxExplicitOffCaps.middleFrameSupported).toBe(false);
+        expect(h3MaxExplicitOffCaps.referenceOrderSupport).toBe("unsupported");
+        expect(h3MaxExplicitOffCaps.controlsSupport).toBe("unsupported");
 
-        // 自定义/BYOK 渠道同名模型不套用 BeefTV 渠道契约
-        const customH3MaxCaps = resolveVideoReferenceCapabilities("custom::minimax-h3-max", managedVideoCatalogItem("minimax-h3").videoCapabilities, true);
-        expect(customH3MaxCaps.middleFrameSupport).toBe("unsupported");
+        // 自定义/BYOK 渠道同名模型不套用 BeefTV 渠道契约；省略标志保持 opaque 且不展示不支持的控件
+        const customH3MaxCaps = resolveVideoReferenceCapabilities(
+            "custom::minimax-h3-max",
+            { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, middleFrame: undefined, operationReferences: undefined },
+            true,
+        );
+        expect(customH3MaxCaps.middleFrameSupport).toBe("opaque");
         expect(customH3MaxCaps.middleFrameSupported).toBe(false);
         expect(customH3MaxCaps.maxFrameAudios).toBe(0);
         const customKlingCaps = resolveVideoReferenceCapabilities(

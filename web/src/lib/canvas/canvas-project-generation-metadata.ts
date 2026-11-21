@@ -4,7 +4,7 @@ import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
-import { modelCapabilityConfigFor, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, normalizeVideoGenerationControls, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
 import { resolveVideoReferenceCapabilities, resolveVideoReferenceOrder } from "@/lib/canvas/video-reference-mode";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
@@ -239,9 +239,7 @@ function resolveVideoEditOperation(
         referenceAudios: ReferenceAudio[];
         characterReferences?: Array<unknown>;
     } | undefined,
-    effectiveModel: string,
     videoProfile?: VideoCapabilityConfig | null,
-    isBeefTVRoute?: boolean,
 ): CanvasVideoEditOperation {
     const storedOperation = node?.metadata?.videoEditOperation;
     const referenceImages = context?.referenceImages || [];
@@ -254,7 +252,12 @@ function resolveVideoEditOperation(
         audioCount: context?.referenceAudios.length || 0,
         characterCount,
     };
-    return resolveVideoOperation(input, storedOperation, videoProfile, effectiveModel, isBeefTVRoute) as CanvasVideoEditOperation;
+    const hasExplicitFrame = Boolean(
+        node?.metadata?.videoStartFrameNodeId ||
+            node?.metadata?.videoEndFrameNodeId ||
+            node?.metadata?.videoMiddleFrameNodeId,
+    );
+    return resolveVideoOperation(input, storedOperation, videoProfile, { hasExplicitFrame }) as CanvasVideoEditOperation;
 }
 
 export function resolveVideoGenerationEditOperation(
@@ -278,7 +281,7 @@ export function resolveVideoGenerationEditOperation(
     const videoProfile = declaredOrOmniVideoCapability(config, effectiveModel);
     const { middleFrameSupport } = resolveVideoReferenceCapabilities(effectiveModel, fullVideoProfile, declared, isBeefTVRoute);
     const hasMiddleFrame = middleFrameSupport === "supported" && Boolean(metadata?.videoMiddleFrameNodeId);
-    const resolvedOperation = resolveVideoEditOperation(node, context, effectiveModel, videoProfile, isBeefTVRoute);
+    const resolvedOperation = resolveVideoEditOperation(node, context, videoProfile);
     return hasMiddleFrame && Boolean(videoProfile?.operations.includes("reference_to_video"))
         ? "reference_to_video"
         : resolvedOperation;
@@ -356,7 +359,11 @@ export function buildVideoGenerationMetadata(
         videoEndFrameNodeId: endFrame,
         videoMiddleFrameNodeId: middleFrame,
         videoMiddleFrameTime: clearMiddleFrame ? undefined : metadata?.videoMiddleFrameTime,
-        videoH3Options: controlsSupport !== "unsupported" ? metadata?.videoH3Options : undefined,
+        videoH3Options: controlsSupport === "supported"
+            ? normalizeVideoGenerationControls(fullVideoProfile?.controls, metadata?.videoH3Options)
+            : controlsSupport === "opaque"
+              ? metadata?.videoH3Options
+              : undefined,
         videoReferenceOrder: referenceOrderSupport !== "unsupported"
             ? resolveVideoReferenceOrder(metadata?.videoReferenceOrder, [...(context?.referenceImages || []), ...(context?.referenceVideos || []), ...(context?.referenceAudios || [])])
             : undefined,

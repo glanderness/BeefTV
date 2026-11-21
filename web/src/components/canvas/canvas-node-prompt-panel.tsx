@@ -147,7 +147,18 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
     const videoProfile = mode === "video" ? modelCapabilityConfigFor(config, config.model).video : undefined;
     const preferredReferenceMode = useCreationPreferencesStore((state) => state.preferences.videoReferenceMode ?? "all");
     const effectiveVideoOperation = mode === "video" && requirements.input
-        ? resolveVideoOperation(requirements.input, canvasVideoOperationPreference(config, node, requirements.input, preferredReferenceMode), declaredOrOmniVideoCapability(config, config.model))
+        ? resolveVideoOperation(
+              requirements.input,
+              canvasVideoOperationPreference(config, node, requirements.input, preferredReferenceMode),
+              declaredOrOmniVideoCapability(config, config.model),
+              {
+                  hasExplicitFrame: Boolean(
+                      node.metadata?.videoStartFrameNodeId ||
+                          node.metadata?.videoEndFrameNodeId ||
+                          node.metadata?.videoMiddleFrameNodeId,
+                  ),
+              },
+          )
         : undefined;
     const {
         endFrameSupported,

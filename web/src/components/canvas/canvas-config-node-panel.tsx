@@ -169,7 +169,18 @@ export function CanvasConfigNodePanel({ config: configProp, node, isRunning, inp
                         <Select
                             aria-label="视频生成模式"
                             className="w-full"
-                            value={resolveVideoOperation(inputSummary, node.metadata?.videoEditOperation, declaredOrOmniVideoCapability(config, config.model))}
+                            value={resolveVideoOperation(
+                                inputSummary,
+                                node.metadata?.videoEditOperation,
+                                declaredOrOmniVideoCapability(config, config.model),
+                                {
+                                    hasExplicitFrame: Boolean(
+                                        node.metadata?.videoStartFrameNodeId ||
+                                            node.metadata?.videoEndFrameNodeId ||
+                                            node.metadata?.videoMiddleFrameNodeId,
+                                    ),
+                                },
+                            )}
                             options={buildConfigNodeVideoOperationOptions(config, inputSummary)}
                             onChange={(value) => onConfigChange(node.id, { videoEditOperation: value as CanvasVideoEditOperation })}
                         />

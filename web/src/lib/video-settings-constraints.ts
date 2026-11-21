@@ -1,10 +1,19 @@
-import { isVideoReferenceMode, modelCapabilityConfigFor, videoSupportsAdvancedControls, videoSupportsMiddleFrame } from "./model-capabilities";
+import { isVideoReferenceMode, modelCapabilityConfigFor, videoSupportsMiddleFrame, type VideoCapabilityConfig } from "./model-capabilities";
 import { resolveVideoOperation } from "./model-selection";
 import { seedanceSettingsConstraints, type SeedanceSettingsConstraints } from "./seedance-task-constraints";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeMetadata } from "@/types/canvas";
 
 export type VideoSettingsConstraints = SeedanceSettingsConstraints & { ratioHelp?: string };
+
+function usesKeyframeRatioConstraints(videoProfile?: VideoCapabilityConfig | null): boolean {
+    if (!videoProfile || videoProfile.taskTypeConstraints) return false;
+    return (
+        videoProfile.operationReferences?.image_to_video !== undefined ||
+        videoProfile.middleFrame !== undefined ||
+        videoProfile.preferReferenceMode !== undefined
+    );
+}
 
 export function videoSettingsConstraints(
     config: AiConfig,
@@ -16,11 +25,12 @@ export function videoSettingsConstraints(
     const audioCount = input.audioCount || 0;
     const first = metadata?.videoStartFrameNodeId;
     const last = metadata?.videoEndFrameNodeId;
+    const hasExplicitFrame = Boolean(first || last || metadata?.videoMiddleFrameNodeId);
     const videoProfile = modelCapabilityConfigFor(config, config.model).video;
-    if (videoSupportsAdvancedControls(videoProfile)) {
+    if (usesKeyframeRatioConstraints(videoProfile)) {
         // Canvas submission resolves the operation before building the provider payload.
         const counts = { textCount: 0, imageCount, videoCount, audioCount, characterCount: 0 };
-        const resolvedOperation = resolveVideoOperation(counts, metadata?.videoEditOperation, videoProfile);
+        const resolvedOperation = resolveVideoOperation(counts, metadata?.videoEditOperation, videoProfile, { hasExplicitFrame });
         const referenceMode = isVideoReferenceMode(videoProfile, counts, { ...metadata, videoEditOperation: resolvedOperation });
         if (referenceMode) return {};
         if (input.characterCount) {

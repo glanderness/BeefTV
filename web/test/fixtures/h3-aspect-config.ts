@@ -49,9 +49,13 @@ function fixtureVideoCapabilities(id: string, includeServerControls: boolean): V
         defaultOperation: "text_to_video",
         ...(includeServerControls
             ? {
-                  ...(!style ? { operationReferences: { image_to_video: { maxImages: 2, maxVideos: 0, maxAudios: 1 } } } : {}),
-                  ...(id === "minimax-h3-max" ? { middleFrame: true } : {}),
-                  ...(id === "minimax-h3-max" || id === "minimax-h3-max-turbo" ? { referenceOrder: true } : {}),
+                  operationReferences: {
+                      image_to_video: style
+                          ? { maxImages: 1, maxVideos: 0, maxAudios: 0 }
+                          : { maxImages: 2, maxVideos: 0, maxAudios: 1 },
+                  },
+                  middleFrame: id === "minimax-h3-max",
+                  referenceOrder: id === "minimax-h3-max" || id === "minimax-h3-max-turbo",
                   ...(id === "minimax-h3" ? { preferReferenceMode: true } : {}),
                   controls: style
                       ? {

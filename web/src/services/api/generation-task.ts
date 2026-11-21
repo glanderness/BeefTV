@@ -8,7 +8,7 @@ import { submitGenerationCommand } from "./generation-submission";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { isArkPlanBaseUrl } from "@/lib/seedance-video";
 import { seedreamFamily } from "@/lib/seedream-image";
-import { declaredOrOmniVideoCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, resolveVideoOperation } from "@/lib/model-selection";
 import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -217,6 +217,11 @@ export async function runBackendGenerationTaskBatch(options: BackendGenerationTa
 
 function generationOperation(options: BackendGenerationTaskOptions) {
     if (options.mode !== "video") return options.mode;
+    const hasExplicitFrame = Boolean(
+        options.metadata?.videoStartFrameNodeId ||
+            options.metadata?.videoEndFrameNodeId ||
+            options.metadata?.videoMiddleFrameNodeId,
+    );
     return resolveVideoOperation(
         {
             textCount: 0,
@@ -227,8 +232,7 @@ function generationOperation(options: BackendGenerationTaskOptions) {
         },
         options.metadata?.videoEditOperation as string | undefined,
         declaredOrOmniVideoCapability(options.config, options.config.model),
-        options.config.model,
-        isBeefTVModelRoute(options.config.model, options.config),
+        { hasExplicitFrame },
     );
 }
 

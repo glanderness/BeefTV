@@ -140,3 +140,31 @@ test("catalog refresh preserves server display_lines and clears stale videoPrici
         expect(cleared.modelProfiles!.find((item) => item.model === original.model)!.videoPricing).toBeNull();
     }
 });
+
+test("display_lines-only and future resolution (1440p) quotes are preserved without failing legacy rates whitelist", () => {
+    const displayOnly = sanitizeVideoPriceQuote({
+        display_lines: ["  1440p：¥0.88 / 秒  ", "", "按服务端实时档位结算"],
+    });
+    expect(displayOnly).toEqual({
+        display_lines: ["1440p：¥0.88 / 秒", "按服务端实时档位结算"],
+    });
+    expect(videoPricingDisplayLines(displayOnly)).toEqual(["1440p：¥0.88 / 秒", "按服务端实时档位结算"]);
+
+    const with1440p = {
+        currency: "CNY" as const,
+        mode: "seconds" as const,
+        rates: { "1440p": { output: 0.88, reference_video: 0 } },
+        display_lines: ["1440p：¥0.88 / 秒"],
+    };
+    expect(videoPricingDisplayLines(with1440p)).toEqual(["1440p：¥0.88 / 秒"]);
+    expect(sanitizeVideoPriceQuote(with1440p)).toEqual({ display_lines: ["1440p：¥0.88 / 秒"] });
+    // Legacy invalid rates WITHOUT display_lines are still rejected.
+    expect(sanitizeVideoPriceQuote({ currency: "CNY", mode: "seconds", rates: { "1440p": { output: 0.88, reference_video: 0 } } })).toBeNull();
+
+    const config = videoFixture(displayOnly);
+    const reloaded = normalizeConfigSnapshot({ config }).config;
+    expect(reloaded.channels[0]!.modelProfiles![0]!.videoPricing).toEqual(displayOnly);
+    const html = renderToStaticMarkup(createElement(ModelPicker, { config: reloaded, value: reloaded.models[0], capability: "video", onChange() {} }));
+    expect(html).toContain("1440p：¥0.88 / 秒");
+    expect(html).toContain("按服务端实时档位结算");
+});

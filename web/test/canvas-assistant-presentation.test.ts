@@ -175,6 +175,17 @@ describe("付费生成确认", () => {
         expect(text).toContain("¥42");
         expect(text).not.toContain("byok::");
     });
+
+    test("传入可读展示名时替换裸模型 ID", () => {
+        const text = assistantProposalText(
+            { proposalId: "video-display", kind: "video", nodeIds: ["a"], model: "seedance-2.0", modelKey: "beeftv::seedance-2.0" },
+            ["720p：¥46 / 百万视频 Token"],
+            true,
+            "Seedance 2.0",
+        );
+        expect(text).toContain("为 1 个节点生成视频 · Seedance 2.0");
+        expect(text).not.toContain("seedance-2.0");
+    });
 });
 
 describe("生成结果只使用这项提议的真实回执", () => {

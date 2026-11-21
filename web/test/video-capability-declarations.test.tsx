@@ -240,8 +240,6 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
                 { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 2, characterCount: 0 },
                 "image_to_video",
                 { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, operationReferences: { image_to_video: { maxImages: 2 } } },
-                "beeftv::minimax-h3",
-                true,
             ),
         ).toBe("image_to_video");
         expect(
@@ -249,19 +247,22 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
                 { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 2, characterCount: 0 },
                 "image_to_video",
                 { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, operationReferences: {} },
-                "beeftv::minimax-h3",
-                true,
             ),
         ).toBe("image_to_video");
         expect(
             resolveVideoOperation(
                 { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 1, characterCount: 0 },
                 "image_to_video",
-                managedVideoCatalogItem("minimax-h3").videoCapabilities!,
-                "custom::minimax-h3",
-                false,
+                { ...managedVideoCatalogItem("minimax-h3").videoCapabilities!, operationReferences: undefined },
             ),
         ).toBe("reference_to_video");
+        expect(
+            resolveVideoOperation(
+                { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 1, characterCount: 0 },
+                "image_to_video",
+                managedVideoCatalogItem("minimax-h3").videoCapabilities!,
+            ),
+        ).toBe("image_to_video");
 
         const customDupChannel = createModelChannel({
             id: "custom-dup",
@@ -345,8 +346,8 @@ describe("Video capability declarations & BeefTV route boundaries", () => {
             config: { ...defaultConfig, channels: [frame9Channel], model: "custom-frame9::frame9-video", videoModel: "custom-frame9::frame9-video" },
         }).config;
         const threeImagesInput = { textCount: 1, imageCount: 3, videoCount: 0, audioCount: 0, characterCount: 0 };
-        expect(resolveVideoOperation(threeImagesInput, undefined, frameOnlyMax9Cap.video, "custom-frame9::frame9-video", false)).toBe("reference_to_video");
-        expect(resolveVideoOperation(threeImagesInput, "reference_to_video", frameOnlyMax9Cap.video, "beeftv::minimax-h3-max-turbo", true)).toBe("reference_to_video");
+        expect(resolveVideoOperation(threeImagesInput, undefined, frameOnlyMax9Cap.video)).toBe("reference_to_video");
+        expect(resolveVideoOperation(threeImagesInput, "reference_to_video", frameOnlyMax9Cap.video)).toBe("reference_to_video");
         expect(modelCompatibilityError(frame9Config, "custom-frame9::frame9-video", { capability: "video", input: threeImagesInput })).toBe("最多支持 2 张参考图");
 
         expect(

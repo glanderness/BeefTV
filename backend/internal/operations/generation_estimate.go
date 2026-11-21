@@ -88,14 +88,21 @@ func EstimateGenerationCost(domain Domain, targets []EstimateTarget) GenerationE
 	for i, target := range targets {
 		item := prepareEstimateTarget(catalog, target)
 		prepared[i] = item
-		if item.channelID == beeftv.ChannelID && item.shortKey != "" && (catalog == nil || item.found) {
-			modelID := item.shortKey
-			if item.found && strings.TrimSpace(item.model.ID) != "" {
-				modelID = item.model.ID
+		managedBeefTV := item.channelID == beeftv.ChannelID
+		if item.found && item.model.ManagedBeefTV != nil {
+			managedBeefTV = *item.model.ManagedBeefTV
+		}
+		if managedBeefTV && item.shortKey != "" && (catalog == nil || item.found) {
+			modelKey := item.shortKey
+			if item.found && strings.TrimSpace(item.model.ModelKey) != "" {
+				_, key := splitEstimateModelKey(item.model.ModelKey)
+				if key != "" {
+					modelKey = key
+				}
 			}
 			serverIndices = append(serverIndices, i)
 			serverTargets = append(serverTargets, beeftv.PricingEstimateTarget{
-				Model:           modelID,
+				Model:           modelKey,
 				Kind:            item.request.Kind,
 				Size:            item.request.Size,
 				Quality:         item.request.Quality,

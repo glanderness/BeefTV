@@ -125,6 +125,9 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 		"video": map[string]any{
 			"defaultOperation": "text_to_video",
 			"operations":       []string{"text_to_video", "image_to_video", "reference_to_video"},
+			"middleFrame":      false,
+			"referenceOrder":   false,
+			"controls":         map[string]any{},
 			"references":       map[string]any{"maxImages": 10, "maxVideos": 5, "maxAudios": 5},
 			"operationReferences": map[string]any{
 				"image_to_video":     map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 0},
@@ -202,6 +205,7 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 			"defaultOperation": "text_to_video",
 			"operations":       []string{"text_to_video", "image_to_video", "audio_to_video", "reference_to_video"},
 			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+			"middleFrame":      false,
 			"referenceOrder":   true,
 			"controls":         map[string]any{"seed": true},
 		},
@@ -236,6 +240,9 @@ func TestGenerationTargetsReconcilesStaleVideoOperationWithModelCapabilities(t *
 		"video": map[string]any{
 			"defaultOperation": "text_to_video",
 			"operations":       []string{"text_to_video", "image_to_video"},
+			"middleFrame":      false,
+			"referenceOrder":   false,
+			"controls":         map[string]any{},
 			"references":       map[string]any{"maxImages": 2, "maxVideos": 0, "maxAudios": 0},
 		},
 	}
@@ -806,5 +813,111 @@ func TestGenerationTargetsPreferReferenceModeDefaultsUntaggedImages(t *testing.T
 	}
 	if got := byID["shot-i2v"].Metadata["videoEditOperation"]; got != "image_to_video" {
 		t.Fatalf("shot-i2v videoEditOperation = %v, want image_to_video", got)
+	}
+}
+
+func TestGenerationTargetsOmittedFlagsStayOpaqueAndControlsNormalizeStaleOptions(t *testing.T) {
+	declaredTrue := true
+	omittedFlagsCap := map[string]any{
+		"version": 1,
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video", "reference_to_video"},
+			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+		},
+	}
+	strictControlsCap := map[string]any{
+		"version": 1,
+		"video": map[string]any{
+			"defaultOperation": "text_to_video",
+			"operations":       []string{"text_to_video", "image_to_video", "reference_to_video"},
+			"references":       map[string]any{"maxImages": 9, "maxVideos": 3, "maxAudios": 3},
+			"controls": map[string]any{
+				"seed":                 true,
+				"promptExpansionModes": []string{"disabled", "balanced", "quality"},
+			},
+		},
+	}
+	catalog := modelcatalog.NewCatalogResponse(modelcatalog.CatalogSourceSystem, nil, []modelcatalog.PublicChannelCatalog{
+		{
+			ID: "beeftv",
+			Models: []modelcatalog.PublicChannelModel{
+				{ID: "legacy-cached-video", ModelKey: "legacy-cached-video", Capability: "video", Available: true, CapabilityDeclared: &declaredTrue, CapabilityConfig: omittedFlagsCap},
+				{ID: "strict-controls-video", ModelKey: "strict-controls-video", Capability: "video", Available: true, CapabilityDeclared: &declaredTrue, CapabilityConfig: strictControlsCap},
+			},
+		},
+	})
+	img1 := imageNode("img-1", "image")
+	img1["metadata"].(map[string]any)["storageKey"] = "resource:img-1"
+	img2 := imageNode("img-2", "image")
+	img2["metadata"].(map[string]any)["storageKey"] = "resource:img-2"
+
+	legacyShot := imageNode("legacy-shot", "beeftv::legacy-cached-video")
+	legacyShot["type"] = "video"
+	legacyShot["metadata"].(map[string]any)["videoEditOperation"] = "reference_to_video"
+	legacyShot["metadata"].(map[string]any)["videoMiddleFrameNodeId"] = "img-2"
+	legacyShot["metadata"].(map[string]any)["videoMiddleFrameTime"] = 2.5
+	legacyShot["metadata"].(map[string]any)["videoReferenceOrder"] = []any{"img-2", "img-1"}
+	legacyShot["metadata"].(map[string]any)["videoH3Options"] = map[string]any{"seed": float64(7), "prompt_expansion_mode": "fast"}
+
+	strictPartialShot := imageNode("strict-partial", "beeftv::strict-controls-video")
+	strictPartialShot["type"] = "video"
+	strictPartialShot["metadata"].(map[string]any)["videoH3Options"] = map[string]any{
+		"seed":                  float64(42),
+		"prompt_expansion_mode": "fast",
+		"damage_level":          "heavy",
+	}
+
+	strictDroppedShot := imageNode("strict-dropped", "beeftv::strict-controls-video")
+	strictDroppedShot["type"] = "video"
+	strictDroppedShot["metadata"].(map[string]any)["videoH3Options"] = map[string]any{
+		"prompt_expansion_mode": "fast",
+		"damage_level":          "light",
+	}
+
+	allNodes := []map[string]any{img1, img2, legacyShot, strictPartialShot, strictDroppedShot}
+	doc := map[string]any{
+		"nodes": []any{img1, img2, legacyShot, strictPartialShot, strictDroppedShot},
+		"connections": []any{
+			map[string]any{"fromNodeId": "img-1", "toNodeId": "legacy-shot"},
+			map[string]any{"fromNodeId": "img-2", "toNodeId": "legacy-shot"},
+		},
+	}
+	probe := &catalogGenerationProbe{
+		mixedGenerationProbe: mixedGenerationProbe{proposeProbe: proposeProbe{doc: proposeCanvas(t, allNodes)}},
+		catalog:              &catalog,
+	}
+	probe.resolve = func(_, selected string) (AssistantGenerationModel, error) {
+		return AssistantGenerationModel{ModelKey: selected, Display: selected}, nil
+	}
+	targets, err := GenerationTargets(probe, doc, []string{"legacy-shot", "strict-partial", "strict-dropped"})
+	if err != nil {
+		t.Fatalf("GenerationTargets failed: %v", err)
+	}
+	byID := map[string]GenerationTarget{}
+	for _, target := range targets {
+		byID[target.NodeID] = target
+	}
+	// Omitted flags on a declared model stay opaque and never wipe saved parameters.
+	if got := byID["legacy-shot"].Parameters["videoMiddleFrameNodeId"]; got != "img-2" {
+		t.Fatalf("legacy-shot wiped middleFrame: %q", got)
+	}
+	if got := byID["legacy-shot"].Metadata["videoMiddleFrameTime"]; got != 2.5 {
+		t.Fatalf("legacy-shot wiped middleFrameTime: %v", got)
+	}
+	if got := byID["legacy-shot"].Metadata["videoReferenceOrder"]; got == nil {
+		t.Fatal("legacy-shot wiped videoReferenceOrder")
+	}
+	if got := byID["legacy-shot"].Metadata["videoH3Options"]; got == nil {
+		t.Fatal("legacy-shot wiped videoH3Options")
+	}
+	// Strict controls strip unsupported prompt_expansion_mode ("fast") and damage_level ("heavy") while retaining supported seed.
+	partialOpts, ok := byID["strict-partial"].Metadata["videoH3Options"].(map[string]any)
+	if !ok || partialOpts["seed"] != float64(42) || partialOpts["prompt_expansion_mode"] != nil || partialOpts["damage_level"] != nil {
+		t.Fatalf("strict-partial normalized videoH3Options = %#v, want only seed=42", byID["strict-partial"].Metadata["videoH3Options"])
+	}
+	// When all fields are unsupported, videoH3Options is removed entirely.
+	if got := byID["strict-dropped"].Metadata["videoH3Options"]; got != nil {
+		t.Fatalf("strict-dropped should remove empty videoH3Options, got %#v", got)
 	}
 }

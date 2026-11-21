@@ -89,8 +89,9 @@ test("actual prompt panel updates keyframe hints, reconnects and changes H3 mode
         await selectScenario(page, "minimax-h3-max");
         await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
         await selectScenario(page, "minimax-h3");
-        await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
+        await page.getByRole("button", { name: /高级设置：.*16:9/ }).waitFor();
         await selectScenario(page, "指定首帧");
+        await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
         await selectScenario(page, "加入角色卡");
         await assertCharacterWarning(page);
         await selectScenario(page, "只用尾帧");

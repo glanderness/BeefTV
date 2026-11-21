@@ -230,3 +230,62 @@ func TestGenerationEstimateFallsBackToLocalCatalogOnServerError(t *testing.T) {
 		t.Fatalf("expected seamless local fallback estimate, got %+v", got)
 	}
 }
+
+func TestGenerationEstimateSendsModelKeyNotRowIDAndRespectsManagedBeefTV(t *testing.T) {
+	managedTrue := true
+	managedFalse := false
+	serverAmount := 1.25
+	catalog := modelcatalog.NewCatalogResponse(modelcatalog.CatalogSourceSystem, nil, []modelcatalog.PublicChannelCatalog{
+		{
+			ID: "beeftv",
+			Models: []modelcatalog.PublicChannelModel{
+				{ID: "row-uuid-123", ModelKey: "minimax-h3-max-turbo", Capability: "video", Available: true, ManagedBeefTV: &managedTrue},
+			},
+		},
+		{
+			ID: "beeftv-alias",
+			Models: []modelcatalog.PublicChannelModel{
+				{ID: "row-uuid-456", ModelKey: "minimax-h3-max", Capability: "video", Available: true, ManagedBeefTV: &managedTrue},
+			},
+		},
+		{
+			ID: "custom-byok",
+			Models: []modelcatalog.PublicChannelModel{
+				{ID: "row-uuid-789", ModelKey: "minimax-h3-max-turbo", Capability: "video", Available: true, ManagedBeefTV: &managedFalse},
+			},
+		},
+	})
+	probe := &serverEstimateProbe{
+		estimateProbe: estimateProbe{catalog: &catalog},
+		resp: beeftv.PricingEstimateResponse{
+			Items: []pricing.Estimate{
+				{Amount: &serverAmount, Label: "¥1.25", Basis: "server-1", Text: "¥1.25"},
+				{Amount: &serverAmount, Label: "¥1.25", Basis: "server-2", Text: "¥1.25"},
+			},
+		},
+	}
+
+	got := EstimateGenerationCost(probe, []EstimateTarget{
+		{ModelKey: "beeftv::minimax-h3-max-turbo", Kind: "video", Parameters: map[string]string{"vquality": "768p", "seconds": "5"}},
+		{ModelKey: "beeftv-alias::minimax-h3-max", Kind: "video", Parameters: map[string]string{"vquality": "768p", "seconds": "5"}},
+		{ModelKey: "custom-byok::minimax-h3-max-turbo", Kind: "video", Parameters: map[string]string{"vquality": "768p", "seconds": "5"}},
+	})
+	if probe.calls != 1 {
+		t.Fatalf("expected 1 server pricing call, got %d", probe.calls)
+	}
+	if len(probe.got.Targets) != 2 {
+		t.Fatalf("expected 2 managed server targets, got %+v", probe.got.Targets)
+	}
+	if probe.got.Targets[0].Model != "minimax-h3-max-turbo" {
+		t.Fatalf("expected ModelKey minimax-h3-max-turbo (not row UUID), got %q", probe.got.Targets[0].Model)
+	}
+	if probe.got.Targets[1].Model != "minimax-h3-max" {
+		t.Fatalf("expected stripped ModelKey minimax-h3-max for custom ManagedBeefTV channel, got %q", probe.got.Targets[1].Model)
+	}
+	if got.Items[0].Amount == nil || *got.Items[0].Amount != serverAmount || got.Items[1].Amount == nil || *got.Items[1].Amount != serverAmount {
+		t.Fatalf("managed targets lost server pricing: %+v", got.Items)
+	}
+	if got.Items[2].Amount != nil {
+		t.Fatalf("ManagedBeefTV=false target must not use server pricing: %+v", got.Items[2])
+	}
+}

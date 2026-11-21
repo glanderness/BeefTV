@@ -345,6 +345,38 @@ export function videoSupportsAdvancedControls(video?: VideoCapabilityConfig | nu
     return Boolean(controls.seed || controls.promptExpansionModes?.length || controls.damageLevels?.length);
 }
 
+export function normalizeVideoGenerationControls(
+    controlsCap: VideoGenerationControlsCapability | null | undefined,
+    value: VideoGenerationControls | undefined,
+): VideoGenerationControls | undefined {
+    if (!controlsCap || !value) return undefined;
+    const next: VideoGenerationControls = {};
+    if (controlsCap.seed && typeof value.seed === "number" && Number.isSafeInteger(value.seed)) {
+        next.seed = value.seed;
+    }
+    if (
+        controlsCap.promptExpansionModes?.length &&
+        value.prompt_expansion_mode &&
+        controlsCap.promptExpansionModes.includes(value.prompt_expansion_mode)
+    ) {
+        next.prompt_expansion_mode = value.prompt_expansion_mode;
+    }
+    if (
+        controlsCap.damageLevels?.length &&
+        value.damage_level &&
+        controlsCap.damageLevels.includes(value.damage_level)
+    ) {
+        next.damage_level = value.damage_level;
+    }
+    if (typeof value.enable_safety_checker === "boolean") {
+        next.enable_safety_checker = value.enable_safety_checker;
+    }
+    if (typeof value.sync_mode === "boolean") {
+        next.sync_mode = value.sync_mode;
+    }
+    return Object.keys(next).length ? next : undefined;
+}
+
 export function videoSupportsMiddleFrame(video?: VideoCapabilityConfig | null): boolean {
     return video?.middleFrame === true;
 }

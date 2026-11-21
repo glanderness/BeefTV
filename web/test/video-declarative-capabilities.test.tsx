@@ -4,10 +4,12 @@ import { CanvasH3Controls } from "../src/components/canvas/canvas-h3-controls";
 import { CanvasH3ReferenceOrder } from "../src/components/canvas/canvas-h3-reference-order";
 import { CanvasConfigNodePanel } from "../src/components/canvas/canvas-config-node-panel";
 import { buildGenerationConfig, canvasVideoOperationPreference } from "../src/lib/canvas/canvas-generation-config";
-import { resolveVideoReferenceOrder } from "../src/lib/canvas/video-reference-mode";
+import { buildVideoGenerationMetadata } from "../src/lib/canvas/canvas-project-generation";
+import { resolveVideoReferenceCapabilities, resolveVideoReferenceOrder } from "../src/lib/canvas/video-reference-mode";
 import { mergeFetchedChannelModelProfiles } from "../src/lib/channel-model-catalog";
 import {
     isVideoReferenceMode,
+    normalizeVideoGenerationControls,
     normalizeVideoValue,
     sanitizeServerVideoCapability,
     videoDurationAllowed,
@@ -17,6 +19,8 @@ import {
     videoSupportsReferenceOrder,
     type VideoCapabilityConfig,
 } from "../src/lib/model-capabilities";
+import { resolveVideoOperation } from "../src/lib/model-selection";
+import { videoSettingsConstraints } from "../src/lib/video-settings-constraints";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot } from "../src/stores/use-config-store";
 import { CanvasNodeType } from "../src/types/canvas";
 
@@ -270,5 +274,194 @@ describe("capability-driven video UI controls for opaque model IDs", () => {
         // Explicit frame role or explicit image_to_video stays out of reference_to_video.
         expect(canvasVideoOperationPreference(config, { ...baseNode, metadata: { ...baseNode.metadata, videoStartFrameNodeId: "img-1" } }, oneImage, "frames")).toBeUndefined();
         expect(canvasVideoOperationPreference(config, { ...baseNode, metadata: { ...baseNode.metadata, videoEditOperation: "image_to_video" } }, oneImage, "frames")).toBe("image_to_video");
+    });
+
+    test("resolveVideoOperation unifies preferReferenceMode across create, config panel, and settings constraints", () => {
+        const opaqueCap = sanitizeServerVideoCapability({
+            ...baseCapabilityPayload,
+            preferReferenceMode: true,
+            operationReferences: { image_to_video: { maxImages: 2, maxVideos: 0, maxAudios: 1 } },
+            controls: { seed: true, promptExpansionModes: ["disabled", "balanced", "quality"] },
+        })!;
+        const oneImage = { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 };
+        // Direct caller (e.g. /create submit) & untagged node resolve to reference_to_video
+        expect(resolveVideoOperation(oneImage, undefined, opaqueCap)).toBe("reference_to_video");
+        // Explicit frame or explicit image_to_video stays image_to_video
+        expect(resolveVideoOperation(oneImage, undefined, opaqueCap, { hasExplicitFrame: true })).toBe("image_to_video");
+        expect(resolveVideoOperation(oneImage, "image_to_video", opaqueCap)).toBe("image_to_video");
+
+        const channel = createModelChannel({
+            id: "studio",
+            name: "Studio",
+            baseUrl: "https://studio.example/v1",
+            models: ["opaque-prefer-ref"],
+        });
+        channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [
+            {
+                id: "opaque-prefer-ref",
+                supportedEndpointTypes: ["openai-video"],
+                videoCapabilitiesVersion: "v-prefer-unified",
+                videoCapabilities: opaqueCap,
+            },
+        ]);
+        const config = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [channel], model: "studio::opaque-prefer-ref", videoModel: "studio::opaque-prefer-ref" },
+        }).config;
+
+        // Settings constraints agree with resolveVideoOperation: untagged -> editable ratio; explicit frame -> locked ratio
+        expect(videoSettingsConstraints(config, { imageCount: 1 })).toEqual({});
+        expect(videoSettingsConstraints(config, { imageCount: 1 }, { videoStartFrameNodeId: "img-1" }).ratioLabel).toBe("随首帧图片");
+        expect(videoSettingsConstraints(config, { imageCount: 1 }, { videoEditOperation: "image_to_video" }).ratioLabel).toBe("随首帧图片");
+
+        // Config node panel select agrees: untagged shows 全能参考 (reference_to_video)
+        const untaggedConfigNode = {
+            id: "cfg-prefer-ref",
+            type: CanvasNodeType.Config,
+            title: "Config",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 240,
+            metadata: { generationMode: "video" as const, model: "studio::opaque-prefer-ref" },
+        };
+        const htmlUntagged = renderToStaticMarkup(
+            <CanvasConfigNodePanel
+                config={config}
+                node={untaggedConfigNode}
+                isRunning={false}
+                inputSummary={oneImage}
+                onConfigChange={() => {}}
+                onGenerate={() => {}}
+                onComposerToggle={() => {}}
+            />,
+        );
+        expect(htmlUntagged).toContain("参考生成");
+        const explicitFrameHtml = renderToStaticMarkup(
+            <CanvasConfigNodePanel
+                config={config}
+                node={{ ...untaggedConfigNode, metadata: { ...untaggedConfigNode.metadata, videoStartFrameNodeId: "img-1" } }}
+                isRunning={false}
+                inputSummary={oneImage}
+                onConfigChange={() => {}}
+                onGenerate={() => {}}
+                onComposerToggle={() => {}}
+            />,
+        );
+        expect(explicitFrameHtml).toContain("首帧 / 首尾帧");
+    });
+
+    test("omitted declarative flags stay opaque (preserving cached saved settings) while explicit false/empty cleans them", () => {
+        const omittedCap = sanitizeServerVideoCapability({
+            ...baseCapabilityPayload,
+        })!;
+        const explicitOffCap = sanitizeServerVideoCapability({
+            ...baseCapabilityPayload,
+            middleFrame: false,
+            referenceOrder: false,
+            controls: {},
+        })!;
+
+        // Omitted flags -> opaque even when hasDeclaredCapability = true; UI stays hidden (supported = false)
+        const omittedSupport = resolveVideoReferenceCapabilities("beeftv::opaque-legacy-cache", omittedCap, true);
+        expect(omittedSupport.middleFrameSupport).toBe("opaque");
+        expect(omittedSupport.middleFrameSupported).toBe(false);
+        expect(omittedSupport.referenceOrderSupport).toBe("opaque");
+        expect(omittedSupport.referenceOrderSupported).toBe(false);
+        expect(omittedSupport.controlsSupport).toBe("opaque");
+        expect(omittedSupport.controlsSupported).toBe(false);
+
+        // Explicit false / empty controls -> unsupported
+        const offSupport = resolveVideoReferenceCapabilities("beeftv::opaque-explicit-off", explicitOffCap, true);
+        expect(offSupport.middleFrameSupport).toBe("unsupported");
+        expect(offSupport.referenceOrderSupport).toBe("unsupported");
+        expect(offSupport.controlsSupport).toBe("unsupported");
+
+        const channel = createModelChannel({
+            id: "beeftv",
+            name: "BeefTV",
+            baseUrl: "https://beeftv.app/v1",
+            models: ["opaque-legacy-cache", "opaque-explicit-off"],
+        });
+        channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [
+            { id: "opaque-legacy-cache", supportedEndpointTypes: ["openai-video"], videoCapabilitiesVersion: "v1", videoCapabilities: omittedCap },
+            { id: "opaque-explicit-off", supportedEndpointTypes: ["openai-video"], videoCapabilitiesVersion: "v2", videoCapabilities: explicitOffCap },
+        ]);
+        const config = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [channel], model: "beeftv::opaque-legacy-cache", videoModel: "beeftv::opaque-legacy-cache" },
+        }).config;
+        const images = [
+            { id: "img-1", name: "1.png", type: "image/png", dataUrl: "https://example.com/1.png", position: { x: 0, y: 0 } },
+            { id: "img-2", name: "2.png", type: "image/png", dataUrl: "https://example.com/2.png", position: { x: 10, y: 0 } },
+        ];
+        const savedNode = {
+            id: "vid-saved",
+            type: CanvasNodeType.Video,
+            title: "Saved",
+            position: { x: 0, y: 0 },
+            width: 240,
+            height: 180,
+            metadata: {
+                model: "beeftv::opaque-legacy-cache",
+                videoEditOperation: "reference_to_video" as const,
+                videoMiddleFrameNodeId: "img-2",
+                videoMiddleFrameTime: 1.5,
+                videoReferenceOrder: ["img-2", "img-1"],
+                videoH3Options: { seed: 42, prompt_expansion_mode: "balanced" as const },
+            },
+        };
+        const legacyMeta = buildVideoGenerationMetadata(savedNode, { referenceImages: images, referenceVideos: [], referenceAudios: [] }, config);
+        expect(legacyMeta.videoMiddleFrameNodeId).toBe("img-2");
+        expect(legacyMeta.videoMiddleFrameTime).toBe(1.5);
+        expect(legacyMeta.videoReferenceOrder).toEqual(["img-2", "img-1"]);
+        expect(legacyMeta.videoH3Options).toEqual({ seed: 42, prompt_expansion_mode: "balanced" });
+
+        const offConfig = { ...config, model: "beeftv::opaque-explicit-off", videoModel: "beeftv::opaque-explicit-off" };
+        const offMeta = buildVideoGenerationMetadata(
+            { ...savedNode, metadata: { ...savedNode.metadata, model: "beeftv::opaque-explicit-off" } },
+            { referenceImages: images, referenceVideos: [], referenceAudios: [] },
+            offConfig,
+        );
+        expect(offMeta.videoMiddleFrameNodeId).toBeUndefined();
+        expect(offMeta.videoMiddleFrameTime).toBeUndefined();
+        expect(offMeta.videoReferenceOrder).toBeUndefined();
+        expect(offMeta.videoH3Options).toBeUndefined();
+    });
+
+    test("normalizeVideoGenerationControls and buildVideoGenerationMetadata strip unsupported persisted videoH3Options", () => {
+        const cap = { seed: true, promptExpansionModes: ["disabled", "balanced", "quality"] as const };
+        expect(normalizeVideoGenerationControls(cap, { seed: 7, prompt_expansion_mode: "fast", damage_level: "heavy" })).toEqual({ seed: 7 });
+        expect(normalizeVideoGenerationControls(cap, { prompt_expansion_mode: "fast", damage_level: "light" })).toBeUndefined();
+        expect(normalizeVideoGenerationControls({ seed: false, promptExpansionModes: ["balanced"] }, { seed: 7, prompt_expansion_mode: "balanced" })).toEqual({ prompt_expansion_mode: "balanced" });
+        expect(normalizeVideoGenerationControls({ seed: true }, { seed: 1.5 })).toBeUndefined();
+
+        const serverCap = sanitizeServerVideoCapability({
+            ...baseCapabilityPayload,
+            controls: { seed: true, promptExpansionModes: ["disabled", "balanced", "quality"] },
+        })!;
+        const channel = createModelChannel({
+            id: "studio",
+            name: "Studio",
+            baseUrl: "https://studio.example/v1",
+            models: ["opaque-controls-strict"],
+        });
+        channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [
+            { id: "opaque-controls-strict", supportedEndpointTypes: ["openai-video"], videoCapabilitiesVersion: "v1", videoCapabilities: serverCap },
+        ]);
+        const config = normalizeConfigSnapshot({
+            config: { ...defaultConfig, channels: [channel], model: "studio::opaque-controls-strict", videoModel: "studio::opaque-controls-strict" },
+        }).config;
+        const node = {
+            id: "vid-stale-opts",
+            type: CanvasNodeType.Video,
+            title: "Stale Controls",
+            position: { x: 0, y: 0 },
+            width: 240,
+            height: 180,
+            metadata: {
+                model: "studio::opaque-controls-strict",
+                videoH3Options: { seed: 99, prompt_expansion_mode: "fast" as const, damage_level: "medium" as const },
+            },
+        };
+        const built = buildVideoGenerationMetadata(node, { referenceImages: [], referenceVideos: [], referenceAudios: [] }, config);
+        expect(built.videoH3Options).toEqual({ seed: 99 });
     });
 });

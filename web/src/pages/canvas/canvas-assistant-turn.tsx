@@ -184,7 +184,9 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                 const started = handledProposals.has(proposal.proposalId) || admittedOnCanvas;
                 const skipped = handledProposals.has(dismissedProposalKey(proposal.proposalId));
                 const selectedModel = proposal.modelKey || proposal.model;
-                const profile = proposal.kind === "video" ? resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel)) : undefined;
+                const channelProfile = resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel));
+                const profile = proposal.kind === "video" ? channelProfile : undefined;
+                const configuredModelLabel = channelProfile?.displayName?.trim();
                 const running = Boolean(runningProposalIds?.has(proposal.proposalId));
                 const progress = started && nodes ? assistantProposalProgress(proposal, nodes) : null;
                 const awaitingConfirmation = !started && !skipped && !undone && !turn.proposalsInvalidated;
@@ -224,7 +226,7 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                         ) : (
                             <>
                                 <div className="canvas-assistant-proposal-lines">
-                                    {assistantProposalText(proposal, videoPricingDisplayLines(profile?.videoPricing), awaitingConfirmation).split("\n").map((part, partIndex) => <div key={partIndex} className={part.length > 80 ? "canvas-assistant-pretty-line" : undefined}>{part}</div>)}
+                                    {assistantProposalText(proposal, videoPricingDisplayLines(profile?.videoPricing), awaitingConfirmation, configuredModelLabel).split("\n").map((part, partIndex) => <div key={partIndex} className={part.length > 80 ? "canvas-assistant-pretty-line" : undefined}>{part}</div>)}
                                 </div>
                                 {orderTargetLines.length > 0 ? (
                                     <details className="canvas-assistant-proposal-details">

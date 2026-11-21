@@ -102,7 +102,7 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
         const profile = capabilityConfig.video!;
         if (requirements.videoOperation !== "draft_to_final" && requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) return "不支持当前视频时长";
         if (!input) return "";
-        const operation = resolveVideoOperation(input, requirements.videoOperation, profile, model, isBeefTVModelRoute(model, config));
+        const operation = resolveVideoOperation(input, requirements.videoOperation, profile);
         const refOperation = profile.operations.includes(operation)
             ? operation
             : visualInputCount > 0 && input.videoCount === 0 && profile.operations.includes("image_to_video")
@@ -167,7 +167,7 @@ function logicalModelCompatibilityError(spec: NonNullable<NonNullable<AiConfig["
                   },
               } as VideoCapabilityConfig)
             : undefined;
-    const operation = requirements.capability === "video" && input ? resolveVideoOperation(input, requirements.videoOperation, logicalVideoProfile, model) : requirements.videoOperation;
+    const operation = requirements.capability === "video" && input ? resolveVideoOperation(input, requirements.videoOperation, logicalVideoProfile) : requirements.videoOperation;
     if (operation && spec.operations?.length && !spec.operations.includes(operation)) return "不支持当前生成模式";
     // 图片创作状态也会携带全局默认视频时长；这个字段只对视频模型有意义，
     // 不能把它拼进图片逻辑模型的能力匹配，否则图片模型会被误判为“不支持当前时长”。
@@ -468,7 +468,16 @@ export function isBeefTVModelRoute(model: string, config?: Partial<AiConfig>): b
     return Boolean(config?.baseUrl && isBeefTVEndpoint(config.baseUrl));
 }
 
-export function resolveVideoOperation(input: ModelInputSummary, storedOperation?: string, profile?: VideoCapabilityConfig | null, _model?: string, _isBeefTVRoute?: boolean) {
+export type ResolveVideoOperationOptions = {
+    hasExplicitFrame?: boolean;
+};
+
+export function resolveVideoOperation(
+    input: ModelInputSummary,
+    storedOperation?: string,
+    profile?: VideoCapabilityConfig | null,
+    options?: ResolveVideoOperationOptions,
+) {
     const visualInputCount = input.imageCount + input.characterCount;
     const totalMediaCount = visualInputCount + input.videoCount + input.audioCount;
     const supportsReferenceVideo = profile ? profile.operations.includes("reference_to_video") : undefined;
@@ -478,6 +487,14 @@ export function resolveVideoOperation(input: ModelInputSummary, storedOperation?
     if (storedOperation === "reference_to_video" && totalMediaCount > 0 && supportsReferenceVideo !== false) return storedOperation;
     const inferred = inferVideoOperation(input);
     if (inferred === "image_to_video" && supportsReferenceVideo) {
+        if (
+            profile?.preferReferenceMode &&
+            storedOperation !== "image_to_video" &&
+            input.imageCount > 0 &&
+            !options?.hasExplicitFrame
+        ) {
+            return "reference_to_video";
+        }
         const frameRefs = videoReferencesForOperation(profile!, "image_to_video");
         const frameMaxVideos = hasExplicitOpRefs ? frameRefs.maxVideos : 0;
         const frameMaxAudios = hasExplicitOpRefs ? frameRefs.maxAudios : 0;

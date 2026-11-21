@@ -280,7 +280,18 @@ export function CanvasConfigComposer({ config: configProp, value, inputs, skillR
                         middleFrameSupported={middleFrameSupported}
                         referenceLabel="参考生成"
                         frameOptions={videoFrameOptions}
-                        referenceMode={(!middleFrameSupported && resolveVideoOperation(inputSummary, metadata?.videoEditOperation, declaredOrOmniVideoCapability(globalConfig, effectiveModel)) === "reference_to_video") ? "all" : "frames"}
+                        referenceMode={(!middleFrameSupported && resolveVideoOperation(
+                            inputSummary,
+                            metadata?.videoEditOperation,
+                            declaredOrOmniVideoCapability(globalConfig, effectiveModel),
+                            {
+                                hasExplicitFrame: Boolean(
+                                    metadata?.videoStartFrameNodeId ||
+                                        metadata?.videoEndFrameNodeId ||
+                                        metadata?.videoMiddleFrameNodeId,
+                                ),
+                            },
+                        ) === "reference_to_video") ? "all" : "frames"}
                         referenceSummary={{
                             imageCount: inputSummary.imageCount + inputSummary.characterCount,
                             videoCount: inputSummary.videoCount,
