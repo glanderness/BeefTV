@@ -19,8 +19,8 @@ func TestMediaReviewSelectionUsesItsOwnRoleAndSelectedCredential(t *testing.T) {
 	if reason != "" || provider.Model != MediaReviewModel || provider.APIKey != "synthetic-key" || provider.BaseURL != "https://selected.example.test/v1" || lookups != 1 {
 		t.Fatal("selected managed media model did not resolve")
 	}
-	if _, reason := ResolveAssistantChannelModel(snapshot, snapshot.MediaReviewModel, lookup); reason == "" {
-		t.Fatal("media role must not grant main assistant access")
+	if _, err := ResolveAssistantProvider(snapshot, lookup); err == nil {
+		t.Fatal("media review selection must not supply the main assistant model")
 	}
 	for _, change := range []func(*AssistantConfigSnapshot){
 		func(s *AssistantConfigSnapshot) { s.MediaReviewModel = "" },

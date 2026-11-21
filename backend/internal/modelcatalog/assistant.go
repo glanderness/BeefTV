@@ -25,11 +25,6 @@ var assistantProtocols = map[string]string{
 	"google-gemini-generate-content": "gemini-generate-content",
 }
 
-// managedAssistantModels 是 BeefTV 托管渠道允许的助手模型。名单必须显式列出：
-// gpt-6-astra 已经不是默认值，但已选它的老用户仍要能继续使用，所以不能随手删掉
-// 旧默认值；换默认值只改 DefaultManagedAssistantModel，不动这份名单。
-var managedAssistantModels = []string{"deepseek-v4.1-flash", "gpt-6-astra", "claude-opus-5-5", "glm-5.3", "gemini-3.8-flash"}
-
 type AssistantModelProfile struct {
 	Model         string `json:"model"`
 	Capability    string `json:"capability"`
@@ -113,10 +108,6 @@ func ResolveAssistantProvider(snapshot AssistantConfigSnapshot, lookup ManagedCr
 }
 
 func ResolveAssistantChannelModel(snapshot AssistantConfigSnapshot, modelKey string, lookup ManagedCredentialLookup) (assistant.Provider, string) {
-	return resolveChannelModel(snapshot, modelKey, lookup, managedAssistantModels)
-}
-
-func resolveChannelModel(snapshot AssistantConfigSnapshot, modelKey string, lookup ManagedCredentialLookup, managedModels []string) (assistant.Provider, string) {
 	if modelKey == "" {
 		return assistant.Provider{}, AssistantReasonModelNotConfigured
 	}
@@ -131,18 +122,6 @@ func resolveChannelModel(snapshot AssistantConfigSnapshot, modelKey string, look
 	modelID = assistantModelAlias(channel, modelID)
 	if !assistantChannelHasModel(channel, modelID) {
 		return assistant.Provider{}, AssistantReasonModelNotConfigured
-	}
-	if channel.ID == "beeftv" && (channel.Pinned || channel.CredentialRef == "beeftv") {
-		allowed := false
-		for _, candidate := range managedModels {
-			if assistantModelAlias(channel, candidate) == modelID {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return assistant.Provider{}, AssistantReasonModelNotConfigured
-		}
 	}
 	protocol, protocolOK := ChannelModelProtocol(channel, modelID)
 	if !protocolOK {
@@ -240,7 +219,7 @@ func ChannelModelProtocol(channel AssistantChannel, modelID string) (string, boo
 			continue
 		}
 		capability := strings.TrimSpace(profile.Capability)
-		if capability != "" && capability != "text" {
+		if capability != "text" {
 			return "", false
 		}
 		declared := strings.TrimSpace(profile.Protocol)

@@ -9,7 +9,7 @@ import (
 const MediaReviewModel = "wand-vega-vl-1.0-flash"
 
 // A review model uses the same channel and credentials as other selections,
-// but its verified media adapter does not grant it the main assistant role.
+// while restricting media review to its verified video + audio adapter.
 func ResolveMediaReviewProvider(snapshot AssistantConfigSnapshot, lookup ManagedCredentialLookup) (assistant.Provider, string) {
 	selection := strings.TrimSpace(snapshot.MediaReviewModel)
 	channelID, modelID := SplitModelKey(selection)
@@ -25,5 +25,5 @@ func ResolveMediaReviewProvider(snapshot AssistantConfigSnapshot, lookup Managed
 	if !ok || protocol != "chat-completion" {
 		return assistant.Provider{}, AssistantReasonProtocolUnsupported
 	}
-	return resolveChannelModel(snapshot, selection, lookup, []string{MediaReviewModel})
+	return ResolveAssistantChannelModel(snapshot, selection, lookup)
 }
