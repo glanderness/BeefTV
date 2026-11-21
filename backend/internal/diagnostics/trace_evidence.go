@@ -38,7 +38,7 @@ func (s *Service) collectTraceEvidence(userID string, c *collection) {
 	}
 	c.setCoverage("backendEvents", len(c.BackendEvents), 5000, nil)
 	if len(c.BackendEvents) > 5000 {
-		c.BackendEvents = c.BackendEvents[:5000]
+		c.BackendEvents = c.BackendEvents[len(c.BackendEvents)-5000:]
 	}
 	coverage := c.Collectors["backendEvents"]
 	coverage.Scope = "recorder_retained_history"

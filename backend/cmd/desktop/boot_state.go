@@ -267,7 +267,6 @@ func (a *DesktopApp) startSingleflight(ctx context.Context) error {
 
 	clearStartupErrorFiles(dataDir, fallbackTemp)
 	a.checkAndArmCrashSentinel(dataDir, fallbackTemp, launchID, rt)
-	a.startRendererWatchdog(rt)
 	_ = diagnostics.AppendBootLogEntry(dataDir, diagnostics.BootLogEntry{
 		ID:         newDesktopBootID("boot"),
 		LaunchID:   launchID,

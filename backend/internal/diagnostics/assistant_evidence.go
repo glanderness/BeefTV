@@ -71,7 +71,7 @@ func (s *Service) collectAssistantEvidence(userID string, c *collection) {
 	c.setCoverage("assistantRuntime", len(c.AssistantEvidence), 2000, nil)
 	coverage := c.Collectors["assistantRuntime"]
 	if len(c.AssistantEvidence) > 2000 {
-		c.AssistantEvidence = c.AssistantEvidence[:2000]
+		c.AssistantEvidence = c.AssistantEvidence[len(c.AssistantEvidence)-2000:]
 	}
 	if snapshot.Coverage.Status != "complete" && coverage.Status != "truncated" {
 		coverage.Status, coverage.Reason = "partial", sanitizeIdentifier(snapshot.Coverage.Reason)

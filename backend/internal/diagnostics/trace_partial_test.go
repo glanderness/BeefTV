@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -102,5 +103,39 @@ func TestTraceReadErrorsPreserveValidScopedEvidenceAndLossCounters(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+func TestTraceEvidenceTruncationKeepsNewestEvents(t *testing.T) {
+	db := evidenceDB(t)
+	now := time.Now().UTC()
+	const total = 5005
+	events := make([]supporttrace.Event, 0, total)
+	for i := 0; i < total; i++ {
+		events = append(events, supporttrace.Event{
+			ID:        fmt.Sprintf("evt-%05d", i),
+			Fields:    supporttrace.Fields{UserID: "owner"},
+			Name:      "http.request",
+			Phase:     "end",
+			Status:    "ok",
+			Timestamp: now.Add(-time.Duration(total-i) * time.Millisecond),
+		})
+	}
+	source := partialTraceFixture{snapshot: supporttrace.Snapshot{
+		Events:   events,
+		Coverage: supporttrace.Coverage{Status: "complete", Records: len(events)},
+	}}
+	service := New(Dependencies{Store: repository.New(db), TraceSource: source})
+	bundle, err := service.Export("owner", ExportRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := readTestZIP(t, bundle.Data)
+	content := files["backend/events.jsonl"]
+	if strings.Contains(content, `"id":"evt-00000"`) || strings.Contains(content, `"id":"evt-00004"`) {
+		t.Fatal("oldest events outside the latest 5000 window should have been truncated")
+	}
+	if !strings.Contains(content, `"id":"evt-00005"`) || !strings.Contains(content, `"id":"evt-05004"`) {
+		t.Fatal("expected latest 5000 events (evt-00005..evt-05004) to be retained")
 	}
 }
