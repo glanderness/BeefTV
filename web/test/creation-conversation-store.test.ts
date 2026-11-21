@@ -669,3 +669,55 @@ test("load surfaces unsaved new conversation after initial PUT failure and drops
     expect(afterTombstone?.map((item) => item.id)).toEqual(["existing"]);
     expect(hasPendingCreationConversationWrites()).toBe(false);
 });
+
+test("lost ack on initial PUT followed by same-id edit and adopt preserves both local edit and server result", async () => {
+    // Simulate first PUT committed on server at rev 1, but client never saw the ack (transient error after server write).
+    const initial = {
+        id: "lost-ack-1",
+        title: "初版标题",
+        messages: [
+            { id: "u1", role: "user" as const, content: "初版提示词" },
+            { id: "a1", role: "assistant" as const, status: "pending", content: "", taskIds: ["task-1"] },
+        ],
+    };
+    server.conversations.set("lost-ack-1", {
+        id: "lost-ack-1",
+        revision: 1,
+        updatedAt: "2026-10-02T00:00:00.000Z",
+        document: structuredClone(initial),
+    });
+    server.failNext = { status: 500, message: "响应丢失" };
+    await expect(saveCreationConversations([initial])).rejects.toThrow("响应丢失");
+
+    // Backend task attach advances server to rev 2 while user edits title AND same-id user message u1.
+    const serverAttached = {
+        id: "lost-ack-1",
+        title: "初版标题",
+        messages: [
+            { id: "u1", role: "user" as const, content: "初版提示词" },
+            { id: "a1", role: "assistant" as const, status: "done", content: "生成完成", taskIds: ["task-1"], resultUrls: ["/api/resources/r1/file"] },
+        ],
+    };
+    server.conversations.set("lost-ack-1", {
+        id: "lost-ack-1",
+        revision: 2,
+        updatedAt: "2026-10-02T00:01:00.000Z",
+        document: serverAttached,
+    });
+
+    const userEdited = {
+        id: "lost-ack-1",
+        title: "用户二次改名",
+        messages: [
+            { id: "u1", role: "user" as const, content: "用户补充后的提示词" },
+            { id: "a1", role: "assistant" as const, status: "pending", content: "", taskIds: ["task-1"] },
+        ],
+    };
+    // Retry PUT (expectedRevision 0 -> 409) rebases using sentDocument as true 3-way ancestor!
+    await saveCreationConversations([userEdited]);
+    const final = server.conversations.get("lost-ack-1");
+    expect(final?.revision).toBe(3);
+    expect(final?.document?.title).toBe("用户二次改名");
+    expect(final?.document?.messages.find((item) => item.id === "u1")?.content).toBe("用户补充后的提示词");
+    expect(final?.document?.messages.find((item) => item.id === "a1")?.content).toBe("生成完成");
+});

@@ -324,7 +324,7 @@ func TestPutRejectsCredentialsAndKeepsUnknownFields(t *testing.T) {
 	}
 }
 
-func TestDeleteDoesNotRequireMissingLocalDraft(t *testing.T) {
+func TestDeleteCreatesTombstoneForMissingConversation(t *testing.T) {
 	_, _, svc := openConversationFixture(t)
 	deleted, err := svc.Delete("local", "conversation-never", 0)
 	if err != nil || !deleted.Deleted {

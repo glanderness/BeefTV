@@ -25,6 +25,8 @@ type CommittedState = {
 type PendingWrite = {
     generation: number;
     document: StoredCreationConversation;
+    /** Last document actually dispatched in a PUT, used as 3-way ancestor on lost-ack 409/adopt. */
+    sentDocument?: StoredCreationConversation;
     adoptedRevision?: number;
 };
 
@@ -141,7 +143,7 @@ function persistAttachment(value: unknown) {
 }
 
 function persistableDocument(conversation: StoredCreationConversation): CreationConversationDocument {
-    const { revision: _revision, pending: _pending, conflictRemote: _conflictRemote, ...rest } = conversation;
+    const { revision: _revision, ...rest } = conversation;
     const stripped = stripEphemeralMedia(rest) as Record<string, unknown>;
     const title = typeof stripped.title === "string" ? stripped.title.trim() : "";
     stripped.title = title || "新创作";
@@ -374,7 +376,7 @@ export async function loadCreationConversations<T extends StoredCreationConversa
             loaded.push(cloneConversation(document) as T);
             continue;
         }
-        const live = projectLocalOnCanonical(existing?.document, pending.document, document);
+        const live = projectLocalOnCanonical(existing?.document ?? pending.sentDocument, pending.document, document);
         if (fingerprintOf(live) === fingerprintOf(document)) {
             pendingWrites.delete(key);
             loaded.push(cloneConversation(document) as T);
@@ -382,6 +384,7 @@ export async function loadCreationConversations<T extends StoredCreationConversa
             pendingWrites.set(key, {
                 generation: nextGeneration(key),
                 document: cloneConversation(live),
+                sentDocument: pending.sentDocument,
                 adoptedRevision: record.revision,
             });
             loaded.push(cloneConversation(live) as T);
@@ -427,8 +430,13 @@ async function flushConversation(scope: string, id: string) {
             saved = await creationConversationsApi.put(id, { expectedRevision, document: payload });
         } catch (error) {
             // Retain pendingWrites as the latest local intent on transient errors so a
-            // subsequent adopt or retry preserves unsaved user edits.
+            // subsequent adopt or retry preserves unsaved user edits. Record the first
+            // unknown-outcome PUT payload as a possible server ancestor for lost-ack rebase.
             if (!isConflictError(error)) {
+                const activePending = pendingWrites.get(key);
+                if (activePending && !activePending.sentDocument) {
+                    activePending.sentDocument = snapshot.document;
+                }
                 throw error;
             }
             const latestCommitted = committed.get(key);
@@ -471,10 +479,15 @@ async function flushConversation(scope: string, id: string) {
                 if (rebaseAttempts >= MAX_CONFLICT_REBASE_ATTEMPTS) throw error;
                 rebaseAttempts += 1;
                 if (pendingAfterGet.adoptedRevision !== committedAfterGet.revision) {
-                    const merged = projectLocalOnCanonical(state?.document, pendingAfterGet.document, committedAfterGet.document);
+                    const merged = projectLocalOnCanonical(
+                        state?.document ?? pendingAfterGet.sentDocument,
+                        pendingAfterGet.document,
+                        committedAfterGet.document,
+                    );
                     pendingWrites.set(key, {
                         generation: nextGeneration(key),
                         document: merged,
+                        sentDocument: pendingAfterGet.sentDocument,
                         adoptedRevision: committedAfterGet.revision,
                     });
                 }
@@ -485,7 +498,8 @@ async function flushConversation(scope: string, id: string) {
             } else if (rebaseAttempts < MAX_CONFLICT_REBASE_ATTEMPTS) {
                 rebaseAttempts += 1;
                 const liveLocal = pendingAfterGet?.document ?? snapshot.document;
-                const merged = projectLocalOnCanonical(state?.document, liveLocal, remoteDoc);
+                const base = state?.document ?? snapshot.sentDocument;
+                const merged = projectLocalOnCanonical(base, liveLocal, remoteDoc);
                 commitIfCurrent(scope, id, remote.revision, remoteDoc);
                 pendingWrites.set(key, {
                     generation: nextGeneration(key),
@@ -541,7 +555,8 @@ export async function saveCreationConversations<T extends StoredCreationConversa
             return Promise.resolve();
         }
         const generation = nextGeneration(key);
-        pendingWrites.set(key, { generation, document: cloned });
+        const priorSent = pendingWrites.get(key)?.sentDocument;
+        pendingWrites.set(key, { generation, document: cloned, ...(priorSent ? { sentDocument: priorSent } : {}) });
         deletedAt.delete(key);
         return enqueue(scope, cloned.id, () => flushConversation(scope, cloned.id));
     });
@@ -569,7 +584,7 @@ export async function adoptServerConfirmedConversationDocument(
         return cloneConversation(pending?.document ?? current.document);
     }
 
-    const base = current?.document;
+    const base = current?.document ?? pending?.sentDocument;
     let live: StoredCreationConversation;
     if (!pending) {
         live = cloneConversation(canonical);

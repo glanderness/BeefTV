@@ -151,6 +151,17 @@ export function useCreateConversations(params: UseCreateConversationsParams) {
     }, [demoConversation, userId]);
 
     useEffect(() => {
+        if (demoConversation) return;
+        const onBeforeUnload = (event: BeforeUnloadEvent) => {
+            if (!hasPendingCreationConversationWrites()) return;
+            event.preventDefault();
+            event.returnValue = "";
+        };
+        window.addEventListener("beforeunload", onBeforeUnload);
+        return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    }, [demoConversation]);
+
+    useEffect(() => {
         activeIdRef.current = activeId;
     }, [activeId]);
 
