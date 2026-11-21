@@ -140,6 +140,17 @@ export function canvasBackendSubmitPending(id: string, scope: string) {
     return backendSaveTails.has(key) || backendSaveTimers.has(key);
 }
 
+/** 等待当前作用域里已在发送的画布保存链结束（不主动触发节流计时器）。 */
+export async function waitForActiveCanvasBackendSaves(scope = getActiveUserScope()) {
+    const prefix = `${scope}\0`;
+    const tails = [...backendSaveTails.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([, tail]) => tail);
+    if (tails.length > 0) {
+        await Promise.allSettled(tails);
+    }
+}
+
 /** 把保存链的真实状态发布到同步进度：排队、提交中、已被接受或失败。 */
 export function publishCanvasSaveProgress(id: string, scope: string, failed = false) {
     const key = saveKey(scope, id);

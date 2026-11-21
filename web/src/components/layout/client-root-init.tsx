@@ -103,7 +103,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         if (!assetsHydrated || !canvasHydrated) return;
-        if (canvasHealth.started && (canvasHealth.loading || Boolean(canvasHealth.error))) return;
+        if (canvasHealth.loading || Boolean(canvasHealth.error)) return;
         const scope = getActiveUserScope();
         if (localMediaCleanupScope.current === scope) return;
         localMediaCleanupScope.current = scope;
@@ -112,7 +112,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             if (localMediaCleanupScope.current === scope) localMediaCleanupScope.current = "";
             console.warn("本地媒体缓存清理失败，已保留当前工作区", { scope, error });
         });
-    }, [assetsHydrated, canvasHydrated, canvasHealth.error, canvasHealth.loading, canvasHealth.started]);
+    }, [assetsHydrated, canvasHydrated, canvasHealth.error, canvasHealth.loading]);
 
     useEffect(() => {
         setDiagnosticUserScope(userId);

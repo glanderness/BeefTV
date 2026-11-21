@@ -315,9 +315,10 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
         const fallback = openLocalCanvasProject(id);
         if (fallback && !fallback.summaryOnly) return fallback;
         const inFlightDocument = peekCanvasOperationJournal(id, scope)?.inFlight?.payload?.document;
-        if (inFlightDocument && !inFlightDocument.summaryOnly) {
+        if (inFlightDocument && !inFlightDocument.summaryOnly && !canvasDeleting.has(saveKey(scope, id))) {
             const recovered = normalizeCanvasProjectGraph(inFlightDocument);
-            applyLiveCanvasProject(id, recovered, false);
+            applyLiveCanvasProject(id, recovered, true);
+            await flushCanvasStorePersistence();
             return recovered;
         }
         throw error;

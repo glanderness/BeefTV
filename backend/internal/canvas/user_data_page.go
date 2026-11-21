@@ -2,6 +2,7 @@ package canvas
 
 import (
 	"encoding/json"
+	"fmt"
 	"infinite-canvas/backend/internal/kernel"
 	"sort"
 	"strings"
@@ -54,28 +55,49 @@ func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, 
 	}
 	result := CanvasLibraryPage{Projects: make([]CanvasLibrarySummary, 0, len(projects)), Page: page, PageSize: pageSize, Total: total, HasMore: int64(page)*int64(pageSize) < total}
 	for _, project := range projects {
-		var document struct {
-			WorkspaceProjectID string           `json:"workspaceProjectId"`
-			CanvasTitle        string           `json:"canvasTitle"`
-			Nodes              []map[string]any `json:"nodes"`
-		}
-		if err := json.Unmarshal([]byte(project.PayloadJSON), &document); err != nil {
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(project.PayloadJSON), &raw); err != nil {
 			return CanvasLibraryPage{}, err
 		}
-		preview := canvasLibraryPreviewNodes(document.Nodes)
+		workspaceProjectID, _ := raw["workspaceProjectId"].(string)
+		canvasTitle, _ := raw["canvasTitle"].(string)
+		var nodes []map[string]any
+		if rawNodes, ok := raw["nodes"]; ok && rawNodes != nil {
+			nodeList, ok := rawNodes.([]any)
+			if !ok {
+				return CanvasLibraryPage{}, fmt.Errorf("invalid canvas nodes payload")
+			}
+			nodes = make([]map[string]any, 0, len(nodeList))
+			for _, item := range nodeList {
+				if item == nil {
+					nodes = append(nodes, nil)
+					continue
+				}
+				nodeMap, ok := item.(map[string]any)
+				if !ok {
+					return CanvasLibraryPage{}, fmt.Errorf("invalid canvas node payload")
+				}
+				nodes = append(nodes, nodeMap)
+			}
+		}
+		preview := canvasLibraryPreviewNodes(nodes)
+		var localMediaKeys []string
+		if strings.Contains(project.PayloadJSON, `"storageKey"`) {
+			localMediaKeys = collectLocalMediaStorageKeys(raw)
+		}
 		result.Projects = append(result.Projects, CanvasLibrarySummary{
 			ID:                 project.ID,
-			WorkspaceProjectID: strings.TrimSpace(document.WorkspaceProjectID),
+			WorkspaceProjectID: strings.TrimSpace(workspaceProjectID),
 			ProjectID:          project.ProjectID,
 			FolderID:           project.LibraryFolderID,
 			Title:              project.Title,
-			CanvasTitle:        strings.TrimSpace(document.CanvasTitle),
+			CanvasTitle:        strings.TrimSpace(canvasTitle),
 			Revision:           project.Revision,
 			CreatedAt:          project.CreatedAt,
 			UpdatedAt:          project.UpdatedAt,
-			NodeCount:          len(document.Nodes),
+			NodeCount:          len(nodes),
 			PreviewNodes:       preview,
-			LocalMediaKeys:     collectLocalMediaStorageKeys(project.PayloadJSON),
+			LocalMediaKeys:     localMediaKeys,
 		})
 	}
 	return result, nil
@@ -133,14 +155,7 @@ func safeCanvasPreviewURL(value string) bool {
 	return len(value) <= 2048 && (strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "/api/") || strings.HasPrefix(value, "/resources/"))
 }
 
-func collectLocalMediaStorageKeys(payloadJSON string) []string {
-	if !strings.Contains(payloadJSON, `"storageKey"`) {
-		return nil
-	}
-	var raw any
-	if err := json.Unmarshal([]byte(payloadJSON), &raw); err != nil {
-		return nil
-	}
+func collectLocalMediaStorageKeys(raw any) []string {
 	seen := map[string]struct{}{}
 	walkLocalMediaStorageKeys(raw, seen)
 	if len(seen) == 0 {

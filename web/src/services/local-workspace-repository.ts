@@ -632,30 +632,53 @@ export async function deleteLocalCanvasProjects(ids: readonly string[], options:
     const scope = getActiveUserScope();
     const recordHistory = options.recordHistory !== false;
     const selected = [...new Set(ids)];
-    const snapshots: CanvasProject[] = [];
-    for (const id of selected) {
-        const current = useCanvasStore.getState().openProject(id);
-        if (!current) continue;
-        if (current.summaryOnly && recordHistory) {
-            try {
-                snapshots.push(await readLocalCanvasProjectFromBackend(id));
-            } catch (error) {
-                if (!isNotFoundApiError(error)) {
-                    throw error;
-                }
-            }
-        } else {
-            snapshots.push(current);
-        }
-    }
     for (const id of selected) canvasDeleting.add(saveKey(scope, id));
     try {
         await Promise.all(selected.map((id) => waitForCanvasBackendIdle(id, scope)));
+        const snapshots: CanvasProject[] = [];
+        for (const id of selected) {
+            const current = useCanvasStore.getState().openProject(id);
+            if (!current) continue;
+            if (current.summaryOnly && recordHistory) {
+                let journalInFlight: CanvasProject | undefined;
+                try {
+                    const journal = await loadCanvasOperationJournal(id, scope);
+                    const candidate = journal.inFlight?.payload?.document;
+                    if (candidate && !candidate.summaryOnly) {
+                        journalInFlight = normalizeCanvasProjectGraph(candidate);
+                    }
+                } catch {
+                    // 日记读取失败时回退到后端完整读取。
+                }
+                if (journalInFlight) {
+                    snapshots.push(journalInFlight);
+                    continue;
+                }
+                try {
+                    snapshots.push(await readLocalCanvasProjectFromBackend(id));
+                } catch (error) {
+                    if (!isNotFoundApiError(error)) {
+                        throw error;
+                    }
+                }
+            } else {
+                snapshots.push(current);
+            }
+        }
         const deleted: string[] = [];
         const failures: unknown[] = [];
         for (const id of selected) {
+            const snapshot = snapshots.find((item) => item.id === id);
             try {
-                await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
+                try {
+                    await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
+                } catch (error) {
+                    // 回滚清理（recordHistory: false）或从未成功创建过的 revision=0 草稿，
+                    // 后端返回 404 视为已不存在，继续清理本地状态与提交日记。
+                    if (!(isNotFoundApiError(error) && (!recordHistory || (snapshot?.revision ?? 0) === 0))) {
+                        throw error;
+                    }
+                }
                 await flushPendingCanvasOverlapWrite(id, scope);
                 await clearCanvasOperationJournal(id, scope);
                 clearCanvasDocumentBase(id, scope);
@@ -666,9 +689,8 @@ export async function deleteLocalCanvasProjects(ids: readonly string[], options:
             } catch (error) {
                 console.error("画布后端删除失败", { id, error });
                 failures.push(error);
-                if (!useCanvasStore.getState().openProject(id)) {
-                    const snapshot = snapshots.find((item) => item.id === id);
-                    if (snapshot) useCanvasStore.getState().restoreProject(snapshot);
+                if (!useCanvasStore.getState().openProject(id) && snapshot) {
+                    useCanvasStore.getState().restoreProject(snapshot);
                 }
             }
         }

@@ -1,11 +1,11 @@
-import { Button } from "antd";
+import { App, Button } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { RotateCcw, Trash2, X } from "lucide-react";
 
 import { ProjectPreview } from "@/components/canvas/canvas-project-card";
 import { cn } from "@/lib/utils";
-import { syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { deleteLocalCanvasProjects, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
@@ -25,12 +25,55 @@ export function prepareRestoredDeletedCanvas(project: CanvasProject): CanvasProj
     };
 }
 
+export async function restoreDeletedCanvasProjects(
+    ids: readonly string[],
+): Promise<{ restoredIds: string[]; failedIds: string[]; firstError?: unknown }> {
+    const historyState = useCanvasHistoryStore.getState();
+    const canvasState = useCanvasStore.getState();
+    const candidates: CanvasProject[] = [];
+    for (const id of ids) {
+        const item = historyState.deletedProjects.find((entry) => entry.id === id);
+        if (item?.project && !item.project.summaryOnly) {
+            const restored = prepareRestoredDeletedCanvas(item.project);
+            canvasState.restoreProject(restored);
+            candidates.push(restored);
+        }
+    }
+    if (candidates.length === 0) return { restoredIds: [], failedIds: [] };
+    await flushCanvasStorePersistence();
+    const restoredIds: string[] = [];
+    const failedIds: string[] = [];
+    let firstError: unknown;
+    if (isLocalWorkspaceMode()) {
+        for (const restored of candidates) {
+            try {
+                await syncLocalCanvasProjectToBackend(restored.id);
+                restoredIds.push(restored.id);
+            } catch (error) {
+                failedIds.push(restored.id);
+                if (firstError === undefined) firstError = error;
+            }
+        }
+        if (failedIds.length > 0) {
+            await deleteLocalCanvasProjects(failedIds, { recordHistory: false }).catch(() => {
+                useCanvasStore.getState().deleteProjects(failedIds);
+            });
+        }
+    } else {
+        restoredIds.push(...candidates.map((item) => item.id));
+    }
+    const removeDeletedItem = useCanvasHistoryStore.getState().removeDeletedHistoryItem;
+    for (const id of restoredIds) removeDeletedItem(id);
+    return { restoredIds, failedIds, firstError };
+}
+
 export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
     const closeButtonRef = useRef<HTMLButtonElement>(null);
-    const restoreProject = useCanvasStore((state) => state.restoreProject);
+    const { message } = App.useApp();
     const deletedProjects = useCanvasHistoryStore((state) => state.deletedProjects);
     const removeDeletedItem = useCanvasHistoryStore((state) => state.removeDeletedHistoryItem);
     const [selectedDeleted, setSelectedDeleted] = useState<string[]>([]);
+    const [restoring, setRestoring] = useState(false);
     const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
 
     const allDeletedProjectIds = useMemo(() => deletedProjects.map((project) => project.id), [deletedProjects]);
@@ -64,20 +107,23 @@ export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: ()
     if (!open || typeof document === "undefined") return null;
 
     const restoreSelectedProjects = async () => {
-        const restoredIds: string[] = [];
-        for (const id of selectedDeleted) {
-            const item = deletedProjects.find((entry) => entry.id === id);
-            if (item?.project && !item.project.summaryOnly) {
-                const restored = prepareRestoredDeletedCanvas(item.project);
-                restoreProject(restored);
-                restoredIds.push(restored.id);
+        if (restoring || selectedDeleted.length === 0) return;
+        setRestoring(true);
+        try {
+            const result = await restoreDeletedCanvasProjects(selectedDeleted);
+            setSelectedDeleted((current) => current.filter((id) => !result.restoredIds.includes(id)));
+            if (result.failedIds.length > 0) {
+                const detail = result.firstError instanceof Error && result.firstError.message.trim()
+                    ? result.firstError.message.trim()
+                    : "请稍后重试";
+                message.error(
+                    result.restoredIds.length > 0
+                        ? `已恢复 ${result.restoredIds.length} 项，另有 ${result.failedIds.length} 项保存失败并留在回收站：${detail}`
+                        : `恢复项目失败，已保留在回收站：${detail}`,
+                );
             }
-        }
-        await flushCanvasStorePersistence();
-        for (const id of restoredIds) removeDeletedItem(id);
-        setSelectedDeleted([]);
-        if (isLocalWorkspaceMode() && restoredIds.length > 0) {
-            await Promise.allSettled(restoredIds.map((id) => syncLocalCanvasProjectToBackend(id)));
+        } finally {
+            setRestoring(false);
         }
     };
 
@@ -137,10 +183,10 @@ export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: ()
                         {selectedDeleted.length ? <span className="recycle-bin-selected-count">已选择 {selectedDeleted.length} 项</span> : null}
                     </label>
                     <div className="recycle-bin-actions">
-                        <Button danger disabled={!selectedDeleted.length} icon={<Trash2 className="size-4" />} onClick={() => setDeleteConfirmationOpen(true)}>
+                        <Button danger disabled={!selectedDeleted.length || restoring} icon={<Trash2 className="size-4" />} onClick={() => setDeleteConfirmationOpen(true)}>
                             彻底删除
                         </Button>
-                        <Button disabled={!selectedDeleted.length} icon={<RotateCcw className="size-4" />} onClick={() => void restoreSelectedProjects()} aria-label="恢复到项目列表">
+                        <Button disabled={!selectedDeleted.length || restoring} loading={restoring} icon={<RotateCcw className="size-4" />} onClick={() => void restoreSelectedProjects()} aria-label="恢复到项目列表">
                             恢复
                         </Button>
                     </div>

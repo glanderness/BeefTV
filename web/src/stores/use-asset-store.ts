@@ -14,6 +14,7 @@ import { readAllCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { cleanupUnusedMedia, collectMediaStorageKeys } from "@/services/file-storage";
 import { insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
 import { cleanupUnusedImages, collectImageStorageKeys } from "@/services/image-storage";
+import { waitForActiveCanvasBackendSaves } from "@/services/local-workspace-state";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
 import { CANVAS_DRAFTS_KEY } from "@/stores/canvas/canvas-store-persistence";
 import {
@@ -316,68 +317,74 @@ export const useAssetStore = create<AssetStore>()(
                 const frozenExtraMediaKeys = collectMediaStorageKeys(extra);
                 await new Promise<void>((resolve, reject) => {
                     window.setTimeout(() =>
-                        withGenerationArtifactCommitLock(scope, async () => {
-                            const hydration = getCanvasHydrationHealth();
-                            if (hydration.started && (hydration.loading || Boolean(hydration.error))) return;
-                            const storage = localForageStorageForScope(scope);
-                            const syncDrafts = await readAllCanvasSyncDrafts(scope);
-                            const journalModule = await import("@/services/canvas-operation-journal");
-                            const journals = typeof journalModule.readAllCanvasOperationJournals === "function"
-                                ? await journalModule.readAllCanvasOperationJournals(scope)
-                                : [];
-                            const journalDocuments = journals.flatMap((journal) => [
-                                ...(journal.inFlight?.payload?.document ? [journal.inFlight.payload.document] : []),
-                                ...(journal.pendingProjection?.remote ? [journal.pendingProjection.remote] : []),
-                                ...(journal.pendingProjection?.base ? [journal.pendingProjection.base] : []),
-                            ]);
-                            // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
-                            const canvasReferences = await withCanvasStorePersistenceLock(scope, async () => {
-                                await commitPendingCanvasStorePersistenceLocked(scope);
-                                const durableCanvas = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY));
-                                const durableCanvasDrafts = parseCanvasStorageDocument(await storage.getItem(CANVAS_DRAFTS_KEY));
-                                const liveProjects = scope === getActiveUserScope() ? useCanvasStore.getState().projects : [];
-                                const summaryMediaRefs = liveProjects.flatMap((project) =>
-                                    project.summaryOnly && project.summaryMediaKeys?.length
-                                        ? project.summaryMediaKeys.map((storageKey) => ({ storageKey }))
-                                        : [],
-                                );
-                                return {
-                                    projects: [
-                                        ...liveProjects,
-                                        ...(pendingCanvasStorePersistence(scope)?.projects ?? []),
-                                        ...durableCanvas.state.projects,
-                                        ...durableCanvasDrafts.state.projects,
-                                        ...journalDocuments,
-                                    ],
-                                    summaryMediaRefs,
-                                };
+                        (async () => {
+                            // 先在锁外等待进行中的画布后端保存链，避免保存冲突路径写草稿时与 GC 互相等待。
+                            await waitForActiveCanvasBackendSaves(scope);
+                            await withGenerationArtifactCommitLock(scope, async () => {
+                                const hydration = getCanvasHydrationHealth();
+                                if (hydration.loading || Boolean(hydration.error)) return;
+                                const storage = localForageStorageForScope(scope);
+                                const syncDrafts = await readAllCanvasSyncDrafts(scope);
+                                // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
+                                const canvasReferences = await withCanvasStorePersistenceLock(scope, async () => {
+                                    await commitPendingCanvasStorePersistenceLocked(scope);
+                                    const durableCanvas = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY));
+                                    const durableCanvasDrafts = parseCanvasStorageDocument(await storage.getItem(CANVAS_DRAFTS_KEY));
+                                    const liveProjects = scope === getActiveUserScope() ? useCanvasStore.getState().projects : [];
+                                    const pendingProjects = pendingCanvasStorePersistence(scope)?.projects ?? [];
+                                    const journalModule = await import("@/services/canvas-operation-journal");
+                                    const journals = typeof journalModule.readAllCanvasOperationJournals === "function"
+                                        ? await journalModule.readAllCanvasOperationJournals(scope)
+                                        : [];
+                                    const journalDocuments = journals.flatMap((journal) => [
+                                        ...(journal.confirmedSnapshot ? [journal.confirmedSnapshot] : []),
+                                        ...(journal.inFlight?.payload?.document ? [journal.inFlight.payload.document] : []),
+                                        ...(journal.pendingProjection?.remote ? [journal.pendingProjection.remote] : []),
+                                        ...(journal.pendingProjection?.base ? [journal.pendingProjection.base] : []),
+                                    ]);
+                                    const summaryMediaRefs = [...liveProjects, ...pendingProjects].flatMap((project) =>
+                                        project.summaryOnly && project.summaryMediaKeys?.length
+                                            ? project.summaryMediaKeys.map((storageKey) => ({ storageKey }))
+                                            : [],
+                                    );
+                                    return {
+                                        projects: [
+                                            ...liveProjects,
+                                            ...pendingProjects,
+                                            ...durableCanvas.state.projects,
+                                            ...durableCanvasDrafts.state.projects,
+                                            ...journalDocuments,
+                                        ],
+                                        summaryMediaRefs,
+                                    };
+                                });
+                                await withGenerationAssetStorageLock(scope, async () => {
+                                    await commitPendingAssetStorePersistenceLocked(scope);
+                                    await hydrateAssetStoreDrafts(scope);
+                                    const durableAssets = (await readPersistedAssetDocumentForScope(scope)).state.assets;
+                                    const liveAssets = scope === getActiveUserScope() ? get().assets : [];
+                                    const draftAssets = readAssetStoreDraftsForScope(scope).upserts;
+                                    const references = {
+                                        projects: canvasReferences.projects,
+                                        summaryMediaRefs: canvasReferences.summaryMediaRefs,
+                                        assets: durableAssets,
+                                        liveAssets,
+                                        draftAssets,
+                                        syncDrafts,
+                                    };
+                                    const imageKeys = new Set([...frozenExtraImageKeys, ...collectImageStorageKeys(references)]);
+                                    const mediaKeys = new Set([...frozenExtraMediaKeys, ...collectMediaStorageKeys(references)]);
+                                    await cleanupUnusedImages(
+                                        [...imageKeys].map((storageKey) => ({ storageKey })),
+                                        scope,
+                                    );
+                                    await cleanupUnusedMedia(
+                                        [...mediaKeys].map((storageKey) => ({ storageKey })),
+                                        scope,
+                                    );
+                                });
                             });
-                            await withGenerationAssetStorageLock(scope, async () => {
-                                await commitPendingAssetStorePersistenceLocked(scope);
-                                await hydrateAssetStoreDrafts(scope);
-                                const durableAssets = (await readPersistedAssetDocumentForScope(scope)).state.assets;
-                                const liveAssets = scope === getActiveUserScope() ? get().assets : [];
-                                const draftAssets = readAssetStoreDraftsForScope(scope).upserts;
-                                const references = {
-                                    projects: canvasReferences.projects,
-                                    summaryMediaRefs: canvasReferences.summaryMediaRefs,
-                                    assets: durableAssets,
-                                    liveAssets,
-                                    draftAssets,
-                                    syncDrafts,
-                                };
-                                const imageKeys = new Set([...frozenExtraImageKeys, ...collectImageStorageKeys(references)]);
-                                const mediaKeys = new Set([...frozenExtraMediaKeys, ...collectMediaStorageKeys(references)]);
-                                await cleanupUnusedImages(
-                                    [...imageKeys].map((storageKey) => ({ storageKey })),
-                                    scope,
-                                );
-                                await cleanupUnusedMedia(
-                                    [...mediaKeys].map((storageKey) => ({ storageKey })),
-                                    scope,
-                                );
-                            });
-                        }).then(resolve, reject),
+                        })().then(resolve, reject),
                     );
                 });
             },

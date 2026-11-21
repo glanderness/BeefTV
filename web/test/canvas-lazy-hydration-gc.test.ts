@@ -99,7 +99,7 @@ describe("lazy hydration GC reference completeness", () => {
             useCanvasStore.setState({ projects: [] });
         });
         useAssetStore.setState({ assets: [] });
-        setCanvasHydrationHealth({ error: "", loading: false, started: false });
+        setCanvasHydrationHealth({ error: "", loading: false });
     });
 
     afterEach(() => {
@@ -107,7 +107,7 @@ describe("lazy hydration GC reference completeness", () => {
         withCanvasStorePersistenceSuppressed(() => {
             useCanvasStore.setState({ projects: [] });
         });
-        setCanvasHydrationHealth({ error: "", loading: true, started: false });
+        setCanvasHydrationHealth({ error: "", loading: true });
         setActiveUserScope(previousScope);
         installLocalForageStoreFactoryForTests(undefined);
         resetLocalForageDatabaseForTests();
@@ -115,13 +115,19 @@ describe("lazy hydration GC reference completeness", () => {
         else Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
     });
 
-    it("skips local media GC when backend canvas hydration failed or is still loading", async () => {
+    it("skips local media GC before hydration begins, while loading, or when backend hydration failed", async () => {
         const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
         const mediaStore = localForageInstance(MEDIA_FILES_STORE_NAME);
         const imgKey = `image:${scope}:kept-on-error`;
         const audioKey = `audio:${scope}:kept-on-error`;
         await imageStore.setItem(imgKey, new Blob(["img"]));
         await mediaStore.setItem(audioKey, new Blob(["aud"]));
+
+        // Initial boot state before beginCanvasHydration() has ever run must still block GC.
+        setCanvasHydrationHealth({ error: "", loading: true });
+        await useAssetStore.getState().cleanupImages();
+        expect(await imageStore.getItem(imgKey)).not.toBeNull();
+        expect(await mediaStore.getItem(audioKey)).not.toBeNull();
 
         const attempt = beginCanvasHydration();
         await useAssetStore.getState().cleanupImages();
@@ -134,17 +140,19 @@ describe("lazy hydration GC reference completeness", () => {
         expect(await mediaStore.getItem(audioKey)).not.toBeNull();
     });
 
-    it("protects summaryMediaKeys and in-flight journal media keys while reclaiming orphaned blobs with zero detail GETs", async () => {
+    it("protects summaryMediaKeys, confirmedSnapshot, and in-flight journal media keys across cold reload while reclaiming orphaned blobs", async () => {
         const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
         const mediaStore = localForageInstance(MEDIA_FILES_STORE_NAME);
         const summaryImg = `image:${scope}:referenced-by-summary`;
         const summaryAudio = `audio:${scope}:referenced-by-summary`;
-        const journalImg = `image:${scope}:referenced-by-journal`;
+        const journalInFlightImg = `image:${scope}:referenced-by-journal-inflight`;
+        const journalConfirmedImg = `image:${scope}:referenced-by-journal-confirmed`;
         const orphanImg = `image:${scope}:orphan`;
         const orphanAudio = `audio:${scope}:orphan`;
 
         await imageStore.setItem(summaryImg, new Blob(["summary-img"]));
-        await imageStore.setItem(journalImg, new Blob(["journal-img"]));
+        await imageStore.setItem(journalInFlightImg, new Blob(["journal-inflight-img"]));
+        await imageStore.setItem(journalConfirmedImg, new Blob(["journal-confirmed-img"]));
         await imageStore.setItem(orphanImg, new Blob(["orphan-img"]));
         await mediaStore.setItem(summaryAudio, new Blob(["summary-aud"]));
         await mediaStore.setItem(orphanAudio, new Blob(["orphan-aud"]));
@@ -164,6 +172,20 @@ describe("lazy hydration GC reference completeness", () => {
         await updateCanvasOperationJournal("canvas-journal", scope, (current) => ({
             ...current,
             confirmedRevision: 1,
+            confirmedSnapshot: makeCanvas("canvas-journal", {
+                revision: 1,
+                nodes: [
+                    {
+                        id: "n-confirmed",
+                        type: "image",
+                        title: "confirmed",
+                        position: { x: 0, y: 0 },
+                        width: 100,
+                        height: 100,
+                        metadata: { storageKey: journalConfirmedImg },
+                    } as never,
+                ],
+            }),
             inFlight: {
                 operationId: "op-gc-1",
                 expectedRevision: 1,
@@ -179,7 +201,7 @@ describe("lazy hydration GC reference completeness", () => {
                                 position: { x: 0, y: 0 },
                                 width: 100,
                                 height: 100,
-                                metadata: { storageKey: journalImg },
+                                metadata: { storageKey: journalInFlightImg },
                             } as never,
                         ],
                     }),
@@ -187,13 +209,17 @@ describe("lazy hydration GC reference completeness", () => {
             },
         }));
 
+        // Clear in-memory journal cache to simulate a fresh page reload before GC runs.
+        resetCanvasOperationJournalMemory();
+
         const attempt = beginCanvasHydration();
         finishCanvasHydration(attempt, "");
         await useAssetStore.getState().cleanupImages();
 
         expect(await imageStore.getItem(summaryImg)).not.toBeNull();
         expect(await mediaStore.getItem(summaryAudio)).not.toBeNull();
-        expect(await imageStore.getItem(journalImg)).not.toBeNull();
+        expect(await imageStore.getItem(journalInFlightImg)).not.toBeNull();
+        expect(await imageStore.getItem(journalConfirmedImg)).not.toBeNull();
         expect(await imageStore.getItem(orphanImg)).toBeNull();
         expect(await mediaStore.getItem(orphanAudio)).toBeNull();
     });
