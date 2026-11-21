@@ -22,13 +22,6 @@ export type CreationConversationList = {
     deletedIds: string[];
 };
 
-export type CreationConversationImportResult = {
-    imported: boolean;
-    id: string;
-    deleted?: boolean;
-    conversation: CreationConversationRecord;
-};
-
 const path = (id: string) => `/creation-conversations/${encodeURIComponent(id)}`;
 
 export const creationConversationsApi = {
@@ -38,6 +31,4 @@ export const creationConversationsApi = {
         http.put<CreationConversationRecord>(path(id), input, { signal }),
     remove: (id: string, expectedRevision: number, signal?: AbortSignal) =>
         http.delete<CreationConversationRecord>(path(id), { params: compactApiParams({ expectedRevision }), signal }),
-    importLegacy: (input: { operationId: string; hash?: string; document: CreationConversationDocument }, signal?: AbortSignal) =>
-        http.post<CreationConversationImportResult>("/creation-conversations/import", input, { signal }),
 };

@@ -6,14 +6,11 @@ import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import type { GenerationTask } from "@/services/api/task-center";
 import {
-    acceptSavedCreationConversation,
     deleteCreationConversation,
-    hasParkedCreationConversationDraft,
+    hasPendingCreationConversationWrites,
     loadCreationConversations,
-    loadLocalCreationConversationDrafts,
     pendingCreationTaskIds,
     removeCreationConversationSnapshot,
-    restoreParkedCreationConversation,
     saveCreationConversations,
     updateCreationConversationSnapshot,
 } from "@/services/creation-conversation-store";
@@ -67,8 +64,6 @@ export function useCreateConversations(params: UseCreateConversationsParams) {
     const activeIdRef = useRef("");
     const [hydrated, setHydrated] = useState(false);
     const skipPersistRef = useRef(true);
-    const [conflictOpen, setConflictOpen] = useState(false);
-    const [parkedDraftId, setParkedDraftId] = useState("");
     const [historyOpen, setHistoryOpen] = useState(false);
     const [openingCanvas, setOpeningCanvas] = useState(false);
     const openingCanvasRef = useRef(false);
@@ -131,29 +126,19 @@ export function useCreateConversations(params: UseCreateConversationsParams) {
             setHydrated(true);
             return () => { cancelled = true; };
         }
-        void loadCreationConversations<CreationConversation>().then(async (stored) => {
+        void loadCreationConversations<CreationConversation>().then((stored) => {
             if (cancelled) return;
-            skipPersistRef.current = true;
+            skipPersistRef.current = !hasPendingCreationConversationWrites();
             const next = stored?.length ? stored : [newConversation()];
             conversationsRef.current = next;
             setConversations(next);
             setActiveId(next[0].id);
             setHydrated(true);
-            const parked = next[0]?.id ? await hasParkedCreationConversationDraft(next[0].id) : false;
-            if (cancelled) return;
-            setParkedDraftId(parked && next[0] ? next[0].id : "");
-        }).catch(async (error) => {
+        }).catch((error) => {
             if (cancelled) return;
             toastRef.current.error(error instanceof Error ? error.message : "对话加载失败");
-            let local: CreationConversation[] | null = null;
-            try {
-                local = await loadLocalCreationConversationDrafts<CreationConversation>();
-            } catch {
-                local = null;
-            }
-            if (cancelled) return;
             skipPersistRef.current = true;
-            const next = local?.length ? local : [newConversation()];
+            const next = [newConversation()];
             conversationsRef.current = next;
             setConversations(next);
             setActiveId(next[0].id);
@@ -166,6 +151,17 @@ export function useCreateConversations(params: UseCreateConversationsParams) {
     }, [demoConversation, userId]);
 
     useEffect(() => {
+        if (demoConversation) return;
+        const onBeforeUnload = (event: BeforeUnloadEvent) => {
+            if (!hasPendingCreationConversationWrites()) return;
+            event.preventDefault();
+            event.returnValue = "";
+        };
+        window.addEventListener("beforeunload", onBeforeUnload);
+        return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    }, [demoConversation]);
+
+    useEffect(() => {
         activeIdRef.current = activeId;
     }, [activeId]);
 
@@ -176,25 +172,8 @@ export function useCreateConversations(params: UseCreateConversationsParams) {
             skipPersistRef.current = false;
             return;
         }
-        void saveCreationConversations(conversations).catch(async (error) => {
+        void saveCreationConversations(conversations).catch((error) => {
             toastRef.current.error(error instanceof Error ? error.message : "对话保存失败");
-            try {
-                const local = await loadLocalCreationConversationDrafts<CreationConversation>();
-                if (!local?.length) return;
-                const remotes = new Map(local.flatMap((item) => item.conflictRemote ? [[item.id, item.conflictRemote] as const] : []));
-                if (!remotes.size) return;
-                skipPersistRef.current = true;
-                setConversations((current) => {
-                    const next = current.map((item) => {
-                        const remote = remotes.get(item.id);
-                        return remote && !item.conflictRemote ? { ...item, conflictRemote: remote } : item;
-                    });
-                    conversationsRef.current = next;
-                    return next;
-                });
-            } catch {
-                // 保存失败已经提示；冲突标记读不到时仍保留当前草稿。
-            }
         });
     }, [conversations, demoConversation, hydrated]);
 
@@ -304,55 +283,6 @@ export function useCreateConversations(params: UseCreateConversationsParams) {
         setDraftReferences([]);
         setReferenceNotice("");
         setHistoryOpen(false);
-        setConflictOpen(false);
-        void hasParkedCreationConversationDraft(conversation.id).then((parked) => {
-            setParkedDraftId(parked ? conversation.id : "");
-        });
-    };
-
-    const useSavedConflictVersion = async (conversation: CreationConversation) => {
-        const remote = conversation.conflictRemote;
-        if (!remote) return;
-        try {
-            await acceptSavedCreationConversation(conversation.id, conversation, remote);
-            const saved = { ...remote.document, id: conversation.id } as CreationConversation;
-            const next = updateCreationConversationSnapshot(conversationsRef.current, conversation.id, () => saved);
-            skipPersistRef.current = true;
-            conversationsRef.current = next;
-            setConversations(next);
-            setConflictOpen(false);
-            setParkedDraftId(conversation.id);
-        } catch (error) {
-            toastRef.current.error(error instanceof Error ? error.message : "无法换成已保存的版本");
-        }
-    };
-
-    const restoreParkedDraft = async (conversationId: string) => {
-        try {
-            const parked = await restoreParkedCreationConversation<CreationConversation>(conversationId);
-            if (!parked) return;
-            const next = updateCreationConversationSnapshot(conversationsRef.current, conversationId, () => parked);
-            skipPersistRef.current = true;
-            conversationsRef.current = next;
-            setConversations(next);
-            setParkedDraftId("");
-        } catch (error) {
-            toastRef.current.error(error instanceof Error ? error.message : "无法恢复刚才的草稿");
-        }
-    };
-
-    const overwriteSavedWithDraft = async (conversation: CreationConversation) => {
-        try {
-            await saveCreationConversations([conversation], undefined, { resolveConflictIds: [conversation.id] });
-            const { conflictRemote: _conflictRemote, ...resolved } = conversation;
-            const next = updateCreationConversationSnapshot(conversationsRef.current, conversation.id, () => resolved as CreationConversation);
-            skipPersistRef.current = true;
-            conversationsRef.current = next;
-            setConversations(next);
-            setConflictOpen(false);
-        } catch (error) {
-            toastRef.current.error(error instanceof Error ? error.message : "这份草稿没有保存成功，原来的版本还在");
-        }
     };
 
     const confirmDeleteConversation = (conversation: CreationConversation) => {
@@ -408,9 +338,6 @@ export function useCreateConversations(params: UseCreateConversationsParams) {
         conversations,
         activeConversation,
         historyConversations,
-        conflictOpen,
-        setConflictOpen,
-        parkedDraftId,
         historyOpen,
         setHistoryOpen,
         openingCanvas,
@@ -420,9 +347,6 @@ export function useCreateConversations(params: UseCreateConversationsParams) {
         startNewConversation,
         continueOnCanvas,
         selectConversation,
-        useSavedConflictVersion,
-        restoreParkedDraft,
-        overwriteSavedWithDraft,
         confirmDeleteConversation,
         renameConversationTitle,
     };

@@ -37,18 +37,12 @@ export type CreationMessage = {
     taskOutcome?: import("@/lib/task-outcome").TaskOutcome;
     providerCancelStatus?: import("@/services/api/task-center").ProviderCancelStatus;
 };
-export type CreationConversationConflict = {
-    revision: number;
-    document: CreationConversation;
-};
-
 export type CreationConversation = {
     id: string;
     title: string;
     updatedAt: string;
     canvasId?: string;
     messages: CreationMessage[];
-    conflictRemote?: CreationConversationConflict;
 };
 
 export const modeLabels: Record<CreationMode, string> = { text: "文本", image: "图片", video: "视频" };

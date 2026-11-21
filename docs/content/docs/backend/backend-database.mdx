@@ -152,11 +152,11 @@ HTTPS 图片提交前读取同源 `/models` 元数据，仅成功响应明确声
 | `canvas_snapshots`、`canvas_snapshot_resources` | 画布历史快照与快照引用的资源 | 快照读写按归属校验；历史恢复同样走 revision 前置条件 |
 | `agent_op_records` | 统一操作层的幂等记录：`(user_id, op_id)` 主键、payload 哈希、状态与可空 `turn_id` | 同一 `opId` 同参数回读原结果、不同参数返回冲突；失败操作回滚且不留幂等记录；只在本用户命名空间内回放，不跨用户读取；`turn_id` 与业务写入同事务提交，只有后端鉴权的内置宿主能写入归属 |
 | `assistant_turns` | 助手业务回合：范围、权限、轮前画布快照、结算摘要与撤销标记 | 主键 `turn_id`；必须带用户和画布身份；open 回合才接受写入归属。v15 `permission_mode` 按回合固定，`canvas_snapshots_json` 保存所有写入目标的轮前文档与版本；撤销先检查全部目标，再将旧文档写成新 revision，与 undone 标记同事务提交。v14 `skill_pins_json` 保存用户选定的技能 ID、版本 ID 与内容摘要，并附带选定时记下的显示名 `skillName` 与版本号 `version`（只用于显示，不参与身份比较；旧记录可能没有）；恢复不得自动替换版本。不保存模型对话稿 |
-| `creation_conversations` | `/create` 页面对话与消息文档 | 主键 `(user_id, conversation_id)`；按 revision CAS 写入；删除写墓碑，稳定 ID 不会被 IndexedDB 缓存复活。导入操作在 `(user_id, import_operation_id)` 上有部分唯一索引。不保存密钥。临时媒体只从附件/结果 URL 字段去掉，正文保留。删除对话不删除任务或素材 |
+| `creation_conversations` | `/create` 页面对话与消息文档 | 主键 `(user_id, conversation_id)`；按 revision CAS 写入；删除写墓碑，稳定 ID 不会被重建。历史 v11 迁移结构保留 `(user_id, import_operation_id)` 部分唯一索引。不保存密钥。临时媒体只从附件/结果 URL 字段去掉，正文保留。删除对话不删除任务或素材 |
 
 版本 10 `assistant-business-turns` 为既有 v9 工作区创建 `assistant_turns`。旧 JSON 文件 `assistant-turns/<hexID>.json` 是只读迁移输入，按被访问的 ID 校验后导入，导入后不再作为竞争事实；生产路径不改写、不删除原文件。保留策略只压缩超龄大快照、留下身份墓碑，不会删掉进行中的回合、回执引用的回合或操作回执。操作层若要把回执记到某一轮，必须在该操作自己的事务里校验回合仍为 open；只做事务外预检无法关闭结算与写入的竞态。
 
-版本 11 `creation-conversations` 为既有 v10 工作区创建 `creation_conversations`。浏览器 IndexedDB `creation-conversations-v1` 只是导入源：没有后端记录或墓碑时，按稳定 `operationId` 与文档哈希在同一事务内导入；已有记录不覆盖。全量数组替换会删掉未见过的对话，因此写入是按对话 CAS，删除走显式墓碑。后续任务绑定可在同一调用方事务里调用 `AttachMessageResult`，只改该消息的结果字段。
+版本 11 `creation-conversations` 为既有 v10 工作区创建 `creation_conversations`，作为 `/create` 页面对话的唯一 SQLite 持久化来源。全量数组替换会删掉未见过的对话，因此写入是按对话 CAS，删除走显式墓碑；早期浏览器 IndexedDB 历史导入入口已退场（v11 历史表结构保持不动）。后续任务绑定可在同一调用方事务里调用 `AttachMessageResult`，只改该消息的结果字段。
 
 版本 12 `canvas-library-drawings` 为既有工作区创建 `canvas_library_folders`、`canvas_drawings`，并为 `canvas_projects` 增加 `library_folder_id`。两张新表带 `deleted_at` 墓碑列：删除保留身份、释放资源引用，禁止同 ID 自动重建。未保存的画板草稿由前端保留为可恢复内容并决定如何提示恢复，后端不另存一份正文。画板快照由 SQLite 持有，预览和成品字节引用已有资源；IndexedDB 只作草稿和缓存。写入按账号画布和素材数据上限（`StructuredDataMB`，默认 256MB）核算字节，HTTP 请求体为该上限加 JSON 信封余量，没有单独的 8MB 画板上限。保留版本 11 的会话迁移身份。
 

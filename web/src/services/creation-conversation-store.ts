@@ -1,12 +1,6 @@
-import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { ApiError } from "@/services/api/request";
 import { creationConversationsApi, type CreationConversationDocument, type CreationConversationRecord } from "@/services/api/creation-conversations";
-
-export const CREATION_CONVERSATIONS_KEY = "creation-conversations-v1";
-const CREATION_CONVERSATION_DRAFTS_KEY = "creation-conversation-drafts-v1";
-const CREATION_CONVERSATION_DRAFT_INDEX_KEY = "creation-conversation-drafts-v1:index";
-const CREATION_CONVERSATION_TOMBSTONES_KEY = "creation-conversation-tombstones-v1";
 
 type PendingCreationMessage = {
     id: string;
@@ -19,14 +13,7 @@ type PendingCreationMessage = {
 export type StoredCreationConversation = {
     id: string;
     messages: PendingCreationMessage[];
-    conflictRemote?: { revision: number; document: StoredCreationConversation };
     [key: string]: unknown;
-};
-
-type ConversationDraft = {
-    baseRevision: number;
-    document: StoredCreationConversation;
-    remote?: { revision: number; document: StoredCreationConversation };
 };
 
 type CommittedState = {
@@ -38,14 +25,19 @@ type CommittedState = {
 type PendingWrite = {
     generation: number;
     document: StoredCreationConversation;
+    /** Last document actually dispatched in a PUT, used as 3-way ancestor on lost-ack 409/adopt. */
+    sentDocument?: StoredCreationConversation;
+    adoptedRevision?: number;
 };
 
 const committed = new Map<string, CommittedState>();
 const writeQueues = new Map<string, Promise<unknown>>();
-const storageQueues = new Map<string, Promise<unknown>>();
 const pendingWrites = new Map<string, PendingWrite>();
 const writeGenerations = new Map<string, number>();
+const deletedAt = new Map<string, number>();
+let opClock = 0;
 
+const MAX_CONFLICT_REBASE_ATTEMPTS = 2;
 const mediaURLKeys = new Set(["dataurl", "url", "previewurl", "poster", "src", "thumbnail", "thumbnailurl", "imageurl"]);
 
 export function updateCreationConversationSnapshot<T extends { id: string }>(conversations: T[], conversationId: string, updater: (conversation: T) => T) {
@@ -82,47 +74,7 @@ export function pendingCreationTaskIds(conversations: StoredCreationConversation
 }
 
 function scopeKey(scope: string, id: string) {
-    return `${scope}:${id}`;
-}
-
-function draftItemKey(id: string) {
-    return `${CREATION_CONVERSATION_DRAFTS_KEY}:${id}`;
-}
-
-function rememberCommitted(scope: string, id: string, revision: number, document: StoredCreationConversation) {
-    committed.set(scopeKey(scope, id), { revision, fingerprint: fingerprintOf(document), document: cloneConversation(document) });
-}
-
-function commitIfCurrent(scope: string, id: string, revision: number, document: StoredCreationConversation) {
-    const current = committed.get(scopeKey(scope, id));
-    if (current && current.revision > revision) return false;
-    rememberCommitted(scope, id, revision, document);
-    return true;
-}
-
-function forgetCommitted(scope: string, id: string) {
-    committed.delete(scopeKey(scope, id));
-    pendingWrites.delete(scopeKey(scope, id));
-}
-
-function fingerprintOf(document: StoredCreationConversation) {
-    return canonicalFingerprint(persistableDocument(document));
-}
-
-function persistableFingerprint(document: StoredCreationConversation) {
-    try {
-        return fingerprintOf(document);
-    } catch {
-        return null;
-    }
-}
-
-function persistableDocument(conversation: StoredCreationConversation): CreationConversationDocument {
-    const { revision: _revision, pending: _pending, conflictRemote: _conflictRemote, ...rest } = conversation;
-    const stripped = stripEphemeralMedia(rest) as Record<string, unknown>;
-    const title = typeof stripped.title === "string" ? stripped.title.trim() : "";
-    stripped.title = title || "新创作";
-    return stripped as CreationConversationDocument;
+    return `${scope}\0${id}`;
 }
 
 function cloneConversation<T>(value: T): T {
@@ -130,102 +82,8 @@ function cloneConversation<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
 }
 
-export function conversationHasConflict(conversation: { conflictRemote?: unknown } | null | undefined) {
-    return Boolean(conversation?.conflictRemote);
-}
-
-function parkedDraftKey(id: string) {
-    return `${CREATION_CONVERSATION_DRAFTS_KEY}:${id}:replaced`;
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function samePersistable(left: unknown, right: unknown) {
-    try {
-        return canonicalFingerprint(left) === canonicalFingerprint(right);
-    } catch {
-        return false;
-    }
-}
-
-function projectPendingOnCanonical(sent: StoredCreationConversation, pending: StoredCreationConversation, canonical: StoredCreationConversation): StoredCreationConversation {
-    const pendingFingerprint = persistableFingerprint(pending);
-    const sentFingerprint = persistableFingerprint(sent);
-    if (pendingFingerprint && sentFingerprint && pendingFingerprint === sentFingerprint) return cloneConversation(canonical);
-    const merged = threeWayValue(sent, pending, canonical);
-    if (!isPlainObject(merged)) return cloneConversation(pending);
-    const { conflictRemote: _conflictRemote, ...rest } = merged as StoredCreationConversation;
-    const messages = Array.isArray(rest.messages) ? rest.messages : pending.messages;
-    return { ...rest, id: pending.id || canonical.id, messages } as StoredCreationConversation;
-}
-
-function threeWayValue(base: unknown, ours: unknown, theirs: unknown): unknown {
-    if (samePersistable(ours, base)) return theirs;
-    if (samePersistable(theirs, base)) return ours;
-    if (Array.isArray(ours) && Array.isArray(theirs) && Array.isArray(base) && looksLikeMessageList(ours)) {
-        return threeWayMessages(base, ours, theirs);
-    }
-    if (isPlainObject(ours) && isPlainObject(theirs) && isPlainObject(base)) {
-        const keys = new Set([...Object.keys(ours), ...Object.keys(theirs), ...Object.keys(base)]);
-        const out: Record<string, unknown> = {};
-        for (const key of keys) {
-            if (key === "conflictRemote") continue;
-            if (!(key in ours)) {
-                if (samePersistable(theirs[key], base[key])) continue;
-                out[key] = theirs[key];
-                continue;
-            }
-            out[key] = threeWayValue(base[key], ours[key], key in theirs ? theirs[key] : ours[key]);
-        }
-        return out;
-    }
-    return ours;
-}
-
-function looksLikeMessageList(value: unknown[]) {
-    return value.every((item) => !item || (isPlainObject(item) && typeof item.id === "string"));
-}
-
-function threeWayMessages(base: unknown[], ours: unknown[], theirs: unknown[]) {
-    const baseById = messageMap(base);
-    const oursById = messageMap(ours);
-    const theirsById = messageMap(theirs);
-    const seen = new Set<string>();
-    const merged: unknown[] = [];
-    for (const item of ours) {
-        if (!isPlainObject(item) || typeof item.id !== "string") {
-            merged.push(item);
-            continue;
-        }
-        seen.add(item.id);
-        const previous = baseById.get(item.id);
-        const canonical = theirsById.get(item.id);
-        if (!previous) {
-            merged.push(item);
-            continue;
-        }
-        if (samePersistable(item, previous)) {
-            if (canonical) merged.push(canonical);
-            continue;
-        }
-        merged.push(threeWayValue(previous, item, canonical ?? item));
-    }
-    for (const item of theirs) {
-        if (!isPlainObject(item) || typeof item.id !== "string" || seen.has(item.id)) continue;
-        if (baseById.has(item.id) && !oursById.has(item.id)) continue;
-        merged.push(item);
-    }
-    return merged;
-}
-
-function messageMap(list: unknown[]) {
-    const map = new Map<string, Record<string, unknown>>();
-    for (const item of list) {
-        if (isPlainObject(item) && typeof item.id === "string") map.set(item.id, item);
-    }
-    return map;
 }
 
 function fieldKey(key: string) {
@@ -284,8 +142,12 @@ function persistAttachment(value: unknown) {
     return out;
 }
 
-function canonicalFingerprint(value: unknown): string {
-    return JSON.stringify(sortKeys(value));
+function persistableDocument(conversation: StoredCreationConversation): CreationConversationDocument {
+    const { revision: _revision, ...rest } = conversation;
+    const stripped = stripEphemeralMedia(rest) as Record<string, unknown>;
+    const title = typeof stripped.title === "string" ? stripped.title.trim() : "";
+    stripped.title = title || "新创作";
+    return stripped as CreationConversationDocument;
 }
 
 function sortKeys(value: unknown): unknown {
@@ -300,164 +162,136 @@ function sortKeys(value: unknown): unknown {
     return value;
 }
 
-function enqueue(scope: string, id: string, work: () => Promise<void>) {
-    const key = scopeKey(scope, id);
-    const previous = writeQueues.get(key) || Promise.resolve();
-    const next = previous.then(work, work);
-    writeQueues.set(key, next.catch(() => undefined));
-    return next;
+function canonicalFingerprint(value: unknown): string {
+    return JSON.stringify(sortKeys(value));
 }
 
-function withScopeStorage<T>(scope: string, work: () => Promise<T>): Promise<T> {
-    const previous = storageQueues.get(scope) || Promise.resolve();
-    const current = previous.then(work, work) as Promise<T>;
-    storageQueues.set(scope, current.then(() => undefined, () => undefined));
-    return current;
+function fingerprintOf(document: StoredCreationConversation) {
+    return canonicalFingerprint(persistableDocument(document));
 }
 
-function nextGeneration(key: string) {
-    const generation = (writeGenerations.get(key) || 0) + 1;
-    writeGenerations.set(key, generation);
-    return generation;
-}
-
-async function readLegacyArray(scope: string): Promise<StoredCreationConversation[] | null> {
-    const storage = localForageStorageForScope(scope);
-    const value = await storage.getItem(CREATION_CONVERSATIONS_KEY);
-    if (!value) return null;
-    let parsed: unknown;
+function samePersistable(left: unknown, right: unknown) {
     try {
-        parsed = JSON.parse(value);
+        return canonicalFingerprint(left) === canonicalFingerprint(right);
     } catch {
-        throw new Error("创作对话持久状态无效");
+        return false;
     }
-    if (!Array.isArray(parsed)) throw new Error("创作对话持久状态无效");
-    return parsed as StoredCreationConversation[];
 }
 
-async function writeLegacyArray(scope: string, conversations: StoredCreationConversation[]) {
-    const storage = localForageStorageForScope(scope);
-    await storage.setItem(CREATION_CONVERSATIONS_KEY, JSON.stringify(conversations));
+function looksLikeMessageList(value: unknown[]) {
+    return value.every((item) => !item || (isPlainObject(item) && typeof item.id === "string"));
 }
 
-async function removeLegacyConversation(scope: string, id: string) {
-    const legacy = await readLegacyArray(scope);
-    if (!legacy?.some((item) => item.id === id)) return;
-    await writeLegacyArray(scope, legacy.filter((item) => item.id !== id));
+function messageMap(list: unknown[]) {
+    const map = new Map<string, Record<string, unknown>>();
+    for (const item of list) {
+        if (isPlainObject(item) && typeof item.id === "string") map.set(item.id, item);
+    }
+    return map;
 }
 
-async function readJSON<T>(scope: string, key: string, fallback: T): Promise<T> {
-    const storage = localForageStorageForScope(scope);
-    const value = await storage.getItem(key);
-    if (!value) return fallback;
+function mergeMessages(base: unknown[], ours: unknown[], theirs: unknown[]) {
+    const baseById = messageMap(base);
+    const oursById = messageMap(ours);
+    const theirsById = messageMap(theirs);
+    const seen = new Set<string>();
+    const merged: unknown[] = [];
+    for (const item of ours) {
+        if (!isPlainObject(item) || typeof item.id !== "string") {
+            merged.push(item);
+            continue;
+        }
+        seen.add(item.id);
+        const previous = baseById.get(item.id);
+        const canonical = theirsById.get(item.id);
+        if (!previous) {
+            merged.push(item);
+            continue;
+        }
+        if (samePersistable(item, previous)) {
+            if (canonical) merged.push(canonical);
+            continue;
+        }
+        merged.push(mergeValue(previous, item, canonical ?? item));
+    }
+    for (const item of theirs) {
+        if (!isPlainObject(item) || typeof item.id !== "string" || seen.has(item.id)) continue;
+        if (baseById.has(item.id) && !oursById.has(item.id)) continue;
+        merged.push(item);
+    }
+    return merged;
+}
+
+function mergeValue(base: unknown, ours: unknown, theirs: unknown): unknown {
+    if (samePersistable(ours, base)) return theirs;
+    if (samePersistable(theirs, base)) return ours;
+    if (Array.isArray(ours) && Array.isArray(theirs) && Array.isArray(base) && looksLikeMessageList(ours)) {
+        return mergeMessages(base, ours, theirs);
+    }
+    if (isPlainObject(ours) && isPlainObject(theirs) && isPlainObject(base)) {
+        const keys = new Set([...Object.keys(ours), ...Object.keys(theirs), ...Object.keys(base)]);
+        const out: Record<string, unknown> = {};
+        for (const key of keys) {
+            if (!(key in ours)) {
+                if (samePersistable(theirs[key], base[key])) continue;
+                out[key] = theirs[key];
+                continue;
+            }
+            out[key] = mergeValue(base[key], ours[key], key in theirs ? theirs[key] : ours[key]);
+        }
+        return out;
+    }
+    return ours;
+}
+
+function mergeMessagesWithoutBase(local: unknown[], canonical: unknown[]) {
+    const canonicalIds = new Set<string>();
+    const merged: unknown[] = [];
+    for (const item of canonical) {
+        if (isPlainObject(item) && typeof item.id === "string") canonicalIds.add(item.id);
+        merged.push(cloneConversation(item));
+    }
+    for (const item of local) {
+        if (isPlainObject(item) && typeof item.id === "string") {
+            if (canonicalIds.has(item.id)) continue;
+            canonicalIds.add(item.id);
+        }
+        merged.push(cloneConversation(item));
+    }
+    return merged;
+}
+
+function projectLocalOnCanonical(
+    base: StoredCreationConversation | undefined,
+    local: StoredCreationConversation,
+    canonical: StoredCreationConversation,
+): StoredCreationConversation {
+    if (!base) {
+        const merged = cloneConversation(canonical) as Record<string, unknown>;
+        for (const [key, value] of Object.entries(local)) {
+            if (key === "id" || key === "messages") continue;
+            if (!(key in merged)) merged[key] = cloneConversation(value);
+        }
+        const canonicalTitle = typeof merged.title === "string" ? merged.title.trim() : "";
+        const localTitle = typeof local.title === "string" ? local.title.trim() : "";
+        if ((!canonicalTitle || canonicalTitle === "新创作") && localTitle && localTitle !== "新创作") {
+            merged.title = localTitle;
+        }
+        const messages = mergeMessagesWithoutBase(
+            Array.isArray(local.messages) ? local.messages : [],
+            Array.isArray(canonical.messages) ? canonical.messages : [],
+        );
+        return { ...merged, id: canonical.id || local.id, messages } as StoredCreationConversation;
+    }
     try {
-        return JSON.parse(value) as T;
+        if (fingerprintOf(local) === fingerprintOf(base)) return cloneConversation(canonical);
     } catch {
-        throw new Error("创作对话本地状态无效");
+        // Keep merging when an unvalidated local document differs from base.
     }
-}
-
-async function readDraftIndex(scope: string): Promise<string[]> {
-    await migrateCombinedDrafts(scope);
-    const index = await readJSON<string[]>(scope, CREATION_CONVERSATION_DRAFT_INDEX_KEY, []);
-    return Array.isArray(index) ? index.filter((id) => typeof id === "string" && id) : [];
-}
-
-async function migrateCombinedDrafts(scope: string) {
-    const storage = localForageStorageForScope(scope);
-    const raw = await storage.getItem(CREATION_CONVERSATION_DRAFTS_KEY);
-    if (!raw) return;
-    let parsed: Record<string, ConversationDraft>;
-    try {
-        parsed = JSON.parse(raw) as Record<string, ConversationDraft>;
-    } catch {
-        await storage.removeItem(CREATION_CONVERSATION_DRAFTS_KEY);
-        return;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        await storage.removeItem(CREATION_CONVERSATION_DRAFTS_KEY);
-        return;
-    }
-    const ids = Object.keys(parsed);
-    for (const id of ids) {
-        if (parsed[id]?.document) await storage.setItem(draftItemKey(id), JSON.stringify(parsed[id]));
-    }
-    await storage.setItem(CREATION_CONVERSATION_DRAFT_INDEX_KEY, JSON.stringify(ids));
-    await storage.removeItem(CREATION_CONVERSATION_DRAFTS_KEY);
-}
-
-async function readDraft(scope: string, id: string): Promise<ConversationDraft | null> {
-    const value = await readJSON<ConversationDraft | null>(scope, draftItemKey(id), null);
-    if (!value?.document) return null;
-    return value;
-}
-
-async function writeDraft(scope: string, id: string, draft: ConversationDraft) {
-    const storage = localForageStorageForScope(scope);
-    await storage.setItem(draftItemKey(id), JSON.stringify(draft));
-    const index = await readDraftIndex(scope);
-    if (!index.includes(id)) {
-        index.push(id);
-        await storage.setItem(CREATION_CONVERSATION_DRAFT_INDEX_KEY, JSON.stringify(index));
-    }
-}
-
-async function removeDraft(scope: string, id: string) {
-    const storage = localForageStorageForScope(scope);
-    await storage.removeItem(draftItemKey(id));
-    const index = (await readDraftIndex(scope)).filter((item) => item !== id);
-    await storage.setItem(CREATION_CONVERSATION_DRAFT_INDEX_KEY, JSON.stringify(index));
-}
-
-async function listDrafts(scope: string): Promise<Record<string, ConversationDraft>> {
-    const ids = await readDraftIndex(scope);
-    const drafts: Record<string, ConversationDraft> = {};
-    for (const id of ids) {
-        const draft = await readDraft(scope, id);
-        if (draft) drafts[id] = draft;
-    }
-    return drafts;
-}
-
-async function readTombstones(scope: string): Promise<Set<string>> {
-    const ids = await readJSON<string[]>(scope, CREATION_CONVERSATION_TOMBSTONES_KEY, []);
-    return new Set(Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id) : []);
-}
-
-async function writeTombstones(scope: string, ids: Set<string>) {
-    const storage = localForageStorageForScope(scope);
-    await storage.setItem(CREATION_CONVERSATION_TOMBSTONES_KEY, JSON.stringify(Array.from(ids)));
-}
-
-async function rememberTombstones(scope: string, ids: string[]) {
-    await withScopeStorage(scope, async () => {
-        const current = await readTombstones(scope);
-        for (const id of ids) current.add(id);
-        await writeTombstones(scope, current);
-    });
-}
-
-async function captureDraft(scope: string, id: string, document: StoredCreationConversation) {
-    await withScopeStorage(scope, async () => {
-        const existing = await readDraft(scope, id);
-        const committedRevision = committed.get(scopeKey(scope, id))?.revision ?? 0;
-        const baseRevision = existing && existing.baseRevision < committedRevision ? existing.baseRevision : committedRevision;
-        const { conflictRemote, ...rest } = document;
-        await writeDraft(scope, id, {
-            baseRevision,
-            document: rest as StoredCreationConversation,
-            remote: conflictRemote || existing?.remote,
-        });
-    });
-}
-
-async function draftBaseRevision(scope: string, id: string) {
-    return withScopeStorage(scope, async () => {
-        const existing = await readDraft(scope, id);
-        const committedRevision = committed.get(scopeKey(scope, id))?.revision ?? 0;
-        if (existing && existing.baseRevision < committedRevision) return existing.baseRevision;
-        return committedRevision;
-    });
+    const merged = mergeValue(base, local, canonical);
+    if (!isPlainObject(merged)) return cloneConversation(canonical);
+    const messages = Array.isArray(merged.messages) ? merged.messages : canonical.messages;
+    return { ...merged, id: canonical.id || local.id, messages } as StoredCreationConversation;
 }
 
 function documentFromRecord(record: { id: string; document?: CreationConversationDocument }): StoredCreationConversation {
@@ -469,188 +303,234 @@ function documentFromRecord(record: { id: string; document?: CreationConversatio
     return { ...document, id: record.id, messages } as StoredCreationConversation;
 }
 
-function withConflict(document: StoredCreationConversation, remote: { revision: number; document: StoredCreationConversation }): StoredCreationConversation {
-    const { conflictRemote: _conflictRemote, ...rest } = document;
-    return { ...rest, conflictRemote: remote };
-}
-
-export async function loadLocalCreationConversationDrafts<T extends StoredCreationConversation>(scope = getActiveUserScope()) {
-    const drafts = await withScopeStorage(scope, () => listDrafts(scope));
-    const tombstones = await withScopeStorage(scope, () => readTombstones(scope));
-    const legacy = await withScopeStorage(scope, () => readLegacyArray(scope));
-    const byId = new Map<string, T>();
-    for (const item of legacy || []) {
-        if (item?.id && !tombstones.has(item.id)) byId.set(item.id, item as T);
-    }
-    for (const [id, draft] of Object.entries(drafts)) {
-        if (draft?.document?.id && !tombstones.has(id)) {
-            byId.set(id, (draft.remote ? withConflict(draft.document, draft.remote) : draft.document) as T);
-        }
-    }
-    return byId.size ? Array.from(byId.values()) : null;
-}
-
-export async function loadCreationConversations<T extends StoredCreationConversation>(scope = getActiveUserScope()) {
-    const listed = await creationConversationsApi.list();
-    const deleted = new Set(listed.deletedIds || []);
-    await rememberTombstones(scope, listed.deletedIds || []);
-    const committedRecords = new Map((listed.conversations || []).map((item) => [item.id, item]));
-    const tombstones = await withScopeStorage(scope, () => readTombstones(scope));
-    const legacy = await withScopeStorage(scope, () => readLegacyArray(scope));
-    for (const local of legacy || []) {
-        if (!local?.id || deleted.has(local.id) || tombstones.has(local.id)) continue;
-        const existing = committedRecords.get(local.id);
-        if (existing && !existing.deleted) {
-            const remoteDocument = documentFromRecord(existing);
-            const localFingerprint = persistableFingerprint(local);
-            const remoteFingerprint = persistableFingerprint(remoteDocument);
-            if (localFingerprint && remoteFingerprint && localFingerprint === remoteFingerprint) {
-                await withScopeStorage(scope, () => removeLegacyConversation(scope, local.id));
-                continue;
-            }
-            await withScopeStorage(scope, () => writeDraft(scope, local.id, {
-                baseRevision: existing.revision,
-                document: cloneConversation(local),
-                remote: { revision: existing.revision, document: remoteDocument },
-            }));
-            await withScopeStorage(scope, () => removeLegacyConversation(scope, local.id));
-            continue;
-        }
-        let document: CreationConversationDocument;
-        try {
-            document = persistableDocument(local);
-        } catch {
-            await withScopeStorage(scope, () => writeDraft(scope, local.id, { baseRevision: 0, document: cloneConversation(local) }));
-            continue;
-        }
-        const imported = await creationConversationsApi.importLegacy({
-            operationId: `${CREATION_CONVERSATIONS_KEY}:${local.id}`,
-            document,
-        });
-        if (imported.deleted) {
-            deleted.add(imported.id);
-            await rememberTombstones(scope, [imported.id]);
-            continue;
-        }
-        if (imported.conversation?.id) {
-            committedRecords.set(imported.conversation.id, imported.conversation);
-            await withScopeStorage(scope, () => removeLegacyConversation(scope, imported.conversation.id));
-        }
-    }
-    const drafts = await withScopeStorage(scope, () => listDrafts(scope));
-    const loaded: T[] = [];
-    for (const record of committedRecords.values()) {
-        if (record.deleted || deleted.has(record.id) || tombstones.has(record.id)) continue;
-        const document = documentFromRecord(record);
-        rememberCommitted(scope, record.id, record.revision, document);
-        const draft = drafts[record.id];
-        if (draft?.document) {
-            const draftFingerprint = persistableFingerprint(draft.document);
-            const remoteFingerprint = persistableFingerprint(document);
-            if (draftFingerprint && remoteFingerprint && draftFingerprint === remoteFingerprint) {
-                await withScopeStorage(scope, () => removeDraft(scope, record.id));
-                loaded.push(document as T);
-                continue;
-            }
-            if (draft.baseRevision !== record.revision || draft.remote || !draftFingerprint) {
-                const remote = draft.remote || { revision: record.revision, document };
-                await withScopeStorage(scope, () => writeDraft(scope, record.id, { ...draft, remote }));
-                loaded.push(withConflict(draft.document, remote) as T);
-                continue;
-            }
-            loaded.push(draft.document as T);
-            continue;
-        }
-        loaded.push(document as T);
-    }
-    for (const [id, draft] of Object.entries(drafts)) {
-        if (!draft?.document || committedRecords.has(id) || deleted.has(id) || tombstones.has(id)) continue;
-        loaded.push((draft.remote ? withConflict(draft.document, draft.remote) : draft.document) as T);
-        rememberCommitted(scope, id, 0, { id, messages: [] });
-    }
-    return loaded.length ? loaded : null;
-}
-
-async function putConversation(id: string, expectedRevision: number, document: StoredCreationConversation) {
-    return creationConversationsApi.put(id, {
-        expectedRevision,
-        document: persistableDocument(document),
+function rememberCommitted(scope: string, id: string, revision: number, document: StoredCreationConversation) {
+    committed.set(scopeKey(scope, id), {
+        revision,
+        fingerprint: fingerprintOf(document),
+        document: cloneConversation(document),
     });
+}
+
+function commitIfCurrent(scope: string, id: string, revision: number, document: StoredCreationConversation) {
+    const current = committed.get(scopeKey(scope, id));
+    if (current && current.revision > revision) return false;
+    rememberCommitted(scope, id, revision, document);
+    return true;
+}
+
+function enqueue<T>(scope: string, id: string, work: () => Promise<T>): Promise<T> {
+    const key = scopeKey(scope, id);
+    const previous = writeQueues.get(key) ?? Promise.resolve();
+    const run = previous.then(work, work);
+    const tail = run.then(() => undefined, () => undefined);
+    writeQueues.set(key, tail);
+    void tail.finally(() => {
+        if (writeQueues.get(key) === tail) writeQueues.delete(key);
+    });
+    return run;
+}
+
+function nextGeneration(key: string) {
+    const generation = (writeGenerations.get(key) || 0) + 1;
+    writeGenerations.set(key, generation);
+    return generation;
 }
 
 function isConflictError(error: unknown) {
     return error instanceof ApiError && (error.status === 409 || error.reason === "conflict");
 }
 
-async function recoverLostAck(scope: string, id: string, document: StoredCreationConversation): Promise<CreationConversationRecord | null> {
-    let remote: CreationConversationRecord;
-    try {
-        remote = await creationConversationsApi.get(id);
-    } catch (error) {
-        if (error instanceof ApiError && (error.status === 404 || error.reason === "not_found")) return null;
-        throw error;
-    }
-    if (remote.deleted) return null;
-    const remoteDocument = documentFromRecord(remote);
-    const localFingerprint = persistableFingerprint(document);
-    const remoteFingerprint = persistableFingerprint(remoteDocument);
-    if (localFingerprint && remoteFingerprint && localFingerprint === remoteFingerprint) {
-        return remote;
-    }
-    await withScopeStorage(scope, async () => {
-        const existing = await readDraft(scope, id);
-        await writeDraft(scope, id, {
-            baseRevision: existing?.baseRevision ?? committed.get(scopeKey(scope, id))?.revision ?? 0,
-            document,
-            remote: { revision: remote.revision, document: remoteDocument },
-        });
-    });
-    return null;
+function isNotFoundError(error: unknown) {
+    return error instanceof ApiError && (error.status === 404 || error.reason === "not_found");
 }
 
-async function flushConversation(scope: string, id: string, resolveConflict: boolean) {
+export function hasPendingCreationConversationWrites(scope = getActiveUserScope()) {
+    const prefix = `${scope}\0`;
+    for (const key of pendingWrites.keys()) {
+        if (key.startsWith(prefix)) return true;
+    }
+    return false;
+}
+
+export async function loadCreationConversations<T extends StoredCreationConversation>(scope = getActiveUserScope()) {
+    const startedAt = opClock;
+    const listed = await creationConversationsApi.list();
+    const deleted = new Set(listed.deletedIds || []);
+    const seenIds = new Set<string>();
+    const loaded: T[] = [];
+    for (const record of listed.conversations || []) {
+        if (record.deleted || deleted.has(record.id)) continue;
+        const key = scopeKey(scope, record.id);
+        if ((deletedAt.get(key) || 0) > startedAt) continue;
+        seenIds.add(record.id);
+        const document = documentFromRecord(record);
+        const existing = committed.get(key);
+        if (existing && existing.revision > record.revision) {
+            const live = pendingWrites.get(key)?.document ?? existing.document;
+            loaded.push(cloneConversation(live) as T);
+            continue;
+        }
+        rememberCommitted(scope, record.id, record.revision, document);
+        const pending = pendingWrites.get(key);
+        if (!pending) {
+            loaded.push(cloneConversation(document) as T);
+            continue;
+        }
+        const live = projectLocalOnCanonical(existing?.document ?? pending.sentDocument, pending.document, document);
+        if (fingerprintOf(live) === fingerprintOf(document)) {
+            pendingWrites.delete(key);
+            loaded.push(cloneConversation(document) as T);
+        } else {
+            pendingWrites.set(key, {
+                generation: nextGeneration(key),
+                document: cloneConversation(live),
+                sentDocument: pending.sentDocument,
+                adoptedRevision: record.revision,
+            });
+            loaded.push(cloneConversation(live) as T);
+        }
+    }
+    const scopePrefix = `${scope}\0`;
+    for (const [key, pending] of pendingWrites) {
+        if (!key.startsWith(scopePrefix)) continue;
+        const id = key.slice(scopePrefix.length);
+        if (seenIds.has(id)) continue;
+        if (deleted.has(id)) {
+            pendingWrites.delete(key);
+            continue;
+        }
+        if ((deletedAt.get(key) || 0) > startedAt) continue;
+        loaded.unshift(cloneConversation(pending.document) as T);
+    }
+    return loaded.length ? loaded : null;
+}
+
+async function flushConversation(scope: string, id: string) {
     const key = scopeKey(scope, id);
+    let rebaseAttempts = 0;
+
     for (;;) {
         const snapshot = pendingWrites.get(key);
         if (!snapshot) return;
+
+        const payload = persistableDocument(snapshot.document);
+        const payloadFingerprint = canonicalFingerprint(payload);
         const state = committed.get(key);
-        if (state && fingerprintOf(snapshot.document) === state.fingerprint) {
+        if (state && payloadFingerprint === state.fingerprint) {
             if (pendingWrites.get(key)?.generation === snapshot.generation) {
                 pendingWrites.delete(key);
-                await withScopeStorage(scope, () => removeDraft(scope, id));
+                return;
             }
-            if ((pendingWrites.get(key)?.generation ?? 0) > snapshot.generation) continue;
-            return;
+            continue;
         }
-        const draft = await withScopeStorage(scope, () => readDraft(scope, id));
-        if (!resolveConflict && draft?.remote) return;
-        const expectedRevision = resolveConflict
-            ? (draft?.remote?.revision ?? committed.get(key)?.revision ?? 0)
-            : await draftBaseRevision(scope, id);
+
+        const expectedRevision = state?.revision ?? 0;
         let saved: CreationConversationRecord;
         try {
-            saved = await putConversation(id, expectedRevision, snapshot.document);
+            saved = await creationConversationsApi.put(id, { expectedRevision, document: payload });
         } catch (error) {
-            if (!isConflictError(error)) throw error;
-            const recovered = await recoverLostAck(scope, id, snapshot.document);
-            if (!recovered) throw error;
-            saved = recovered;
+            // Retain pendingWrites as the latest local intent on transient errors so a
+            // subsequent adopt or retry preserves unsaved user edits. Record the first
+            // unknown-outcome PUT payload as a possible server ancestor for lost-ack rebase.
+            if (!isConflictError(error)) {
+                const activePending = pendingWrites.get(key);
+                if (activePending && !activePending.sentDocument) {
+                    activePending.sentDocument = snapshot.document;
+                }
+                throw error;
+            }
+            const latestCommitted = committed.get(key);
+            const latestPending = pendingWrites.get(key);
+            if (!latestPending) {
+                if (latestCommitted && latestCommitted.revision > expectedRevision) return;
+                throw error;
+            }
+            // If adopt/load already advanced committed and projected pendingWrites onto
+            // that exact revision while this PUT was in flight, retry without an extra GET.
+            if (
+                rebaseAttempts < MAX_CONFLICT_REBASE_ATTEMPTS
+                && latestCommitted
+                && latestCommitted.revision > expectedRevision
+                && latestPending.generation > snapshot.generation
+                && latestPending.adoptedRevision === latestCommitted.revision
+            ) {
+                rebaseAttempts += 1;
+                continue;
+            }
+            let remote: CreationConversationRecord;
+            try {
+                remote = await creationConversationsApi.get(id);
+            } catch (getError) {
+                if (isNotFoundError(getError)) {
+                    if (pendingWrites.get(key)?.generation === snapshot.generation) pendingWrites.delete(key);
+                    throw error;
+                }
+                throw getError;
+            }
+            if (remote.deleted) {
+                if (pendingWrites.get(key)?.generation === snapshot.generation) pendingWrites.delete(key);
+                throw error;
+            }
+            const remoteDoc = documentFromRecord(remote);
+            const committedAfterGet = committed.get(key);
+            const pendingAfterGet = pendingWrites.get(key);
+            if (committedAfterGet && committedAfterGet.revision > remote.revision) {
+                if (!pendingAfterGet) return;
+                if (rebaseAttempts >= MAX_CONFLICT_REBASE_ATTEMPTS) throw error;
+                rebaseAttempts += 1;
+                if (pendingAfterGet.adoptedRevision !== committedAfterGet.revision) {
+                    const merged = projectLocalOnCanonical(
+                        state?.document ?? pendingAfterGet.sentDocument,
+                        pendingAfterGet.document,
+                        committedAfterGet.document,
+                    );
+                    pendingWrites.set(key, {
+                        generation: nextGeneration(key),
+                        document: merged,
+                        sentDocument: pendingAfterGet.sentDocument,
+                        adoptedRevision: committedAfterGet.revision,
+                    });
+                }
+                continue;
+            }
+            if (fingerprintOf(remoteDoc) === payloadFingerprint) {
+                saved = remote;
+            } else if (rebaseAttempts < MAX_CONFLICT_REBASE_ATTEMPTS) {
+                rebaseAttempts += 1;
+                const liveLocal = pendingAfterGet?.document ?? snapshot.document;
+                const base = state?.document ?? snapshot.sentDocument;
+                const merged = projectLocalOnCanonical(base, liveLocal, remoteDoc);
+                commitIfCurrent(scope, id, remote.revision, remoteDoc);
+                pendingWrites.set(key, {
+                    generation: nextGeneration(key),
+                    document: merged,
+                    adoptedRevision: remote.revision,
+                });
+                continue;
+            } else {
+                throw error;
+            }
         }
+
         const canonical = documentFromRecord(saved);
-        if (!commitIfCurrent(scope, id, saved.revision, canonical)) return;
+        const applied = commitIfCurrent(scope, id, saved.revision, canonical);
         const latest = pendingWrites.get(key);
+        if (!applied) {
+            if (latest && latest.generation > snapshot.generation) {
+                rebaseAttempts = 0;
+                continue;
+            }
+            if (latest?.generation === snapshot.generation) pendingWrites.delete(key);
+            return;
+        }
         if (latest && latest.generation > snapshot.generation) {
-            const projected = projectPendingOnCanonical(snapshot.document, latest.document, canonical);
+            const projected = projectLocalOnCanonical(snapshot.document, latest.document, canonical);
             pendingWrites.set(key, { generation: latest.generation, document: projected });
-            await withScopeStorage(scope, () => writeDraft(scope, id, {
-                baseRevision: saved.revision,
-                document: projected,
-            }));
+            rebaseAttempts = 0;
             continue;
         }
         if (latest?.generation === snapshot.generation) {
             pendingWrites.delete(key);
-            await withScopeStorage(scope, () => removeDraft(scope, id));
         }
         return;
     }
@@ -659,42 +539,30 @@ async function flushConversation(scope: string, id: string, resolveConflict: boo
 export async function saveCreationConversations<T extends StoredCreationConversation>(
     conversations: T[],
     scope = getActiveUserScope(),
-    options?: { resolveConflictIds?: string[] },
 ) {
-    const resolveIds = new Set(options?.resolveConflictIds || []);
     const jobs = conversations.map((conversation) => {
-        if (!conversation?.id) throw new Error("缺少要保存的创作对话 ID");
+        if (!conversation?.id) return Promise.reject(new Error("缺少要保存的创作对话 ID"));
         const cloned = cloneConversation(conversation);
+        let payloadFingerprint: string;
+        try {
+            payloadFingerprint = fingerprintOf(cloned);
+        } catch (error) {
+            return Promise.reject(error);
+        }
         const key = scopeKey(scope, cloned.id);
+        const current = committed.get(key);
+        if (!pendingWrites.has(key) && current && current.fingerprint === payloadFingerprint) {
+            return Promise.resolve();
+        }
         const generation = nextGeneration(key);
-        pendingWrites.set(key, { generation, document: cloned });
-        const resolveConflict = resolveIds.has(cloned.id);
-        return captureDraft(scope, cloned.id, cloned).then(() => {
-            if (conversationHasConflict(cloned) && !resolveConflict) return;
-            return enqueue(scope, cloned.id, () => flushConversation(scope, cloned.id, resolveConflict));
-        });
+        const priorSent = pendingWrites.get(key)?.sentDocument;
+        pendingWrites.set(key, { generation, document: cloned, ...(priorSent ? { sentDocument: priorSent } : {}) });
+        deletedAt.delete(key);
+        return enqueue(scope, cloned.id, () => flushConversation(scope, cloned.id));
     });
-    await Promise.all(jobs);
-}
-
-export async function parkCreationConversationDraft(
-    id: string,
-    document: StoredCreationConversation,
-    remote: { revision: number; document: StoredCreationConversation } | undefined,
-    scope = getActiveUserScope(),
-) {
-    const storage = localForageStorageForScope(scope);
-    const { conflictRemote: _conflictRemote, ...local } = document;
-    await storage.setItem(parkedDraftKey(id), JSON.stringify({
-        document: cloneConversation(local),
-        remote: remote ? cloneConversation(remote) : undefined,
-    }));
-}
-
-function liveFromCommittedAndDraft(state: CommittedState | undefined, ours: StoredCreationConversation | undefined) {
-    if (!ours) return state ? cloneConversation(state.document) : undefined;
-    if (!state) return cloneConversation(ours);
-    return projectPendingOnCanonical(state.document, ours, state.document);
+    const results = await Promise.allSettled(jobs);
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed) throw failed.reason;
 }
 
 export async function adoptServerConfirmedConversationDocument(
@@ -706,133 +574,79 @@ export async function adoptServerConfirmedConversationDocument(
     const id = conversationId.trim();
     if (!id) throw new Error("缺少要采纳的创作对话 ID");
     if (!Number.isInteger(revision) || revision < 1) throw new Error("对话版本无效");
+
+    const key = scopeKey(scope, id);
     const canonical = cloneConversation({ ...document, id });
-    let adopted: StoredCreationConversation | undefined;
+    const current = committed.get(key);
+    const pending = pendingWrites.get(key);
 
-    await withScopeStorage(scope, async () => {
-        const key = scopeKey(scope, id);
-        const current = committed.get(key);
-        if (current && current.revision > revision) {
-            const ours = pendingWrites.get(key)?.document ?? (await readDraft(scope, id))?.document;
-            adopted = liveFromCommittedAndDraft(current, ours) ?? cloneConversation(current.document);
-            return;
-        }
-
-        const draft = await readDraft(scope, id);
-        const base = current?.document ?? draft?.remote?.document;
-        // Every storage await can admit another edit, including the final
-        // remove. Only publish/ack a generation still current after its I/O.
-        for (;;) {
-            const generation = writeGenerations.get(key) ?? 0;
-            const pending = pendingWrites.get(key);
-            const ours = pending?.document ?? draft?.document;
-            let live: StoredCreationConversation;
-            let remote: ConversationDraft["remote"];
-            let keepDraft = false;
-            if (!ours || persistableFingerprint(ours) === persistableFingerprint(canonical)) {
-                live = cloneConversation(canonical);
-            } else if (!base) {
-                live = cloneConversation(ours);
-                remote = { revision, document: cloneConversation(canonical) };
-                keepDraft = true;
-            } else {
-                live = projectPendingOnCanonical(base, ours, canonical);
-                keepDraft = persistableFingerprint(live) !== persistableFingerprint(canonical);
-            }
-            await writeDraft(scope, id, { baseRevision: revision, document: cloneConversation(live), remote });
-            if ((writeGenerations.get(key) ?? 0) !== generation) continue;
-            if (!commitIfCurrent(scope, id, revision, canonical)) {
-                const latestCommitted = committed.get(key);
-                adopted = liveFromCommittedAndDraft(latestCommitted, pendingWrites.get(key)?.document ?? ours) ?? cloneConversation(canonical);
-                return;
-            }
-            if (keepDraft) {
-                if (pending) pendingWrites.set(key, { generation: pending.generation, document: live });
-                adopted = remote ? withConflict(live, remote) : live;
-                return;
-            }
-            await removeDraft(scope, id);
-            if ((writeGenerations.get(key) ?? 0) !== generation) continue;
-            if (pendingWrites.get(key)?.generation === pending?.generation) pendingWrites.delete(key);
-            adopted = cloneConversation(canonical);
-            return;
-        }
-    });
-
-    if (!adopted) throw new Error("这次生成结果没能写进对话。请再试一次。");
-    return adopted;
-}
-
-export async function acceptSavedCreationConversation(
-    id: string,
-    document: StoredCreationConversation,
-    remote: { revision: number; document: StoredCreationConversation },
-    scope = getActiveUserScope(),
-) {
-    await parkCreationConversationDraft(id, document, remote, scope);
-    pendingWrites.delete(scopeKey(scope, id));
-    rememberCommitted(scope, id, remote.revision, remote.document);
-    await withScopeStorage(scope, () => removeDraft(scope, id));
-}
-
-export async function restoreParkedCreationConversation<T extends StoredCreationConversation>(id: string, scope = getActiveUserScope()) {
-    const parked = await takeParkedCreationConversationDraft<T>(id, scope);
-    if (!parked) return null;
-    const remote = parked.conflictRemote;
-    const document = cloneConversation(parked);
-    delete document.conflictRemote;
-    await withScopeStorage(scope, () => writeDraft(scope, id, {
-        baseRevision: remote?.revision ?? committed.get(scopeKey(scope, id))?.revision ?? 0,
-        document,
-        remote,
-    }));
-    pendingWrites.delete(scopeKey(scope, id));
-    return parked;
-}
-
-export async function takeParkedCreationConversationDraft<T extends StoredCreationConversation>(id: string, scope = getActiveUserScope()) {
-    const storage = localForageStorageForScope(scope);
-    const raw = await storage.getItem(parkedDraftKey(id));
-    await storage.removeItem(parkedDraftKey(id));
-    if (!raw) return null;
-    try {
-        const parsed = JSON.parse(raw) as { document?: T; remote?: { revision: number; document: T } };
-        if (!parsed?.document?.id) return null;
-        return parsed.remote ? withConflict(parsed.document, parsed.remote) as T : parsed.document;
-    } catch {
-        return null;
+    if (current && current.revision > revision) {
+        return cloneConversation(pending?.document ?? current.document);
     }
-}
 
-export async function hasParkedCreationConversationDraft(id: string, scope = getActiveUserScope()) {
-    const storage = localForageStorageForScope(scope);
-    return Boolean(await storage.getItem(parkedDraftKey(id)));
+    const base = current?.document ?? pending?.sentDocument;
+    let live: StoredCreationConversation;
+    if (!pending) {
+        live = cloneConversation(canonical);
+    } else if (fingerprintOf(pending.document) === fingerprintOf(canonical)) {
+        pendingWrites.delete(key);
+        live = cloneConversation(canonical);
+    } else {
+        live = projectLocalOnCanonical(base, pending.document, canonical);
+        if (fingerprintOf(live) === fingerprintOf(canonical)) {
+            pendingWrites.delete(key);
+        } else {
+            pendingWrites.set(key, {
+                generation: nextGeneration(key),
+                document: cloneConversation(live),
+                adoptedRevision: revision,
+            });
+        }
+    }
+
+    rememberCommitted(scope, id, revision, canonical);
+    return cloneConversation(live);
 }
 
 export async function deleteCreationConversation(conversationId: string, scope = getActiveUserScope()) {
     if (!conversationId) throw new Error("缺少要删除的创作对话 ID");
+    const key = scopeKey(scope, conversationId);
     return enqueue(scope, conversationId, async () => {
-        const expectedRevision = committed.get(scopeKey(scope, conversationId))?.revision ?? 0;
+        const expectedRevision = committed.get(key)?.revision ?? 0;
         try {
             await creationConversationsApi.remove(conversationId, expectedRevision);
         } catch (error) {
-            if (!(error instanceof ApiError) || error.status !== 404) throw error;
+            if (isNotFoundError(error)) {
+                // Already deleted in SQLite.
+            } else if (isConflictError(error)) {
+                let latest: CreationConversationRecord;
+                try {
+                    latest = await creationConversationsApi.get(conversationId);
+                } catch (getError) {
+                    if (isNotFoundError(getError)) {
+                        latest = { id: conversationId, revision: expectedRevision, updatedAt: "", deleted: true };
+                    } else {
+                        throw getError;
+                    }
+                }
+                if (!latest.deleted) {
+                    await creationConversationsApi.remove(conversationId, latest.revision);
+                }
+            } else {
+                throw error;
+            }
         }
-        forgetCommitted(scope, conversationId);
-        await rememberTombstones(scope, [conversationId]);
-        await withScopeStorage(scope, async () => {
-            await removeDraft(scope, conversationId);
-            await removeLegacyConversation(scope, conversationId);
-        });
-        const storage = localForageStorageForScope(scope);
-        await storage.removeItem(parkedDraftKey(conversationId));
+        committed.delete(key);
+        pendingWrites.delete(key);
+        deletedAt.set(key, ++opClock);
     });
 }
 
 export function resetCreationConversationStoreForTests() {
     committed.clear();
     writeQueues.clear();
-    storageQueues.clear();
     pendingWrites.clear();
     writeGenerations.clear();
+    deletedAt.clear();
+    opClock = 0;
 }

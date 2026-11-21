@@ -33,23 +33,6 @@ func (r *Repository) CreationConversation(tx *gorm.DB, userID, conversationID st
 	return &row, nil
 }
 
-func (r *Repository) CreationConversationByImportOperation(tx *gorm.DB, userID, operationID string) (*model.CreationConversation, error) {
-	db := r.creationConversationDB(tx)
-	if db == nil {
-		return nil, errors.New("创作对话存储不可用")
-	}
-	operationID = strings.TrimSpace(operationID)
-	if operationID == "" {
-		return nil, gorm.ErrRecordNotFound
-	}
-	var row model.CreationConversation
-	err := db.Where("user_id = ? AND import_operation_id = ?", strings.TrimSpace(userID), operationID).First(&row).Error
-	if err != nil {
-		return nil, err
-	}
-	return &row, nil
-}
-
 func (r *Repository) ListCreationConversations(tx *gorm.DB, userID string) ([]model.CreationConversation, error) {
 	db := r.creationConversationDB(tx)
 	if db == nil {

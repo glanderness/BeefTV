@@ -181,47 +181,7 @@ func TestTwoCASWritersOneConflict(t *testing.T) {
 	}
 }
 
-func TestInterruptedImportReplaysWithoutOverwrite(t *testing.T) {
-	db, _, svc := openConversationFixture(t)
-	raw := sampleDocument("conversation-import", "导入", "assistant-1", "task-1")
-	injected := errors.New("injected import failure")
-	err := db.Transaction(func(tx *gorm.DB) error {
-		bound := svc.WithTx(tx)
-		if _, importErr := bound.Import("local", "creation-conversations-v1:conversation-import", "", raw); importErr != nil {
-			t.Fatal(importErr)
-		}
-		return injected
-	})
-	if !errors.Is(err, injected) {
-		t.Fatalf("tx error = %v", err)
-	}
-	if _, err := svc.Get("local", "conversation-import"); err == nil {
-		t.Fatal("rolled back import still visible")
-	}
-	first, err := svc.Import("local", "creation-conversations-v1:conversation-import", "", raw)
-	if err != nil || !first.Imported || first.Conversation.Revision != 1 {
-		t.Fatalf("first import = %+v err=%v", first, err)
-	}
-	replay, err := svc.Import("local", "creation-conversations-v1:conversation-import", conversation.DocumentHash(first.Conversation.Document), raw)
-	if err != nil || replay.Imported {
-		t.Fatalf("replay = %+v err=%v", replay, err)
-	}
-	changed := sampleDocument("conversation-import", "被覆盖", "assistant-1", "task-1")
-	_, hashErr := svc.Import("local", "creation-conversations-v1:conversation-import", "", changed)
-	var convErr *conversation.Error
-	if !errors.As(hashErr, &convErr) || convErr.Reason != conversation.ReasonConflict {
-		t.Fatalf("changed hash error = %v", hashErr)
-	}
-	loaded, err := svc.Get("local", "conversation-import")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !jsonContains(loaded.Document, `"title":"导入"`) {
-		t.Fatalf("import overwritten: %s", loaded.Document)
-	}
-}
-
-func TestDeletedTombstoneNotResurrectedByLegacyImport(t *testing.T) {
+func TestDeletedTombstoneNotResurrectedByPut(t *testing.T) {
 	_, _, svc := openConversationFixture(t)
 	if _, err := svc.Put("local", "conversation-dead", 0, sampleDocument("conversation-dead", "旧对话", "assistant-1", "task-1")); err != nil {
 		t.Fatal(err)
@@ -235,13 +195,6 @@ func TestDeletedTombstoneNotResurrectedByLegacyImport(t *testing.T) {
 	}
 	if len(list.Conversations) != 0 || len(list.DeletedIDs) != 1 || list.DeletedIDs[0] != "conversation-dead" {
 		t.Fatalf("list after delete = %+v", list)
-	}
-	imported, err := svc.Import("local", "creation-conversations-v1:conversation-dead", "", sampleDocument("conversation-dead", "复活", "assistant-1", "task-1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if imported.Imported || !imported.Deleted {
-		t.Fatalf("tombstone resurrected: %+v", imported)
 	}
 	if _, err := svc.Get("local", "conversation-dead"); err == nil {
 		t.Fatal("deleted conversation visible via get")
@@ -371,15 +324,16 @@ func TestPutRejectsCredentialsAndKeepsUnknownFields(t *testing.T) {
 	}
 }
 
-func TestDeleteDoesNotRequireMissingLocalDraft(t *testing.T) {
+func TestDeleteCreatesTombstoneForMissingConversation(t *testing.T) {
 	_, _, svc := openConversationFixture(t)
 	deleted, err := svc.Delete("local", "conversation-never", 0)
 	if err != nil || !deleted.Deleted {
 		t.Fatalf("missing local delete = %+v err=%v", deleted, err)
 	}
-	imported, err := svc.Import("local", "creation-conversations-v1:conversation-never", "", sampleDocument("conversation-never", "复活", "assistant-1", "task-1"))
-	if err != nil || imported.Imported || !imported.Deleted {
-		t.Fatalf("zero-revision tombstone missing: %+v err=%v", imported, err)
+	_, putErr := svc.Put("local", "conversation-never", 0, sampleDocument("conversation-never", "复活", "assistant-1", "task-1"))
+	var convErr *conversation.Error
+	if !errors.As(putErr, &convErr) || convErr.Reason != conversation.ReasonDeleted {
+		t.Fatalf("zero-revision tombstone did not block put: %v", putErr)
 	}
 }
 
@@ -461,52 +415,6 @@ func TestNormalizeKeepsPromptTextAndRejectsNumericIDs(t *testing.T) {
 	_, err = svc.Put("local", "conversation-blob-only", 0, json.RawMessage(`{"id":"conversation-blob-only","title":"x","messages":[{"id":"m1","role":"user","content":"hi","attachments":[{"id":"a1","dataUrl":"data:image/png;base64,aaaa"}]}]}`))
 	if !errors.As(err, &convErr) || convErr.Reason != conversation.ReasonInvalid {
 		t.Fatalf("blob-only attachment error = %v", err)
-	}
-}
-
-func TestConcurrentImportSameOperationDifferentDocuments(t *testing.T) {
-	db, _, svc := openConversationFixture(t)
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	results := make([]error, 2)
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			<-start
-			id := "conversation-import-a"
-			title := "甲"
-			if i == 1 {
-				id = "conversation-import-b"
-				title = "乙"
-			}
-			_, results[i] = svc.Import("local", "creation-conversations-v1:shared-op", "", sampleDocument(id, title, "assistant-1", "task-1"))
-		}(i)
-	}
-	close(start)
-	wg.Wait()
-	successes := 0
-	conflicts := 0
-	for _, err := range results {
-		if err == nil {
-			successes++
-			continue
-		}
-		var convErr *conversation.Error
-		if !errors.As(err, &convErr) || convErr.Reason != conversation.ReasonConflict {
-			t.Fatalf("import error = %v", err)
-		}
-		conflicts++
-	}
-	if successes != 1 || conflicts != 1 {
-		t.Fatalf("successes=%d conflicts=%d errors=%v", successes, conflicts, results)
-	}
-	var count int64
-	if err := db.Raw("SELECT COUNT(*) FROM creation_conversations WHERE import_operation_id = ?", "creation-conversations-v1:shared-op").Scan(&count).Error; err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("duplicate import rows = %d", count)
 	}
 }
 
