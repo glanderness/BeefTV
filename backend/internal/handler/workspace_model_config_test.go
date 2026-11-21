@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/app"
@@ -277,4 +280,258 @@ func TestRegisterCanvasAPINormalizesInstalledPluginWorkflow(t *testing.T) {
 	if duration["selection"] != "range" || duration["min"] != float64(1) || duration["max"] != float64(12) || duration["default"] != float64(5) {
 		t.Fatalf("duration = %#v, want range 1..12 default 5", duration)
 	}
+}
+
+func TestWorkspaceModelConfigRecoversAndSavesAfterPrimaryCorruption(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	store, err := workspace.NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := app.NewLocal(nil, dir)
+	router := gin.New()
+	router.Use(WorkspaceMiddleware(workspace.Context{ID: "local", DataDir: dir}))
+	router.Use(RuntimeDependenciesMiddleware(RuntimeDependencies{ProviderConfig: store}))
+	RegisterWorkspaceRoutes(router.Group("/api"), service)
+
+	// 连续写入两次以生成有效 .bak（revision 1）。
+	first := putModelConfig(t, router, 0, "first-secret")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first put status = %d body=%s", first.Code, first.Body.String())
+	}
+	second := putModelConfig(t, router, 1, "second-secret")
+	if second.Code != http.StatusOK {
+		t.Fatalf("second put status = %d body=%s", second.Code, second.Body.String())
+	}
+
+	// 模拟主配置文件损坏。
+	primaryPath := filepath.Join(dir, workspace.LocalProviderConfigFile)
+	if err := os.WriteFile(primaryPath, []byte(`{"schemaVersion":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. GET 降级返回备份与 health=recovered。
+	getRec := httptest.NewRecorder()
+	router.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/api/workspace/model-config", nil))
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s", getRec.Code, getRec.Body.String())
+	}
+	data := modelConfigResponseData(t, getRec)
+	if data["health"] != string(workspace.ConfigHealthRecovered) || data["revision"] != float64(1) {
+		t.Fatalf("unexpected recovery metadata: %#v", data)
+	}
+
+	// 2. 启动自动恢复写回或用户编辑自定义渠道保存都不应再陷入 500 死锁。
+	saveBody, err := json.Marshal(map[string]any{
+		"expectedRevision": 1,
+		"config": map[string]any{
+			"channels": []any{
+				map[string]any{"id": "beeftv", "apiKey": "", "enabled": true},
+				map[string]any{
+					"id":      "custom-sd",
+					"name":    "sd 2.5",
+					"apiKey":  "custom-key",
+					"enabled": true,
+					"models":  []string{"seedance-2-5-special"},
+					"modelProfiles": []any{
+						map[string]any{
+							"model":      "seedance-2-5-special",
+							"capability": "video",
+							"capabilityConfig": map[string]any{
+								"version": 1,
+								"video": map[string]any{
+									"duration": map[string]any{"selection": "range", "min": 1, "max": 15, "step": 1, "default": 5},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	putRec := httptest.NewRecorder()
+	putReq := httptest.NewRequest(http.MethodPut, "/api/workspace/model-config", bytes.NewReader(saveBody))
+	putReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("recovery put status = %d body=%s", putRec.Code, putRec.Body.String())
+	}
+	if rev := modelConfigResponseData(t, putRec)["revision"]; rev != float64(2) {
+		t.Fatalf("revision = %#v, want 2", rev)
+	}
+
+	// 3. 下一次 GET 回到 ready。
+	afterRec := httptest.NewRecorder()
+	router.ServeHTTP(afterRec, httptest.NewRequest(http.MethodGet, "/api/workspace/model-config", nil))
+	if afterRec.Code != http.StatusOK {
+		t.Fatalf("after get status = %d body=%s", afterRec.Code, afterRec.Body.String())
+	}
+	if got := modelConfigResponseData(t, afterRec)["health"]; got != string(workspace.ConfigHealthReady) {
+		t.Fatalf("after health = %#v, want ready", got)
+	}
+}
+
+func TestWorkspaceModelConfigReturnsExplicitBusinessErrors(t *testing.T) {
+	t.Run("corrupt_without_backup", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		dir := t.TempDir()
+		store, err := workspace.NewProviderConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, workspace.LocalProviderConfigFile), []byte(`{"schemaVersion":`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		service := app.NewLocal(nil, dir)
+		router := gin.New()
+		router.Use(WorkspaceMiddleware(workspace.Context{ID: "local", DataDir: dir}))
+		router.Use(RuntimeDependenciesMiddleware(RuntimeDependencies{ProviderConfig: store}))
+		RegisterWorkspaceRoutes(router.Group("/api"), service)
+
+		rec := putModelConfig(t, router, 0, "do-not-leak")
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Reason string `json:"reason"`
+			Msg    string `json:"msg"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Reason != "provider_config_corrupt" || !strings.Contains(body.Msg, "损坏") {
+			t.Fatalf("unexpected error payload: %+v", body)
+		}
+		if bytes.Contains(rec.Body.Bytes(), []byte("do-not-leak")) {
+			t.Fatalf("error leaked secret: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("corrupt_ciphertext_without_backup", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			corrupt []byte
+		}{
+			{name: "invalid_format", corrupt: []byte(`{"schemaVersion":2,"encryptedConfig":"enc:v1:not-valid-cipher"}`)},
+			{name: "short_nonce", corrupt: []byte(`{"schemaVersion":2,"encryptedConfig":"enc:v1:AAAA"}`)},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				gin.SetMode(gin.TestMode)
+				dir := t.TempDir()
+				store, err := workspace.NewProviderConfig(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"custom","apiKey":"seed"}]}`)); err != nil {
+					t.Fatal(err)
+				}
+				_ = os.Remove(filepath.Join(dir, workspace.LocalProviderConfigFile+".bak"))
+				primaryPath := filepath.Join(dir, workspace.LocalProviderConfigFile)
+				if err := os.WriteFile(primaryPath, tc.corrupt, 0o600); err != nil {
+					t.Fatal(err)
+				}
+
+				service := app.NewLocal(nil, dir)
+				router := gin.New()
+				router.Use(WorkspaceMiddleware(workspace.Context{ID: "local", DataDir: dir}))
+				router.Use(RuntimeDependenciesMiddleware(RuntimeDependencies{ProviderConfig: store}))
+				RegisterWorkspaceRoutes(router.Group("/api"), service)
+
+				rec := putModelConfig(t, router, 1, "do-not-leak")
+				if rec.Code != http.StatusInternalServerError {
+					t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+				}
+				var body struct {
+					Reason string `json:"reason"`
+					Msg    string `json:"msg"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+					t.Fatal(err)
+				}
+				if body.Reason != "provider_config_corrupt" || !strings.Contains(body.Msg, "损坏") {
+					t.Fatalf("unexpected error payload: %+v", body)
+				}
+				if bytes.Contains(rec.Body.Bytes(), []byte("do-not-leak")) {
+					t.Fatalf("error leaked secret: %s", rec.Body.String())
+				}
+				gotPrimary, err := os.ReadFile(primaryPath)
+				if err != nil || !bytes.Equal(gotPrimary, tc.corrupt) {
+					t.Fatalf("primary modified on rejected corrupt write: err=%v body=%q", err, gotPrimary)
+				}
+			})
+		}
+	})
+
+	t.Run("missing_settings_key", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		dir := t.TempDir()
+		store, err := workspace.NewProviderConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"custom","apiKey":"secret-value"}]}`)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(filepath.Join(dir, ".settings-key")); err != nil {
+			t.Fatal(err)
+		}
+		service := app.NewLocal(nil, dir)
+		router := gin.New()
+		router.Use(WorkspaceMiddleware(workspace.Context{ID: "local", DataDir: dir}))
+		router.Use(RuntimeDependenciesMiddleware(RuntimeDependencies{ProviderConfig: store}))
+		RegisterWorkspaceRoutes(router.Group("/api"), service)
+
+		rec := putModelConfig(t, router, 1, "new-secret")
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Reason string `json:"reason"`
+			Msg    string `json:"msg"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Reason != "provider_config_key_unavailable" || !strings.Contains(body.Msg, "密钥") {
+			t.Fatalf("unexpected error payload: %+v", body)
+		}
+	})
+
+	t.Run("unmatched_redacted_secret_and_non_object_return_400", func(t *testing.T) {
+		router, _ := newModelConfigTestRouter(t)
+		first := putModelConfig(t, router, 0, "seed-secret")
+		if first.Code != http.StatusOK {
+			t.Fatalf("seed put status = %d body=%s", first.Code, first.Body.String())
+		}
+
+		unmatchedBody, _ := json.Marshal(map[string]any{
+			"expectedRevision": 1,
+			"config":           map[string]any{"channels": []any{map[string]any{"id": "unknown", "apiKey": workspace.RedactedSecret}}},
+		})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/api/workspace/model-config", bytes.NewReader(unmatchedBody))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("unmatched status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var unmatched struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &unmatched); err != nil || unmatched.Reason != "provider_config_unmatched_secret" {
+			t.Fatalf("unmatched body = %s", rec.Body.String())
+		}
+
+		arrayRec := httptest.NewRecorder()
+		arrayReq := httptest.NewRequest(http.MethodPut, "/api/workspace/model-config", bytes.NewReader([]byte(`{"expectedRevision":1,"config":["bad"]}`)))
+		arrayReq.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(arrayRec, arrayReq)
+		if arrayRec.Code != http.StatusBadRequest {
+			t.Fatalf("array status = %d body=%s", arrayRec.Code, arrayRec.Body.String())
+		}
+	})
 }

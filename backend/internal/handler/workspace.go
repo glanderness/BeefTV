@@ -85,7 +85,7 @@ func RegisterWorkspaceRoutes(r *gin.RouterGroup, bootstrap workspaceBootstrap) {
 		if versioned, supportsVersioning := providerConfig.(VersionedProviderConfig); supportsVersioning {
 			effective, health, err := versioned.LoadEffectiveModelConfig()
 			if err != nil {
-				failService(c, err)
+				failModelConfig(c, err)
 				return
 			}
 			ok(c, gin.H{"config": redactModelConfig(c, bootstrap, effective.Config), "revision": effective.Revision, "health": health, "source": "builtin+local"})
@@ -93,7 +93,7 @@ func RegisterWorkspaceRoutes(r *gin.RouterGroup, bootstrap workspaceBootstrap) {
 		}
 		body, err := providerConfig.ReadLocalModelConfig()
 		if err != nil {
-			failService(c, err)
+			failModelConfig(c, err)
 			return
 		}
 		if len(body) == 0 {
@@ -102,7 +102,7 @@ func RegisterWorkspaceRoutes(r *gin.RouterGroup, bootstrap workspaceBootstrap) {
 		}
 		var config map[string]any
 		if err := json.Unmarshal(body, &config); err != nil {
-			fail(c, http.StatusInternalServerError, errors.New("本地模型配置损坏"))
+			failModelConfig(c, workspace.ErrMalformedProviderConfig)
 			return
 		}
 		ok(c, gin.H{"config": redactModelConfig(c, bootstrap, config)})
@@ -133,19 +133,15 @@ func RegisterWorkspaceRoutes(r *gin.RouterGroup, bootstrap workspaceBootstrap) {
 		providerConfig := requestProviderConfig(c, bootstrap)
 		if versioned, supportsVersioning := providerConfig.(VersionedProviderConfig); supportsVersioning && envelope.ExpectedRevision != nil {
 			revision, err := versioned.SaveLocalModelConfigRevision(envelope.Config, *envelope.ExpectedRevision)
-			if errors.Is(err, workspace.ErrProviderConfigRevisionConflict) {
-				fail(c, http.StatusConflict, err)
-				return
-			}
 			if err != nil {
-				failService(c, err)
+				failModelConfig(c, err)
 				return
 			}
 			ok(c, gin.H{"saved": true, "revision": revision})
 			return
 		}
 		if err := providerConfig.SaveLocalModelConfig(envelope.Config); err != nil {
-			failService(c, err)
+			failModelConfig(c, err)
 			return
 		}
 		ok(c, gin.H{"saved": true})
@@ -220,6 +216,79 @@ func preserveManagedModelConfig(c *gin.Context, bootstrap workspaceBootstrap, ra
 		return raw
 	}
 	return encoded
+}
+
+func failModelConfig(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, workspace.ErrProviderConfigRevisionConflict):
+		fail(c, http.StatusConflict, err)
+	case errors.Is(err, workspace.ErrUnmatchedRedactedSecret):
+		writeAppError(c, &app.AppError{
+			Status:  http.StatusBadRequest,
+			Code:    http.StatusBadRequest,
+			Reason:  app.ErrorReason("provider_config_unmatched_secret"),
+			Message: workspace.ErrUnmatchedRedactedSecret.Error(),
+			Cause:   err,
+		})
+	case errors.Is(err, workspace.ErrInvalidProviderIdentity):
+		writeAppError(c, &app.AppError{
+			Status:  http.StatusBadRequest,
+			Code:    http.StatusBadRequest,
+			Reason:  app.ErrorReason("provider_config_invalid_identity"),
+			Message: workspace.ErrInvalidProviderIdentity.Error(),
+			Cause:   err,
+		})
+	case errors.Is(err, workspace.ErrProviderConfigInvalidSize):
+		writeAppError(c, &app.AppError{
+			Status:  http.StatusBadRequest,
+			Code:    http.StatusBadRequest,
+			Reason:  app.ReasonInvalidArgument,
+			Message: workspace.ErrProviderConfigInvalidSize.Error(),
+			Cause:   err,
+		})
+	case errors.Is(err, workspace.ErrProviderConfigNotObject) && !errors.Is(err, workspace.ErrMalformedProviderConfig):
+		writeAppError(c, &app.AppError{
+			Status:  http.StatusBadRequest,
+			Code:    http.StatusBadRequest,
+			Reason:  app.ReasonInvalidArgument,
+			Message: workspace.ErrProviderConfigNotObject.Error(),
+			Cause:   err,
+		})
+	case errors.Is(err, workspace.ErrProviderConfigLocked):
+		writeAppError(c, &app.AppError{
+			Status:  http.StatusServiceUnavailable,
+			Code:    http.StatusServiceUnavailable,
+			Reason:  app.ErrorReason("provider_config_locked"),
+			Message: workspace.ErrProviderConfigLocked.Error(),
+			Cause:   err,
+		})
+	case errors.Is(err, workspace.ErrProviderConfigKeyUnavailable):
+		writeAppError(c, &app.AppError{
+			Status:  http.StatusInternalServerError,
+			Code:    http.StatusInternalServerError,
+			Reason:  app.ErrorReason("provider_config_key_unavailable"),
+			Message: workspace.ErrProviderConfigKeyUnavailable.Error(),
+			Cause:   err,
+		})
+	case errors.Is(err, workspace.ErrMalformedProviderConfig):
+		writeAppError(c, &app.AppError{
+			Status:  http.StatusInternalServerError,
+			Code:    http.StatusInternalServerError,
+			Reason:  app.ErrorReason("provider_config_corrupt"),
+			Message: "本地模型配置文件损坏且无可用备份，请检查工作区目录或联系支持",
+			Cause:   err,
+		})
+	case errors.Is(err, workspace.ErrProviderConfigPermission):
+		writeAppError(c, &app.AppError{
+			Status:  http.StatusInternalServerError,
+			Code:    http.StatusInternalServerError,
+			Reason:  app.ErrorReason("provider_config_permission"),
+			Message: workspace.ErrProviderConfigPermission.Error(),
+			Cause:   err,
+		})
+	default:
+		failService(c, err)
+	}
 }
 
 func workspaceForLocalRequest(c *gin.Context, connections beefTVConnections) (workspace.Context, error) {

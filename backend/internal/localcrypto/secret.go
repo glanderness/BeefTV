@@ -17,6 +17,13 @@ import (
 
 const Prefix = "enc:v1:"
 
+var (
+	ErrInvalidCiphertextFormat = errors.New("本地密钥密文格式无效")
+	ErrInvalidCiphertextLength = errors.New("本地密钥密文长度无效")
+	ErrDecryptFailed           = errors.New("本地密钥解密失败，请检查工作区密钥")
+	ErrInvalidKeyLength        = errors.New("工作区密钥长度无效")
+)
+
 var keyMu sync.Mutex
 
 func Encrypt(dataDir, value string) (string, error) {
@@ -47,11 +54,11 @@ func Decrypt(dataDir, value string) (string, error) {
 		return "", nil
 	}
 	if !strings.HasPrefix(value, Prefix) {
-		return "", errors.New("本地密钥密文格式无效")
+		return "", ErrInvalidCiphertextFormat
 	}
 	payload, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(value, Prefix))
 	if err != nil {
-		return "", errors.New("本地密钥密文格式无效")
+		return "", ErrInvalidCiphertextFormat
 	}
 	// Decryption must never create a replacement key for existing ciphertext.
 	key, err := readKey(filepath.Join(dataDir, ".settings-key"))
@@ -67,11 +74,11 @@ func Decrypt(dataDir, value string) (string, error) {
 		return "", err
 	}
 	if len(payload) < gcm.NonceSize() {
-		return "", errors.New("本地密钥密文长度无效")
+		return "", ErrInvalidCiphertextLength
 	}
 	plain, err := gcm.Open(nil, payload[:gcm.NonceSize()], payload[gcm.NonceSize():], nil)
 	if err != nil {
-		return "", errors.New("本地密钥解密失败，请检查工作区密钥")
+		return "", ErrDecryptFailed
 	}
 	return string(plain), nil
 }
@@ -82,7 +89,7 @@ func readKey(path string) ([]byte, error) {
 		return nil, err
 	}
 	if len(key) != 32 {
-		return nil, errors.New("工作区密钥长度无效")
+		return nil, ErrInvalidKeyLength
 	}
 	return key, nil
 }
