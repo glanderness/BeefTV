@@ -11,6 +11,8 @@ import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-sto
 import {
     clearLegacyDesktopAssetCache,
     hydrateAssetStoreDrafts,
+    peekAssetStoreDraft,
+    promoteAssetStoreDraftsBatch,
     readAssetStoreDrafts,
     runAssetStoreProjection,
     useAssetStore,
@@ -175,20 +177,25 @@ export async function preserveLegacyCacheOnlyAssetDrafts() {
     await hydrateAssetStoreDrafts(userScope);
     const summaries = await listWorkspaceAssetSummaries();
     const committed = new Set((summaries.assets || []).map((item) => item.id).filter(Boolean));
-    const drafts = readAssetStoreDrafts();
-    const drafted = new Set([...drafts.upserts, ...drafts.deletes].map((draft) => draft.id));
-    const preservedIds: string[] = [];
+    const toPromote: Asset[] = [];
+    const now = new Date().toISOString();
     for (const asset of useAssetStore.getState().assets) {
-        if (committed.has(asset.id) || drafted.has(asset.id)) continue;
-        useAssetStore.getState().updateAsset(asset.id, {
+        if (committed.has(asset.id)) continue;
+        const existingDraft = peekAssetStoreDraft(userScope, asset.id);
+        if (existingDraft && (existingDraft.kind === "delete" || existingDraft.asset)) continue;
+        toPromote.push({
+            ...asset,
             status: "draft",
+            updatedAt: now,
             metadata: { ...(asset.metadata || {}), recoverableLocalDraft: true },
         });
-        preservedIds.push(asset.id);
     }
-    await clearLegacyDesktopAssetCache(userScope);
+    if (toPromote.length) {
+        promoteAssetStoreDraftsBatch(userScope, toPromote);
+    }
+    await clearLegacyDesktopAssetCache(userScope, committed);
     preservedDraftScopes.add(userScope);
-    return { preservedIds, tombstoneSeam: WORKSPACE_ASSET_TOMBSTONE_SEAM };
+    return { preservedIds: toPromote.map((asset) => asset.id), tombstoneSeam: WORKSPACE_ASSET_TOMBSTONE_SEAM };
 }
 
 function loadBrowserLocalAssetPage(options: WorkspaceAssetLibraryPageOptions): WorkspaceAssetLibraryPage {

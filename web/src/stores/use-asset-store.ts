@@ -7,11 +7,13 @@ import { rebaseAssetSnapshot, serializeAssetStorageDocument, type AssetStorageDo
 import { parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
+import { lookupWorkspaceAssetsByIds } from "@/services/api/workspace-assets";
 import { readAllCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { cleanupUnusedMedia, collectMediaStorageKeys } from "@/services/file-storage";
 import { insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
 import { cleanupUnusedImages, collectImageStorageKeys } from "@/services/image-storage";
-import { canvasMemoryStates } from "@/stores/canvas/canvas-store-persistence";
+import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
 import { CANVAS_STORE_KEY, commitPendingCanvasStorePersistenceLocked, pendingCanvasStorePersistence, withCanvasStorePersistenceLock } from "@/stores/canvas/use-canvas-store";
 import {
     ASSET_STORE_DRAFTS_KEY,
@@ -19,9 +21,11 @@ import {
     bindAssetDraftStoreHooks,
     flushAssetStoreDraftWrites,
     hydrateAssetStoreDrafts,
+    isDeletedGenerationAsset,
     markAssetStoreDraft,
     markAssetStoreDraftForScope,
     peekAssetStoreDraft,
+    promoteAssetStoreDraftsBatch,
     readAssetStoreDrafts,
     recordAssetStoreDraft,
     resetAssetStoreDraftsForTests,
@@ -36,7 +40,6 @@ import {
     commitPendingAssetStorePersistenceLocked,
     flushAssetStorePersistence,
     hasActiveAssetStorePersistence,
-    isDesktopAssetSingleSourceMode,
     observedAssetPersistForScope,
     readPersistedAssetDocumentForScope,
     recordAssetStorageDocument,
@@ -68,6 +71,7 @@ export {
     ackAssetStoreDraft,
     hydrateAssetStoreDrafts,
     peekAssetStoreDraft,
+    promoteAssetStoreDraftsBatch,
     readAssetStoreDrafts,
     recordAssetStoreDraft,
     resetAssetStoreDraftsForTests,
@@ -87,6 +91,24 @@ async function generationAssetId(effectKey: string) {
     return `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
+function normalizeServerAssetRecord(raw: unknown): Asset {
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        const record = raw as Record<string, unknown>;
+        const data = record.data && typeof record.data === "object" && !Array.isArray(record.data) ? (record.data as Record<string, unknown>) : null;
+        if (data && typeof data.storageKey === "string") {
+            const resourceId = resourceIdFromStorageKey(data.storageKey);
+            const media = record.kind === "image" || record.kind === "video" || record.kind === "audio" || record.kind === "model";
+            if (resourceId && media) {
+                const field = record.kind === "image" ? "dataUrl" : "url";
+                if (data[field] === undefined) {
+                    return parseAssetRecord({ ...record, data: { ...data, [field]: resourceFileUrl(resourceId) } });
+                }
+            }
+        }
+    }
+    return parseAssetRecord(raw);
+}
+
 export const useAssetStore = create<AssetStore>()(
     persist(
         (set, get) => ({
@@ -101,7 +123,7 @@ export const useAssetStore = create<AssetStore>()(
             },
             addGenerationAsset: (effectKey, asset, signal) => {
                 const scope = getActiveUserScope();
-                if (isDesktopAssetSingleSourceMode()) {
+                if (usesSingleSourceLocalPersistence()) {
                     return trackGenerationAssetOperation(
                         scope,
                         effectKey,
@@ -132,13 +154,26 @@ export const useAssetStore = create<AssetStore>()(
                                 readPersistedAssets: async () => {
                                     try {
                                         await hydrateAssetStoreDrafts(scope);
-                                        return get().assets;
+                                        const current = get().assets;
+                                        if (current.some((item) => item.id === id || item.metadata?.generationEffectKey === effectKey)) {
+                                            return current;
+                                        }
+                                        // Check SQLite authoritatively so an unloaded committed generation
+                                        // asset is never recreated or overwritten with a new draft.
+                                        const remote = await lookupWorkspaceAssetsByIds([id], { signal });
+                                        const found = (remote.assets || []).map(normalizeServerAssetRecord);
+                                        if (!found.length) return current;
+                                        const byId = new Map(current.map((item) => [item.id, item]));
+                                        for (const item of found) {
+                                            if (!byId.has(item.id)) byId.set(item.id, item);
+                                        }
+                                        return [...byId.values()];
                                     } catch (error) {
                                         recordGenerationAssetFailure(scope, effectKey, error);
                                         throw error;
                                     }
                                 },
-                                isAssetDeleted: () => peekAssetStoreDraft(scope, id)?.kind === "delete",
+                                isAssetDeleted: () => isDeletedGenerationAsset(scope, id),
                                 requireCrossRealmLock: true,
                                 signal,
                                 persistAssets: async () => {
@@ -256,6 +291,10 @@ export const useAssetStore = create<AssetStore>()(
             },
             replaceAssets: (assets) => set({ assets: assets.map(parseAssetRecord) }),
             cleanupImages: async (extra) => {
+                // In single-source local SQLite mode, state.assets is a paged/draft projection
+                // rather than the full workspace catalog; Go resource storage owns media GC.
+                // Never sweep IndexedDB fallback blobs against a partial in-memory catalog.
+                if (usesSingleSourceLocalPersistence()) return;
                 const scope = getActiveUserScope();
                 const frozenExtraImageKeys = collectImageStorageKeys(extra);
                 const frozenExtraMediaKeys = collectMediaStorageKeys(extra);
@@ -263,19 +302,15 @@ export const useAssetStore = create<AssetStore>()(
                     window.setTimeout(() =>
                         withGenerationArtifactCommitLock(scope, async () => {
                             const syncDrafts = await readAllCanvasSyncDrafts(scope);
-                            const desktopSingleSource = isDesktopAssetSingleSourceMode();
                             // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
                             const canvasProjects = await withCanvasStorePersistenceLock(scope, async () => {
                                 await commitPendingCanvasStorePersistenceLocked(scope);
-                                if (desktopSingleSource) {
-                                    return pendingCanvasStorePersistence(scope)?.projects ?? canvasMemoryStates.get(scope)?.projects ?? [];
-                                }
                                 const durableCanvas = parseCanvasStorageDocument(await localForageStorageForScope(scope).getItem(CANVAS_STORE_KEY));
                                 return pendingCanvasStorePersistence(scope)?.projects ?? durableCanvas.state.projects;
                             });
                             await withGenerationAssetStorageLock(scope, async () => {
                                 await commitPendingAssetStorePersistenceLocked(scope);
-                                const durableAssets = desktopSingleSource ? get().assets : (await readPersistedAssetDocumentForScope(scope)).state.assets;
+                                const durableAssets = (await readPersistedAssetDocumentForScope(scope)).state.assets;
                                 const references = { projects: canvasProjects, assets: durableAssets, syncDrafts };
                                 const imageKeys = new Set([...frozenExtraImageKeys, ...collectImageStorageKeys(references)]);
                                 const mediaKeys = new Set([...frozenExtraMediaKeys, ...collectMediaStorageKeys(references)]);
@@ -299,7 +334,7 @@ export const useAssetStore = create<AssetStore>()(
             partialize: (state) => ({ assets: state.assets }) as StorageValue<AssetStore>["state"],
             onRehydrateStorage: () => () => {
                 useAssetStore.setState({ hydrated: true });
-                void hydrateAssetStoreDrafts();
+                void hydrateAssetStoreDrafts(undefined, { reproject: true });
             },
         },
     ),

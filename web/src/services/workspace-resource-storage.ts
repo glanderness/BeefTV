@@ -1,3 +1,4 @@
+import { isDesktopShellOrigin } from "@/lib/desktop-shell";
 import { isLocalRuntimeMode, isNativeDesktopRuntime } from "@/lib/runtime-mode";
 import { isEmbeddedRuntime } from "@/lib/embedded-runtime";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
@@ -14,6 +15,16 @@ export function usesBrowserLocalResourceStore() {
 
 export function usesNativeLocalResourceStore() {
     return isLocalRuntimeMode() && (isNativeDesktopRuntime() || isEmbeddedRuntime());
+}
+
+/**
+ * Desktop shell (Wails) and embedded Harness both run against the local Go/SQLite
+ * backend as their single source of truth; skip redundant full-catalog IndexedDB
+ * mirroring while preserving explicit uncommitted draft persistence.
+ */
+export function usesSingleSourceLocalPersistence(): boolean {
+    if (typeof window === "undefined" || usesBrowserLocalResourceStore()) return false;
+    return isDesktopShellOrigin(window.location) || isEmbeddedRuntime();
 }
 
 const WORKSPACE_MEDIA_KINDS = new Set(["image", "video", "audio", "model"]);

@@ -3,10 +3,9 @@ import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { sameCanvasContent } from "@/lib/canvas/canvas-content";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import { mergeCanvasStorageProjects, parseCanvasStorageDocument, serializeCanvasStorageDocument, type CanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
-import { isDesktopShellOrigin } from "@/lib/desktop-shell";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
+import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
 import type { CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasStarterMode } from "@/lib/canvas/canvas-starter";
@@ -96,7 +95,7 @@ const desktopDraftsPersistedScopes = new Set<string>();
 const ignoredDeletedCanvasIds = new Map<string, Set<string>>();
 
 function isDesktopSingleSourceMode(): boolean {
-    return typeof window !== "undefined" && isDesktopShellOrigin(window.location) && !usesBrowserLocalResourceStore();
+    return usesSingleSourceLocalPersistence();
 }
 
 function runWithBrowserCanvasStorageLock<T>(scope: string, operation: () => Promise<T>, options: CanvasStorageLockOptions) {

@@ -2,16 +2,21 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import localforage from "localforage";
 
 import { serializeAssetStorageDocument } from "@/lib/asset-storage-revision";
+import { IMAGE_FILES_STORE_NAME, localForageInstance } from "@/lib/localforage-storage";
 import * as runtimeMode from "@/lib/runtime-mode";
-import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
+import { getActiveUserScope, scopedStorageKey, setActiveUserScope } from "@/lib/user-scope";
+import { applyUserSession } from "@/lib/user-session";
 import { apiClient } from "@/services/api/request";
 import {
     loadWorkspaceAssetLibraryPage,
     preserveLegacyCacheOnlyAssetDrafts,
     resetWorkspaceAssetReadStateForTests,
 } from "@/services/workspace-asset-read";
+import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
 import {
+    ASSET_STORE_DRAFTS_KEY,
     ASSET_STORE_KEY,
+    ackAssetStoreDraft,
     flushAssetStorePersistence,
     hydrateAssetStoreDrafts,
     peekAssetStoreDraft,
@@ -73,10 +78,17 @@ const originalWindow = globalThis.window;
 function enterDesktopSingleSourceMode() {
     spies.push(spyOn(runtimeMode, "isNativeDesktopRuntime").mockReturnValue(true));
     spies.push(spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(true));
+    const ls = new Map<string, string>();
     Object.assign(globalThis, {
         window: {
             location: { protocol: "wails:", hostname: "wails.localhost", host: "wails.localhost" },
-            localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+            localStorage: {
+                getItem: (k: string) => ls.get(k) ?? null,
+                setItem: (k: string, v: string) => { ls.set(k, v); },
+                removeItem: (k: string) => { ls.delete(k); },
+            },
+            setTimeout: globalThis.setTimeout.bind(globalThis),
+            clearTimeout: globalThis.clearTimeout.bind(globalThis),
         },
     });
 }
@@ -89,9 +101,38 @@ afterEach(async () => {
     await resetAssetStoreDraftsForTests();
 });
 
-describe("asset store desktop single-source persistence", () => {
-    test("skips full ASSET_STORE_KEY IndexedDB writes during reads and mutations while persisting uncommitted drafts", async () => {
-        const restore = switchScope("desktop-single-source-1");
+describe("asset store single-source persistence", () => {
+    test("usesSingleSourceLocalPersistence matches desktop Wails, embedded Harness, and browser-local matrix", () => {
+        const nativeSpy = spyOn(runtimeMode, "isNativeDesktopRuntime").mockReturnValue(true);
+        const localSpy = spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(true);
+        spies.push(nativeSpy, localSpy);
+
+        // Desktop Wails shell -> true
+        Object.assign(globalThis, {
+            window: { location: { protocol: "wails:", hostname: "wails.localhost", host: "wails.localhost" } },
+        });
+        expect(usesSingleSourceLocalPersistence()).toBe(true);
+
+        // Embedded Harness (non-wails origin + __BEEFTV_HARNESS__) -> true
+        nativeSpy.mockReturnValue(false);
+        Object.assign(globalThis, {
+            window: {
+                location: { protocol: "http:", hostname: "127.0.0.1", host: "127.0.0.1:4173" },
+                __BEEFTV_HARNESS__: { embedded: true, apiBase: "/beeftv/app/api" },
+            },
+        });
+        expect(usesSingleSourceLocalPersistence()).toBe(true);
+
+        // Browser-local (no native desktop, no embedded harness) -> false
+        Object.assign(globalThis, {
+            window: { location: { protocol: "http:", hostname: "127.0.0.1", host: "127.0.0.1:4173" } },
+        });
+        expect(usesSingleSourceLocalPersistence()).toBe(false);
+    });
+
+    test("skips full ASSET_STORE_KEY writes during SQLite page reads and mutations, and survives applyUserSession restart without unloading draft hydration marker", async () => {
+        const scope = "desktop-single-source-1";
+        const restore = switchScope(scope);
         enterDesktopSingleSourceMode();
         const memory = new Map<string, string>();
         const catalogWrites: string[] = [];
@@ -109,23 +150,31 @@ describe("asset store desktop single-source persistence", () => {
         }));
 
         try {
-            await withAdapter(async () => envelope({
-                assets: [{ id: "srv-1", payload: textAsset("srv-1", "后端素材") }],
-                kindCounts: { text: 1 },
-                categoryCounts: { other: 1 },
-                folderCounts: {},
-                favoriteTotal: 0,
-                recentTotal: 1,
-                projectCounts: {},
-                generatedTotal: 0,
-                generatedKindCounts: {},
-                page: 1,
-                pageSize: 40,
-                total: 1,
-                hasMore: false,
-            }), async () => {
-                await loadWorkspaceAssetLibraryPage({ page: 1, pageSize: 40 });
+            await withAdapter(async (config) => {
+                const url = String(config.url || "");
+                if (url.startsWith("/assets") && config.params?.page != null) {
+                    return envelope({
+                        assets: [textAsset("srv-1", "后端素材")],
+                        kindCounts: { text: 1 },
+                        categoryCounts: { other: 1 },
+                        folderCounts: {},
+                        favoriteTotal: 0,
+                        recentTotal: 1,
+                        projectCounts: {},
+                        generatedTotal: 0,
+                        generatedKindCounts: {},
+                        page: 1,
+                        pageSize: 40,
+                        total: 1,
+                        hasMore: false,
+                    });
+                }
+                return envelope({ assets: [{ id: "srv-1", title: "后端素材", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }] });
+            }, async () => {
+                const page = await loadWorkspaceAssetLibraryPage({ page: 1, pageSize: 40 });
+                expect(page.assets.map((item) => item.id)).toEqual(["srv-1"]);
             });
+            expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual(["srv-1"]);
 
             const id = useAssetStore.getState().addAsset({
                 kind: "text",
@@ -142,35 +191,72 @@ describe("asset store desktop single-source persistence", () => {
 
             expect(catalogWrites).toEqual([]);
             expect(draftWrites.length).toBeGreaterThan(0);
-            expect(peekAssetStoreDraft("desktop-single-source-1", id)?.asset?.title).toBe("更新后草稿");
+            expect(peekAssetStoreDraft(scope, id)?.asset?.title).toBe("更新后草稿");
 
-            // Restart with empty ASSET_STORE_KEY recovers the uncommitted draft from ASSET_STORE_DRAFTS_KEY.
-            unloadAssetStoreDraftsForTests();
-            useAssetStore.setState({ assets: [] });
-            await useAssetStore.persist.rehydrate();
-            await hydrateAssetStoreDrafts("desktop-single-source-1");
+            // Production restart ordering: scope is ALREADY marked hydrated in hydratedAssetDraftScopes,
+            // ASSET_STORE_KEY is absent, and applyUserSession resets stale assets before rehydrating.
+            // Without calling unloadAssetStoreDraftsForTests(), the draft must still project back into state.assets!
+            await withAdapter(async () => envelope({
+                assets: [{ id: "srv-1", title: "后端素材", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }],
+            }), async () => {
+                await applyUserSession({
+                    contractVersion: "local-v1",
+                    workspace: { id: scope, name: "本地工作区" },
+                    user: { id: scope, username: "local", role: "owner", email: "", createdAt: "2026-10-02T00:00:00.000Z" },
+                    runtimeLimits: { maxUploadMB: 256, maxStructuredDataMB: 256 },
+                    features: {},
+                    capabilities: { workspaceMode: "local" },
+                } as never);
+            });
+
+            expect(catalogWrites).toEqual([]);
             expect(useAssetStore.getState().assets.find((item) => item.id === id)?.title).toBe("更新后草稿");
         } finally {
             restore();
         }
     });
 
-    test("promotes legacy cache-only assets to drafts and removes obsolete ASSET_STORE_KEY only after drafts are durable", async () => {
-        const restore = switchScope("desktop-legacy-cleanup");
+    test("cleanupImages in desktop single-source mode skips destructive IndexedDB blob sweep", async () => {
+        const scope = "desktop-cleanup-safe";
+        const restore = switchScope(scope);
+        enterDesktopSingleSourceMode();
+        const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
+        const draftBlobKey = `image:${scope}:draft-fallback-1`;
+        await imageStore.setItem(draftBlobKey, new Blob(["img"], { type: "image/png" }));
+
+        try {
+            useAssetStore.setState({ assets: [] });
+            await useAssetStore.getState().cleanupImages();
+            expect(await imageStore.getItem(draftBlobKey)).not.toBeNull();
+        } finally {
+            await imageStore.removeItem(draftBlobKey);
+            restore();
+        }
+    });
+
+    test("batch-promotes legacy cache-only assets in one write, preserves legacy cache on failure or invalid records, and cleans up once covered", async () => {
+        const scope = "desktop-legacy-cleanup";
+        const restore = switchScope(scope);
         enterDesktopSingleSourceMode();
         const memory = new Map<string, string>();
-        const legacyKey = `${ASSET_STORE_KEY}:user:desktop-legacy-cleanup`;
-        memory.set(legacyKey, serializeAssetStorageDocument({
-            state: { assets: [textAsset("legacy-only", "旧缓存独有"), textAsset("in-sqlite", "已在库里")] },
+        const legacyKey = scopedStorageKey(ASSET_STORE_KEY, scope);
+
+        // Case A: legacy cache contains an invalid/quarantined record -> MUST NOT delete ASSET_STORE_KEY.
+        memory.set(legacyKey, JSON.stringify({
+            state: { assets: [textAsset("in-sqlite", "已在库里"), { id: "corrupt-1", kind: "image", title: "坏记录" }] },
             version: 0,
-            storageRevision: 3,
+            storageRevision: 2,
             tombstones: { assets: {} },
         }));
 
-        let failDraftWrite = true;
+        let failDraftWrite = false;
+        let draftWriteCount = 0;
         spies.push(spyOn(localforage, "getItem").mockImplementation(async (key) => memory.get(String(key)) ?? null));
         spies.push(spyOn(localforage, "setItem").mockImplementation(async (key, value) => {
-            if (isDraftsKey(key) && failDraftWrite) throw new Error("disk full");
+            if (isDraftsKey(key)) {
+                draftWriteCount += 1;
+                if (failDraftWrite) throw new Error("disk full");
+            }
             memory.set(String(key), String(value));
             return value;
         }));
@@ -180,34 +266,64 @@ describe("asset store desktop single-source persistence", () => {
 
         try {
             await useAssetStore.persist.rehydrate();
-            expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual(["legacy-only", "in-sqlite"]);
-
-            // First attempt fails writing promoted draft -> obsolete ASSET_STORE_KEY must NOT be deleted!
-            await withAdapter(async () => envelope({
-                assets: [{ id: "in-sqlite", title: "已在库里", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }],
-            }), async () => {
-                await expect(preserveLegacyCacheOnlyAssetDrafts()).rejects.toThrow("disk full");
-            });
-            expect(memory.has(legacyKey)).toBe(true);
-
-            // Second attempt succeeds after disk recovers -> promoted draft is durable and obsolete ASSET_STORE_KEY is removed.
-            failDraftWrite = false;
-            useAssetStore.getState().updateAsset("legacy-only", { title: "旧缓存独有" });
             await withAdapter(async () => envelope({
                 assets: [{ id: "in-sqlite", title: "已在库里", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }],
             }), async () => {
                 await preserveLegacyCacheOnlyAssetDrafts();
             });
+            expect(memory.has(legacyKey)).toBe(true);
+
+            // Case B: clean legacy cache with 3 cache-only assets + 1 SQLite asset -> single batch draft write!
+            resetWorkspaceAssetReadStateForTests();
+            unloadAssetStoreDraftsForTests();
+            memory.clear();
+            draftWriteCount = 0;
+            memory.set(legacyKey, serializeAssetStorageDocument({
+                state: {
+                    assets: [
+                        textAsset("legacy-1", "旧缓存1"),
+                        textAsset("legacy-2", "旧缓存2"),
+                        textAsset("legacy-3", "旧缓存3"),
+                        textAsset("in-sqlite", "已在库里"),
+                    ],
+                },
+                version: 0,
+                storageRevision: 3,
+                tombstones: { assets: {} },
+            }));
+
+            failDraftWrite = true;
+            await useAssetStore.persist.rehydrate();
+            await withAdapter(async () => envelope({
+                assets: [{ id: "in-sqlite", title: "已在库里", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }],
+            }), async () => {
+                await expect(preserveLegacyCacheOnlyAssetDrafts()).rejects.toThrow("disk full");
+            });
+            // Single batch write attempted (O(N), not 3 writes), and legacy key kept because draft flush failed!
+            expect(draftWriteCount).toBe(1);
+            expect(memory.has(legacyKey)).toBe(true);
+
+            // Disk recovers -> retry flushes failed drafts and removes obsolete ASSET_STORE_KEY cleanly.
+            failDraftWrite = false;
+            await withAdapter(async () => envelope({
+                assets: [{ id: "in-sqlite", title: "已在库里", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }],
+            }), async () => {
+                await preserveLegacyCacheOnlyAssetDrafts();
+            });
+            expect(draftWriteCount).toBe(2);
             expect(memory.has(legacyKey)).toBe(false);
-            const storedDrafts = [...memory.entries()].find(([key]) => isDraftsKey(key))?.[1] ?? "";
-            expect(storedDrafts).toContain("legacy-only");
+            const storedDrafts = memory.get(scopedStorageKey(ASSET_STORE_DRAFTS_KEY, scope)) ?? "";
+            expect(storedDrafts).toContain("legacy-1");
+            expect(storedDrafts).toContain("legacy-2");
+            expect(storedDrafts).toContain("legacy-3");
         } finally {
             restore();
         }
     });
 
-    test("addGenerationAsset in desktop single-source mode deduplicates, respects delete drafts, and never writes ASSET_STORE_KEY", async () => {
-        const restore = switchScope("desktop-gen-asset");
+    test("addGenerationAsset checks authoritative SQLite for unloaded assets and blocks resurrection even after delete draft is acked", async () => {
+        const scope = "desktop-gen-asset";
+        const restore = switchScope(scope);
         enterDesktopSingleSourceMode();
         const memory = new Map<string, string>();
         const catalogWrites: string[] = [];
@@ -223,40 +339,69 @@ describe("asset store desktop single-source persistence", () => {
         }));
 
         try {
-            const id1 = await useAssetStore.getState().addGenerationAsset("task-1:output:0", {
-                kind: "text",
-                title: "生成结果",
-                coverUrl: "",
-                tags: ["生成"],
-                status: "confirmed",
-                source: "生成任务",
-                data: { content: "generated" },
-            });
-            const id2 = await useAssetStore.getState().addGenerationAsset("task-1:output:0", {
-                kind: "text",
-                title: "重复生成",
-                coverUrl: "",
-                tags: ["生成"],
-                status: "confirmed",
-                source: "生成任务",
-                data: { content: "duplicate" },
-            });
-            expect(id2).toBe(id1);
-            expect(useAssetStore.getState().assets.filter((item) => item.id === id1)).toHaveLength(1);
-            expect(catalogWrites).toEqual([]);
-            expect(peekAssetStoreDraft("desktop-gen-asset", id1)?.kind).toBe("upsert");
+            // Case 1: generation asset exists in SQLite (with user-renamed title) but is not loaded in memory.
+            const effectKeyExisting = "task-existing:output:0";
+            const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKeyExisting));
+            const existingId = `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+            const sqliteRow: Asset = {
+                ...textAsset(existingId, "用户已重命名"),
+                tags: ["重要"],
+                metadata: { generationEffectKey: effectKeyExisting },
+            };
 
-            // Tombstoned asset rejects re-creation under the same effectKey.
-            recordAssetStoreDraft(id1, "delete");
-            await expect(useAssetStore.getState().addGenerationAsset("task-1:output:0", {
+            const returnedId = await withAdapter(async (config) => {
+                const body = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+                expect(body?.ids).toEqual([existingId]);
+                return envelope({ assets: [sqliteRow] });
+            }, async () => useAssetStore.getState().addGenerationAsset(effectKeyExisting, {
                 kind: "text",
-                title: "删除后复活",
+                title: "默认标题不应覆盖",
                 coverUrl: "",
                 tags: ["生成"],
                 status: "confirmed",
                 source: "生成任务",
-                data: { content: "zombie" },
-            })).rejects.toThrow("生成素材已被用户删除");
+                data: { content: "new" },
+            }));
+            expect(returnedId).toBe(existingId);
+            expect(useAssetStore.getState().assets.find((item) => item.id === existingId)?.title).toBe("用户已重命名");
+            expect(peekAssetStoreDraft(scope, existingId)).toBeUndefined();
+            expect(catalogWrites).toEqual([]);
+
+            // Case 2: newly materialized generation asset -> deleted -> delete draft ACKED -> restart -> must NOT resurrect!
+            const effectKeyDeleted = "task-deleted:output:0";
+            const createdId = await withAdapter(async () => envelope({ assets: [] }), async () =>
+                useAssetStore.getState().addGenerationAsset(effectKeyDeleted, {
+                    kind: "text",
+                    title: "稍后删除",
+                    coverUrl: "",
+                    tags: ["生成"],
+                    status: "confirmed",
+                    source: "生成任务",
+                    data: { content: "temp" },
+                }),
+            );
+            recordAssetStoreDraft(createdId, "delete");
+            const deleteVersion = peekAssetStoreDraft(scope, createdId)!.version;
+            ackAssetStoreDraft(createdId, deleteVersion);
+            await flushAssetStorePersistence();
+            expect(peekAssetStoreDraft(scope, createdId)).toBeUndefined();
+
+            // Simulate full cold restart from IndexedDB draft store (no ASSET_STORE_KEY).
+            unloadAssetStoreDraftsForTests();
+            useAssetStore.setState({ assets: [] });
+            await hydrateAssetStoreDrafts(scope);
+
+            await withAdapter(async () => envelope({ assets: [] }), async () => {
+                await expect(useAssetStore.getState().addGenerationAsset(effectKeyDeleted, {
+                    kind: "text",
+                    title: "尝试复活",
+                    coverUrl: "",
+                    tags: ["生成"],
+                    status: "confirmed",
+                    source: "生成任务",
+                    data: { content: "zombie" },
+                })).rejects.toThrow("生成素材已被用户删除");
+            });
             expect(catalogWrites).toEqual([]);
         } finally {
             restore();

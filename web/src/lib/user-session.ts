@@ -60,7 +60,7 @@ async function hydrateLocalWorkspace(payload: WorkspaceBootstrapPayload) {
             usePluginStore.persist.rehydrate(),
             useCreationPreferencesStore.persist.rehydrate(),
         ]);
-        await hydrateAssetStoreDrafts();
+        await hydrateAssetStoreDrafts(undefined, { reproject: true });
 
         useConfigStore.getState().replaceConfig(localWorkspaceConfig(useConfigStore.getState().config));
         useCanvasStore.setState((state) => ({ projects: state.projects.map(normalizeLocalCanvasProject) }));

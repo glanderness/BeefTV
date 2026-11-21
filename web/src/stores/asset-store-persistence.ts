@@ -2,15 +2,14 @@ import type { PersistStorage, StorageValue } from "zustand/middleware";
 
 import { parseAssetRecord } from "@/lib/asset-record";
 import { parseAssetStorageDocumentRecovering, rebaseAssetSnapshot, serializeAssetStorageDocument, type AssetStorageDocument } from "@/lib/asset-storage-revision";
-import { isDesktopShellOrigin } from "@/lib/desktop-shell";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { flushGenerationAssetStorageLocks, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
-import { flushAssetStoreDraftWrites, hasActiveAssetStoreDraftWrites } from "./asset-store-drafts";
+import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
+import { flushAssetStoreDraftWrites, hasActiveAssetStoreDraftWrites, peekAssetStoreDraft, retryFailedAssetStoreDraftPersist } from "./asset-store-drafts";
 import type { Asset, AssetStore } from "./asset-types";
 
 export const ASSET_STORE_KEY = "infinite-canvas:asset_store";
@@ -31,6 +30,11 @@ type QueuedAssetPersist = {
     token: number;
 };
 
+type LegacyDesktopAssetCacheState = {
+    assetIds: string[];
+    hasInvalidRecords: boolean;
+};
+
 let suppressAssetStorePersistence = 0;
 const assetMemoryStates = new Map<string, PersistedAssetState>();
 const observedAssetPersists = new Map<string, ObservedAssetPersist>();
@@ -38,14 +42,10 @@ const queuedAssetPersists = new Map<string, QueuedAssetPersist>();
 const assetPersistTokens = new Map<string, number>();
 const assetOperations = new Set<Promise<unknown>>();
 const generationAssetFailures = new Map<string, unknown>();
-const desktopLegacyAssetCacheScopes = new Set<string>();
-
-export function isDesktopAssetSingleSourceMode(): boolean {
-    return typeof window !== "undefined" && isDesktopShellOrigin(window.location) && !usesBrowserLocalResourceStore();
-}
+const desktopLegacyAssetCaches = new Map<string, LegacyDesktopAssetCacheState>();
 
 export function clearDesktopLegacyAssetCacheScopesForTests() {
-    desktopLegacyAssetCacheScopes.clear();
+    desktopLegacyAssetCaches.clear();
 }
 
 export function observedAssetPersistForScope(scope: string) {
@@ -175,9 +175,9 @@ function persistAssetState(name: string, value: StorageValue<AssetStore>) {
     assetMemoryStates.set(scope, { assets: nextAssets });
     if (suppressAssetStorePersistence) return;
 
-    // In desktop SQLite mode, SQLite owns committed assets and ASSET_STORE_DRAFTS_KEY
+    // In desktop/embedded SQLite mode, SQLite owns committed assets and ASSET_STORE_DRAFTS_KEY
     // owns uncommitted local edits; never mirror the full catalog into ASSET_STORE_KEY.
-    if (isDesktopAssetSingleSourceMode()) return;
+    if (usesSingleSourceLocalPersistence()) return;
 
     const token = (assetPersistTokens.get(scope) ?? 0) + 1;
     assetPersistTokens.set(scope, token);
@@ -193,14 +193,34 @@ function persistAssetState(name: string, value: StorageValue<AssetStore>) {
 }
 
 /**
- * Remove the legacy full-catalog IndexedDB mirror in desktop single-source mode
- * only after any promoted cache-only drafts are durably saved in ASSET_STORE_DRAFTS_KEY.
+ * Remove the legacy full-catalog IndexedDB mirror in single-source mode only after
+ * proving every legacy entry is safely backed by SQLite or a complete durable draft
+ * snapshot (and zero invalid records were quarantined).
  */
-export async function clearLegacyDesktopAssetCache(scope = getActiveUserScope()) {
-    if (!isDesktopAssetSingleSourceMode() || !desktopLegacyAssetCacheScopes.has(scope)) return;
+export async function clearLegacyDesktopAssetCache(scope = getActiveUserScope(), committedIds?: ReadonlySet<string>) {
+    if (!usesSingleSourceLocalPersistence()) return false;
+    const legacy = desktopLegacyAssetCaches.get(scope);
+    if (!legacy) return false;
+    if (legacy.hasInvalidRecords) {
+        console.warn("旧版素材缓存存在隔离的历史损坏记录，保留旧缓存以免丢数据", { scope });
+        return false;
+    }
+    const uncovered = legacy.assetIds.filter((id) => {
+        if (committedIds?.has(id)) return false;
+        const draft = peekAssetStoreDraft(scope, id);
+        if (!draft) return true;
+        if (draft.kind === "delete") return false;
+        return !draft.asset;
+    });
+    if (uncovered.length > 0) {
+        console.warn("旧版素材缓存仍有未被 SQLite 或完整草稿覆盖的记录，保留旧缓存", { scope, uncoveredCount: uncovered.length });
+        return false;
+    }
+    retryFailedAssetStoreDraftPersist(scope);
     await flushAssetStoreDraftWrites(scope);
     await localForageStorageForScope(scope).removeItem(ASSET_STORE_KEY);
-    desktopLegacyAssetCacheScopes.delete(scope);
+    desktopLegacyAssetCaches.delete(scope);
+    return true;
 }
 
 export async function flushAssetStorePersistence() {
@@ -234,7 +254,7 @@ export function hasActiveAssetStorePersistence() {
     return assetOperations.size > 0 || hasActiveAssetStoreDraftWrites();
 }
 
-async function normalizePersistedAsset(asset: Asset): Promise<Asset> {
+export async function normalizePersistedAsset(asset: Asset): Promise<Asset> {
     asset = parseAssetRecord(asset);
     const storageKey = "data" in asset && asset.data && "storageKey" in asset.data ? asset.data.storageKey : undefined;
     const resourceId = resourceIdFromStorageKey(storageKey);
@@ -267,13 +287,10 @@ export const assetStorage: PersistStorage<AssetStore> = {
         const scope = getActiveUserScope();
         const value = await localForageStorageForScope(scope).getItem(name);
         if (!value) {
-            desktopLegacyAssetCacheScopes.delete(scope);
+            desktopLegacyAssetCaches.delete(scope);
             assetMemoryStates.set(scope, { assets: [] });
             observedAssetPersists.set(scope, { assets: [], revision: 0 });
             return null;
-        }
-        if (isDesktopAssetSingleSourceMode()) {
-            desktopLegacyAssetCacheScopes.add(scope);
         }
         const recovery = parseAssetStorageDocumentRecovering(value);
         if (recovery.invalid.length) {
@@ -283,6 +300,12 @@ export const assetStorage: PersistStorage<AssetStore> = {
             });
         }
         const document = recovery.document;
+        if (usesSingleSourceLocalPersistence()) {
+            desktopLegacyAssetCaches.set(scope, {
+                assetIds: document.state.assets.map((asset) => asset.id),
+                hasInvalidRecords: recovery.invalid.length > 0,
+            });
+        }
         // 持久化恢复只恢复结构化记录，不能为每个 resource: key 逐条读取资源元数据或 Blob。
         // 远程资源直接使用受鉴权的 file URL；本地 legacy key 仍恢复为 Blob URL，避免兼容性回归。
         // 单张本地图片被系统清理时只影响该条记录，不能拒绝整个 getItem，
@@ -307,7 +330,7 @@ export const assetStorage: PersistStorage<AssetStore> = {
     setItem: persistAssetState,
     removeItem: (name) => {
         const scope = getActiveUserScope();
-        desktopLegacyAssetCacheScopes.delete(scope);
+        desktopLegacyAssetCaches.delete(scope);
         return localForageStorageForScope(scope).removeItem(name);
     },
 };
