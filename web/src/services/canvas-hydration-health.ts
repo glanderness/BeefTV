@@ -1,4 +1,4 @@
-type Health = { error: string; loading: boolean };
+type Health = { error: string; loading: boolean; scope?: string };
 let state: Health = { error: "", loading: true };
 let attempt = 0;
 const listeners = new Set<() => void>();
@@ -13,11 +13,11 @@ export function setCanvasHydrationHealth(next: Health) {
     state = next;
     listeners.forEach((listener) => listener());
 }
-export function beginCanvasHydration() {
+export function beginCanvasHydration(scope?: string) {
     const id = ++attempt;
-    setCanvasHydrationHealth({ error: "", loading: true });
+    setCanvasHydrationHealth({ error: "", loading: true, scope });
     return id;
 }
-export function finishCanvasHydration(id: number, error = "") {
-    if (id === attempt) setCanvasHydrationHealth({ error, loading: false });
+export function finishCanvasHydration(id: number, error = "", scope?: string) {
+    if (id === attempt) setCanvasHydrationHealth({ error, loading: false, scope: error ? undefined : scope });
 }

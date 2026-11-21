@@ -55,7 +55,7 @@ export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }
                 loadWorkspace,
                 applySession: async (payload) => {
                     await applyUserSession(payload);
-                    if (isEmbeddedRuntime()) await hydrateLocalCanvasProjectsFromBackend();
+                    if (isEmbeddedRuntime() || isRetry) await hydrateLocalCanvasProjectsFromBackend();
                 },
                 restoreModelConfig: hydrateLocalModelConfig,
             });
