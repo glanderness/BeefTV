@@ -14,6 +14,7 @@ import {
     hasActiveAssetStoreDraftWrites,
     isDeletedGenerationAsset,
     peekAssetStoreDraft,
+    recordDeletedGenerationAssetIds,
     retryFailedAssetStoreDraftPersist,
 } from "./asset-store-drafts";
 import type { Asset, AssetStore } from "./asset-types";
@@ -38,6 +39,7 @@ type QueuedAssetPersist = {
 
 type LegacyDesktopAssetCacheState = {
     assetIds: string[];
+    deletedGenerationIds: string[];
     hasInvalidRecords: boolean;
 };
 
@@ -222,6 +224,9 @@ export async function clearLegacyDesktopAssetCache(scope = getActiveUserScope(),
         console.warn("旧版素材缓存仍有未被 SQLite 或完整草稿覆盖的记录，保留旧缓存", { scope, uncoveredCount: uncovered.length });
         return false;
     }
+    if (legacy.deletedGenerationIds.length) {
+        recordDeletedGenerationAssetIds(scope, legacy.deletedGenerationIds);
+    }
     retryFailedAssetStoreDraftPersist(scope);
     await flushAssetStoreDraftWrites(scope);
     await localForageStorageForScope(scope).removeItem(ASSET_STORE_KEY);
@@ -307,10 +312,15 @@ export const assetStorage: PersistStorage<AssetStore> = {
         }
         const document = recovery.document;
         if (usesSingleSourceLocalPersistence()) {
+            const deletedGenerationIds = Object.keys(document.tombstones.assets || {}).filter((id) => id.startsWith("generation_"));
             desktopLegacyAssetCaches.set(scope, {
                 assetIds: document.state.assets.map((asset) => asset.id),
+                deletedGenerationIds,
                 hasInvalidRecords: recovery.invalid.length > 0,
             });
+            if (deletedGenerationIds.length) {
+                recordDeletedGenerationAssetIds(scope, deletedGenerationIds);
+            }
         }
         // 持久化恢复只恢复结构化记录，不能为每个 resource: key 逐条读取资源元数据或 Blob。
         // 远程资源直接使用受鉴权的 file URL；本地 legacy key 仍恢复为 Blob URL，避免兼容性回归。

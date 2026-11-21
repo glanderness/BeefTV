@@ -13,7 +13,9 @@ import {
     preserveLegacyCacheOnlyAssetDrafts,
     resetWorkspaceAssetReadStateForTests,
 } from "@/services/workspace-asset-read";
+import { deleteWorkspaceAsset, persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import {
     ASSET_STORE_DRAFTS_KEY,
     ASSET_STORE_KEY,
@@ -217,21 +219,77 @@ describe("asset store single-source persistence", () => {
         }
     });
 
-    test("single-source cleanupImages skips full-store sweeps while removeAsset reclaims only the deleted asset's fallback blobs", async () => {
+    test("deleteWorkspaceAsset and cleanupImages reclaim orphaned fallback blobs while protecting pending drafts and canvas references", async () => {
         const scope = "desktop-cleanup-safe";
         const restore = switchScope(scope);
         enterDesktopSingleSourceMode();
         const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
         const removedImageKey = `image:${scope}:removed-fallback-1`;
-        const retainedImageKey = `image:${scope}:other-draft-fallback-2`;
+        const draftOnlyImageKey = `image:${scope}:draft-only-fallback-2`;
+        const canvasSharedImageKey = `image:${scope}:canvas-shared-fallback-3`;
         const removedVideoKey = `video:${scope}:removed-fallback-vid`;
-        const retainedVideoKey = `video:${scope}:other-draft-vid`;
+        const draftOnlyVideoKey = `video:${scope}:draft-only-vid`;
         await imageStore.setItem(removedImageKey, new Blob(["img-a"], { type: "image/png" }));
-        await imageStore.setItem(retainedImageKey, new Blob(["img-b"], { type: "image/png" }));
+        await imageStore.setItem(draftOnlyImageKey, new Blob(["img-b"], { type: "image/png" }));
+        await imageStore.setItem(canvasSharedImageKey, new Blob(["img-c"], { type: "image/png" }));
         await setMediaBlob(removedVideoKey, new Blob(["vid-a"], { type: "video/mp4" }));
-        await setMediaBlob(retainedVideoKey, new Blob(["vid-b"], { type: "video/mp4" }));
+        await setMediaBlob(draftOnlyVideoKey, new Blob(["vid-b"], { type: "video/mp4" }));
 
         try {
+            // Seed a pending draft whose snapshot holds draftOnlyImageKey & draftOnlyVideoKey,
+            // then clear in-memory state.assets to simulate paged/unloaded catalog.
+            useAssetStore.getState().addAsset({
+                kind: "image",
+                title: "未加载的图片草稿",
+                coverUrl: "blob:http://localhost/draft-img",
+                tags: [],
+                category: "other",
+                status: "confirmed",
+                source: "手动添加",
+                pendingRemoteUpload: true,
+                data: { dataUrl: "blob:http://localhost/draft-img", storageKey: draftOnlyImageKey, width: 100, height: 100, bytes: 5, mimeType: "image/png" },
+            });
+            useAssetStore.getState().addAsset({
+                kind: "video",
+                title: "未加载的视频草稿",
+                coverUrl: "",
+                tags: [],
+                category: "other",
+                status: "confirmed",
+                source: "手动添加",
+                pendingRemoteUpload: true,
+                data: { url: "blob:http://localhost/draft-vid", storageKey: draftOnlyVideoKey, width: 1280, height: 720, bytes: 5, mimeType: "video/mp4" },
+            });
+            await flushAssetStorePersistence();
+            // Canvas node still references canvasSharedImageKey.
+            useCanvasStore.setState({
+                projects: [{
+                    id: "proj-ref",
+                    title: "画布引用",
+                    createdAt: "2026-10-02T00:00:00.000Z",
+                    updatedAt: "2026-10-02T00:00:00.000Z",
+                    nodes: [{
+                        id: "node-1",
+                        type: "image" as never,
+                        position: { x: 0, y: 0 },
+                        width: 200,
+                        height: 200,
+                        metadata: { storageKey: canvasSharedImageKey },
+                    }],
+                    connections: [],
+                    chatSessions: [],
+                    activeChatId: null,
+                    backgroundMode: "dots",
+                    showImageInfo: false,
+                    viewport: { x: 0, y: 0, scale: 1 },
+                    directorScenes: [],
+                }],
+            });
+
+            // Drop the draft-only assets from in-memory state.assets to prove cleanupImages
+            // protects ASSET_STORE_DRAFTS_KEY even when state.assets is a partial page!
+            useAssetStore.setState({ assets: [] });
+
             const removedImgId = useAssetStore.getState().addAsset({
                 kind: "image",
                 title: "待删图片草稿",
@@ -242,6 +300,17 @@ describe("asset store single-source persistence", () => {
                 source: "手动添加",
                 pendingRemoteUpload: true,
                 data: { dataUrl: "blob:http://localhost/removed", storageKey: removedImageKey, width: 100, height: 100, bytes: 5, mimeType: "image/png" },
+            });
+            const canvasReferencedAssetId = useAssetStore.getState().addAsset({
+                kind: "image",
+                title: "被画布引用的图片",
+                coverUrl: "blob:http://localhost/shared",
+                tags: [],
+                category: "other",
+                status: "confirmed",
+                source: "手动添加",
+                pendingRemoteUpload: true,
+                data: { dataUrl: "blob:http://localhost/shared", storageKey: canvasSharedImageKey, width: 100, height: 100, bytes: 5, mimeType: "image/png" },
             });
             const removedVidId = useAssetStore.getState().addAsset({
                 kind: "video",
@@ -254,51 +323,54 @@ describe("asset store single-source persistence", () => {
                 pendingRemoteUpload: true,
                 data: { url: "blob:http://localhost/vid", storageKey: removedVideoKey, width: 1280, height: 720, bytes: 5, mimeType: "video/mp4" },
             });
+            await flushAssetStorePersistence();
 
-            await useAssetStore.getState().removeAsset(removedImgId);
-            await useAssetStore.getState().removeAsset(removedVidId);
+            // Exercise the REAL desktop delete path (deleteWorkspaceAsset) on degraded fallback assets.
+            await withAdapter(async () => envelope({ ok: true }), async () => {
+                await deleteWorkspaceAsset(removedImgId);
+                await deleteWorkspaceAsset(canvasReferencedAssetId);
+                await deleteWorkspaceAsset(removedVidId);
+            });
+            // Orphaned fallback blobs are reclaimed.
             expect(await imageStore.getItem(removedImageKey)).toBeNull();
             expect(await getMediaBlob(removedVideoKey)).toBeNull();
-            // Other unloaded/surviving draft blobs must NOT be touched.
-            expect(await imageStore.getItem(retainedImageKey)).not.toBeNull();
-            expect(await getMediaBlob(retainedVideoKey)).not.toBeNull();
-
-            // Direct cleanupImages call still skips full-store IndexedDB sweep.
-            useAssetStore.setState({ assets: [] });
-            await useAssetStore.getState().cleanupImages();
-            expect(await imageStore.getItem(retainedImageKey)).not.toBeNull();
-            expect(await getMediaBlob(retainedVideoKey)).not.toBeNull();
+            // Pending draft blobs (unloaded from state.assets) AND canvas-referenced blob survive!
+            expect(await imageStore.getItem(draftOnlyImageKey)).not.toBeNull();
+            expect(await getMediaBlob(draftOnlyVideoKey)).not.toBeNull();
+            expect(await imageStore.getItem(canvasSharedImageKey)).not.toBeNull();
         } finally {
+            useCanvasStore.setState({ projects: [] });
             await imageStore.removeItem(removedImageKey);
-            await imageStore.removeItem(retainedImageKey);
-            await deleteStoredMedia([removedVideoKey, retainedVideoKey]);
+            await imageStore.removeItem(draftOnlyImageKey);
+            await imageStore.removeItem(canvasSharedImageKey);
+            await deleteStoredMedia([removedVideoKey, draftOnlyVideoKey]);
             restore();
         }
     });
 
-    test("legacy ASSET_STORE_KEY entries covered by deletedGenerationIds tombstone stay filtered and allow legacy cache cleanup", async () => {
+    test("legacy ASSET_STORE_KEY tombstones migrate into deletedGenerationIds before legacy cache cleanup and block resurrection", async () => {
         const scope = "desktop-legacy-tombstone";
         const restore = switchScope(scope);
         enterDesktopSingleSourceMode();
         const memory = new Map<string, string>();
         const legacyKey = scopedStorageKey(ASSET_STORE_KEY, scope);
-        const draftsKey = scopedStorageKey(ASSET_STORE_DRAFTS_KEY, scope);
 
+        const effectKeyLegacyDeleted = "task-legacy-tombstone:output:0";
+        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKeyLegacyDeleted));
+        const legacyDeletedId = `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+
+        // Seed ONLY legacy ASSET_STORE_KEY (no ASSET_STORE_DRAFTS_KEY): pre-upgrade tombstone
+        // lives in legacy document.tombstones.assets and a stale generation item also lingers in assets.
         memory.set(legacyKey, serializeAssetStorageDocument({
             state: {
                 assets: [
-                    textAsset("generation_deleted_1", "已删旧生成素材"),
+                    textAsset(legacyDeletedId, "已删旧生成素材"),
                     textAsset("in-sqlite", "已在库里"),
                 ],
             },
             version: 0,
             storageRevision: 4,
-            tombstones: { assets: {} },
-        }));
-        memory.set(draftsKey, JSON.stringify({
-            drafts: {},
-            clocks: { generation_deleted_1: 2 },
-            deletedGenerationIds: ["generation_deleted_1"],
+            tombstones: { assets: { [legacyDeletedId]: 4 } },
         }));
 
         spies.push(spyOn(localforage, "getItem").mockImplementation(async (key) => memory.get(String(key)) ?? null));
@@ -320,8 +392,25 @@ describe("asset store single-source persistence", () => {
             }), async () => preserveLegacyCacheOnlyAssetDrafts());
 
             expect(result.preservedIds).toEqual([]);
-            expect(peekAssetStoreDraft(scope, "generation_deleted_1")).toBeUndefined();
+            expect(peekAssetStoreDraft(scope, legacyDeletedId)).toBeUndefined();
             expect(memory.has(legacyKey)).toBe(false);
+
+            // Cold restart after ASSET_STORE_KEY removal: migrated tombstone in ASSET_STORE_DRAFTS_KEY
+            // must still block addGenerationAsset from resurrecting the deleted output.
+            unloadAssetStoreDraftsForTests();
+            useAssetStore.setState({ assets: [] });
+            await hydrateAssetStoreDrafts(scope);
+            await withAdapter(async () => envelope({ assets: [] }), async () => {
+                await expect(useAssetStore.getState().addGenerationAsset(effectKeyLegacyDeleted, {
+                    kind: "text",
+                    title: "尝试复活旧墓碑",
+                    coverUrl: "",
+                    tags: ["生成"],
+                    status: "confirmed",
+                    source: "生成任务",
+                    data: { content: "zombie" },
+                })).rejects.toThrow("生成素材已被用户删除");
+            });
         } finally {
             restore();
         }
@@ -543,13 +632,14 @@ describe("asset store single-source persistence", () => {
                 expect(normalizedMedia.data.dataUrl).toBe("/api/resources/res-img-1/file");
             }
 
-            // Case 4: transient SQLite lookup failure degrades gracefully to local pending draft instead of losing output.
+            // Case 4: transient SQLite lookup failure saves an unverified draft, and later
+            // persistWorkspaceAssetChanges reconciles against SQLite without overwriting user edits.
             const effectKeyOffline = "task-offline:output:0";
             const offlineId = await withAdapter(async () => {
                 throw new Error("sqlite busy");
             }, async () => useAssetStore.getState().addGenerationAsset(effectKeyOffline, {
                 kind: "text",
-                title: "离线降级草稿",
+                title: "默认离线标题",
                 coverUrl: "",
                 tags: ["生成"],
                 status: "confirmed",
@@ -557,8 +647,34 @@ describe("asset store single-source persistence", () => {
                 data: { content: "offline-output" },
             }));
             await flushAssetStorePersistence();
-            expect(useAssetStore.getState().assets.find((item) => item.id === offlineId)?.title).toBe("离线降级草稿");
-            expect(peekAssetStoreDraft(scope, offlineId)?.kind).toBe("upsert");
+            expect(useAssetStore.getState().assets.find((item) => item.id === offlineId)?.title).toBe("默认离线标题");
+            expect(peekAssetStoreDraft(scope, offlineId)?.asset?.metadata?.generationLookupUnverified).toBe(true);
+
+            // Backend recovers with a pre-existing renamed SQLite row -> commit must adopt it without PUT!
+            const putRequests: string[] = [];
+            await withAdapter(async (config) => {
+                const method = String(config.method || "get").toUpperCase();
+                const url = String(config.url || "");
+                if (method === "PUT") {
+                    putRequests.push(url);
+                    throw new Error("should not PUT over existing SQLite generation asset");
+                }
+                if (url.includes("/assets/batch")) {
+                    return envelope({
+                        assets: [{
+                            ...textAsset(offlineId, "用户早已改过的标题"),
+                            tags: ["精选"],
+                            metadata: { generationEffectKey: effectKeyOffline },
+                        }],
+                    });
+                }
+                throw new Error(`unexpected ${method} ${url}`);
+            }, async () => {
+                await persistWorkspaceAssetChanges();
+            });
+            expect(putRequests).toEqual([]);
+            expect(useAssetStore.getState().assets.find((item) => item.id === offlineId)?.title).toBe("用户早已改过的标题");
+            expect(peekAssetStoreDraft(scope, offlineId)).toBeUndefined();
             expect(catalogWrites).toEqual([]);
         } finally {
             restore();

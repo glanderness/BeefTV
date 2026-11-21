@@ -10,36 +10,32 @@ import { getActiveUserScope } from "@/lib/user-scope";
 import { parseWorkspaceAssetPayloads } from "@/lib/workspace-asset-normalize";
 import { lookupWorkspaceAssetsByIds } from "@/services/api/workspace-assets";
 import { readAllCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
-import { cleanupUnusedMedia, collectMediaStorageKeys, deleteStoredMedia } from "@/services/file-storage";
+import { cleanupUnusedMedia, collectMediaStorageKeys } from "@/services/file-storage";
 import { insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
-import { cleanupUnusedImages, collectImageStorageKeys, deleteStoredImages } from "@/services/image-storage";
+import { cleanupUnusedImages, collectImageStorageKeys } from "@/services/image-storage";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
-import { CANVAS_STORE_KEY, commitPendingCanvasStorePersistenceLocked, pendingCanvasStorePersistence, withCanvasStorePersistenceLock } from "@/stores/canvas/use-canvas-store";
 import {
-    ASSET_STORE_DRAFTS_KEY,
-    ackAssetStoreDraft,
+    CANVAS_DRAFTS_KEY,
+    CANVAS_STORE_KEY,
+    commitPendingCanvasStorePersistenceLocked,
+    pendingCanvasStorePersistence,
+    useCanvasStore,
+    withCanvasStorePersistenceLock,
+} from "@/stores/canvas/use-canvas-store";
+import {
     bindAssetDraftStoreHooks,
     flushAssetStoreDraftWrites,
     hydrateAssetStoreDrafts,
     isDeletedGenerationAsset,
     markAssetStoreDraft,
     markAssetStoreDraftForScope,
-    peekAssetStoreDraft,
-    promoteAssetStoreDraftsBatch,
-    readAssetStoreDrafts,
-    recordAssetStoreDraft,
-    resetAssetStoreDraftsForTests,
-    runAssetStoreProjection,
-    unloadAssetStoreDraftsForTests,
+    readAssetStoreDraftsForScope,
 } from "./asset-store-drafts";
 import {
     ASSET_STORE_KEY,
     assetStorage,
     clearDesktopLegacyAssetCacheScopesForTests,
-    clearLegacyDesktopAssetCache,
     commitPendingAssetStorePersistenceLocked,
-    flushAssetStorePersistence,
-    hasActiveAssetStorePersistence,
     observedAssetPersistForScope,
     readPersistedAssetDocumentForScope,
     recordAssetStorageDocument,
@@ -116,6 +112,7 @@ export const useAssetStore = create<AssetStore>()(
                             // Check SQLite outside the asset storage lock so a slow or transient
                             // backend error neither blocks sibling writes nor breaks draft creation.
                             let remoteMatches: Asset[] = [];
+                            let lookupFailed = false;
                             const hasLocalMatch = get().assets.some((item) => item.id === id || item.metadata?.generationEffectKey === effectKey);
                             if (!isDeletedGenerationAsset(scope, id) && !hasLocalMatch) {
                                 try {
@@ -125,6 +122,7 @@ export const useAssetStore = create<AssetStore>()(
                                     if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
                                         throw error;
                                     }
+                                    lookupFailed = true;
                                     console.warn("生成素材回查本地库失败，将先保存为本地草稿等待后续同步", {
                                         scope,
                                         assetId: id,
@@ -144,7 +142,11 @@ export const useAssetStore = create<AssetStore>()(
                                         id,
                                         createdAt: now,
                                         updatedAt: now,
-                                        metadata: { ...asset.metadata, generationEffectKey: effectKey },
+                                        metadata: {
+                                            ...asset.metadata,
+                                            generationEffectKey: effectKey,
+                                            ...(lookupFailed ? { generationLookupUnverified: true } : {}),
+                                        },
                                     });
                                     return createdAsset;
                                 },
@@ -282,47 +284,45 @@ export const useAssetStore = create<AssetStore>()(
                 // 没有本地媒体定位时没有需要由该删除动作回收的 Blob；跳过全库扫描，
                 // 避免纯文本/远程资源删除依赖浏览器 IndexedDB 驱动。
                 if (options?.cleanupMedia === false) return;
-                if (!removedAsset) return;
-                const removedImageKeys = collectImageStorageKeys(removedAsset);
-                const removedMediaKeys = collectMediaStorageKeys(removedAsset);
-                if (!removedImageKeys.size && !removedMediaKeys.size) return;
-                if (usesSingleSourceLocalPersistence()) {
-                    // Single-source mode skips whole-store IndexedDB GC, so explicitly delete
-                    // unreferenced fallback blobs owned by the removed asset itself.
-                    const retained = { assets: remainingAssets, drafts: readAssetStoreDrafts().upserts };
-                    const retainedImageKeys = collectImageStorageKeys(retained);
-                    const retainedMediaKeys = collectMediaStorageKeys(retained);
-                    const orphanImageKeys = [...removedImageKeys].filter((key) => !retainedImageKeys.has(key));
-                    const orphanMediaKeys = [...removedMediaKeys].filter((key) => !retainedMediaKeys.has(key));
-                    if (orphanImageKeys.length) await deleteStoredImages(orphanImageKeys);
-                    if (orphanMediaKeys.length) await deleteStoredMedia(orphanMediaKeys);
-                    return;
-                }
+                if (!removedAsset || (!collectImageStorageKeys(removedAsset).size && !collectMediaStorageKeys(removedAsset).size)) return;
                 await get().cleanupImages({ assets: remainingAssets });
             },
             replaceAssets: (assets) => set({ assets: assets.map(parseAssetRecord) }),
             cleanupImages: async (extra) => {
-                // In single-source local SQLite mode, state.assets is a paged/draft projection
-                // rather than the full workspace catalog; Go resource storage owns media GC.
-                // Never sweep IndexedDB fallback blobs against a partial in-memory catalog.
-                if (usesSingleSourceLocalPersistence()) return;
                 const scope = getActiveUserScope();
                 const frozenExtraImageKeys = collectImageStorageKeys(extra);
                 const frozenExtraMediaKeys = collectMediaStorageKeys(extra);
                 await new Promise<void>((resolve, reject) => {
                     window.setTimeout(() =>
                         withGenerationArtifactCommitLock(scope, async () => {
+                            const storage = localForageStorageForScope(scope);
                             const syncDrafts = await readAllCanvasSyncDrafts(scope);
                             // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
-                            const canvasProjects = await withCanvasStorePersistenceLock(scope, async () => {
+                            const canvasReferences = await withCanvasStorePersistenceLock(scope, async () => {
                                 await commitPendingCanvasStorePersistenceLocked(scope);
-                                const durableCanvas = parseCanvasStorageDocument(await localForageStorageForScope(scope).getItem(CANVAS_STORE_KEY));
-                                return pendingCanvasStorePersistence(scope)?.projects ?? durableCanvas.state.projects;
+                                const durableCanvas = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY));
+                                const durableCanvasDrafts = parseCanvasStorageDocument(await storage.getItem(CANVAS_DRAFTS_KEY));
+                                const liveProjects = scope === getActiveUserScope() ? useCanvasStore.getState().projects : [];
+                                return [
+                                    ...liveProjects,
+                                    ...(pendingCanvasStorePersistence(scope)?.projects ?? []),
+                                    ...durableCanvas.state.projects,
+                                    ...durableCanvasDrafts.state.projects,
+                                ];
                             });
                             await withGenerationAssetStorageLock(scope, async () => {
                                 await commitPendingAssetStorePersistenceLocked(scope);
+                                await hydrateAssetStoreDrafts(scope);
                                 const durableAssets = (await readPersistedAssetDocumentForScope(scope)).state.assets;
-                                const references = { projects: canvasProjects, assets: durableAssets, syncDrafts };
+                                const liveAssets = scope === getActiveUserScope() ? get().assets : [];
+                                const draftAssets = readAssetStoreDraftsForScope(scope).upserts;
+                                const references = {
+                                    projects: canvasReferences,
+                                    assets: durableAssets,
+                                    liveAssets,
+                                    draftAssets,
+                                    syncDrafts,
+                                };
                                 const imageKeys = new Set([...frozenExtraImageKeys, ...collectImageStorageKeys(references)]);
                                 const mediaKeys = new Set([...frozenExtraMediaKeys, ...collectMediaStorageKeys(references)]);
                                 await cleanupUnusedImages(

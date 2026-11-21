@@ -1,8 +1,10 @@
 import { linkProjectAsset, moveProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
 import { ApiError } from "@/services/api/request";
+import { lookupWorkspaceAssetsByIds } from "@/services/api/workspace-assets";
 import { deleteWorkspaceAssetRecord, putWorkspaceAsset } from "@/services/api/workspace-data";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { normalizeAssetCategory } from "@/lib/asset-category";
+import { parseWorkspaceAssetPayloads } from "@/lib/workspace-asset-normalize";
 import { usesBrowserLocalResourceStore, workspaceAssetHasCanonicalMediaPersist } from "@/services/workspace-resource-storage";
 import {
     ackAssetStoreDraft,
@@ -118,6 +120,27 @@ function applyReceiptProjection(id: string, submitted: Asset, receipt: AssetWrit
     return true;
 }
 
+function stripGenerationLookupUnverified(asset: Asset): Asset {
+    if (!asset.metadata || asset.metadata.generationLookupUnverified !== true) return asset;
+    const { generationLookupUnverified: _omitted, ...rest } = asset.metadata;
+    return { ...asset, metadata: Object.keys(rest).length ? rest : undefined };
+}
+
+async function reconcileUnverifiedGenerationAsset(asset: Asset, signal?: AbortSignal): Promise<{ existing: Asset | null; asset: Asset }> {
+    if (asset.metadata?.generationLookupUnverified !== true) return { existing: null, asset };
+    const remote = await lookupWorkspaceAssetsByIds([asset.id], { signal });
+    throwIfAborted(signal);
+    const existing = parseWorkspaceAssetPayloads(remote.assets).find((item) => item.id === asset.id) ?? null;
+    if (!existing) return { existing: null, asset: stripGenerationLookupUnverified(asset) };
+    runAssetStoreProjection(() => {
+        useAssetStore.setState((state) => {
+            const has = state.assets.some((item) => item.id === existing.id);
+            return { assets: has ? state.assets.map((item) => (item.id === existing.id ? existing : item)) : [existing, ...state.assets] };
+        });
+    });
+    return { existing, asset: existing };
+}
+
 async function commitTrackedAssetDraft(id: string, signal?: AbortSignal) {
     throwIfAborted(signal);
     const draft = peekAssetStoreDraft(getActiveUserScope(), id);
@@ -145,7 +168,12 @@ async function commitTrackedAssetDraft(id: string, signal?: AbortSignal) {
         await flushAssetStorePersistence();
         throw new WorkspaceAssetMediaPendingError();
     }
-    const submitted = asset;
+    const reconciled = await reconcileUnverifiedGenerationAsset(asset, signal);
+    if (reconciled.existing) {
+        ackAssetStoreDraft(id, submittedVersion);
+        return;
+    }
+    const submitted = reconciled.asset;
     const saved = await putWorkspaceAsset(id, submitted, { signal });
     throwIfAborted(signal);
     assertAssetWriteReceipt(saved?.asset, id);
@@ -182,19 +210,25 @@ export async function persistWorkspaceAssetLink({ asset, domainProjectId, catego
             await commitTrackedAssetDraft(live.id, signal);
             return;
         }
-        const submitted = live;
-        const saved = await putWorkspaceAsset(live.id, submitted, { signal });
-        throwIfAborted(signal);
-        assertAssetWriteReceipt(saved?.asset, live.id);
-        if (submittedVersion) ackAssetStoreDraft(live.id, submittedVersion);
+        const reconciled = await reconcileUnverifiedGenerationAsset(live, signal);
+        const submitted = reconciled.asset;
+        let receipt: AssetWriteReceipt;
+        if (reconciled.existing) {
+            if (submittedVersion) ackAssetStoreDraft(live.id, submittedVersion);
+            receipt = reconciled.existing;
+        } else {
+            const saved = await putWorkspaceAsset(live.id, submitted, { signal });
+            throwIfAborted(signal);
+            assertAssetWriteReceipt(saved?.asset, live.id);
+            if (submittedVersion) ackAssetStoreDraft(live.id, submittedVersion);
+            receipt = saved.asset;
+        }
         const afterPut = peekAssetStoreDraft(getActiveUserScope(), live.id);
         if (afterPut?.kind === "delete") {
             await commitTrackedAssetDraft(live.id, signal);
             return;
         }
         if (!useAssetStore.getState().assets.some((item) => item.id === live.id)) return;
-
-        let receipt: AssetWriteReceipt = saved.asset;
         if (domainProjectId) {
             const { asset: linkedAsset } = await linkProjectAsset(
                 domainProjectId,
@@ -255,8 +289,12 @@ export async function deleteWorkspaceAsset(id: string, options?: DeleteWorkspace
         const later = peekAssetStoreDraft(getActiveUserScope(), assetId);
         if (later && later.version !== submittedVersion && later.kind === "upsert") return;
         if (later && later.version === submittedVersion) ackAssetStoreDraft(assetId, submittedVersion);
-        if (useAssetStore.getState().assets.some((item) => item.id === assetId)) {
-            await runAssetStoreProjection(() => useAssetStore.getState().removeAsset(assetId, { cleanupMedia: false }));
+        const liveAsset = useAssetStore.getState().assets.find((item) => item.id === assetId);
+        if (liveAsset) {
+            // Canonical resource:* and text rows have no browser-local blobs to sweep;
+            // degraded fallback media rows still reclaim their IndexedDB blobs via full-graph GC.
+            const hasLocalFallback = !workspaceAssetHasCanonicalMediaPersist(liveAsset);
+            await runAssetStoreProjection(() => useAssetStore.getState().removeAsset(assetId, { cleanupMedia: hasLocalFallback }));
         }
     });
 }

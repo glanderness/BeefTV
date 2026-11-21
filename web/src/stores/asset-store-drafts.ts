@@ -183,18 +183,8 @@ function nextAssetStoreDraftVersion(userScope: string, id: string) {
 }
 
 /**
- * Hydration merge order:
- * 1. Read durable drafts and clocks.
- * 2. In-process memory drafts win every overlapping id. An edit made while
- *    getItem awaited is newer than that durable snapshot, even when the
- *    durable counter is larger.
- * 3. Durable fills ids that memory does not have.
- * 4. clocks[id] = max(durable clocks, durable draft versions, memory clocks,
- *    memory draft versions).
- * 5. If a memory-winning draft is at or below that high-water, bump it to
- *    high-water + 1 so an older ack cannot match the new edit.
- * Upsert snapshots project into effective assets without a backend save.
- * Delete drafts stay tombstones and drop matching effective assets.
+ * Merge durable drafts/clocks with newer in-process edits (memory wins overlaps;
+ * clocks track high-water marks so older acks cannot clear newer edits).
  */
 function mergeHydratedAssetStoreDrafts(
     durableDrafts: Map<string, AssetStoreDraft>,
@@ -365,6 +355,19 @@ export function isDeletedGenerationAsset(userScope: string, id: string) {
         || Boolean(deletedGenerationAssetIds.get(userScope)?.has(id));
 }
 
+export function recordDeletedGenerationAssetIds(userScope: string, ids: Iterable<string>) {
+    const deleted = deletedGenerationAssetIds.get(userScope) ?? new Set<string>();
+    let changed = false;
+    for (const id of ids) {
+        if (!isGenerationAssetId(id) || deleted.has(id)) continue;
+        deleted.add(id);
+        changed = true;
+    }
+    if (!changed) return;
+    deletedGenerationAssetIds.set(userScope, deleted);
+    return scheduleAssetStoreDraftPersist(userScope);
+}
+
 /** Apply a server projection without treating the local patch as a new uncommitted write. */
 export function runAssetStoreProjection<T>(operation: () => T): T {
     suppressAssetStoreDraftTracking += 1;
@@ -375,8 +378,8 @@ export function runAssetStoreProjection<T>(operation: () => T): T {
     }
 }
 
-export function readAssetStoreDrafts() {
-    const drafts = assetStoreDrafts.get(getActiveUserScope()) ?? new Map<string, AssetStoreDraft>();
+export function readAssetStoreDraftsForScope(userScope: string) {
+    const drafts = assetStoreDrafts.get(userScope) ?? new Map<string, AssetStoreDraft>();
     const upserts: AssetStoreDraftRecord[] = [];
     const deletes: AssetStoreDraftRecord[] = [];
     for (const [id, draft] of drafts) {
@@ -384,6 +387,10 @@ export function readAssetStoreDrafts() {
         else deletes.push({ id, ...draft });
     }
     return { upserts, deletes };
+}
+
+export function readAssetStoreDrafts() {
+    return readAssetStoreDraftsForScope(getActiveUserScope());
 }
 
 /** Ack only the submitted version. A later local edit keeps its draft. Clocks and generation tombstones stay. */
