@@ -134,7 +134,7 @@ test("Max and Turbo reference ratios remain editable alongside H3 advanced contr
             await panel.getByRole("button", { name: "16:9", exact: true }).click();
             expect(await page.getByTestId("saved-size").textContent()).toBe("16:9");
             await panel.getByRole("button", { name: "9:16", exact: true }).click();
-            await panel.getByText("MiniMax H3 高级设置", { exact: true }).click();
+            await panel.getByText("高级参数", { exact: true }).click();
             const seed = panel.getByRole("spinbutton", { name: "随机种子", exact: true });
             await seed.fill("42");
             await seed.press("Tab");

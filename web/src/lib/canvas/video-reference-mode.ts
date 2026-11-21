@@ -1,7 +1,6 @@
 import { beefTVVideoContract } from "@/lib/beeftv-video-contracts";
 import { CANVAS_IMAGE_SLOT_KIND_SOURCE } from "@/lib/canvas/canvas-resource-references";
-import { isH3Model, isH3Style } from "@/lib/h3-video";
-import { videoReferencesForOperation, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { videoPrefersReferenceMode, videoReferencesForOperation, videoSupportsAdvancedControls, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { isBeefTVModelRoute } from "@/lib/model-selection";
 import type { CanvasNodeMetadata, CanvasVideoReferenceMode } from "@/types/canvas";
 
@@ -59,18 +58,50 @@ export function stripPromptFirstFrameClauses(prompt: string): string {
         .replace(/[，,。；;\s]+$/u, (tail) => (tail.includes("\n") ? "\n" : ""));
 }
 
-export type VideoMiddleFrameSupport = "supported" | "unsupported" | "opaque";
+export type VideoCapabilityFlagSupport = "supported" | "unsupported" | "opaque";
+export type VideoMiddleFrameSupport = VideoCapabilityFlagSupport;
+
+// Resolve card groups only after character images/voices have been hydrated.
+// Explicit prompt mentions may select a subset of the connected nodes.
+export function resolveVideoReferenceOrder(order: string[] | undefined, media: Array<{ id: string; sourceNodeId?: string }>): string[] | undefined {
+    if (!order) return undefined;
+    const resolved: string[] = [];
+    const append = (id: string) => {
+        if (!resolved.includes(id)) resolved.push(id);
+    };
+    for (const nodeId of order) {
+        for (const item of media) if (item.id === nodeId || item.sourceNodeId === nodeId) append(item.id);
+    }
+    for (const item of media) append(item.id);
+    return resolved;
+}
 
 export function resolveVideoMiddleFrameSupport(
-    model: string,
+    _model: string,
     videoProfile?: VideoCapabilityConfig | null,
     hasDeclaredCapability = false,
-    isBeefTVRoute = isBeefTVModelRoute(model),
+    _isBeefTVRoute?: boolean,
 ): VideoMiddleFrameSupport {
     if (videoProfile?.middleFrame === true) return "supported";
     if (videoProfile?.middleFrame === false) return "unsupported";
-    const modelName = model.split("::").at(-1) || "";
-    if (isBeefTVRoute && beefTVVideoContract(modelName)?.middleFrame) return "supported";
+    return hasDeclaredCapability ? "unsupported" : "opaque";
+}
+
+export function resolveVideoReferenceOrderSupport(
+    videoProfile?: VideoCapabilityConfig | null,
+    hasDeclaredCapability = false,
+): VideoCapabilityFlagSupport {
+    if (videoProfile?.referenceOrder === true) return "supported";
+    if (videoProfile?.referenceOrder === false) return "unsupported";
+    return hasDeclaredCapability ? "unsupported" : "opaque";
+}
+
+export function resolveVideoControlsSupport(
+    videoProfile?: VideoCapabilityConfig | null,
+    hasDeclaredCapability = false,
+): VideoCapabilityFlagSupport {
+    if (videoSupportsAdvancedControls(videoProfile)) return "supported";
+    if (videoProfile?.controls !== undefined) return "unsupported";
     return hasDeclaredCapability ? "unsupported" : "opaque";
 }
 
@@ -86,48 +117,36 @@ export function resolveVideoReferenceCapabilities(
     maxFrameAudios: number;
     middleFrameSupport: VideoMiddleFrameSupport;
     middleFrameSupported: boolean;
+    referenceOrderSupport: VideoCapabilityFlagSupport;
+    referenceOrderSupported: boolean;
+    controlsSupport: VideoCapabilityFlagSupport;
+    controlsSupported: boolean;
+    preferReferenceMode: boolean;
 } {
     const modelName = model.split("::").at(-1) || "";
     const contract = isBeefTVRoute ? beefTVVideoContract(modelName) : undefined;
     const middleFrameSupport = resolveVideoMiddleFrameSupport(model, videoProfile, hasDeclaredCapability, isBeefTVRoute);
     const middleFrameSupported = middleFrameSupport === "supported";
+    const referenceOrderSupport = resolveVideoReferenceOrderSupport(videoProfile, hasDeclaredCapability);
+    const referenceOrderSupported = referenceOrderSupport === "supported";
+    const controlsSupport = resolveVideoControlsSupport(videoProfile, hasDeclaredCapability);
+    const controlsSupported = controlsSupport === "supported";
+    const preferReferenceMode = videoPrefersReferenceMode(videoProfile);
     const hasExplicitOpRefs = videoProfile?.operationReferences !== undefined;
     const frameRefs = videoProfile ? videoReferencesForOperation(videoProfile, "image_to_video") : undefined;
 
-    if (isBeefTVRoute && isH3Style(model) && !hasExplicitOpRefs) {
-        const styleMaxImages = hasDeclaredCapability && frameRefs ? Math.min(2, frameRefs.maxImages) : Math.min(2, contract?.maxReferences?.image ?? 1);
-        const styleMaxAudios = hasDeclaredCapability && frameRefs ? frameRefs.maxAudios : (contract?.maxReferences?.audio ?? 0);
-        return {
-            maxFrameImages: styleMaxImages,
-            endFrameSupported: styleMaxImages >= 2,
-            referenceVideoSupported: hasDeclaredCapability ? Boolean(videoProfile?.operations.includes("reference_to_video")) : false,
-            maxFrameAudios: styleMaxAudios,
-            middleFrameSupport,
-            middleFrameSupported,
-        };
-    }
-
-    const h3 = isBeefTVRoute && isH3Model(model);
-    const contractFrameMaxImages = contract?.operationReferences?.image_to_video?.maxImages;
     const maxFrameImages = hasExplicitOpRefs && frameRefs
         ? Math.min(2, frameRefs.maxImages)
-        : contractFrameMaxImages !== undefined
-          ? Math.min(2, hasDeclaredCapability && videoProfile ? Math.min(contractFrameMaxImages, videoProfile.references.maxImages) : contractFrameMaxImages)
-          : (hasDeclaredCapability || Boolean(videoProfile?.operations.includes("reference_to_video"))) && frameRefs
-            ? Math.min(2, frameRefs.maxImages)
-            : Math.min(2, contract?.maxReferences?.image ?? 2);
+        : (hasDeclaredCapability || Boolean(videoProfile?.operations.includes("reference_to_video"))) && frameRefs
+          ? Math.min(2, frameRefs.maxImages)
+          : Math.min(2, contract?.maxReferences?.image ?? 2);
     const endFrameSupported = maxFrameImages >= 2;
-    const referenceVideoSupported = h3
-        ? !hasDeclaredCapability || Boolean(videoProfile?.operations.includes("reference_to_video"))
-        : Boolean(videoProfile?.operations.includes("reference_to_video"));
-    const contractFrameMaxAudios = contract?.operationReferences?.image_to_video?.maxAudios;
+    const referenceVideoSupported = Boolean(videoProfile?.operations.includes("reference_to_video"));
     const maxFrameAudios = hasExplicitOpRefs && frameRefs
         ? frameRefs.maxAudios
         : !referenceVideoSupported && hasDeclaredCapability && frameRefs
           ? frameRefs.maxAudios
-          : contractFrameMaxAudios !== undefined
-            ? (hasDeclaredCapability && videoProfile ? Math.min(contractFrameMaxAudios, videoProfile.references.maxAudios) : contractFrameMaxAudios)
-            : 0;
+          : 0;
 
     return {
         maxFrameImages,
@@ -136,6 +155,11 @@ export function resolveVideoReferenceCapabilities(
         maxFrameAudios,
         middleFrameSupport,
         middleFrameSupported,
+        referenceOrderSupport,
+        referenceOrderSupported,
+        controlsSupport,
+        controlsSupported,
+        preferReferenceMode,
     };
 }
 
@@ -145,9 +169,8 @@ export function resolveVideoReferenceModeState({
     references,
     endFrameSupported = true,
     referenceVideoSupported = true,
-    h3Model = false,
-    h3Style = false,
-    maxFrameAudios,
+    maxFrameAudios = 0,
+    preferReferenceMode = false,
     prompt = "",
 }: {
     metadata?: CanvasNodeMetadata;
@@ -155,9 +178,8 @@ export function resolveVideoReferenceModeState({
     references: VideoReferenceCandidate[];
     endFrameSupported?: boolean;
     referenceVideoSupported?: boolean;
-    h3Model?: boolean;
-    h3Style?: boolean;
     maxFrameAudios?: number;
+    preferReferenceMode?: boolean;
     prompt?: string;
 }): VideoReferenceModeState {
     const active = references.filter((item) => item.active !== false && item.kind !== "skill");
@@ -167,7 +189,7 @@ export function resolveVideoReferenceModeState({
     const videoCount = active.filter((item) => item.kind === "video").length;
     const audioCount = active.filter((item) => item.kind === "audio").length;
     const maxFrameImages = endFrameSupported ? 2 : 1;
-    const allowedFrameAudios = maxFrameAudios ?? (h3Model ? 1 : 0);
+    const allowedFrameAudios = maxFrameAudios;
 
     const canSelectFrames =
         imageRefs.length >= 1 &&
@@ -175,7 +197,7 @@ export function resolveVideoReferenceModeState({
         visualCount <= maxFrameImages &&
         videoCount === 0 &&
         audioCount <= allowedFrameAudios;
-    const canSelectAll = !h3Style && referenceVideoSupported && (visualCount > 0 || videoCount > 0 || audioCount > 0);
+    const canSelectAll = referenceVideoSupported && (visualCount > 0 || videoCount > 0 || audioCount > 0);
 
     let framesDisabledReason: string | undefined;
     if (!canSelectFrames) {
@@ -185,8 +207,10 @@ export function resolveVideoReferenceModeState({
             framesDisabledReason = "已连接角色卡，当前为全能参考模式。如需严格锁定上段尾帧开场，请单独连接 1–2 张关键帧，或在提示词中用 @图片N 描述开场画面并保持同景构图";
         } else if (visualCount > maxFrameImages) {
             framesDisabledReason = "首尾帧锁定仅支持 1–2 张图；连接 3 张及以上图片时为全能参考（软引导）。如需严格接上段尾帧，请只连 1–2 张关键帧，或在提示词用 @图片N 写明开场并保持起幅同景";
-        } else if (audioCount > 0) {
-            framesDisabledReason = "当前模型连接参考音频时为全能参考模式。如需严格锁定首尾帧，请先移除参考音频并只保留 1–2 张图";
+        } else if (audioCount > allowedFrameAudios) {
+            framesDisabledReason = allowedFrameAudios > 0
+                ? `首尾帧模式最多支持 ${allowedFrameAudios} 段参考音频；超出时为全能参考模式。`
+                : "当前模型连接参考音频时为全能参考模式。如需严格锁定首尾帧，请先移除参考音频并只保留 1–2 张图";
         } else {
             framesDisabledReason = "请先连接 1–2 张参考图";
         }
@@ -194,7 +218,7 @@ export function resolveVideoReferenceModeState({
     const allDisabledReason = !canSelectAll ? "当前模型仅支持首帧/首尾帧模式，不支持全能参考" : undefined;
 
     const prefersAll = metadata?.videoEditOperation === "reference_to_video"
-        || (!metadata?.videoEditOperation && !metadata?.videoStartFrameNodeId && !metadata?.videoEndFrameNodeId && preferredMode === "all");
+        || (!metadata?.videoEditOperation && !metadata?.videoStartFrameNodeId && !metadata?.videoEndFrameNodeId && (preferredMode === "all" || preferReferenceMode));
     const mode: CanvasVideoReferenceMode = !canSelectAll
         ? "frames"
         : !canSelectFrames || prefersAll

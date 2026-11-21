@@ -588,17 +588,12 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 	return targets, nil
 }
 
-func resolveVideoMiddleFrameSupport(modelID string, videoProfile *modelcatalog.VideoCapabilityConfig, declared bool, managedBeefTV bool) string {
+func resolveVideoMiddleFrameSupport(videoProfile *modelcatalog.VideoCapabilityConfig, declared bool) string {
 	if videoProfile != nil && videoProfile.MiddleFrame != nil {
 		if *videoProfile.MiddleFrame {
 			return "supported"
 		}
 		return "unsupported"
-	}
-	if managedBeefTV {
-		if contract, ok := providerpreset.BeefTVVideoContract(modelID); ok && contract.MiddleFrame {
-			return "supported"
-		}
 	}
 	if declared {
 		return "unsupported"
@@ -606,14 +601,27 @@ func resolveVideoMiddleFrameSupport(modelID string, videoProfile *modelcatalog.V
 	return "opaque"
 }
 
-func resolveVideoContractFlagSupport(contractFlag bool, hasRouteContract bool, declared bool, managedBeefTV bool) string {
-	if hasRouteContract {
-		if contractFlag {
+func resolveVideoReferenceOrderSupport(videoProfile *modelcatalog.VideoCapabilityConfig, declared bool) string {
+	if videoProfile != nil && videoProfile.ReferenceOrder != nil {
+		if *videoProfile.ReferenceOrder {
 			return "supported"
 		}
 		return "unsupported"
 	}
-	if declared || managedBeefTV {
+	if declared {
+		return "unsupported"
+	}
+	return "opaque"
+}
+
+func resolveVideoControlsSupport(videoProfile *modelcatalog.VideoCapabilityConfig, declared bool) string {
+	if videoProfile != nil && videoProfile.Controls != nil {
+		if videoProfile.Controls.HasAny() {
+			return "supported"
+		}
+		return "unsupported"
+	}
+	if declared {
 		return "unsupported"
 	}
 	return "opaque"
@@ -647,21 +655,22 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 			}
 		}
 	}
-	routeContract, hasRouteContract := providerpreset.BeefTVVideoContract(modelID)
 	var contract providerpreset.VideoContract
 	hasContract := false
-	if managedBeefTV && hasRouteContract {
-		contract, hasContract = routeContract, true
+	if managedBeefTV {
+		if routeContract, ok := providerpreset.BeefTVVideoContract(modelID); ok {
+			contract, hasContract = routeContract, true
+		}
 	}
-	middleFrameSupport := resolveVideoMiddleFrameSupport(modelID, rawVideoProfile, declared, managedBeefTV)
+	middleFrameSupport := resolveVideoMiddleFrameSupport(rawVideoProfile, declared)
 	if middleFrameSupport == "unsupported" {
 		delete(parameters, "videoMiddleFrameNodeId")
 		delete(metadata, "videoMiddleFrameTime")
 	}
-	if resolveVideoContractFlagSupport(routeContract.ReferenceOrder, hasRouteContract, declared, managedBeefTV) == "unsupported" {
+	if resolveVideoReferenceOrderSupport(rawVideoProfile, declared) == "unsupported" {
 		delete(metadata, "videoReferenceOrder")
 	}
-	if resolveVideoContractFlagSupport(routeContract.H3Options, hasRouteContract, declared, managedBeefTV) == "unsupported" {
+	if resolveVideoControlsSupport(rawVideoProfile, declared) == "unsupported" {
 		delete(metadata, "videoH3Options")
 	}
 	storedOp := strings.TrimSpace(dependencyString(nodeMeta, "videoEditOperation"))
@@ -695,29 +704,14 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 		frameMaxImages = min(2, frameRefs.MaxImages)
 		frameMaxAudios = frameRefs.MaxAudios
 	} else {
-		hasContractFrameMaxImages := false
-		if hasContract {
-			if contractImg, ok := contract.OperationReferences["image_to_video"]["maxImages"]; ok {
-				frameMaxImages = min(2, contractImg)
-				hasContractFrameMaxImages = true
-			} else if !declared {
-				if maxImg, ok := contract.MaxReferences["image"]; ok {
-					frameMaxImages = min(2, maxImg)
-				}
-			}
-			if contractAud, ok := contract.OperationReferences["image_to_video"]["maxAudios"]; ok {
-				frameMaxAudios = contractAud
+		if hasContract && !declared {
+			if maxImg, ok := contract.MaxReferences["image"]; ok {
+				frameMaxImages = min(2, maxImg)
 			}
 		}
 		if videoProfile != nil {
-			if !hasContractFrameMaxImages {
-				frameMaxImages = min(2, videoProfile.References.MaxImages)
-			} else if declared && frameMaxImages > videoProfile.References.MaxImages {
-				frameMaxImages = min(2, videoProfile.References.MaxImages)
-			}
+			frameMaxImages = min(2, videoProfile.References.MaxImages)
 			if !supportsRefVideo && declared {
-				frameMaxAudios = videoProfile.References.MaxAudios
-			} else if declared && frameMaxAudios > videoProfile.References.MaxAudios {
 				frameMaxAudios = videoProfile.References.MaxAudios
 			}
 		}
@@ -734,8 +728,10 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 		delete(parameters, "videoEndFrameNodeId")
 	}
 	hasMiddleFrame := middleFrameSupport == "supported" && parameters["videoMiddleFrameNodeId"] != ""
+	preferReferenceMode := videoProfile != nil && videoProfile.PreferReferenceMode != nil && *videoProfile.PreferReferenceMode
+	hasExplicitFrame := parameters["videoStartFrameNodeId"] != "" || parameters["videoEndFrameNodeId"] != "" || parameters["videoMiddleFrameNodeId"] != ""
 	nextOp := storedOp
-	if supportsRefVideo && (visualCount+videoCount+audioCount > 0) && (hasMiddleFrame || videoCount > 0 || characterCount > 0 || visualCount > frameMaxImages || (visualCount > 0 && audioCount > frameMaxAudios)) {
+	if supportsRefVideo && (visualCount+videoCount+audioCount > 0) && (hasMiddleFrame || videoCount > 0 || characterCount > 0 || visualCount > frameMaxImages || (visualCount > 0 && audioCount > frameMaxAudios) || (storedOp == "" && preferReferenceMode && visualCount > 0 && !hasExplicitFrame)) {
 		nextOp = "reference_to_video"
 	} else if storedOp == "reference_to_video" && declared && !supportsRefVideo && supportsImageVideo && videoCount == 0 && characterCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
 		nextOp = "image_to_video"

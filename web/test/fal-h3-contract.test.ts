@@ -7,7 +7,7 @@ import { SYSTEM_PROMPT } from "../../agent-host/system-prompt.mjs";
 test("H3 preserves CNY seconds and 768p without accepting unverified model aliases", () => {
     expect(beefTVVideoContract("minimax-h3-max-turbo")?.protocol).toBe("newapi-channel-2");
     expect(beefTVVideoContract("minimax-h3-max")?.protocol).toBe("newapi-channel-2");
-    expect(beefTVVideoContract("minimax-h3")?.maxReferences).toEqual({image: 9, video: 3, audio: 3});
+    expect(beefTVVideoContract("minimax-h3")?.protocol).toBe("newapi-channel-2");
     expect(beefTVVideoContract("minimax-h3-max-turbo-other")).toBeUndefined();
     const price = {currency: "CNY", mode: "seconds", rates: {"768p": {output: 0.2441304, reference_video: 0}}};
     expect(sanitizeVideoPriceQuote(price)).toEqual(price);

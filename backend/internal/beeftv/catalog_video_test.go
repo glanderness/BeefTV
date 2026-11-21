@@ -82,3 +82,54 @@ func TestNormalizeVideoOperationReferencesPreservesZeroAndRejectsInvalid(t *test
 		}
 	}
 }
+
+func TestNormalizeVideoDeclarativeControlsAndFlags(t *testing.T) {
+	var video map[string]any
+	if err := json.Unmarshal(sampleCatalogVideo(t, 3, 3), &video); err != nil {
+		t.Fatal(err)
+	}
+	video["middleFrame"] = true
+	video["referenceOrder"] = true
+	video["preferReferenceMode"] = true
+	video["controls"] = map[string]any{
+		"seed":                 true,
+		"promptExpansionModes": []string{"balanced", "quality", "fast", "disabled"},
+		"damageLevels":         []string{"light", "medium", "heavy"},
+	}
+	body, _ := json.Marshal(video)
+	got, ok := NormalizeVersionedVideoCapability(body, "v3")
+	if !ok {
+		t.Fatal("valid declarative controls capability rejected")
+	}
+	if got["middleFrame"] != true || got["referenceOrder"] != true || got["preferReferenceMode"] != true {
+		t.Fatalf("declarative flags lost: %#v", got)
+	}
+	controls, ok := got["controls"].(map[string]any)
+	if !ok || controls["seed"] != true {
+		t.Fatalf("controls lost: %#v", got["controls"])
+	}
+	if modes, _ := controls["promptExpansionModes"].([]string); len(modes) != 4 {
+		t.Fatalf("promptExpansionModes = %#v", controls["promptExpansionModes"])
+	}
+	if levels, _ := controls["damageLevels"].([]string); len(levels) != 3 {
+		t.Fatalf("damageLevels = %#v", controls["damageLevels"])
+	}
+	for _, patch := range []map[string]any{
+		{"referenceOrder": "yes"},
+		{"preferReferenceMode": 1},
+		{"controls": "bad"},
+		{"controls": map[string]any{"seed": "true"}},
+		{"controls": map[string]any{"promptExpansionModes": []string{"turbo"}}},
+		{"controls": map[string]any{"damageLevels": []string{"extreme"}}},
+	} {
+		var bad map[string]any
+		_ = json.Unmarshal(sampleCatalogVideo(t, 3, 3), &bad)
+		for k, v := range patch {
+			bad[k] = v
+		}
+		raw, _ := json.Marshal(bad)
+		if _, ok := NormalizeVersionedVideoCapability(raw, "v3"); ok {
+			t.Fatalf("invalid declarative video field accepted: %s", raw)
+		}
+	}
+}

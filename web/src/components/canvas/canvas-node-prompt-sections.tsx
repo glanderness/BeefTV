@@ -48,9 +48,9 @@ export function promptPlaceholder(mode: CanvasGenerationMode, hasImageContent: b
 
 type VideoPromptToolsSectionProps = {
     node: CanvasNodeData;
-    config: AiConfig;
     middleFrameSupported: boolean;
     endFrameSupported: boolean;
+    referenceOrderSupported: boolean;
     videoFrameOptions: Array<{ nodeId: string; label: string; title: string; previewUrl?: string }>;
     videoReferenceInputs: Parameters<typeof CanvasH3ReferenceOrder>[0]["inputs"];
     referenceSummary?: Parameters<typeof CanvasVideoPromptTools>[0]["referenceSummary"];
@@ -59,9 +59,9 @@ type VideoPromptToolsSectionProps = {
 
 export function CanvasNodePromptVideoToolsSection({
     node,
-    config,
     middleFrameSupported,
     endFrameSupported,
+    referenceOrderSupported,
     videoFrameOptions,
     videoReferenceInputs,
     referenceSummary,
@@ -81,7 +81,7 @@ export function CanvasNodePromptVideoToolsSection({
                     onMetadataChange={(patch) => onConfigChange(node.id, patch)}
                 />
             ) : null}
-            <CanvasH3ReferenceOrder model={config.model} inputs={videoReferenceInputs} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} />
+            <CanvasH3ReferenceOrder supported={referenceOrderSupported} inputs={videoReferenceInputs} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} />
         </>
     );
 }

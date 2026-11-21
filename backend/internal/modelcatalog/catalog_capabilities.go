@@ -171,6 +171,27 @@ func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool)
 		}
 		video["middleFrame"] = enabled
 	}
+	if value, present := object["referenceOrder"]; present {
+		enabled, ok := value.(bool)
+		if !ok {
+			return nil, false
+		}
+		video["referenceOrder"] = enabled
+	}
+	if value, present := object["preferReferenceMode"]; present {
+		enabled, ok := value.(bool)
+		if !ok {
+			return nil, false
+		}
+		video["preferReferenceMode"] = enabled
+	}
+	if rawControls, present := object["controls"]; present {
+		controls, ok := normalizeCatalogVideoControls(rawControls)
+		if !ok {
+			return nil, false
+		}
+		video["controls"] = controls
+	}
 	if _, present := object["draft"]; present {
 		draft, ok := catalogBooleanConfig(object, "draft")
 		if !ok {
@@ -189,14 +210,51 @@ func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool)
 		}
 		video["returnLastFrame"] = returnLastFrame
 	}
-	if _, present := object["returnLastFrame"]; present {
-		returnLastFrame, ok := catalogBooleanConfig(object, "returnLastFrame")
+	return video, true
+}
+
+func normalizeCatalogVideoControls(raw any) (map[string]any, bool) {
+	object, ok := raw.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	controls := map[string]any{}
+	if value, present := object["seed"]; present {
+		enabled, ok := value.(bool)
 		if !ok {
 			return nil, false
 		}
-		video["returnLastFrame"] = returnLastFrame
+		controls["seed"] = enabled
 	}
-	return video, true
+	if value, present := object["promptExpansionModes"]; present {
+		modes, ok := catalogStringList(value, true)
+		if !ok {
+			return nil, false
+		}
+		for _, mode := range modes {
+			switch mode {
+			case "disabled", "fast", "balanced", "quality":
+			default:
+				return nil, false
+			}
+		}
+		controls["promptExpansionModes"] = modes
+	}
+	if value, present := object["damageLevels"]; present {
+		levels, ok := catalogStringList(value, true)
+		if !ok {
+			return nil, false
+		}
+		for _, level := range levels {
+			switch level {
+			case "light", "medium", "heavy":
+			default:
+				return nil, false
+			}
+		}
+		controls["damageLevels"] = levels
+	}
+	return controls, true
 }
 
 // Keep the existing capability JSON shape intact. Its server owns model limits;

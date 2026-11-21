@@ -4,6 +4,23 @@ import { isVolcengineArkVideoProtocol, type ModelProtocol } from "@/lib/model-pr
 /** 0 means no documented local character limit; the supplier still validates. */
 export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 0;
 
+export type VideoPromptExpansionMode = "disabled" | "fast" | "balanced" | "quality";
+export type VideoDamageLevel = "light" | "medium" | "heavy";
+
+export type VideoGenerationControlsCapability = {
+    seed?: boolean;
+    promptExpansionModes?: VideoPromptExpansionMode[];
+    damageLevels?: VideoDamageLevel[];
+};
+
+export type VideoGenerationControls = {
+    seed?: number;
+    prompt_expansion_mode?: VideoPromptExpansionMode;
+    enable_safety_checker?: boolean;
+    sync_mode?: boolean;
+    damage_level?: VideoDamageLevel;
+};
+
 export type VideoCapabilityConfig = {
     references: {
         promptMaxChars: number;
@@ -51,6 +68,9 @@ export type VideoCapabilityConfig = {
     durationSupported?: boolean;
     taskTypeConstraints?: boolean;
     middleFrame?: boolean;
+    referenceOrder?: boolean;
+    preferReferenceMode?: boolean;
+    controls?: VideoGenerationControlsCapability;
     ratios: string[];
     defaultRatio: string;
     resolutions: string[];
@@ -199,6 +219,30 @@ function sanitizeCatalogDuration(input: Record<string, unknown>): VideoCapabilit
     return { selection, values, default: defaultValue };
 }
 
+const VALID_PROMPT_EXPANSION_MODES = new Set<VideoPromptExpansionMode>(["disabled", "fast", "balanced", "quality"]);
+const VALID_DAMAGE_LEVELS = new Set<VideoDamageLevel>(["light", "medium", "heavy"]);
+
+function sanitizeCatalogControls(value: unknown): VideoGenerationControlsCapability | null {
+    const raw = catalogObject(value);
+    if (!raw) return null;
+    const controls: VideoGenerationControlsCapability = {};
+    if ("seed" in raw && raw.seed !== undefined) {
+        if (typeof raw.seed !== "boolean") return null;
+        controls.seed = raw.seed;
+    }
+    if ("promptExpansionModes" in raw && raw.promptExpansionModes !== undefined) {
+        const modes = catalogStringList(raw.promptExpansionModes, true);
+        if (!modes || modes.some((mode) => !VALID_PROMPT_EXPANSION_MODES.has(mode as VideoPromptExpansionMode))) return null;
+        controls.promptExpansionModes = modes as VideoPromptExpansionMode[];
+    }
+    if ("damageLevels" in raw && raw.damageLevels !== undefined) {
+        const levels = catalogStringList(raw.damageLevels, true);
+        if (!levels || levels.some((level) => !VALID_DAMAGE_LEVELS.has(level as VideoDamageLevel))) return null;
+        controls.damageLevels = levels as VideoDamageLevel[];
+    }
+    return controls;
+}
+
 export function sanitizeServerVideoCapability(value: unknown): VideoCapabilityConfig | null {
     const object = catalogObject(value);
     if (!object || !catalogNumbersFinite(object)) return null;
@@ -256,9 +300,22 @@ export function sanitizeServerVideoCapability(value: unknown): VideoCapabilityCo
         if (typeof object.taskTypeConstraints !== "boolean") return null;
         video.taskTypeConstraints = object.taskTypeConstraints;
     }
-    if ("middleFrame" in object) {
+    if ("middleFrame" in object && object.middleFrame !== undefined) {
         if (typeof object.middleFrame !== "boolean") return null;
         video.middleFrame = object.middleFrame;
+    }
+    if ("referenceOrder" in object && object.referenceOrder !== undefined) {
+        if (typeof object.referenceOrder !== "boolean") return null;
+        video.referenceOrder = object.referenceOrder;
+    }
+    if ("preferReferenceMode" in object && object.preferReferenceMode !== undefined) {
+        if (typeof object.preferReferenceMode !== "boolean") return null;
+        video.preferReferenceMode = object.preferReferenceMode;
+    }
+    if ("controls" in object && object.controls !== undefined) {
+        const controls = sanitizeCatalogControls(object.controls);
+        if (!controls) return null;
+        video.controls = controls;
     }
     if ("draft" in object) {
         const draft = catalogBooleanConfig(object.draft);
@@ -280,6 +337,54 @@ export function videoSupportsTaskTypeConstraints(video?: VideoCapabilityConfig |
     if (!video) return false;
     if (typeof video.taskTypeConstraints === "boolean") return video.taskTypeConstraints;
     return Boolean(video.operations?.includes("inpaint") || video.operations?.includes("extend"));
+}
+
+export function videoSupportsAdvancedControls(video?: VideoCapabilityConfig | null): boolean {
+    const controls = video?.controls;
+    if (!controls) return false;
+    return Boolean(controls.seed || controls.promptExpansionModes?.length || controls.damageLevels?.length);
+}
+
+export function videoSupportsMiddleFrame(video?: VideoCapabilityConfig | null): boolean {
+    return video?.middleFrame === true;
+}
+
+export function videoSupportsReferenceOrder(video?: VideoCapabilityConfig | null): boolean {
+    return video?.referenceOrder === true;
+}
+
+export function videoPrefersReferenceMode(video?: VideoCapabilityConfig | null): boolean {
+    return video?.preferReferenceMode === true;
+}
+
+export function isVideoReferenceMode(
+    video: VideoCapabilityConfig | null | undefined,
+    input: { imageCount: number; characterCount?: number; videoCount: number; audioCount: number },
+    options: { videoEditOperation?: string; videoStartFrameNodeId?: string; videoEndFrameNodeId?: string; videoMiddleFrameNodeId?: string } = {},
+): boolean {
+    if (video && !video.operations.includes("reference_to_video")) return false;
+    const hasExplicitOpRefs = video?.operationReferences !== undefined;
+    const frameRefs = video ? videoReferencesForOperation(video, "image_to_video") : undefined;
+    const maxFrameImages = frameRefs ? Math.min(2, frameRefs.maxImages) : 2;
+    const maxFrameAudios = hasExplicitOpRefs && frameRefs ? frameRefs.maxAudios : 0;
+    const visualCount = input.imageCount + (input.characterCount || 0);
+    const hasFrame = Boolean(options.videoStartFrameNodeId || options.videoEndFrameNodeId || options.videoMiddleFrameNodeId);
+    const audioExceedsDirectMode = visualCount > 0
+        ? input.audioCount > maxFrameAudios
+        : input.audioCount > 0 && (
+              video?.operations.includes("audio_to_video")
+                  ? input.audioCount > (video.operationReferences?.audio_to_video?.maxAudios ?? 1)
+                  : true
+          );
+    return (
+        options.videoEditOperation === "reference_to_video" ||
+        (videoSupportsMiddleFrame(video) && Boolean(options.videoMiddleFrameNodeId)) ||
+        input.videoCount > 0 ||
+        (input.characterCount || 0) > 0 ||
+        visualCount > maxFrameImages ||
+        audioExceedsDirectMode ||
+        (videoPrefersReferenceMode(video) && input.imageCount > 0 && !hasFrame && options.videoEditOperation !== "image_to_video")
+    );
 }
 
 export function versionedVideoCapability(value: unknown, version: string | undefined): VideoCapabilityConfig | null {

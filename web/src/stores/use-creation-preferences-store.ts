@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { scopedLocalStorage } from "@/lib/user-scope";
 import type { AiConfig, ModelCapability } from "@/stores/use-config-store";
-import type { H3VideoOptions } from "@/lib/h3-video";
+import type { VideoGenerationControls } from "@/lib/model-capabilities";
 import type { CanvasGenerationMode, CanvasVideoReferenceMode } from "@/types/canvas";
 
 export type CreationModePreference = "text" | "image" | "video";
@@ -26,7 +26,7 @@ export type CreationVideoPreferences = {
     draft?: string;
     returnLastFrame?: string;
     arkPrivateAssetUpload?: string;
-    h3Options?: H3VideoOptions;
+    h3Options?: VideoGenerationControls;
 };
 
 export type CreationCustomPreset = {
@@ -58,7 +58,7 @@ type CreationPreferencesStore = {
     rememberImageSettings: (settings: CreationImagePreferences) => void;
     rememberModelProvider: (capability: ModelCapability | "transcription", providerId: string) => void;
     rememberVideoReferenceMode: (mode: CanvasVideoReferenceMode) => void;
-    confirmVideoSettings: (config: AiConfig, h3Options?: H3VideoOptions) => void;
+    confirmVideoSettings: (config: AiConfig, h3Options?: VideoGenerationControls) => void;
     resetImageSettings: () => void;
     saveCustomPreset: (input: { name?: string; description?: string; prompt: string; mode: CanvasGenerationMode; modes?: CanvasGenerationMode[] }) => CreationCustomPreset | null;
     renameCustomPreset: (id: string, name: string) => CreationCustomPreset | null;
@@ -103,7 +103,7 @@ function normalizeVideoPreferences(value: unknown): CreationVideoPreferences | u
         ...(nonEmptyString(raw.watermark) ? { watermark: raw.watermark } : {}),
         ...(nonEmptyString(raw.arkPrivateAssetUpload) ? { arkPrivateAssetUpload: raw.arkPrivateAssetUpload } : {}),
         ...(nonEmptyString(raw.returnLastFrame) ? { returnLastFrame: raw.returnLastFrame } : {}),
-        ...(raw.h3Options && typeof raw.h3Options === "object" && !Array.isArray(raw.h3Options) ? { h3Options: raw.h3Options as H3VideoOptions } : {}),
+        ...(raw.h3Options && typeof raw.h3Options === "object" && !Array.isArray(raw.h3Options) ? { h3Options: raw.h3Options as VideoGenerationControls } : {}),
         ...(nonEmptyString(raw.draft) ? { draft: raw.draft } : {}),
     };
     return Object.keys(preferences).length ? preferences : undefined;

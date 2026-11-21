@@ -3,11 +3,10 @@ import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-st
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
-import { isH3MaxFamilyModel, isH3Model, h3ResolvedReferenceOrder } from "@/lib/h3-video";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { modelCapabilityConfigFor, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
-import { resolveVideoReferenceCapabilities } from "@/lib/canvas/video-reference-mode";
+import { resolveVideoReferenceCapabilities, resolveVideoReferenceOrder } from "@/lib/canvas/video-reference-mode";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoEditOperation } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
@@ -304,7 +303,7 @@ export function buildVideoGenerationMetadata(
     const declared = safeConfig ? hasDeclaredModelCapability(safeConfig, effectiveModel, "video") : false;
     const fullVideoProfile = safeConfig && effectiveModel ? modelCapabilityConfigFor(safeConfig, effectiveModel).video : undefined;
     const videoProfile = declaredOrOmniVideoCapability(config, effectiveModel);
-    const { maxFrameImages, endFrameSupported, maxFrameAudios, middleFrameSupport } = resolveVideoReferenceCapabilities(effectiveModel, fullVideoProfile, declared, isBeefTVRoute);
+    const { maxFrameImages, endFrameSupported, maxFrameAudios, middleFrameSupport, referenceOrderSupport, controlsSupport } = resolveVideoReferenceCapabilities(effectiveModel, fullVideoProfile, declared, isBeefTVRoute);
     const videoEditOperation = resolveVideoGenerationEditOperation(node, context, config);
     const storedOperation = metadata?.videoEditOperation;
     // 非中间帧能力声明模型的全模态参考生成不消费首尾帧/中间帧槽位；未知的自定义渠道仅在模式被自动提升时清理残留帧槽位。
@@ -314,17 +313,17 @@ export function buildVideoGenerationMetadata(
             (middleFrameSupport === "unsupported" || (middleFrameSupport === "opaque" && storedOperation !== "reference_to_video")));
     const clearMiddleFrame = ignoreFrameSelection || middleFrameSupport === "unsupported";
     const connectedImages = context?.referenceImages || [];
-    const h3 = isH3Model(effectiveModel);
+    const allowsMixedKeyframes = middleFrameSupport === "supported";
     const allDirectImageNodes =
         connectedImages.length > 0 &&
         connectedImages.length <= maxFrameImages &&
         connectedImages.every((image) => !isIndirectReferenceImage(image));
     const supportsReferenceVideo = !videoProfile || videoProfile.operations.includes("reference_to_video");
-    const nonFrameMediaAttached = !h3 && supportsReferenceVideo && ((context?.referenceVideos.length || 0) > 0 || (context?.referenceAudios.length || 0) > maxFrameAudios || connectedImages.some(isIndirectReferenceImage));
-    const storedStartFrame = !h3 && (nonFrameMediaAttached || (metadata?.videoStartFrameNodeId && !referenceImageIds.has(metadata.videoStartFrameNodeId)))
+    const nonFrameMediaAttached = !allowsMixedKeyframes && supportsReferenceVideo && ((context?.referenceVideos.length || 0) > 0 || (context?.referenceAudios.length || 0) > maxFrameAudios || connectedImages.some(isIndirectReferenceImage));
+    const storedStartFrame = nonFrameMediaAttached || (metadata?.videoStartFrameNodeId && !referenceImageIds.has(metadata.videoStartFrameNodeId))
         ? undefined
         : metadata?.videoStartFrameNodeId;
-    const storedEndFrame = !endFrameSupported || (!h3 && (nonFrameMediaAttached || (metadata?.videoEndFrameNodeId && !referenceImageIds.has(metadata.videoEndFrameNodeId))))
+    const storedEndFrame = !endFrameSupported || nonFrameMediaAttached || (metadata?.videoEndFrameNodeId && !referenceImageIds.has(metadata.videoEndFrameNodeId))
         ? undefined
         : metadata?.videoEndFrameNodeId;
     const defaultFrames =
@@ -357,9 +356,9 @@ export function buildVideoGenerationMetadata(
         videoEndFrameNodeId: endFrame,
         videoMiddleFrameNodeId: middleFrame,
         videoMiddleFrameTime: clearMiddleFrame ? undefined : metadata?.videoMiddleFrameTime,
-        videoH3Options: h3 ? metadata?.videoH3Options : undefined,
-        videoReferenceOrder: isH3MaxFamilyModel(effectiveModel)
-            ? h3ResolvedReferenceOrder(metadata?.videoReferenceOrder, [...(context?.referenceImages || []), ...(context?.referenceVideos || []), ...(context?.referenceAudios || [])])
+        videoH3Options: controlsSupport !== "unsupported" ? metadata?.videoH3Options : undefined,
+        videoReferenceOrder: referenceOrderSupport !== "unsupported"
+            ? resolveVideoReferenceOrder(metadata?.videoReferenceOrder, [...(context?.referenceImages || []), ...(context?.referenceVideos || []), ...(context?.referenceAudios || [])])
             : undefined,
     };
 }

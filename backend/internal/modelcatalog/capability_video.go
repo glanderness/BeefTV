@@ -339,6 +339,22 @@ func validateVideoCapabilityConfig(value *VideoCapabilityConfig) error {
 			return kernel.BadAuthRequest("最少图片引用数不能超过最大图片引用数")
 		}
 	}
+	if value.Controls != nil {
+		for _, mode := range value.Controls.PromptExpansionModes {
+			switch strings.TrimSpace(mode) {
+			case "disabled", "fast", "balanced", "quality":
+			default:
+				return kernel.BadAuthRequest("提示词增强模式配置无效")
+			}
+		}
+		for _, level := range value.Controls.DamageLevels {
+			switch strings.TrimSpace(level) {
+			case "light", "medium", "heavy":
+			default:
+				return kernel.BadAuthRequest("磁带磨损等级配置无效")
+			}
+		}
+	}
 	return nil
 }
 
