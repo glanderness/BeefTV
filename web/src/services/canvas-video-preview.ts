@@ -124,8 +124,8 @@ export function resolveServerVideoPosterUrl(node: VideoPreviewSource): string {
     return resourceId ? resourcePosterAssetUrl(resourceId) : "";
 }
 
-export function canvasVideoPreviewNeedsHydration(node: VideoPreviewSource) {
-    if (resolveServerVideoPosterUrl(node)) return false;
+export function canvasVideoPreviewNeedsHydration(node: VideoPreviewSource, options?: { ignoreServerPoster?: boolean }) {
+    if (!options?.ignoreServerPoster && resolveServerVideoPosterUrl(node)) return false;
     const sourceKey = canvasVideoPreviewSourceKey(node);
     if (!sourceKey) return false;
     const preview = node.metadata?.videoPreview;

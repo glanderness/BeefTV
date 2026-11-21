@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image/jpeg"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,21 +50,32 @@ func ExtractVideoPoster(ctx context.Context, srcPath string, dstPath string, max
 		maxSide, maxSide,
 	)
 
-	// Try a slight offset first (0.2s) to skip black lead-in frames; fall back to frame 0 for ultra-short clips.
-	if err := runPosterFFmpeg(runCtx, ffmpegBin, srcPath, tmpPath, scaleFilter, true); err != nil {
+	// Capture frame 0 first so AI first-frame videos preserve their opening composition.
+	// Only probe a slight offset (0.2s) when frame 0 fails or is nearly pure black (fade-in).
+	chosenPath := tmpPath
+	if err := runPosterFFmpeg(runCtx, ffmpegBin, srcPath, tmpPath, scaleFilter, false); err != nil {
 		if runCtx.Err() != nil {
 			return runCtx.Err()
 		}
-		if fallbackErr := runPosterFFmpeg(runCtx, ffmpegBin, srcPath, tmpPath, scaleFilter, false); fallbackErr != nil {
+		if fallbackErr := runPosterFFmpeg(runCtx, ffmpegBin, srcPath, tmpPath, scaleFilter, true); fallbackErr != nil {
 			return fallbackErr
 		}
+	} else if isMostlyBlackJPEG(tmpPath) {
+		if alt, altErr := os.CreateTemp(filepath.Dir(dstPath), ".poster-alt-*.jpg"); altErr == nil {
+			altPath := alt.Name()
+			_ = alt.Close()
+			defer os.Remove(altPath)
+			if runCtx.Err() == nil && runPosterFFmpeg(runCtx, ffmpegBin, srcPath, altPath, scaleFilter, true) == nil {
+				chosenPath = altPath
+			}
+		}
 	}
-	info, statErr := os.Stat(tmpPath)
+	info, statErr := os.Stat(chosenPath)
 	if statErr != nil || info.Size() == 0 {
 		return fmt.Errorf("%w：视频封面为空", ErrInvalidMedia)
 	}
-	_ = os.Chmod(tmpPath, 0o640)
-	if err := os.Rename(tmpPath, dstPath); err != nil {
+	_ = os.Chmod(chosenPath, 0o640)
+	if err := os.Rename(chosenPath, dstPath); err != nil {
 		return fmt.Errorf("%w：发布视频封面失败", ErrMediaProcessFailed)
 	}
 	return nil
@@ -79,8 +91,10 @@ func runPosterFFmpeg(ctx context.Context, ffmpegBin, srcPath, dstPath, scaleFilt
 		"-an", "-sn", "-dn",
 		"-frames:v", "1",
 		"-vf", scaleFilter,
+		"-c:v", "mjpeg",
 		"-q:v", "4",
-		"-f", "mjpeg",
+		"-f", "image2",
+		"-update", "1",
 		dstPath,
 	)
 	cmd := exec.CommandContext(ctx, ffmpegBin, args...)
@@ -101,6 +115,44 @@ func runPosterFFmpeg(ctx context.Context, ffmpegBin, srcPath, dstPath, scaleFilt
 		return fmt.Errorf("%w：未输出封面帧", ErrMediaProcessFailed)
 	}
 	return nil
+}
+
+// isMostlyBlackJPEG samples an 8x8 grid across a decoded JPEG poster and reports
+// whether the frame is effectively pure black (average luminance < 6, max < 16),
+// matching the frontend video poster black-frame check.
+func isMostlyBlackJPEG(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	img, err := jpeg.Decode(file)
+	if err != nil {
+		return false
+	}
+	bounds := img.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w <= 0 || h <= 0 {
+		return false
+	}
+	cols := min(8, w)
+	rows := min(8, h)
+	var lumSum, maxLum float64
+	samples := 0
+	for r := 0; r < rows; r++ {
+		y := bounds.Min.Y + min(h-1, int((float64(r)+0.5)*float64(h)/float64(rows)))
+		for c := 0; c < cols; c++ {
+			x := bounds.Min.X + min(w-1, int((float64(c)+0.5)*float64(w)/float64(cols)))
+			red, green, blue, _ := img.At(x, y).RGBA()
+			lum := 0.299*float64(red>>8) + 0.587*float64(green>>8) + 0.114*float64(blue>>8)
+			lumSum += lum
+			if lum > maxLum {
+				maxLum = lum
+			}
+			samples++
+		}
+	}
+	return samples > 0 && lumSum/float64(samples) < 6 && maxLum < 16
 }
 
 // ScaleImagePreview scales an oversized local image into a display-sized JPEG
@@ -159,9 +211,9 @@ func ScaleImagePreview(ctx context.Context, srcPath string, dstPath string, maxS
 		"-vf", vf,
 	}
 	if outputPNG {
-		args = append(args, "-c:v", "png", "-compression_level", "2", "-f", "image2", tmpPath)
+		args = append(args, "-c:v", "png", "-compression_level", "2", "-f", "image2", "-update", "1", tmpPath)
 	} else {
-		args = append(args, "-q:v", "4", "-f", "mjpeg", tmpPath)
+		args = append(args, "-c:v", "mjpeg", "-q:v", "4", "-f", "image2", "-update", "1", tmpPath)
 	}
 
 	cmd := exec.CommandContext(runCtx, ffmpegBin, args...)

@@ -3,17 +3,20 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../../src/styles/assets-reference-baseline.css";
 import { AssetMediaPreview } from "../../src/components/asset-media-preview";
+import { InactiveVideoPreview } from "../../src/components/canvas/canvas-node-content";
+import { canvasThemes } from "../../src/lib/canvas-theme";
 import { setCanvasMemoryMode } from "../../src/lib/canvas/canvas-memory-policy";
 import { GenerationHistorySurface } from "../../src/pages/assets/assets-generation-history";
 import type { LibraryAsset } from "../../src/pages/assets/assets-shared";
 import { acquireCanvasVideoPreview, captureCanvasVideoPosterBlobUrl, setCanvasVideoPosterTimeoutForTests } from "../../src/services/canvas-video-preview";
 import { setDirectMediaAssetsEnabled } from "../../src/services/media-asset-url";
 import type { Asset } from "../../src/stores/use-asset-store";
+import { CanvasNodeType, type CanvasNodeData } from "../../src/types/canvas";
 
 const poster = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="orange"/></svg>')}`;
 const portraitPoster = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="90" height="160"><rect width="90" height="160" fill="orange"/></svg>')}`;
 
-type FixtureParams = { count: number; poster: boolean; portrait: boolean; directPoster: boolean; lowMemory: boolean; protectedCoverFail: boolean; drawer: boolean; libraryCard: boolean; posterTimeoutMs: number; prestartCanvasPreview: boolean };
+type FixtureParams = { count: number; poster: boolean; portrait: boolean; directPoster: boolean; lowMemory: boolean; protectedCoverFail: boolean; drawer: boolean; libraryCard: boolean; posterTimeoutMs: number; prestartCanvasPreview: boolean; canvasVideoPoster?: boolean };
 const initialParams = (window as Window & { __fixture: FixtureParams }).__fixture;
 setDirectMediaAssetsEnabled(initialParams.directPoster);
 setCanvasMemoryMode(initialParams.lowMemory ? "low-memory" : "normal");
@@ -61,6 +64,29 @@ function Harness() {
     const [visible, setVisible] = useState(true);
     const [generation, setGeneration] = useState(0);
     const [clicks, setClicks] = useState(0);
+    if (params.canvasVideoPoster) {
+        const videoNode: CanvasNodeData = {
+            id: "canvas-vid-1",
+            type: CanvasNodeType.Video,
+            title: "生成视频",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 180,
+            metadata: {
+                storageKey: "resource:video-0-0",
+                content: "/api/resources/video-0-0/file",
+                mimeType: "video/mp4",
+                status: "success",
+            },
+        };
+        return (
+            <div style={{ padding: 16 }}>
+                <div data-testid="canvas-video-preview" style={{ width: 320, height: 180 }}>
+                    <InactiveVideoPreview node={videoNode} theme={canvasThemes.dark} onPlay={() => undefined} />
+                </div>
+            </div>
+        );
+    }
     if (params.drawer) {
         const videoAsset: LibraryAsset = {
             id: "hist-video-1",

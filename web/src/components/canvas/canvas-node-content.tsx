@@ -631,10 +631,13 @@ export function InactiveVideoPreview({ node, theme, onPlay, hoverEnabled = true,
     const [memoryMode] = useCanvasMemoryMode();
     const sourceKey = canvasDerivedPreviewSourceKey(node);
     const [derivedPreview, setDerivedPreview] = useState<{ sourceKey: string; content: string }>();
-    const serverPosterUrl = nearViewport ? resolveServerVideoPosterUrl(node) : "";
+    const [failedServerPoster, setFailedServerPoster] = useState<{ sourceKey: string; url: string }>();
+    const rawServerPosterUrl = nearViewport ? resolveServerVideoPosterUrl(node) : "";
+    const serverPosterFailed = Boolean(rawServerPosterUrl && failedServerPoster?.sourceKey === sourceKey && failedServerPoster.url === rawServerPosterUrl);
+    const serverPosterUrl = serverPosterFailed ? "" : rawServerPosterUrl;
     const persistedPreviewUrl = canvasNodeVideoPreviewUrl(node);
     const derivedPreviewUrl = derivedPreview?.sourceKey === sourceKey ? derivedPreview.content : "";
-    const previewNeedsHydration = canvasVideoPreviewNeedsHydration(node);
+    const previewNeedsHydration = canvasVideoPreviewNeedsHydration(node, { ignoreServerPoster: serverPosterFailed });
     const previewUrl = serverPosterUrl || (previewNeedsHydration ? derivedPreviewUrl || persistedPreviewUrl : persistedPreviewUrl);
     const [hydrating, setHydrating] = useState(false);
 
@@ -672,7 +675,21 @@ export function InactiveVideoPreview({ node, theme, onPlay, hoverEnabled = true,
 
     if (previewUrl) {
         return <div ref={previewRef} className="group/video-preview relative size-full overflow-hidden rounded-[var(--node-radius)] bg-black">
-            <CachedResourceImage storageKey={serverPosterUrl || derivedPreviewUrl === previewUrl ? undefined : node.metadata?.videoPreview?.storageKey} src={previewUrl} alt={`${node.title || "视频"} 静态预览`} loading="lazy" decoding="async" draggable={false} className="pointer-events-none size-full select-none object-contain" fallback={<InactiveMediaCard icon={showPlayButton ? null : <Video className="size-7" />} reserveCenterOverlay={showPlayButton} title={node.title || "视频"} hint="首帧暂不可用，点击播放视频" theme={theme} />} loadingFallback={<InactiveMediaCard icon={showPlayButton ? null : <Video className="size-7" />} reserveCenterOverlay={showPlayButton} title={node.title || "视频"} hint="正在读取首帧" theme={theme} />} />
+            <CachedResourceImage
+                key={previewUrl}
+                storageKey={serverPosterUrl || derivedPreviewUrl === previewUrl ? undefined : node.metadata?.videoPreview?.storageKey}
+                src={previewUrl}
+                alt={`${node.title || "视频"} 静态预览`}
+                loading="lazy"
+                decoding="async"
+                draggable={false}
+                className="pointer-events-none size-full select-none object-contain"
+                onLoadError={serverPosterUrl ? () => {
+                    setFailedServerPoster({ sourceKey, url: serverPosterUrl });
+                } : undefined}
+                fallback={<InactiveMediaCard icon={showPlayButton ? null : <Video className="size-7" />} reserveCenterOverlay={showPlayButton} title={node.title || "视频"} hint="首帧暂不可用，点击播放视频" theme={theme} />}
+                loadingFallback={<InactiveMediaCard icon={showPlayButton ? null : <Video className="size-7" />} reserveCenterOverlay={showPlayButton} title={node.title || "视频"} hint="正在读取首帧" theme={theme} />}
+            />
             {showPlayButton ? <VideoPreviewPlayButton title={node.title || "视频"} onPlay={onPlay} /> : null}
         </div>;
     }

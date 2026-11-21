@@ -15,6 +15,8 @@ import { collectImageStorageKeys } from "../src/services/image-storage";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import { detectVideoAudioTrack, detectVideoAudioTrackFromBlob, detectVideoAudioTrackFromUrl } from "../src/lib/video-poster";
 import { normalizeVideoPlayerMimeType, resolveEffectiveVideoHasAudio } from "../src/lib/video-player-policy";
+import { canvasVideoPreviewNeedsHydration } from "../src/services/canvas-video-preview";
+import { setDirectMediaAssetsEnabled } from "../src/services/media-asset-url";
 import { readStyleSheet } from "./helpers/app-styles";
 
 const canvasNodeContentSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node-content.tsx"), "utf8");
@@ -129,7 +131,14 @@ describe("large canvas media rendering", () => {
         expect(inactivePreviewSource).toContain("!node.metadata?.storageKey && !node.metadata?.content");
         expect(inactivePreviewSource).not.toContain("updateMetadata");
         expect(canvasVideoPreviewSource).not.toContain("uploadImage");
-        expect(canvasNodeContentSource).toContain("canvasVideoPreviewNeedsHydration(node)");
+        setDirectMediaAssetsEnabled(true);
+        try {
+            const videoNode = { metadata: { storageKey: "resource:vid-1", content: "/api/resources/vid-1/file" } };
+            expect(canvasVideoPreviewNeedsHydration(videoNode)).toBe(false);
+            expect(canvasVideoPreviewNeedsHydration(videoNode, { ignoreServerPoster: true })).toBe(true);
+        } finally {
+            setDirectMediaAssetsEnabled(null);
+        }
         expect(canvasNodeContentSource).not.toContain("hydrateMediaPreview");
         expect(inactivePreviewSource).not.toContain("<video");
         expect(inactivePreviewSource).toContain("<VideoPreviewPlayButton");
