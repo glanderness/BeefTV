@@ -5,15 +5,13 @@ export type GenerationTaskEffectResult = {
 };
 
 export type GenerationTaskEffectClaim =
-    | { status: "claimed"; fence: number; binding?: string }
-    | { status: "busy"; retryAt?: string }
+    | { status: "claimed"; binding: string }
     | { status: "completed"; result: GenerationTaskEffectResult };
 
 export type GenerationTaskEffectStore = {
     claim(effectKey: string, taskId: string, signal?: AbortSignal): Promise<GenerationTaskEffectClaim>;
-    renew?(effectKey: string, taskId: string, binding?: string): Promise<{ fence: number }>;
-    complete(effectKey: string, taskId: string, result: GenerationTaskEffectResult, binding?: string): Promise<void>;
-    release(effectKey: string, taskId: string, binding?: string): Promise<void>;
+    complete(effectKey: string, taskId: string, result: GenerationTaskEffectResult, binding: string): Promise<void>;
+    release(effectKey: string, taskId: string, binding: string): Promise<void>;
 };
 
 export type MaterializeGenerationTaskOutput = (input: {
@@ -66,7 +64,7 @@ export function createGenerationTaskMaterializer(dependencies: {
     effects: GenerationTaskEffectStore;
     materializeOutput: MaterializeGenerationTaskOutput;
 }) {
-    async function releaseClaim(effectKey: string, taskId: string, binding: string | undefined, original: unknown): Promise<never> {
+    async function releaseClaim(effectKey: string, taskId: string, binding: string, original: unknown): Promise<never> {
         let failure = original;
         try {
             await dependencies.effects.release(effectKey, taskId, binding);
@@ -83,16 +81,12 @@ export function createGenerationTaskMaterializer(dependencies: {
         output?: GenerationTaskOutput,
         signal?: AbortSignal,
         options: { consumerResolveCommits?: boolean } = {},
-    ): Promise<"applied" | "completed" | "busy"> {
+    ): Promise<"applied" | "completed"> {
         throwIfAborted(signal);
         const claim = await dependencies.effects.claim(effectKey, task.id, signal);
         if (claim.status === "completed") {
             throwIfAborted(signal);
             return "completed";
-        }
-        if (claim.status === "busy") {
-            throwIfAborted(signal);
-            return "busy";
         }
         try {
             throwIfAborted(signal);
@@ -128,7 +122,7 @@ export function createGenerationTaskMaterializer(dependencies: {
                     if (claim.status === "completed") {
                         throwIfAborted(signal);
                         output.materializedAssetId = claim.result.materializedAssetId;
-                    } else if (claim.status === "claimed") {
+                    } else {
                         try {
                             throwIfAborted(signal);
                             const result = await dependencies.materializeOutput({
@@ -143,8 +137,6 @@ export function createGenerationTaskMaterializer(dependencies: {
                         } catch (error) {
                             return releaseClaim(effectKey, task.id, claim.binding, error);
                         }
-                    } else {
-                        throwIfAborted(signal);
                     }
                 }
                 outputs.push(output);
@@ -155,11 +147,6 @@ export function createGenerationTaskMaterializer(dependencies: {
                 outputs,
                 resultState: outputs.every((output) => Boolean(output.materializedAssetId)) ? "READY" : "MATERIALIZING",
             };
-        },
-
-        attachNode(task: GenerationTask, nodeId: string, outputIndex: number, consumer: GenerationTaskEffectConsumer, signal?: AbortSignal) {
-            const output = requireMaterializedOutput(task, outputIndex);
-            return consumeEffect(attachNodeEffectKey(task.id, nodeId, outputIndex), task, consumer, output, signal);
         },
 
         attachMessage(task: GenerationTask, messageId: string, outputIndex: number, consumer: GenerationTaskEffectConsumer, signal?: AbortSignal) {

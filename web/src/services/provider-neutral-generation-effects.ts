@@ -11,9 +11,6 @@ type ActiveEffectSlot = {
 };
 
 const MAX_COMPLETED_EFFECTS = 4096;
-const completedEffects = new Map<string, GenerationTaskEffectResult>();
-const activeEffects = new Map<string, ActiveEffectSlot>();
-let nextBindingId = 0;
 
 function abortError(): DOMException {
     return new DOMException("The operation was aborted", "AbortError");
@@ -46,41 +43,30 @@ function scopedEffectKey(scope: string, effectKey: string) {
     return `${scope}\0${effectKey}`;
 }
 
-function rememberCompletedEffect(key: string, result: GenerationTaskEffectResult) {
-    if (!completedEffects.has(key) && completedEffects.size >= MAX_COMPLETED_EFFECTS) {
-        const oldest = completedEffects.keys().next().value;
-        if (oldest !== undefined) completedEffects.delete(oldest);
-    }
-    completedEffects.set(key, { ...result });
-}
-
-export function resetGenerationTaskEffectStoreForTest() {
-    for (const slot of activeEffects.values()) slot.finish();
-    activeEffects.clear();
-    completedEffects.clear();
-}
-
 /**
  * 进程内按用户作用域串行化并去重生成任务副作用。
  * 跨刷新幂等由资产库 `generationEffectKey`、画布/对话文档与后端任务绑定持久化共同保证，
  * 无需在浏览器 IndexedDB 中维护跨标签分布式租约、心跳与轮询。
  */
 export function createProviderNeutralGenerationTaskEffectStore(): GenerationTaskEffectStore {
+    const completedEffects = new Map<string, GenerationTaskEffectResult>();
+    const activeEffects = new Map<string, ActiveEffectSlot>();
     const ownedByBinding = new Map<string, ActiveEffectSlot>();
+    let nextBindingId = 0;
 
-    function takeOwnedSlot(effectKey: string, taskId: string, binding?: string): ActiveEffectSlot | undefined {
-        if (binding) {
-            const owned = ownedByBinding.get(binding);
-            if (owned?.taskId === taskId && owned.effectKey === effectKey) {
-                ownedByBinding.delete(binding);
-                return owned;
-            }
-            return undefined;
+    function rememberCompletedEffect(key: string, result: GenerationTaskEffectResult) {
+        if (!completedEffects.has(key) && completedEffects.size >= MAX_COMPLETED_EFFECTS) {
+            const oldest = completedEffects.keys().next().value;
+            if (oldest !== undefined) completedEffects.delete(oldest);
         }
-        const matches = [...ownedByBinding.values()].filter((slot) => slot.taskId === taskId && slot.effectKey === effectKey);
-        if (matches.length !== 1) return undefined;
-        ownedByBinding.delete(matches[0]!.binding);
-        return matches[0];
+        completedEffects.set(key, { ...result });
+    }
+
+    function takeOwnedSlot(effectKey: string, taskId: string, binding: string): ActiveEffectSlot | undefined {
+        const owned = ownedByBinding.get(binding);
+        if (owned?.taskId !== taskId || owned.effectKey !== effectKey) return undefined;
+        ownedByBinding.delete(binding);
+        return owned;
     }
 
     return {
@@ -110,7 +96,7 @@ export function createProviderNeutralGenerationTaskEffectStore(): GenerationTask
                 };
                 activeEffects.set(key, slot);
                 ownedByBinding.set(slot.binding, slot);
-                return { status: "claimed", fence: 1, binding: slot.binding };
+                return { status: "claimed", binding: slot.binding };
             }
         },
         async complete(effectKey, taskId, result, binding) {

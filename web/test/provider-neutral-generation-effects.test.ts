@@ -1,16 +1,9 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { GenerationTask } from "@/services/api/task-center";
-
-let activeScope = "user-a";
-
-mock.module("@/lib/user-scope", () => ({
-    getActiveUserScope: () => activeScope,
-}));
-
-const { createProviderNeutralGenerationTaskEffectStore, resetGenerationTaskEffectStoreForTest } = await import(
-    "@/services/provider-neutral-generation-effects"
-);
-const { createGenerationTaskMaterializer } = await import("@/services/generation-task-materializer");
+import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
+import { insertOrReturnGenerationAsset, type GenerationAssetRecord } from "@/services/generation-asset-repository";
+import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput } from "@/services/generation-task-materializer";
+import { createProviderNeutralGenerationTaskEffectStore } from "@/services/provider-neutral-generation-effects";
 
 function makeTask(id = "task-1"): GenerationTask {
     return {
@@ -27,9 +20,15 @@ function makeTask(id = "task-1"): GenerationTask {
 }
 
 describe("in-process generation task effect store & materializer", () => {
+    let previousScope = "";
+
     beforeEach(() => {
-        activeScope = "user-a";
-        resetGenerationTaskEffectStoreForTest();
+        previousScope = getActiveUserScope();
+        setActiveUserScope("user-a");
+    });
+
+    afterEach(() => {
+        setActiveUserScope(previousScope);
     });
 
     it("serializes concurrent claims for the same effect key and shares the completed result without polling or Web Locks", async () => {
@@ -92,6 +91,35 @@ describe("in-process generation task effect store & materializer", () => {
         expect(recovered.outputs?.[0]?.materializedAssetId).toBe("asset-recovered");
     });
 
+    it("releases the slot when the owner aborts and lets a queued waiter take over", async () => {
+        const effects = createProviderNeutralGenerationTaskEffectStore();
+        let attempts = 0;
+        const ownerAbort = new AbortController();
+
+        const materializer = createGenerationTaskMaterializer({
+            effects,
+            async materializeOutput({ signal }) {
+                attempts += 1;
+                if (attempts === 1) {
+                    return new Promise((_, reject) => {
+                        signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted", "AbortError")), { once: true });
+                    });
+                }
+                return { materializedAssetId: "asset-after-owner-abort" };
+            },
+        });
+
+        const owner = materializer.materialize(makeTask("task-owner-abort"), ownerAbort.signal);
+        const waiter = materializer.materialize(makeTask("task-owner-abort"));
+        await Promise.resolve();
+        ownerAbort.abort();
+
+        await expect(owner).rejects.toMatchObject({ name: "AbortError" });
+        const recovered = await waiter;
+        expect(attempts).toBe(2);
+        expect(recovered.outputs?.[0]?.materializedAssetId).toBe("asset-after-owner-abort");
+    });
+
     it("aborts a waiting caller cleanly without blocking later callers", async () => {
         const effects = createProviderNeutralGenerationTaskEffectStore();
         let finishFirst!: () => void;
@@ -118,24 +146,70 @@ describe("in-process generation task effect store & materializer", () => {
         expect(completed.outputs?.[0]?.materializedAssetId).toBe("asset-ok");
     });
 
-    it("isolates completed and in-flight effects across user scopes", async () => {
-        const effects = createProviderNeutralGenerationTaskEffectStore();
+    it("isolates completed and in-flight effects across user scopes and across store instances", async () => {
+        const storeA = createProviderNeutralGenerationTaskEffectStore();
+        const storeB = createProviderNeutralGenerationTaskEffectStore();
         const calls: string[] = [];
-        const materializer = createGenerationTaskMaterializer({
-            effects,
-            async materializeOutput({ task }) {
-                calls.push(`${activeScope}:${task.id}`);
-                return { materializedAssetId: `asset-${activeScope}` };
-            },
-        });
+        const makeMaterializer = (effects: ReturnType<typeof createProviderNeutralGenerationTaskEffectStore>) =>
+            createGenerationTaskMaterializer({
+                effects,
+                async materializeOutput({ task }) {
+                    calls.push(`${getActiveUserScope()}:${task.id}`);
+                    return { materializedAssetId: `asset-${getActiveUserScope()}` };
+                },
+            });
 
-        activeScope = "user-a";
-        const resA = await materializer.materialize(makeTask("task-shared-id"));
-        activeScope = "user-b";
-        const resB = await materializer.materialize(makeTask("task-shared-id"));
+        const mA = makeMaterializer(storeA);
+        const mB = makeMaterializer(storeB);
 
-        expect(calls).toEqual(["user-a:task-shared-id", "user-b:task-shared-id"]);
+        setActiveUserScope("user-a");
+        const resA = await mA.materialize(makeTask("task-shared-id"));
+        setActiveUserScope("user-b");
+        const resB = await mA.materialize(makeTask("task-shared-id"));
+        setActiveUserScope("user-a");
+        const resIsolatedStore = await mB.materialize(makeTask("task-shared-id"));
+
+        expect(calls).toEqual(["user-a:task-shared-id", "user-b:task-shared-id", "user-a:task-shared-id"]);
         expect(resA.outputs?.[0]?.materializedAssetId).toBe("asset-user-a");
         expect(resB.outputs?.[0]?.materializedAssetId).toBe("asset-user-b");
+        expect(resIsolatedStore.outputs?.[0]?.materializedAssetId).toBe("asset-user-a");
+    });
+
+    it("keeps cross-reload materialization idempotent via durable asset generationEffectKey when memory store resets", async () => {
+        let durableAssets: GenerationAssetRecord[] = [];
+        let liveAssets: GenerationAssetRecord[] = [];
+        let persistCount = 0;
+
+        const makeReloadedMaterializer = () =>
+            createGenerationTaskMaterializer({
+                effects: createProviderNeutralGenerationTaskEffectStore(),
+                materializeOutput: createIdempotentMaterializeOutput({
+                    insertOrReturnAsset: ({ task, effectKey, signal }) =>
+                        insertOrReturnGenerationAsset({
+                            storageScope: getActiveUserScope(),
+                            effectKey,
+                            assetId: `asset:${task.id}:0`,
+                            signal,
+                            createAsset: () => ({ id: `asset:${task.id}:0`, metadata: { generationEffectKey: effectKey } }),
+                            updateAssets: (updater) => {
+                                liveAssets = updater(liveAssets);
+                            },
+                            readAssets: () => liveAssets,
+                            readPersistedAssets: async () => durableAssets,
+                            persistAssets: async (next) => {
+                                persistCount += 1;
+                                durableAssets = next;
+                            },
+                        }),
+                }),
+            });
+
+        const firstRun = await makeReloadedMaterializer().materialize(makeTask("task-reload"));
+        const secondRunAfterReload = await makeReloadedMaterializer().materialize(makeTask("task-reload"));
+
+        expect(firstRun.outputs?.[0]?.materializedAssetId).toBe("asset:task-reload:0");
+        expect(secondRunAfterReload.outputs?.[0]?.materializedAssetId).toBe("asset:task-reload:0");
+        expect(durableAssets).toHaveLength(1);
+        expect(persistCount).toBe(1);
     });
 });
