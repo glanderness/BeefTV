@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
+import { bumpMediaReferenceEpoch } from "@/lib/media-gc-epoch";
 import { getActiveUserScope } from "@/lib/user-scope";
 import type { CanvasDocumentPatchPayload } from "@/services/api/operations";
 import { recordCanvasDocumentBase, type CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -55,11 +56,6 @@ export class CanvasJournalError extends Error {
 
 const memory = new Map<string, CanvasOperationJournal>();
 const journalLocks = new Map<string, Promise<void>>();
-let journalMutationEpoch = 0;
-
-export function getCanvasOperationJournalMutationEpoch() {
-    return journalMutationEpoch;
-}
 
 type JournalStorageDelay = {
     beforeGet?: () => Promise<void>;
@@ -213,8 +209,8 @@ async function readJournalUnlocked(canvasId: string, scope: string): Promise<Can
 }
 
 async function writeJournalUnlocked(journal: CanvasOperationJournal) {
-    journalMutationEpoch += 1;
     const scope = journal.userScope || getActiveUserScope();
+    bumpMediaReferenceEpoch(scope);
     const validated = parseCanvasOperationJournal(journal, scope, journal.canvasId);
     if (validated.confirmedSnapshot && validated.confirmedSnapshot.revision !== validated.confirmedRevision) {
         validated.confirmedSnapshot = { ...validated.confirmedSnapshot, revision: validated.confirmedRevision };
@@ -351,7 +347,7 @@ export async function abandonCanvasInFlight(canvasId: string, scope = getActiveU
 
 export async function clearCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
     return withJournal(scope, canvasId, async () => {
-        journalMutationEpoch += 1;
+        bumpMediaReferenceEpoch(scope);
         await journalStorageDelay?.beforeSet?.();
         await localForageStorageForScope(scope).removeItem(journalName(canvasId));
         memory.delete(cacheKey(scope, canvasId));

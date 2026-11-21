@@ -59,6 +59,7 @@ export type CanvasFolder = {
 
 export const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
 export const CANVAS_DRAFTS_KEY = "infinite-canvas:canvas_unsaved_drafts";
+export const CANVAS_HISTORY_STORE_KEY = "infinite-canvas:deleted_history_store";
 
 export type PersistedCanvasState = { projects: CanvasProject[] };
 

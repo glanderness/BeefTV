@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import { LocalImageUnavailableError } from "@/lib/local-image-unavailable";
 import { readImageMeta } from "@/lib/image-utils";
 import { IMAGE_FILES_STORE_NAME, localForageInstance } from "@/lib/localforage-storage";
+import { bumpMediaReferenceEpoch } from "@/lib/media-gc-epoch";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { importResourceFromUrl, isResourceUrl, ownedResourceStorageKey, renderableMediaUrl, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, resolveResourceUrl, ResourceUploadError, uploadResourceFile } from "@/services/api/resources";
@@ -67,6 +68,7 @@ export async function uploadImage(input: string | Blob, onProgress?: (uploadedBy
         const meta = await readImageMeta(previewUrl);
         if (usesBrowserLocalResourceStore()) {
             const progress = startOperation(input instanceof File ? input.name : "保存图片", { totalBytes: blob.size, detail: "正在保存图片到本机" });
+            bumpMediaReferenceEpoch();
             try { await store.setItem(storageKey, blob); progress.done("图片已保存到本机"); }
             catch (error) { progress.fail("图片保存未完成，请检查本机存储空间"); throw error; }
             objectUrls.set(storageKey, previewUrl);
@@ -97,6 +99,7 @@ export async function uploadImage(input: string | Blob, onProgress?: (uploadedBy
             remoteUploadError = error instanceof Error ? error.message : "图片直传失败";
         }
         // 本地服务暂时不可用时退回浏览器本地缓存，确保当前创作不中断。
+        bumpMediaReferenceEpoch();
         await store.setItem(storageKey, blob);
         const url = previewUrl;
         objectUrls.set(storageKey, url);
@@ -159,6 +162,7 @@ export async function getImageBlob(storageKey: string) {
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
     if (resourceIdFromStorageKey(storageKey)) return primeResourceBlobCache(storageKey, blob);
+    bumpMediaReferenceEpoch();
     await store.setItem(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
@@ -215,8 +219,10 @@ export async function cleanupUnusedImages(
     await store.iterate((_value, key) => {
         if (currentPrefixes.some((prefix) => key.startsWith(prefix)) && !usedKeys.has(key)) unused.push(key);
     });
-    if (options?.shouldAbort?.()) return;
-    await deleteStoredImages(unused);
+    for (const key of unused) {
+        if (options?.shouldAbort?.()) return;
+        await deleteStoredImages([key]);
+    }
 }
 
 export function collectImageStorageKeys(value: unknown, keys = new Set<string>()) {

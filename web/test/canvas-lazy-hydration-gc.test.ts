@@ -8,6 +8,7 @@ import {
     resetLocalForageDatabaseForTests,
 } from "@/lib/localforage-storage";
 import { getActiveUserScope, scopedStorageKey, setActiveUserScope } from "@/lib/user-scope";
+import { MEDIA_GC_EPOCH_KEY } from "@/lib/media-gc-epoch";
 import { prepareRestoredDeletedCanvas } from "@/components/canvas/recycle-bin-dialog";
 import {
     beginCanvasHydration,
@@ -18,12 +19,17 @@ import {
     resetCanvasOperationJournalMemory,
     updateCanvasOperationJournal,
 } from "@/services/canvas-operation-journal";
-import { CANVAS_DRAFTS_KEY } from "@/stores/canvas/canvas-store-persistence";
-import { CANVAS_HISTORY_STORE_KEY, useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
+import { setMediaBlob } from "@/services/file-storage";
+import { setImageBlob } from "@/services/image-storage";
+import { CANVAS_DRAFTS_KEY, CANVAS_HISTORY_STORE_KEY } from "@/stores/canvas/canvas-store-persistence";
+import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { flushCanvasStorePersistence, useCanvasStore, withCanvasStorePersistenceSuppressed, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 
-function createMemoryForageFactory(hooks?: { onIterate?: (storeName: string) => void | Promise<void> }) {
+function createMemoryForageFactory(hooks?: {
+    onIterate?: (storeName: string) => void | Promise<void>;
+    onRemove?: (storeName: string, key: string) => void | Promise<void>;
+}) {
     const stores = new Map<string, Map<string, unknown>>();
     return (storeName: string) => {
         let map = stores.get(storeName);
@@ -41,6 +47,7 @@ function createMemoryForageFactory(hooks?: { onIterate?: (storeName: string) => 
             },
             removeItem: async (key: string) => {
                 map!.delete(key);
+                await hooks?.onRemove?.(storeName, key);
             },
             keys: async () => [...map!.keys()],
             clear: async () => {
@@ -403,6 +410,94 @@ describe("lazy hydration GC reference completeness", () => {
             // Sweep must detect the concurrent mutation and abort before deleting imgKey.
             expect(mutatedOnce).toBe(true);
             expect(await imageStore.getItem(imgKey)).not.toBeNull();
+        }
+    });
+
+    it("aborts remaining per-key deletions inside the delete loop when asset/image/media writes or another tab mutate mid-delete", async () => {
+        const localStorageMap = new Map<string, string>();
+        Object.defineProperty(globalThis, "window", {
+            configurable: true,
+            value: {
+                setTimeout: globalThis.setTimeout.bind(globalThis),
+                clearTimeout: globalThis.clearTimeout.bind(globalThis),
+                location: { protocol: "http:", host: "127.0.0.1:8080", pathname: "/", hash: "" },
+                localStorage: {
+                    getItem: (key: string) => localStorageMap.get(key) ?? null,
+                    setItem: (key: string, value: string) => localStorageMap.set(key, value),
+                    removeItem: (key: string) => localStorageMap.delete(key),
+                },
+            },
+        });
+
+        const deleteLoopScenarios: Array<{ name: string; mutateAfterFirstDelete: (secondKey: string) => void | Promise<void> }> = [
+            {
+                name: "useAssetStore.addAsset mid-delete",
+                mutateAfterFirstDelete: (secondKey) => {
+                    useAssetStore.getState().addAsset({
+                        kind: "image",
+                        title: "并发新增素材",
+                        coverUrl: "",
+                        tags: [],
+                        category: "other",
+                        status: "confirmed",
+                        source: "手动添加",
+                        data: { dataUrl: "", storageKey: secondKey, width: 100, height: 100, bytes: 4, mimeType: "image/png" },
+                    });
+                },
+            },
+            {
+                name: "direct setImageBlob write mid-delete",
+                mutateAfterFirstDelete: async () => {
+                    await setImageBlob(`image:${scope}:direct-upload`, new Blob(["upload"]));
+                },
+            },
+            {
+                name: "direct setMediaBlob write mid-delete",
+                mutateAfterFirstDelete: async () => {
+                    await setMediaBlob(`audio:${scope}:direct-audio`, new Blob(["audio"]));
+                },
+            },
+            {
+                name: "cross-tab localStorage epoch bump mid-delete",
+                mutateAfterFirstDelete: () => {
+                    localStorageMap.set(scopedStorageKey(MEDIA_GC_EPOCH_KEY, scope), "other-tab-write-999");
+                },
+            },
+        ];
+
+        for (const [index, scenario] of deleteLoopScenarios.entries()) {
+            const firstKey = `image:${scope}:delete-loop-${index}-a`;
+            const secondKey = `image:${scope}:delete-loop-${index}-b`;
+            let triggered = false;
+            installLocalForageStoreFactoryForTests(
+                createMemoryForageFactory({
+                    onRemove: async (storeName, key) => {
+                        if (storeName === IMAGE_FILES_STORE_NAME && key === firstKey && !triggered) {
+                            triggered = true;
+                            await scenario.mutateAfterFirstDelete(secondKey);
+                        }
+                    },
+                }),
+            );
+            withCanvasStorePersistenceSuppressed(() => {
+                useCanvasStore.setState({ projects: [] });
+            });
+            useCanvasHistoryStore.setState({ deletedProjects: [] });
+            useAssetStore.setState({ assets: [] });
+            resetCanvasOperationJournalMemory();
+
+            const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
+            await imageStore.setItem(firstKey, new Blob(["first"]));
+            await imageStore.setItem(secondKey, new Blob([scenario.name]));
+
+            const attempt = beginCanvasHydration();
+            finishCanvasHydration(attempt, "");
+            await useAssetStore.getState().cleanupImages();
+
+            // After firstKey's removal triggers a mutation, per-key shouldAbort stops before deleting secondKey.
+            expect(triggered).toBe(true);
+            expect(await imageStore.getItem(firstKey)).toBeNull();
+            expect(await imageStore.getItem(secondKey)).not.toBeNull();
         }
     });
 });

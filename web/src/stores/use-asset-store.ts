@@ -6,6 +6,7 @@ import { parseAssetRecord } from "@/lib/asset-record";
 import { rebaseAssetSnapshot, serializeAssetStorageDocument, type AssetStorageDocument } from "@/lib/asset-storage-revision";
 import { parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
+import { bumpMediaReferenceEpoch, readMediaReferenceEpoch } from "@/lib/media-gc-epoch";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { parseWorkspaceAssetPayloads } from "@/lib/workspace-asset-normalize";
 import { lookupWorkspaceAssetsByIds } from "@/services/api/workspace-assets";
@@ -15,7 +16,7 @@ import { cleanupUnusedMedia, collectMediaStorageKeys } from "@/services/file-sto
 import { insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
 import { cleanupUnusedImages, collectImageStorageKeys } from "@/services/image-storage";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
-import { CANVAS_DRAFTS_KEY } from "@/stores/canvas/canvas-store-persistence";
+import { CANVAS_DRAFTS_KEY, CANVAS_HISTORY_STORE_KEY } from "@/stores/canvas/canvas-store-persistence";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import {
     CANVAS_STORE_KEY,
@@ -322,17 +323,12 @@ export const useAssetStore = create<AssetStore>()(
                             const hydration = getCanvasHydrationHealth();
                             if (hydration.loading || Boolean(hydration.error)) return;
                             const journalModule = await import("@/services/canvas-operation-journal");
-                            const readJournalEpoch = () =>
-                                typeof journalModule.getCanvasOperationJournalMutationEpoch === "function"
-                                    ? journalModule.getCanvasOperationJournalMutationEpoch()
-                                    : 0;
-                            const snapshotReferenceEpoch = () => `${canvasReferenceMutationEpoch}:${readJournalEpoch()}`;
-                            const startEpoch = snapshotReferenceEpoch();
+                            const startEpoch = readMediaReferenceEpoch(scope);
                             const shouldAbortSweep = () => {
                                 const currentHealth = getCanvasHydrationHealth();
                                 return currentHealth.loading
                                     || Boolean(currentHealth.error)
-                                    || snapshotReferenceEpoch() !== startEpoch;
+                                    || readMediaReferenceEpoch(scope) !== startEpoch;
                             };
                             const storage = localForageStorageForScope(scope);
                             const syncDrafts = await readAllCanvasSyncDrafts(scope);
@@ -435,16 +431,17 @@ bindAssetDraftStoreHooks({
     readLegacyDeletedGenerationIds: readLegacyDeletedGenerationIdsForScope,
 });
 
-const CANVAS_HISTORY_STORE_KEY = "infinite-canvas:deleted_history_store";
-let canvasReferenceMutationEpoch = 0;
-const bumpCanvasReferenceMutationEpoch = () => {
-    canvasReferenceMutationEpoch += 1;
+const onReferenceStoreMutated = () => {
+    bumpMediaReferenceEpoch();
 };
 if (typeof useCanvasStore.subscribe === "function") {
-    useCanvasStore.subscribe(bumpCanvasReferenceMutationEpoch);
+    useCanvasStore.subscribe(onReferenceStoreMutated);
 }
 if (typeof useCanvasHistoryStore.subscribe === "function") {
-    useCanvasHistoryStore.subscribe(bumpCanvasReferenceMutationEpoch);
+    useCanvasHistoryStore.subscribe(onReferenceStoreMutated);
+}
+if (typeof useAssetStore.subscribe === "function") {
+    useAssetStore.subscribe(onReferenceStoreMutated);
 }
 
 function parseDeletedHistoryProjects(raw: string | null): CanvasProject[] {
