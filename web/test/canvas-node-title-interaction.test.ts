@@ -5,7 +5,6 @@ import { describe, expect, test } from "bun:test";
 import { readStyleSheet } from "./helpers/app-styles";
 
 const canvasStylesSource = readStyleSheet("../src/styles/globals.css");
-const nodeSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node.tsx"), "utf8");
 const liveViewportSource = readFileSync(resolve(import.meta.dir, "../src/lib/canvas/canvas-live-viewport.ts"), "utf8");
 
 describe("canvas node title interaction", () => {
@@ -13,14 +12,6 @@ describe("canvas node title interaction", () => {
         expect(canvasStylesSource).toMatch(/\[data-canvas-node-dragging="true"\] \.node-element iframe\s*\{\s*pointer-events: none;/);
         expect(liveViewportSource).toContain('if (preview) container.dataset.canvasNodeDragging = "true"');
         expect(liveViewportSource).toContain('else delete container.dataset.canvasNodeDragging');
-    });
-    test("exposes a drag handle without bypassing read-only or locked nodes", () => {
-        expect(nodeSource).toContain('onDragStart={readOnly ? undefined : (event) => onMouseDown(event, data.id)}');
-        expect(nodeSource).toContain('disabled={!onDragStart || Boolean(node.metadata?.locked)}');
-        expect(nodeSource).toContain('onDragStart?.(event)');
-        expect(nodeSource).toContain('event.currentTarget.setPointerCapture(event.pointerId)');
-        expect(nodeSource).toContain('拖动此处移动节点；点击名称可重命名');
-        expect(nodeSource).toContain('onClick={onEdit}');
     });
     test("keeps the toolbar hover bridge from intercepting the external title", () => {
         const hoverBridge = canvasStylesSource.match(/\.canvas-node-toolbar::after\s*\{([\s\S]*?)\}/)?.[1] || "";

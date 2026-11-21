@@ -8,6 +8,7 @@ import { canvasDocumentBase, useCanvasStore } from "@/stores/canvas/use-canvas-s
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData } from "@/types/canvas";
 import { persistCanvasNodeFailure } from "@/lib/canvas/canvas-node-failure-state";
 import { useCanvasNodeContent } from "./use-canvas-node-content";
+import { subscribeWorkspaceResume } from "@/lib/workspace-resume";
 
 function captureFailures(next: CanvasNodeData[], previous?: CanvasNodeData[]) {
     if (next === previous) return next;
@@ -118,7 +119,7 @@ export function useCanvasDocumentState(projectId: string) {
             }, intervalMs);
         };
 
-        const handleVisibilityOrFocus = () => {
+        const handleVisibilityChange = () => {
             if (typeof document !== "undefined" && document.hidden) {
                 if (pollTimer !== null) {
                     window.clearTimeout(pollTimer);
@@ -126,9 +127,14 @@ export function useCanvasDocumentState(projectId: string) {
                 }
                 return;
             }
+            if (pollTimer === null) {
+                scheduleFallbackPoll();
+            }
+        };
+        const unsubscribeResume = subscribeWorkspaceResume(() => {
             sync();
             scheduleFallbackPoll();
-        };
+        });
 
         const unsubscribeStream = subscribeCanvasEventsStream(
             projectId,
@@ -155,18 +161,17 @@ export function useCanvasDocumentState(projectId: string) {
 
         scheduleFallbackPoll();
         if (typeof document !== "undefined") {
-            document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+            document.addEventListener("visibilitychange", handleVisibilityChange);
         }
-        window.addEventListener("focus", handleVisibilityOrFocus);
 
         return () => {
             disposed = true;
             if (debounceTimer !== null) window.clearTimeout(debounceTimer);
             if (pollTimer !== null) window.clearTimeout(pollTimer);
             if (typeof document !== "undefined") {
-                document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+                document.removeEventListener("visibilitychange", handleVisibilityChange);
             }
-            window.removeEventListener("focus", handleVisibilityOrFocus);
+            unsubscribeResume();
             unsubscribeStream();
         };
     }, [projectId]);

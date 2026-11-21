@@ -10,6 +10,7 @@ import { CanvasVideoCropEditor } from "@/components/canvas/canvas-video-crop-dia
 import { CanvasImageCropEditor } from "@/components/canvas/canvas-node-crop-dialog";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { compileAppGlobalsStyles } from "./helpers/app-styles";
 
 let browser: Browser;
 let page: Page;
@@ -91,6 +92,36 @@ for (const scale of [0.5, 0.35, 0.349, 0.25, 0.1, 0.05]) {
         }
     });
 }
+
+test("long image titles stay on one line without expanding width on selection or hover", async () => {
+    const noop = () => {};
+    const node: CanvasNodeData = {
+        id: "long-image", type: CanvasNodeType.Image,
+        title: "一名西式中世纪女骑士，肩部以上正面肖像，深棕色头发束成低辫，身穿旧钢胸甲，肩上披暗红色羊毛披风",
+        position: { x: 0, y: 0 }, width: 480, height: 270,
+    };
+    const css = await compileAppGlobalsStyles();
+    for (const scale of [1, 0.5]) {
+        const restingMarkup = renderToStaticMarkup(<CanvasNode data={node} scale={scale} isSelected={false} isRelated={false} isFocusRelated={false} isConnectionTarget={false} showImageInfo={false} onMouseDown={noop} onHoverStart={noop} onHoverEnd={noop} onConnectStart={noop} onResize={noop} onTitleChange={noop} onContentChange={noop} onContextMenu={noop} />);
+        await page.setContent(`<style>${css}</style><div style="position: absolute; top: 100px; left: 50px; transform: scale(${scale}); transform-origin: 0 0">${restingMarkup}</div>`);
+        const header = page.locator(".canvas-node-external-header");
+        const restingWidth = (await header.boundingBox())!.width;
+        const title = page.getByText(node.title, { exact: true });
+        await title.hover();
+        const hoveredWidth = (await header.boundingBox())!.width;
+        expect(Math.abs(hoveredWidth - restingWidth)).toBeLessThan(1);
+
+        const selectedMarkup = renderToStaticMarkup(<CanvasNode data={node} scale={scale} isSelected={true} isRelated={false} isFocusRelated={false} isConnectionTarget={false} showImageInfo={false} onMouseDown={noop} onHoverStart={noop} onHoverEnd={noop} onConnectStart={noop} onResize={noop} onTitleChange={noop} onContentChange={noop} onContextMenu={noop} />);
+        await page.setContent(`<style>${css}</style><div style="position: absolute; top: 100px; left: 50px; transform: scale(${scale}); transform-origin: 0 0">${selectedMarkup}</div>`);
+        const selectedWidth = (await page.locator(".canvas-node-external-header").boundingBox())!.width;
+        expect(Math.abs(selectedWidth - restingWidth)).toBeLessThan(1);
+        const textLayout = await page.getByText(node.title, { exact: true }).evaluate((element) => ({
+            wrapping: getComputedStyle(element).whiteSpace,
+            isClipped: element.scrollWidth > element.clientWidth,
+        }));
+        expect(textLayout).toEqual({ wrapping: "nowrap", isClipped: true });
+    }
+}, 30_000);
 
 test("video crop controls stay legible and clickable at 20% zoom", async () => {
     const markup = renderToStaticMarkup(<CanvasVideoCropEditor videoUrl="data:video/mp4;base64,AAAA" videoDimensions={{ width: 1920, height: 1080 }} onCancel={() => {}} onConfirm={() => {}} />);

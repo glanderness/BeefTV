@@ -1,6 +1,7 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CanvasNode } from '@/components/canvas/canvas-node';
+import { applyCanvasLiveViewport } from '@/lib/canvas/canvas-live-viewport';
 import { useCanvasSelectionController } from '@/pages/canvas/use-canvas-selection-controller';
 import { CanvasNodeType, type CanvasNodeData } from '@/types/canvas';
 import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
@@ -31,16 +32,35 @@ export function mountNodeDragHarness(host: HTMLElement, options: { locked?: bool
     return () => root.unmount();
 }
 
-export function mountNodeTitleHarness(host: HTMLElement) {
+export function mountNodeTitleHarness(
+    host: HTMLElement,
+    options: { image?: boolean; maskEditActive?: boolean; x?: number; scale?: number; selected?: boolean; readOnly?: boolean; locked?: boolean; error?: boolean } = {},
+) {
     function Harness() {
-        const [node, setNode] = useState<CanvasNodeData>({ id: 'title-test', type: CanvasNodeType.Text, title: '原名称', position: { x: 100, y: 100 }, width: 320, height: 240 });
+        const scale = options.scale ?? 1;
+        const metadata = options.error
+            ? { status: 'error' as const, error: '生成超时', content: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', locked: options.locked }
+            : options.locked ? { locked: true } : undefined;
+        const [node, setNode] = useState<CanvasNodeData>({ id: 'title-test', type: options.image ? CanvasNodeType.Image : CanvasNodeType.Text, title: '原名称', position: { x: options.x ?? 100, y: 100 }, width: 320, height: 240, metadata });
         const [commits, setCommits] = useState(0);
-        return <>
+        const [previews, setPreviews] = useState(0);
+        const [drags, setDrags] = useState(0);
+        const viewportRef = useRef<HTMLDivElement>(null);
+        useEffect(() => {
+            applyCanvasLiveViewport(viewportRef.current, { x: 0, y: 0, k: scale }, false);
+        }, [scale]);
+        return <div ref={viewportRef} data-canvas-viewport style={{ position: 'absolute', inset: 0, overflow: 'hidden', '--canvas-committed-scale': String(scale) } as React.CSSProperties}>
             <div data-testid="canvas-background" onMouseDown={(event) => event.preventDefault()} style={{ position: 'absolute', inset: 0 }} />
             <output data-testid="saved-title">{node.title}</output>
             <output data-testid="commits">{commits}</output>
-            <CanvasNode data={node} scale={1} showImageInfo={false} isSelected={false} isRelated={false} isFocusRelated={false} isConnectionTarget={false} onMouseDown={noop} onHoverStart={noop} onHoverEnd={noop} onConnectStart={noop} onResize={noop} onTitleChange={(_id, title) => { setNode((current) => ({ ...current, title })); setCommits((count) => count + 1); }} onContentChange={noop} onContextMenu={noop} />
-        </>;
+            <output data-testid="previews">{previews}</output>
+            <output data-testid="drags">{drags}</output>
+            <div data-canvas-world-layer style={{ position: 'absolute', top: 0, left: 0, transformOrigin: '0 0' }}>
+                <div style={{ position: 'absolute', top: 0, left: 0, transform: `scale(${scale})`, transformOrigin: '0 0' }}>
+                    <CanvasNode data={node} scale={scale} readOnly={options.readOnly} maskEditActive={options.maskEditActive} showImageInfo={false} isSelected={Boolean(options.selected)} isRelated={false} isFocusRelated={false} isConnectionTarget={false} onMouseDown={() => setDrags((count) => count + 1)} onHoverStart={noop} onHoverEnd={noop} onConnectStart={noop} onResize={noop} onTitleChange={(_id, title) => { setNode((current) => ({ ...current, title })); setCommits((count) => count + 1); }} onViewImage={() => setPreviews((count) => count + 1)} onContentChange={noop} onContextMenu={noop} />
+                </div>
+            </div>
+        </div>;
     }
     const root = createRoot(host);
     root.render(<Harness />);
