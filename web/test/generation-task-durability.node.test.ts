@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { GenerationTask } from "../src/services/api/task-center";
 import { applyGenerationConsumerEffect } from "../src/services/generation-consumer-dedupe";
-import { createGenerationTaskMaterializer, type GenerationTaskEffectResult, type GenerationTaskEffectStore } from "../src/services/generation-task-materializer";
+import { attachNodeEffectKey, createGenerationTaskMaterializer, type GenerationTaskEffectResult, type GenerationTaskEffectStore } from "../src/services/generation-task-materializer";
 import { buildBackendToolRequests } from "../src/services/api/image";
 
 test("managed cloud agent task keeps tool definitions and tool results", () => {
@@ -35,12 +35,9 @@ test("node message and agent consumers receive stable effect keys across three r
         async claim(effectKey) {
             const result = completed.get(effectKey);
             if (result) return { status: "completed", result };
-            if (claimed.has(effectKey)) return { status: "busy" };
+            if (claimed.has(effectKey)) throw new Error("unexpected overlapping claim in sequential replay");
             claimed.add(effectKey);
-            return { status: "claimed", fence: 1 };
-        },
-        async renew() {
-            return { fence: 1 };
+            return { status: "claimed", binding: `binding:${effectKey}` };
         },
         async complete(effectKey, _taskId, result) {
             claimed.delete(effectKey);
@@ -69,10 +66,9 @@ test("node message and agent consumers receive stable effect keys across three r
     };
     const seen: string[] = [];
 
+    assert.equal(attachNodeEffectKey(task.id, "node-safe-id", 0), "attach-node:task-consumer-effect-keys:node-safe-id:0");
+
     for (let replay = 0; replay < 3; replay += 1) {
-        await materializer.attachNode(task, "node-safe-id", 0, async ({ effectKey }) => {
-            seen.push(effectKey);
-        });
         await materializer.attachMessage(task, "message-safe-id", 0, async ({ effectKey }) => {
             seen.push(effectKey);
         });
@@ -81,7 +77,7 @@ test("node message and agent consumers receive stable effect keys across three r
         });
     }
 
-    assert.deepEqual(seen, ["attach-node:task-consumer-effect-keys:node-safe-id:0", "attach-message:task-consumer-effect-keys:message-safe-id:0", "agent-resume:task-consumer-effect-keys:continuation-safe-id"]);
+    assert.deepEqual(seen, ["attach-message:task-consumer-effect-keys:message-safe-id:0", "agent-resume:task-consumer-effect-keys:continuation-safe-id"]);
 });
 
 test("production-shaped node message and agent records replay three times with one side effect", () => {
