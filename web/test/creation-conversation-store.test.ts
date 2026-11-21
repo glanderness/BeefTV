@@ -670,7 +670,7 @@ test("load surfaces unsaved new conversation after initial PUT failure and drops
     expect(hasPendingCreationConversationWrites()).toBe(false);
 });
 
-test("lost ack on initial PUT followed by same-id edit and adopt preserves both local edit and server result", async () => {
+test("lost ack on initial PUT followed by same-id edit and 409 rebase preserves both local edit and server result", async () => {
     // Simulate first PUT committed on server at rev 1, but client never saw the ack (transient error after server write).
     const initial = {
         id: "lost-ack-1",
@@ -716,6 +716,111 @@ test("lost ack on initial PUT followed by same-id edit and adopt preserves both 
     // Retry PUT (expectedRevision 0 -> 409) rebases using sentDocument as true 3-way ancestor!
     await saveCreationConversations([userEdited]);
     const final = server.conversations.get("lost-ack-1");
+    expect(final?.revision).toBe(3);
+    expect(final?.document?.title).toBe("用户二次改名");
+    expect(final?.document?.messages.find((item) => item.id === "u1")?.content).toBe("用户补充后的提示词");
+    expect(final?.document?.messages.find((item) => item.id === "a1")?.content).toBe("生成完成");
+});
+
+test("lost ack on initial PUT followed by direct adopt preserves both local edit and server result via sentDocument", async () => {
+    const initial = {
+        id: "lost-ack-adopt",
+        title: "初版标题",
+        messages: [
+            { id: "u1", role: "user" as const, content: "初版提示词" },
+            { id: "a1", role: "assistant" as const, status: "pending", content: "", taskIds: ["task-adopt"] },
+        ],
+    };
+    server.failNext = { status: 500, message: "响应丢失" };
+    await expect(saveCreationConversations([initial])).rejects.toThrow("响应丢失");
+
+    const userEdited = {
+        id: "lost-ack-adopt",
+        title: "用户二次改名",
+        messages: [
+            { id: "u1", role: "user" as const, content: "用户补充后的提示词" },
+            { id: "a1", role: "assistant" as const, status: "pending", content: "", taskIds: ["task-adopt"] },
+        ],
+    };
+    server.failNext = { status: 500, message: "暂时离线" };
+    await expect(saveCreationConversations([userEdited])).rejects.toThrow("暂时离线");
+
+    // No prior loadCreationConversations: committed is empty, so adopt must use pending.sentDocument.
+    const serverAttached = {
+        id: "lost-ack-adopt",
+        title: "初版标题",
+        messages: [
+            { id: "u1", role: "user" as const, content: "初版提示词" },
+            { id: "a1", role: "assistant" as const, status: "done", content: "生成完成", taskIds: ["task-adopt"], resultUrls: ["/api/resources/r2/file"] },
+        ],
+    };
+    server.conversations.set("lost-ack-adopt", {
+        id: "lost-ack-adopt",
+        revision: 2,
+        updatedAt: "2026-10-02T00:02:00.000Z",
+        document: serverAttached,
+    });
+
+    const adopted = await adoptServerConfirmedConversationDocument("lost-ack-adopt", serverAttached, 2);
+    expect(adopted.title).toBe("用户二次改名");
+    expect(adopted.messages.find((item) => item.id === "u1")?.content).toBe("用户补充后的提示词");
+    expect(adopted.messages.find((item) => item.id === "a1")?.content).toBe("生成完成");
+
+    await saveCreationConversations([adopted]);
+    const final = server.conversations.get("lost-ack-adopt");
+    expect(final?.revision).toBe(3);
+    expect(final?.document?.title).toBe("用户二次改名");
+    expect(final?.document?.messages.find((item) => item.id === "u1")?.content).toBe("用户补充后的提示词");
+    expect(final?.document?.messages.find((item) => item.id === "a1")?.content).toBe("生成完成");
+});
+
+test("lost ack on initial PUT followed by loadCreationConversations preserves both local edit and server result via sentDocument", async () => {
+    const initial = {
+        id: "lost-ack-load",
+        title: "初版标题",
+        messages: [
+            { id: "u1", role: "user" as const, content: "初版提示词" },
+            { id: "a1", role: "assistant" as const, status: "pending", content: "", taskIds: ["task-load"] },
+        ],
+    };
+    server.failNext = { status: 500, message: "响应丢失" };
+    await expect(saveCreationConversations([initial])).rejects.toThrow("响应丢失");
+
+    const userEdited = {
+        id: "lost-ack-load",
+        title: "用户二次改名",
+        messages: [
+            { id: "u1", role: "user" as const, content: "用户补充后的提示词" },
+            { id: "a1", role: "assistant" as const, status: "pending", content: "", taskIds: ["task-load"] },
+        ],
+    };
+    server.failNext = { status: 500, message: "暂时离线" };
+    await expect(saveCreationConversations([userEdited])).rejects.toThrow("暂时离线");
+
+    const serverAttached = {
+        id: "lost-ack-load",
+        title: "初版标题",
+        messages: [
+            { id: "u1", role: "user" as const, content: "初版提示词" },
+            { id: "a1", role: "assistant" as const, status: "done", content: "生成完成", taskIds: ["task-load"], resultUrls: ["/api/resources/r3/file"] },
+        ],
+    };
+    server.conversations.set("lost-ack-load", {
+        id: "lost-ack-load",
+        revision: 2,
+        updatedAt: "2026-10-02T00:03:00.000Z",
+        document: serverAttached,
+    });
+
+    // No prior committed entry: loadCreationConversations must use pending.sentDocument as 3-way ancestor.
+    const loaded = await loadCreationConversations();
+    const record = loaded?.find((item) => item.id === "lost-ack-load");
+    expect(record?.title).toBe("用户二次改名");
+    expect(record?.messages.find((item) => item.id === "u1")?.content).toBe("用户补充后的提示词");
+    expect(record?.messages.find((item) => item.id === "a1")?.content).toBe("生成完成");
+
+    await saveCreationConversations(loaded!);
+    const final = server.conversations.get("lost-ack-load");
     expect(final?.revision).toBe(3);
     expect(final?.document?.title).toBe("用户二次改名");
     expect(final?.document?.messages.find((item) => item.id === "u1")?.content).toBe("用户补充后的提示词");
