@@ -497,7 +497,7 @@ func TestBeefTVSeedancePreuploadResolvesLocalResource(t *testing.T) {
 	if input.ReferenceImages[0].DataURL != "" {
 		t.Fatalf("keepLocal inlined before upload: %#v", input.ReferenceImages[0])
 	}
-	if err := svc.prepareBeefTVSeedanceReferences(harness.ctx(), "user-1", &input); err != nil {
+	if err := generation.PrepareBeefTVSeedanceReferencesForUser(harness.ctx(), "user-1", &input, svc.OpenResource); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(input.ReferenceImages[0].URL, harness.server.URL+"/named/") || input.ReferenceImages[0].DataURL != "" || input.ReferenceImages[0].StorageKey != "" {
@@ -521,22 +521,6 @@ func TestBeefTVSeedanceDirectTaskKeepsInlineWithoutResourceReader(t *testing.T) 
 	}
 	if harness.generates != 1 {
 		t.Fatalf("direct task skipped existing inline generate: generates=%d err=%v", harness.generates, err)
-	}
-}
-
-func TestBeefTVSeedancePutTimeoutHonorsTicketAndContext(t *testing.T) {
-	if got := beefTVSeedancePutTimeout(context.Background()); got != beefTVSeedanceUploadTimeout || got == providerHTTPTimeout {
-		t.Fatalf("timeout = %s, want 15m dedicated upload window", got)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	if got := beefTVSeedancePutTimeout(ctx); got > 90*time.Second || got <= 0 {
-		t.Fatalf("shorter context remaining not honored: %s", got)
-	}
-	long, stop := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer stop()
-	if got := beefTVSeedancePutTimeout(long); got != beefTVSeedanceUploadTimeout {
-		t.Fatalf("long task deadline = %s, want ticket window not generic 5m", got)
 	}
 }
 
@@ -593,7 +577,7 @@ func TestBeefTVSeedancePreuploadOpenResourceLargeLocalVideo(t *testing.T) {
 	if input.ReferenceVideos[0].DataURL != "" || input.ReferenceVideos[0].URL != "" || input.ReferenceVideos[0].StorageKey != "resource:beeftv-preupload-large-video" {
 		t.Fatalf("keepLocal lost owned video: %#v", input.ReferenceVideos[0])
 	}
-	if err := svc.prepareBeefTVSeedanceReferences(harness.ctx(), "user-1", &input); err != nil {
+	if err := generation.PrepareBeefTVSeedanceReferencesForUser(harness.ctx(), "user-1", &input, svc.OpenResource); err != nil {
 		t.Fatal(err)
 	}
 	if input.ReferenceVideos[0].Width != 1280 || input.ReferenceVideos[0].Height != 720 || input.ReferenceVideos[0].DurationMs != 3200 {
@@ -646,7 +630,7 @@ func TestBeefTVSeedancePreuploadRejectsLocalImageWithMissingStoredGeometry(t *te
 	if input.ReferenceImages[0].Width != 100 || input.ReferenceImages[0].Height != 100 {
 		t.Fatal("header geometry was lost")
 	}
-	err := svc.prepareBeefTVSeedanceReferences(harness.ctx(), "user-1", &input)
+	err := generation.PrepareBeefTVSeedanceReferencesForUser(harness.ctx(), "user-1", &input, svc.OpenResource)
 	if err == nil || harness.creates != 0 || harness.generates != 0 {
 		t.Fatalf("invalid image reached network: err=%v create=%d generate=%d", err, harness.creates, harness.generates)
 	}

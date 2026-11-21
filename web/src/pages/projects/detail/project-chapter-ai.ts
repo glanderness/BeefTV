@@ -7,7 +7,7 @@ import { backendProviderConfig, parseBackendGenerationResult } from "@/services/
 import { createGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
-import { logicalModelIDForConfig, type AiConfig } from "@/stores/use-config-store";
+import type { AiConfig } from "@/stores/use-config-store";
 
 import type { ChapterStoryboardAsset, ChapterStoryboardCharacter } from "./chapter-storyboard-production";
 
@@ -132,7 +132,6 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
         operation: "storyboard",
         prompt,
         model,
-        ...(logicalModelIDForConfig(config) ? { logicalModelId: logicalModelIDForConfig(config) } : {}),
         input: {
             // 后端只在 video_ 前缀的任务上兜底 mode，文本任务必须显式带上。
             mode: "text",

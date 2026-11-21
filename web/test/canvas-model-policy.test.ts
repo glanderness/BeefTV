@@ -54,48 +54,6 @@ function node(id: string, type: CanvasNodeType, generationMode?: "image" | "vide
 }
 
 describe("逻辑模型选择", () => {
-    test("图片逻辑模型忽略全局视频时长，不应显示为不支持当前时长", () => {
-        const model = "platform::gpt-image-2";
-        const channel: ModelChannel = {
-            id: "platform",
-            name: "平台模型",
-            baseUrl: "/api",
-            apiKey: "system",
-            apiFormat: "openai",
-            scope: "system",
-            enabled: true,
-            models: ["gpt-image-2"],
-            modelProfiles: [{
-                model: "gpt-image-2",
-                displayName: "GPT Image 2",
-                capability: "image",
-                billingMode: "fixed_request",
-                unitPriceMicrocredits: 1,
-                logicalCapabilitySpec: {
-                    version: 1,
-                    capability: "image",
-                    options: { size: { values: ["1:1", "3:2"] } },
-                },
-            }],
-        };
-        const config: AiConfig = {
-            ...defaultConfig,
-            channels: [channel],
-            models: [model],
-            imageModels: [model],
-            imageModel: model,
-            model,
-        };
-
-        expect(modelCompatibilityError(config, model, {
-            capability: "image",
-            input: { textCount: 1, imageCount: 0, videoCount: 0, audioCount: 0, characterCount: 0 },
-            videoSeconds: "6",
-            imageSize: "3:2",
-            options: { size: "3:2" },
-        })).toBe("");
-    });
-
     test("后台图片默认比例优先于旧的全局 1:1 配置", () => {
         const model = "platform::managed-image";
         const profile = defaultModelCapabilityConfig(undefined, "managed-image");
@@ -103,7 +61,7 @@ describe("逻辑模型选择", () => {
         const config: AiConfig = {
             ...defaultConfig,
             size: "1:1",
-            channels: [{ id: "platform", name: "平台模型", baseUrl: "/api", apiKey: "system", apiFormat: "openai", scope: "system", models: ["managed-image"], modelProfiles: [{ model: "managed-image", capability: "image", billingMode: "fixed_request", unitPriceMicrocredits: 1, logicalModelId: "managed-image", logicalCapabilitySpec: { version: 1, capability: "image" }, capabilityConfig: profile }] }],
+            channels: [{ id: "platform", name: "平台模型", baseUrl: "/api", apiKey: "system", apiFormat: "openai", scope: "system", models: ["managed-image"], modelProfiles: [{ model: "managed-image", capability: "image", billingMode: "fixed_request", unitPriceMicrocredits: 1, capabilityConfig: profile }] }],
             models: [model],
             imageModels: [model],
             imageModel: model,
@@ -120,7 +78,7 @@ describe("逻辑模型选择", () => {
         const config: AiConfig = {
             ...defaultConfig,
             videoSeconds: "6",
-            channels: [{ id: "platform", name: "平台模型", baseUrl: "/api", apiKey: "system", apiFormat: "openai", scope: "system", models: ["managed-video"], modelProfiles: [{ model: "managed-video", capability: "video", billingMode: "per_second", unitPriceMicrocredits: 1, logicalModelId: "managed-video", logicalCapabilitySpec: { version: 1, capability: "video" }, capabilityConfig: profile }] }],
+            channels: [{ id: "platform", name: "平台模型", baseUrl: "/api", apiKey: "system", apiFormat: "openai", scope: "system", models: ["managed-video"], modelProfiles: [{ model: "managed-video", capability: "video", billingMode: "per_second", unitPriceMicrocredits: 1, capabilityConfig: profile }] }],
             models: [model],
             videoModels: [model],
             videoModel: model,
@@ -152,15 +110,6 @@ describe("逻辑模型选择", () => {
                     capability: "video",
                     billingMode: "per_second",
                     unitPriceMicrocredits: 1,
-                    logicalModelId: "silent-video",
-                    logicalCapabilitySpec: {
-                        version: 1,
-                        capability: "video",
-                        options: {
-                            videoGenerateAudio: { values: [false] },
-                            videoWatermark: { values: [false] },
-                        },
-                    },
                     capabilityConfig: profile,
                 }],
             }],
@@ -300,46 +249,6 @@ describe("逻辑模型选择", () => {
 
         expect(modelCompatibilityError(config, imageModel, requirements)).toBe("");
         expect(resolveCompatibleModel(config, "relay::cinema-text", requirements)).toBe(imageModel);
-    });
-
-    test("逻辑视频模型将 720 与 720p 视为同一分辨率", () => {
-        const model = "cinema-720p";
-        const channel: ModelChannel = {
-            id: "logical-video",
-            name: "平台视频模型",
-            baseUrl: "/api",
-            apiKey: "system",
-            apiFormat: "openai",
-            scope: "system",
-            models: [model],
-            modelProfiles: [{
-                model,
-                capability: "video",
-                billingMode: "per_second",
-                unitPriceMicrocredits: 1,
-                logicalCapabilitySpec: {
-                    version: 1,
-                    capability: "video",
-                    operations: ["text_to_video"],
-                    inputs: {},
-                    options: {
-                        videoSeconds: { min: 1, max: 15, step: 1 },
-                        size: { values: ["16:9"] },
-                        vquality: { values: ["720p"] },
-                        videoGenerateAudio: { values: [false] },
-                        videoWatermark: { values: [false] },
-                    },
-                },
-            }],
-        };
-        const value = `logical-video::${model}`;
-        const config = { ...defaultConfig, channels: [channel], models: [value], videoModels: [value], videoModel: value };
-
-        expect(modelCompatibilityError(config, value, {
-            capability: "video",
-            input: { textCount: 1, imageCount: 0, videoCount: 0, audioCount: 0, characterCount: 0 },
-            options: { size: "16:9", videoSeconds: 6, vquality: "720", videoGenerateAudio: false, videoWatermark: false },
-        })).toBe("");
     });
 
     test("已保存的旧 SKU 选择会解析到新的模型家族", () => {

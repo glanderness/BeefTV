@@ -88,7 +88,7 @@ test("native provider models use installed native adapters and never invent a mi
 });
 
 test("external video protocols require an explicit contract and keep user selections", () => {
-    const channel = createModelChannel({ baseUrl: "https://www.whatstoken.ai/v1" });
+    const channel = createModelChannel({ baseUrl: "https://api.example.com/v1" });
     const installed = [...protocols, { value: "video-generations-json", capability: "video", enabled: true } as ModelProtocolDefinition];
     for (const id of ["seedance-2.5", "sora-2", "veo-video", "opaque"]) {
         expect(serviceModelProfile(channel, { id }, installed, "video").protocol).toBeUndefined();

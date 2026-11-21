@@ -1,6 +1,6 @@
 import { isManagedGatewayEndpoint } from "@/lib/channel-url";
 
-// Temporary advisory for the two verified WhatsToken routes. Native Ark,
+// Temporary advisory for managed BeefTV Seedance routes. Native Ark,
 // Fast and Mini retain their own contract.
 export function seedanceTaskRetryWarning(inputJson?: string, model?: string) {
     try {

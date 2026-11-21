@@ -1,6 +1,6 @@
 import { type GenerationTask } from "@/services/api/task-center";
 import { createClientId } from "@/lib/client-id";
-import { backendProviderConfig, logicalModelIDForConfig, runBackendGenerationTask, type GenerationTaskDependencies } from "@/services/api/generation-task";
+import { backendProviderConfig, runBackendGenerationTask, type GenerationTaskDependencies } from "@/services/api/generation-task";
 import { type AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { type CanvasNodeMetadata } from "@/types/canvas";
@@ -75,8 +75,6 @@ export async function runBackendCanvasGenerationTask(
 }
 
 export { backendProviderConfig };
-// 兼容故事板执行器的旧导入路径。
-export { logicalModelIDForConfig };
 
 const generationOperationLocks = new Map<string, Promise<unknown>>();
 

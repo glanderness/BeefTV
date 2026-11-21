@@ -9,9 +9,97 @@ import (
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/protocol"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"time"
 )
+
+func withHTTPRequestRuntime(req *http.Request) *http.Request {
+	if req == nil {
+		return req
+	}
+	return req.WithContext(bindRequestReceipts(req.Context()))
+}
+
+func postJSONWithSubmissionKey(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
+	ctx = bindRequestReceipts(ctx)
+	if generation.SubmissionKeyFromContext(ctx) == "" {
+		if key, ok := ctx.Value(providerSubmissionKeyContext{}).(string); ok {
+			ctx = generation.WithSubmissionKey(ctx, key)
+		}
+	}
+	return generation.PostJSONWithSubmissionKey(ctx, config, path, body, target)
+}
+
+func getJSON(ctx context.Context, config providerConfig, path string, target interface{}) error {
+	return generation.GetJSON(bindRequestReceipts(ctx), config, path, target)
+}
+
+func doBinary(req *http.Request) ([]byte, string, error) {
+	return generation.DoBinary(withHTTPRequestRuntime(req))
+}
+
+func providerPollingDeadline(ctx context.Context) time.Time {
+	return generation.PollingDeadline(ctx)
+}
+
+func ChannelAPIURL(baseURL string, path string) string {
+	return generation.ChannelAPIURL(baseURL, path)
+}
+
+func ChannelAPIURLForProtocol(baseURL string, path string, interfaceType model.ChannelInterfaceType) string {
+	return generation.ChannelAPIURLForProtocol(baseURL, path, interfaceType)
+}
+
+func writeMediaPart(writer *multipart.Writer, field string, media providerMedia) error {
+	return generation.WriteMediaPart(writer, field, media)
+}
+
+func mediaBytes(media providerMedia) ([]byte, string, error) {
+	return generation.MediaBytes(media)
+}
+
+func providerRequestErrorDetails(err error) (string, string) {
+	return generation.ProviderRequestErrorDetails(err)
+}
+
+func DefaultModelCapabilityConfig(p string) *ModelCapabilityConfig {
+	return modelcatalog.DefaultModelCapabilityConfig(p)
+}
+func DefaultImageCapabilityConfig(p, m string) *ImageCapabilityConfig {
+	return modelcatalog.DefaultImageCapabilityConfig(p, m)
+}
+func DefaultModelCapabilityConfigForModel(p, m string) *ModelCapabilityConfig {
+	return modelcatalog.DefaultModelCapabilityConfigForModel(p, m)
+}
+func DecodeModelCapabilityConfig(raw string) (*ModelCapabilityConfig, error) {
+	return modelcatalog.DecodeModelCapabilityConfig(raw)
+}
+func NormalizeModelCapabilityConfig(c, p string, in *ModelCapabilityConfig) (*ModelCapabilityConfig, error) {
+	return modelcatalog.NormalizeModelCapabilityConfig(c, p, in)
+}
+func NormalizeModelCapabilityConfigForModel(c, p, m string, in *ModelCapabilityConfig) (*ModelCapabilityConfig, error) {
+	return modelcatalog.NormalizeModelCapabilityConfigForModel(c, p, m, in)
+}
+func CapabilitySpecFromModelCapabilityConfig(c *ModelCapabilityConfig, cap string) (CapabilitySpec, error) {
+	return modelcatalog.CapabilitySpecFromModelCapabilityConfig(c, cap)
+}
+func validateVideoTask(profile *VideoCapabilityConfig, input canvasGenerationInput) error {
+	return modelcatalog.ValidateVideoTask(profile, taskInputFromCanvas(input))
+}
+func validateVideoTaskParameters(profile *VideoCapabilityConfig, input canvasGenerationInput) error {
+	return modelcatalog.ValidateVideoTaskParameters(profile, taskInputFromCanvas(input))
+}
+func validateImageTask(profile *ImageCapabilityConfig, input canvasGenerationInput) error {
+	return modelcatalog.ValidateImageTask(profile, taskInputFromCanvas(input))
+}
+func ModelRequestIntentFromTaskInput(input map[string]any, taskType, op string) ModelRequestIntent {
+	return modelcatalog.ModelRequestIntentFromTaskInput(input, taskType, op)
+}
+func MatchCapability(spec CapabilitySpec, intent ModelRequestIntent) CapabilityMatch {
+	return modelcatalog.MatchCapability(spec, intent)
+}
+func isRouteDispatchUncertain(err error) bool { return modelcatalog.IsDispatchUncertain(err) }
 
 func postJSON(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
 	return generation.PostJSON(bindRequestReceipts(ctx), config, path, body, target)
@@ -27,10 +115,6 @@ func providerDownloadURL(baseURL string, rawURL string) string {
 
 func doJSON(req *http.Request, target interface{}) error {
 	return generation.DoJSON(withHTTPRequestRuntime(req), target)
-}
-
-func volcengineArkImageDataURLs(ctx context.Context, config providerConfig, payload imageResponse) ([]map[string]string, error) {
-	return generation.MaterializeImageDataURLs(ctx, config, payload)
 }
 
 func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
@@ -183,10 +267,6 @@ func normalizeSeedanceDuration(value string) int {
 
 func normalizeSeedanceResolution(value string, interfaceType string) string {
 	return generation.NormalizeSeedanceResolution(value, interfaceType)
-}
-
-func beefTVSeedancePutTimeout(ctx context.Context) time.Duration {
-	return generation.BeefTVSeedancePutTimeout(ctx)
 }
 
 func arkPrivateAssetUpstreamDetail(response map[string]interface{}) string {

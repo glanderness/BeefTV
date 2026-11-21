@@ -77,7 +77,7 @@ func TestCanvasWorkflowSecondsRejectsInvalidValues(t *testing.T) {
 
 // executeWorkflowTimeline runs a trim or merge step the way the run scheduler does.
 func executeWorkflowTimeline(svc *Service, user, operation string, n cw.Node, edges []cw.Edge, steps map[string]*cw.Step) (*model.Task, error) {
-	project, options, err := cw.TimelineProject(func(id string) (*model.Resource, error) { return svc.workflowResource(user, id, "video") }, n, edges, steps)
+	project, options, err := cw.TimelineProject(func(id string) (*model.Resource, error) { return cw.ReadyResource(svc.repo, user, id, "video") }, n, edges, steps)
 	if err != nil {
 		return nil, err
 	}

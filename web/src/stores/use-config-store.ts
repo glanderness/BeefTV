@@ -11,7 +11,6 @@ import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCap
 import { normalizeVideoBoolean, normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { defaultModelCapabilityConfig, upgradeGPTImageCapability, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
-import type { CapabilitySpec } from "@/services/api/logical-models";
 import type { VideoPriceQuote } from "@/lib/video-pricing";
 import { upgradeBuiltinModelProfile } from "@/lib/builtin-service-presets";
 export { buildApiUrl, isSystemProxyBaseUrl, resolveBackendApiUrl, systemProxyChannelId } from "@/lib/channel-url";
@@ -67,9 +66,6 @@ export type ModelChannel = {
         mediaCapabilities?: MediaCapabilities;
         mediaCapabilitiesVersion?: string;
         videoPricing?: VideoPriceQuote | null;
-        logicalModelId?: string;
-        logicalCapabilitySpec?: CapabilitySpec;
-        logicalCapabilityProfiles?: CapabilitySpec[];
         defaultOptions?: Record<string, unknown>;
     }>;
 };
@@ -753,11 +749,6 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     const lookup = channelLookup(channels);
     const matched = decoded ? lookup.byId.get(decoded.channelId) : lookup.byModel.get(model);
     return matched || channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: (config.models || []).map(modelOptionName) });
-}
-
-export function logicalModelIDForConfig(config: AiConfig) {
-    const channel = resolveModelChannel(config, config.model);
-    return channel.modelProfiles?.find((item) => item.model === modelOptionName(config.model))?.logicalModelId || "";
 }
 
 export function channelConnectionSignature(channel: ModelChannel) {

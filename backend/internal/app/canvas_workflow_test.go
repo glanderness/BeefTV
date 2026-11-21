@@ -276,14 +276,14 @@ func TestCanvasWorkflowResolvesCurrentConnectionAndRejectsRemovedModel(t *testin
 		t.Fatal(e)
 	}
 	input := map[string]any{"mode": "video", "config": map[string]any{"baseUrl": "https://example.test/v1", "model": "video-model", "interfaceType": "openai-video", "apiKey": "historical-key"}}
-	id, e := svc.canvasWorkflowChannelID(input, "")
+	id, e := cw.ChannelID(svc.compileHost(), input, "")
 	if e != nil || id != "custom" {
 		t.Fatalf("channel=%q err=%v", id, e)
 	}
 	if e = svc.SaveLocalModelConfig([]byte(strings.Replace(initial, "first-key", "current-key", 1))); e != nil {
 		t.Fatal(e)
 	}
-	if e = svc.refreshCanvasWorkflowCredentials(input, id); e != nil {
+	if e = cw.RefreshCredentials(svc.compileHost(), input, id); e != nil {
 		t.Fatal(e)
 	}
 	config := input["config"].(map[string]any)
@@ -293,7 +293,7 @@ func TestCanvasWorkflowResolvesCurrentConnectionAndRejectsRemovedModel(t *testin
 	if e = svc.SaveLocalModelConfig([]byte(strings.Replace(initial, `"models":["video-model"]`, `"models":[]`, 1))); e != nil {
 		t.Fatal(e)
 	}
-	if e = svc.refreshCanvasWorkflowCredentials(input, id); e == nil || !strings.Contains(e.Error(), "模型") {
+	if e = cw.RefreshCredentials(svc.compileHost(), input, id); e == nil || !strings.Contains(e.Error(), "模型") {
 		t.Fatalf("removed model accepted: %v", e)
 	}
 }
@@ -344,7 +344,7 @@ func TestCanvasWorkflowRetryRefreshesOnlyUnacceptedCredentials(t *testing.T) {
 				if _, retryErr := svc.taskDomain().RetryWithCredentialRefresh("owner", task.ID, task.InputJSON, task.InputJSON); retryErr == nil {
 					t.Fatal("accepted task allowed a fresh credential retry")
 				}
-				prepared, prepareErr := svc.prepareCanvasWorkflowRetryCredentials(row, "gen", &task)
+				prepared, prepareErr := cw.PrepareRetryCredentials(svc.compileHost(), row, "gen", &task)
 				if prepareErr != nil || prepared != "" {
 					t.Fatalf("accepted receipt refreshed: input=%q err=%v", prepared, prepareErr)
 				}

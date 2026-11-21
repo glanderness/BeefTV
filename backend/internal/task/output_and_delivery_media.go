@@ -280,7 +280,7 @@ func PublicTaskInputJSON(raw string) string {
 		if u != nil {
 			host = strings.ToLower(u.Hostname())
 		}
-		parameters["affectedChannel"] = config["credentialRef"] == "beeftv" || host == "beeftv.app" || host == "whatstoken.ai" || host == "www.whatstoken.ai"
+		parameters["affectedChannel"] = config["credentialRef"] == "beeftv" || host == "beeftv.app"
 		public["videoParameters"] = parameters
 	}
 	for _, key := range []string{"mode", "metadata", "workflowStepId", "domainProjectId", "assetVersionId", "resourceId", "mediaType", "role"} {

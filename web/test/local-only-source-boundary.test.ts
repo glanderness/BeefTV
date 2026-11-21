@@ -67,7 +67,6 @@ describe("local-only source boundary", () => {
 	test("local model configuration contains capabilities, not commerce metadata", () => {
 		for (const file of [
 			"src/stores/use-config-store.ts",
-			"src/services/api/logical-models.ts",
 			"src/components/model-picker.tsx",
 			"src/components/image-settings-panel.tsx",
 			"src/components/video-settings-panel.tsx",

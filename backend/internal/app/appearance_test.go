@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/appearance"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -44,7 +45,7 @@ func TestAppearanceDefaultsPreserveBuiltInBrand(t *testing.T) {
 }
 
 func TestBuiltInAppearanceSkinTooltipPairsMeetContrast(t *testing.T) {
-	for _, skin := range defaultAppearanceSkinThemes() {
+	for _, skin := range appearance.DefaultSkinThemes() {
 		modes := []struct {
 			name   string
 			tokens AppearanceSkinModeTokens
@@ -287,8 +288,8 @@ func TestUploadAppearanceLogoAlwaysUsesServerLocalStorage(t *testing.T) {
 
 func TestAppearanceSkinLibraryProjectsCustomActiveSkin(t *testing.T) {
 	svc, _, _, _ := newAppearanceTestService(t)
-	themes := defaultAppearanceSkinThemes()
-	custom := cloneAppearanceSkin(themes[0], "custom-editorial", "片场夜蓝", "自定义控件与明暗色")
+	themes := appearance.DefaultSkinThemes()
+	custom := appearance.CloneSkin(themes[0], "custom-editorial", "片场夜蓝", "自定义控件与明暗色")
 	custom.Tokens.Light.Primary = "#123456"
 	custom.Tokens.Light.PrimaryHover = "#234567"
 	custom.Tokens.Dark.Primary = "#abcdef"
@@ -304,7 +305,7 @@ func TestAppearanceSkinLibraryProjectsCustomActiveSkin(t *testing.T) {
 	legacyCustom.Tokens.Light.DangerHover = ""
 	legacyCustom.Tokens.Light.DangerActive = ""
 	legacyCustom.Tokens.Light.DangerForeground = ""
-	backfilled := normalizeAppearanceSkinThemes([]AppearanceSkinTheme{legacyCustom})[0]
+	backfilled := appearance.NormalizeSkinThemes([]AppearanceSkinTheme{legacyCustom})[0]
 	if backfilled.Tokens.Light.SwitchChecked != "#123456" || backfilled.Tokens.Light.SwitchCheckedHover != "#234567" || backfilled.Tokens.Light.SwitchUnchecked != legacyCustom.Tokens.Light.ControlBorder || backfilled.Tokens.Light.DangerHover != legacyCustom.Tokens.Light.Danger {
 		t.Fatalf("legacy skin state backfill = %#v", backfilled.Tokens.Light)
 	}

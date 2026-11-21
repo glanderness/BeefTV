@@ -7,7 +7,7 @@
 | 层                   | 目录                       | 内容                                                                                                      |
 | -------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------- |
 | base                 | `ui/base/`                 | 原语 + 基础件：`badges/`、`buttons/`、`checkbox/`、`kbd/`、`segmented-control/`、`select/`、`switch/`、`tooltip/` |
-| product              | `ui/product/`              | 跨页面模式件：`app-drawer/`、`app-modal/`、`callout/`、`empty-state/`、`settings-row/` 及表单/占位辅助件 |
+| product              | `ui/product/`              | 跨页面模式件：`app-drawer/`、`app-modal/`、`callout/`、`empty-state/` 及表单/占位辅助件 |
 | aceternity（存量特效） | `ui/aceternity/` 及根级特效件 | 存量动效与视觉装饰件（`fx/` 与 `application/` 命名空间尚在规划中，未建目录前不要按规划路径导入）           |
 
 > 视觉数值以仓库内的主题变量和组件 token 为权威源，组件不得依赖仓库外的私有样式包。
@@ -43,5 +43,4 @@
 - `product/callout/` — Callout
 - `product/app-modal/` — AppModal（产品弹窗壳，`flush` 去掉 AntD 默认内边距）
 - `product/app-drawer/` — AppDrawer（产品侧栏壳）
-- `product/settings-row/` — SettingsRow（设置项行布局）
 - `product/media-placeholder.tsx`、`product/workspace-form.tsx` — 媒体占位与工作区表单辅助单文件组件

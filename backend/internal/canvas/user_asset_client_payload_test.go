@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/model"
 )
 
 func TestClientAssetPayloadRepairsWorkflowAssetDocument(t *testing.T) {
 	createdAt := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
-	asset := model.Asset{
+	item := model.Asset{
 		ID: "workflow-asset-test",
 		PayloadJSON: `{
 			"id":"workflow-asset-test",
@@ -25,7 +26,7 @@ func TestClientAssetPayloadRepairsWorkflowAssetDocument(t *testing.T) {
 		UpdatedAt: createdAt,
 	}
 
-	raw := ClientAssetPayload(asset)
+	raw := asset.ClientAssetPayload(item)
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
@@ -44,8 +45,8 @@ func TestClientAssetPayloadRepairsWorkflowAssetDocument(t *testing.T) {
 
 func TestClientAssetPayloadPreservesCompleteDocument(t *testing.T) {
 	rawInput := `{"id":"asset-1","kind":"image","title":"完整","coverUrl":"https://example.com/a.png","tags":["角色"],"createdAt":"2026-08-29T00:00:00.000Z","updatedAt":"2026-08-29T00:00:00.000Z","data":{"dataUrl":"https://example.com/a.png","width":2,"height":3,"bytes":1,"mimeType":"image/png"}}`
-	asset := model.Asset{PayloadJSON: rawInput}
-	raw := ClientAssetPayload(asset)
+	item := model.Asset{PayloadJSON: rawInput}
+	raw := asset.ClientAssetPayload(item)
 	var before map[string]any
 	var after map[string]any
 	if err := json.Unmarshal([]byte(rawInput), &before); err != nil {

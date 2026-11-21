@@ -140,7 +140,7 @@ func TestResourceDeriveRoutesHTTPContractsWithoutNativeFFmpeg(t *testing.T) {
 	}
 
 	router := gin.New()
-	RegisterCanvasAPI(router.Group("/api"), svc)
+	registerTestCanvasAPI(router.Group("/api"), svc)
 
 	// 1. 30-frame batch succeeds and idempotent replay returns identical resource IDs.
 	thirty := make([]int64, 30)
@@ -338,7 +338,7 @@ func TestResourceDeriveRoutesEndToEnd(t *testing.T) {
 	}
 
 	router := gin.New()
-	RegisterCanvasAPI(router.Group("/api"), svc)
+	registerTestCanvasAPI(router.Group("/api"), svc)
 
 	body, _ := json.Marshal(asset.ExtractVideoFramesRequest{Preset: "last"})
 	frameReq := httptest.NewRequest(http.MethodPost, "/api/resources/video-1/frames", bytes.NewReader(body))

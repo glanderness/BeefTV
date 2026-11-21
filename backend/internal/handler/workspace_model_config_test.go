@@ -243,7 +243,7 @@ func TestRegisterCanvasAPINormalizesInstalledPluginWorkflow(t *testing.T) {
 	}
 	router := gin.New()
 	router.Use(WorkspaceMiddleware(workspace.Context{ID: "local", DataDir: dir}))
-	RegisterCanvasAPI(router.Group("/api"), svc)
+	registerTestCanvasAPI(router.Group("/api"), svc)
 
 	raw, err := json.Marshal(map[string]any{
 		"category": "video",

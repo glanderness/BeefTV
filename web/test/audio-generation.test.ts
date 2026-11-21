@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 
 import { buildNodeConfig } from "@/components/canvas/canvas-node-prompt-panel";
-import { audioSettingsSummary, audioSpeechProfile, buildAudioSpeechRequest, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue, resolveAudioSpeechSettings } from "@/lib/audio-generation";
+import { audioSettingsSummary, audioSpeechProfile, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue, resolveAudioSpeechSettings } from "@/lib/audio-generation";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { createModelChannel, defaultConfig, type AiConfig } from "@/stores/use-config-store";
 
@@ -68,7 +68,7 @@ describe("enterprise MiniMax speech settings", () => {
         expect(normalizeAudioVoiceValue("alloy", "gpt-4o-mini-tts")).toBe("alloy");
     });
 
-    test("summary and payload follow the speech contract instead of 中文 · 24k · wav", () => {
+    test("summary follows the speech contract instead of 中文 · 24k · wav", () => {
         const settings = resolveAudioSpeechSettings("beeftv::minimax-speech-2.8-hd", {
             audioVoice: "alloy",
             audioFormat: "mp3",
@@ -77,41 +77,6 @@ describe("enterprise MiniMax speech settings", () => {
         expect(audioSettingsSummary({ model: "beeftv::minimax-speech-2.8-hd", ...settings })).toBe("青涩青年 · MP3 · 1x");
         expect(audioSettingsSummary({ model: "beeftv::minimax-speech-2.8-hd", ...settings })).not.toContain("24k");
         expect(audioSettingsSummary({ model: "beeftv::minimax-speech-2.8-hd", ...settings })).not.toContain("中文");
-        expect(buildAudioSpeechRequest({ model: "minimax-speech-2.8-hd", ...settings }, "大家好")).toEqual({
-            model: "minimax-speech-2.8-hd",
-            input: "大家好",
-            voice: "male-qn-qingse",
-            response_format: "mp3",
-            speed: 1,
-        });
-    });
-
-    test("helper music payload omits voice; OpenAI TTS keeps alloy and instructions", () => {
-        expect(buildAudioSpeechRequest({ model: "minimax-music-v3.0", audioFormat: "mp3" }, "轻快的钢琴")).toEqual({
-            model: "minimax-music-v3.0",
-            input: "轻快的钢琴",
-            response_format: "mp3",
-            metadata: { audio_setting: { sample_rate: 44100, bitrate: 256000, format: "mp3" } },
-        });
-        expect(
-            buildAudioSpeechRequest(
-                {
-                    model: "gpt-4o-mini-tts",
-                    audioVoice: "alloy",
-                    audioFormat: "wav",
-                    audioSpeed: "1.25",
-                    audioInstructions: "温暖旁白",
-                },
-                "hello",
-            ),
-        ).toEqual({
-            model: "gpt-4o-mini-tts",
-            input: "hello",
-            voice: "alloy",
-            response_format: "wav",
-            speed: 1.25,
-            instructions: "温暖旁白",
-        });
     });
 
     test("canvas node config remaps enterprise speech defaults for the selected model", () => {
@@ -137,28 +102,6 @@ describe("enterprise MiniMax speech settings", () => {
         expect(normalizeAudioVoiceValue("zh_female_cancan_uranus_bigtts", "beeftv::minimax-speech-2.8-hd")).toBe("male-qn-qingse");
         expect(audioSettingsSummary({ model: "beeftv::seed-audio-1.0", audioVoice: "male-qn-qingse", audioFormat: "mp3", audioSpeed: "1" })).toBe("自动（全能参考） · MP3 · 1x");
         expect(audioSettingsSummary({ model: "beeftv::seed-audio-1.0", audioVoice: "zh_male_taocheng_uranus_bigtts", audioFormat: "mp3", audioSpeed: "1.25", audioPitch: "2", audioVolume: "1.3" })).toBe("阳光小天 · MP3 · 1.25x · 音调+2 · 音量130%");
-        expect(
-            buildAudioSpeechRequest(
-                {
-                    model: "seed-audio-1.0",
-                    audioVoice: "auto",
-                    audioFormat: "mp3",
-                    audioSpeed: "1",
-                    audioPitch: "2",
-                    audioVolume: "1.3",
-                    audioInstructions: "温柔甜美少女音",
-                },
-                "你好世界",
-            ),
-        ).toEqual({
-            model: "seed-audio-1.0",
-            input: "你好世界",
-            response_format: "mp3",
-            speed: 1,
-            pitch: 2,
-            volume: 1.3,
-            instructions: "温柔甜美少女音",
-        });
     });
 
     test("prompt panel no longer overlays a fake Seed Audio summary", () => {

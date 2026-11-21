@@ -10,8 +10,6 @@ import (
 	"infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/diagnostics"
-	"infinite-canvas/backend/internal/eagle"
-	"infinite-canvas/backend/internal/modelcatalog"
 	localplayback "infinite-canvas/backend/internal/playback"
 	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/prompts"
@@ -56,36 +54,6 @@ func isNilService(value any) bool {
 	}
 	v := reflect.ValueOf(value)
 	return v.Kind() == reflect.Pointer && v.IsNil()
-}
-
-// RegisterCanvasAPI is kept as the standalone-development entrypoint. BeefTV
-// has one local-only HTTP surface, so development and Wails use the same route
-// graph instead of selecting between desktop and SaaS profiles at runtime.
-func RegisterCanvasAPI(api *gin.RouterGroup, svc CanvasAPIService) {
-	registerDesktopCanvasAPI(api, svc, defaultRuntimeDependencies(svc))
-}
-
-// RegisterDesktopCanvasAPI keeps the desktop profile local-first. The server
-// profile still exposes hosted routes for backward compatibility.
-func RegisterDesktopCanvasAPI(api *gin.RouterGroup, svc CanvasAPIService) {
-	RegisterDesktopCanvasAPIWithDependencies(api, svc, defaultRuntimeDependencies(svc))
-}
-
-func defaultRuntimeDependencies(svc CanvasAPIService) RuntimeDependencies {
-	if isNilService(svc) {
-		return RuntimeDependencies{Eagle: eagle.New()}
-	}
-	adapter := newServiceRuntimeAdapter(svc)
-	dependencies := RuntimeDependencies{
-		RequestCoordinator: adapter, ProviderConfig: adapter, Assets: adapter, Tasks: adapter, Generation: adapter,
-		Eagle:       eagle.New(),
-		Diagnostics: svc.DiagnosticsDomain(),
-		Appearance:  svc.AppearanceDomain(),
-	}
-	if pluginsDomain := svc.PluginDomain(); pluginsDomain != nil {
-		dependencies.ModelCapability = modelcatalog.NewCapabilityNormalizer(pluginsDomain.LookupWorkflow)
-	}
-	return dependencies
 }
 
 func RegisterDesktopCanvasAPIWithDependencies(api *gin.RouterGroup, svc CanvasAPIService, dependencies RuntimeDependencies) {

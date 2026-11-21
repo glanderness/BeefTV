@@ -5,13 +5,6 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dir, "..");
 
 describe("local resource labels", () => {
-    test("does not classify local Go resources as cloud storage", () => {
-        const source = readFileSync(resolve(root, "src/lib/canvas/resource-storage-status.ts"), "utf8");
-        expect(source).toContain('import { isLocalRuntimeMode } from "@/lib/runtime-mode";');
-        expect(source).toContain("storageKey.startsWith(\"resource:\") ? (localRuntime ? \"local\" : \"oss\") : \"local\"");
-        expect(source).toContain("保存在本机资源目录，不会上传到云端");
-    });
-
     test("only shows the legacy remote-upload warning in hosted mode", () => {
         const source = readFileSync(resolve(root, "src/pages/canvas/use-canvas-upload.ts"), "utf8");
         expect(source).toContain("const browserFallback = Boolean(metadata.storageKey && !resourceIdFromStorageKey(metadata.storageKey));");

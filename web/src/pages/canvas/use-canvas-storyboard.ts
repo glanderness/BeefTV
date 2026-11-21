@@ -9,7 +9,6 @@ import {
     buildGenerationConfig,
     generationTaskMetadata,
     resetGenerationTaskMetadata,
-    logicalModelIDForConfig,
 } from "@/lib/canvas/canvas-project-generation";
 import {
     cinematicStoryboardColumns,
@@ -202,7 +201,6 @@ export function useCanvasStoryboard({
                 operation: "storyboard",
                 prompt: executionPrompt,
                 model: generationConfig.model,
-                ...(logicalModelIDForConfig(generationConfig) ? { logicalModelId: logicalModelIDForConfig(generationConfig) } : {}),
                 input: {
                     mode: "text",
                     prompt: executionPrompt,
@@ -216,7 +214,7 @@ export function useCanvasStoryboard({
                     metadata: { nodeId, ...skillExecution.metadata },
                 },
             };
-            const managed = Boolean(logicalModelIDForConfig(generationConfig) || resolveModelRequestConfig(generationConfig, generationConfig.model).channelId);
+            const managed = Boolean(resolveModelRequestConfig(generationConfig, generationConfig.model).channelId);
             const task = managed ? await submitStoryboardTask(request, { signal, assertCurrent, confirm: (submission) => localMode ? Promise.resolve(true) : new Promise<boolean>((resolve) => {
                 const execution = submission.execution;
                 const dialog = modal.confirm({

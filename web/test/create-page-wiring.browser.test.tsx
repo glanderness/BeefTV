@@ -92,8 +92,7 @@ beforeAll(async () => {
         import { createRoot } from "react-dom/client";
         import { MemoryRouter } from "react-router";
 
-        import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
-        import { WorkspaceTopBarExtensionProvider } from "@/components/layout/workspace-top-bar-extension";
+        import { WorkspaceTopBarExtensionProvider, WorkspaceTopBarExtensionSlot } from "@/components/layout/workspace-top-bar-extension";
         import CreatePage, { CreatePageView } from "@/pages/create/index";
         import { useCreateConversations } from "@/pages/create/use-create-conversations";
         import { useCreatePageController } from "@/pages/create/use-create-page-controller";
@@ -208,7 +207,7 @@ beforeAll(async () => {
                     <App>
                         <WorkspaceTopBarExtensionProvider>
                             <div data-testid="topbar-host">
-                                <WorkspaceTopBar sidebarOpen onToggleSidebar={() => undefined} />
+                                <WorkspaceTopBarExtensionSlot />
                             </div>
                             {scenario === "recovery" ? <RecoveryHarness /> : <CreatePage />}
                         </WorkspaceTopBarExtensionProvider>

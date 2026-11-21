@@ -1190,40 +1190,6 @@ func TestRunVideoTaskRequiresOfficialPluginWhenRegistryEmpty(t *testing.T) {
 	}
 }
 
-func TestVolcengineArkImageDataURLsDownloadsRemoteResult(t *testing.T) {
-	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
-	imageBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write(imageBytes)
-	}))
-	defer server.Close()
-
-	images, err := volcengineArkImageDataURLs(context.Background(), providerConfig{}, imageResponse{
-		Data: []map[string]interface{}{{"url": server.URL + "/generated.png"}},
-	})
-	if err != nil {
-		t.Fatalf("volcengineArkImageDataURLs() error = %v", err)
-	}
-	if len(images) != 1 || !strings.HasPrefix(images[0]["dataUrl"], "data:image/png;base64,") {
-		t.Fatalf("images = %#v", images)
-	}
-
-	svc := newResourceTestService(t)
-	stored, err := svc.persistGeneratedMediaResult("user-1", map[string]interface{}{"mode": "image", "images": images})
-	if err != nil {
-		t.Fatalf("persistGeneratedMediaResult() error = %v", err)
-	}
-	storedImages, ok := stored["images"].([]interface{})
-	if !ok || len(storedImages) != 1 {
-		t.Fatalf("stored images = %#v", stored["images"])
-	}
-	storedImage, ok := storedImages[0].(map[string]interface{})
-	if !ok || !strings.HasPrefix(stringField(storedImage, "storageKey"), "resource:") || !strings.HasPrefix(stringField(storedImage, "dataUrl"), "/api/resources/") {
-		t.Fatalf("stored image = %#v", storedImages[0])
-	}
-}
-
 func TestVolcengineArkImageRejectsMaskBeforeRequest(t *testing.T) {
 	_, err := runImageTask(context.Background(), canvasGenerationInput{
 		Prompt: "edit only the masked area",

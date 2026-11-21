@@ -144,7 +144,7 @@ export function systemProxyChannelId(baseUrl: string) {
     return "";
 }
 
-const MANAGED_GATEWAY_DOMAINS = ["beeftv.app", "whatstoken.ai"] as const;
+const MANAGED_GATEWAY_DOMAINS = ["beeftv.app"] as const;
 
 export function isManagedGatewayEndpoint(baseUrl?: string): boolean {
     if (!baseUrl) return false;

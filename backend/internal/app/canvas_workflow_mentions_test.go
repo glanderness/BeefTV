@@ -80,7 +80,7 @@ func TestCanvasWorkflowRejectsMissingOrUnconnectedNodeMentions(t *testing.T) {
 			db.First(&task, "id = ?", "original")
 			var input map[string]any
 			json.Unmarshal([]byte(task.InputJSON), &input)
-			input["prompt"] = workflowNodeMentionToken(id)
+			input["prompt"] = "@[node:" + id + "]"
 			raw, _ := json.Marshal(input)
 			db.Model(&task).Update("input_json", string(raw))
 			if _, _, err := s.compileCanvasWorkflow("owner", d); err == nil {

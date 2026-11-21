@@ -3,6 +3,8 @@ package canvas
 import (
 	"encoding/json"
 	"testing"
+
+	"infinite-canvas/backend/internal/asset"
 )
 
 func TestUserAssetBytesRequiresNonNegativeNumber(t *testing.T) {
@@ -13,7 +15,7 @@ func TestUserAssetBytesRequiresNonNegativeNumber(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				err = validateUserAssetDocument(encoded)
+				err = asset.ValidateDocument(encoded)
 				valid := raw == "0" || raw == "12"
 				if (err == nil) != valid {
 					t.Fatalf("bytes=%s: error=%v, want valid=%v", raw, err, valid)
@@ -22,7 +24,7 @@ func TestUserAssetBytesRequiresNonNegativeNumber(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := validateUserAssetDocument(encoded); err == nil {
+				if err := asset.ValidateDocument(encoded); err == nil {
 					t.Fatal("missing bytes accepted")
 				}
 			})

@@ -1,7 +1,7 @@
 import { isBeefTVEndpoint } from "@/lib/beeftv-video-contracts";
 import { channelForId } from "@/lib/channel-identity";
 import { defaultImageCapabilityConfig, hasUserModelCapability, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, videoReferencesForOperation, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
-import { normalizeVideoBoolean, videoResolutionComparisonKey } from "@/lib/video-generation-options";
+import { normalizeVideoBoolean } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
 import { channelModelProfile, filterModelsByCapability, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
@@ -71,18 +71,6 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
     if (!capability) return "";
     const input = requirements?.input;
     const visualInputCount = input ? input.imageCount + input.characterCount : 0;
-    const channel = resolveModelChannel(config, model);
-    const logicalCost = channel.modelProfiles?.find((item) => item.model === modelOptionName(model));
-    const logicalSpecs = logicalCost?.logicalCapabilityProfiles?.length ? logicalCost.logicalCapabilityProfiles : logicalCost?.logicalCapabilitySpec ? [logicalCost.logicalCapabilitySpec] : [];
-    if (logicalSpecs.length) {
-        const publicOptionNames = logicalCost?.logicalCapabilitySpec?.options || {};
-        const logicalRequirements = {
-            ...requirements,
-            options: Object.fromEntries(Object.entries(requirements.options || {}).filter(([name]) => Boolean(publicOptionNames[name])).map(([name, value]) => [name, capability === "image" && name === "count" ? modelCapabilityConfigFor(config, model).image?.fixedOutputs || value : value])),
-        };
-        const errors = logicalSpecs.map((spec) => logicalModelCompatibilityError(spec, logicalRequirements, visualInputCount, model));
-        return errors.some((error) => !error) ? "" : errors[0] || "当前输入不受支持";
-    }
 
     if (capability === "image") {
         const hasDeclaredImageCapability = hasDeclaredModelCapability(config, model, "image");
@@ -139,87 +127,6 @@ export function modelRequestOptions(config: AiConfig, capability: ModelCapabilit
         default:
             return {};
     }
-}
-
-function logicalModelCompatibilityError(spec: NonNullable<NonNullable<AiConfig["channels"][number]["modelProfiles"]>[number]["logicalCapabilitySpec"]>, requirements: ModelRequirements, visualInputCount: number, model?: string) {
-    if (requirements.capability && spec.capability !== requirements.capability) return "不支持当前生成类型";
-    const input = requirements.input;
-    const counts: Record<string, number> = {
-        text: 0,
-        image: visualInputCount,
-        video: input?.videoCount || 0,
-        audio: input?.audioCount || 0,
-    };
-    for (const [kind, count] of Object.entries(counts)) {
-        const constraint = spec.inputs?.[kind];
-        if (!constraint && count > 0) return `不支持${kind}输入`;
-        if (constraint && (count < constraint.min || count > constraint.max)) return `${kind}输入需为 ${constraint.min}-${constraint.max} 个`;
-    }
-    const logicalVideoProfile =
-        requirements.capability === "video" && spec.operations?.length
-            ? ({
-                  operations: spec.operations,
-                  references: {
-                      minImages: spec.inputs?.image?.min ?? 0,
-                      maxImages: spec.inputs?.image?.max ?? 0,
-                      maxVideos: spec.inputs?.video?.max ?? 0,
-                      maxAudios: spec.inputs?.audio?.max ?? 0,
-                  },
-              } as VideoCapabilityConfig)
-            : undefined;
-    const operation = requirements.capability === "video" && input ? resolveVideoOperation(input, requirements.videoOperation, logicalVideoProfile) : requirements.videoOperation;
-    if (operation && spec.operations?.length && !spec.operations.includes(operation)) return "不支持当前生成模式";
-    // 图片创作状态也会携带全局默认视频时长；这个字段只对视频模型有意义，
-    // 不能把它拼进图片逻辑模型的能力匹配，否则图片模型会被误判为“不支持当前时长”。
-    const options = {
-        ...requirements.options,
-        ...(requirements.capability === "video" && requirements.videoSeconds ? { videoSeconds: requirements.videoSeconds } : {}),
-        ...(requirements.capability === "image" && requirements.imageSize ? { size: requirements.imageSize } : {}),
-    };
-    for (const [name, value] of Object.entries(options)) {
-        if (value === undefined || value === null || value === "") continue;
-        const constraint = spec.options?.[name];
-        if (!constraint || !logicalOptionMatches(name, constraint, value)) return logicalOptionError(name);
-    }
-    return "";
-}
-
-function logicalOptionMatches(name: string, constraint: { values?: unknown[]; min?: number; max?: number; step?: number }, value: unknown) {
-    if (constraint.values?.length) {
-        const requested = normalizeLogicalOptionValue(name, value);
-        return constraint.values.some((candidate) => normalizeLogicalOptionValue(name, candidate) === requested);
-    }
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return false;
-    if (constraint.min !== undefined && numeric < constraint.min) return false;
-    if (constraint.max !== undefined && numeric > constraint.max) return false;
-    if (constraint.step !== undefined && constraint.min !== undefined) return Math.abs((numeric - constraint.min) / constraint.step - Math.round((numeric - constraint.min) / constraint.step)) < 1e-9;
-    return true;
-}
-
-function normalizeLogicalOptionValue(name: string, value: unknown) {
-    const normalized = String(value).trim().toLowerCase();
-    if (name !== "vquality" && name !== "resolution") return normalized;
-    return videoResolutionComparisonKey(normalized);
-}
-
-function logicalOptionError(name: string) {
-    const label: Record<string, string> = {
-        size: "尺寸",
-        quality: "质量",
-        transparentBackground: "透明背景",
-        count: "输出数量",
-        videoSeconds: "时长",
-        vquality: "分辨率",
-        videoGenerateAudio: "同步音频",
-        videoWatermark: "水印设置",
-        audioVoice: "音色",
-        audioFormat: "音频格式",
-        audioSpeed: "语速",
-        audioPitch: "声调",
-        audioVolume: "音量",
-    };
-    return `不支持当前${label[name] || name}`;
 }
 
 export function compatibleModelInGroup(config: AiConfig, models: string[], requirements?: ModelRequirements, preferred?: string) {
@@ -345,12 +252,11 @@ export function resolveModelGenerationDefaults(
     if (!capability) return {};
     const channel = resolveModelChannel(config, model);
     const profile = channel.modelProfiles?.find((item) => item.model === modelOptionName(model));
-    const isManagedModel = Boolean(profile?.logicalModelId || profile?.logicalCapabilitySpec);
     // A channel model capability profile is an explicit per-model contract too.
     // The persisted global values are legacy defaults and must not override a
     // model's configured duration, ratio, or resolution on a new canvas node.
     const hasModelCapabilityProfile = Boolean(profile?.capabilityConfig);
-    const source = (key: keyof ModelGenerationDefaults) => explicit[key] ?? (isManagedModel || hasModelCapabilityProfile ? undefined : fallback[key]);
+    const source = (key: keyof ModelGenerationDefaults) => explicit[key] ?? (hasModelCapabilityProfile ? undefined : fallback[key]);
     const capabilityProfile = modelCapabilityConfigFor(config, model);
 
     if (capability === "image" && capabilityProfile.image) {
