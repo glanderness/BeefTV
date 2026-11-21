@@ -174,7 +174,7 @@ export async function saveCanvasDrawing(
         return enqueueDrawingOp(key, async () => {
             const existing = unwrapBrowserSnapshot(await activeDrawingStore.getItem(key));
             const updatedAt = new Date().toISOString();
-            const revision = (previous?.revision || existing?.revision || 0) + 1;
+            const revision = Math.max(previous?.revision ?? 0, existing?.revision ?? 0) + 1;
             const document: CanvasDrawingSnapshot = {
                 version: 2,
                 engine,
@@ -186,21 +186,39 @@ export async function saveCanvasDrawing(
                 previewResourceId: previous?.previewResourceId ?? existing?.previewResourceId,
                 renderResourceId: previous?.renderResourceId ?? existing?.renderResourceId,
             };
-            await activeDrawingStore.setItem(key, document);
-            if (preview) {
-                await activeDrawingPreviewStore.setItem(key, preview);
-            } else if (preview === null) {
-                await activeDrawingPreviewStore.removeItem(key);
-            }
-            if (render) {
-                await activeDrawingRenderStore.setItem(key, {
-                    ...liveRenderPublication(render),
-                    version: 1,
-                    revision,
-                    updatedAt,
-                });
-            } else if (render === null) {
-                await activeDrawingRenderStore.removeItem(key);
+            const prevPreview = preview !== undefined ? await activeDrawingPreviewStore.getItem(key) : undefined;
+            const prevRender = render !== undefined ? await activeDrawingRenderStore.getItem(key) : undefined;
+            let previewWritten = false;
+            let renderWritten = false;
+            try {
+                if (preview) {
+                    await activeDrawingPreviewStore.setItem(key, preview);
+                    previewWritten = true;
+                } else if (preview === null) {
+                    await activeDrawingPreviewStore.removeItem(key);
+                    previewWritten = true;
+                }
+                if (render) {
+                    await activeDrawingRenderStore.setItem(key, {
+                        ...liveRenderPublication(render),
+                        version: 1,
+                        revision,
+                        updatedAt,
+                    });
+                    renderWritten = true;
+                } else if (render === null) {
+                    await activeDrawingRenderStore.removeItem(key);
+                    renderWritten = true;
+                }
+                await activeDrawingStore.setItem(key, document);
+            } catch (error) {
+                if (previewWritten) {
+                    await (prevPreview ? activeDrawingPreviewStore.setItem(key, prevPreview) : activeDrawingPreviewStore.removeItem(key)).catch(() => undefined);
+                }
+                if (renderWritten) {
+                    await (prevRender ? activeDrawingRenderStore.setItem(key, prevRender) : activeDrawingRenderStore.removeItem(key)).catch(() => undefined);
+                }
+                throw error;
             }
             return { ...document, origin: "browser" as const };
         });
@@ -337,19 +355,14 @@ export async function saveCanvasDrawingRenderPublication(
     revision: number,
     publication: Pick<CanvasDrawingRenderDraft, "storageKey" | "url">,
 ): Promise<boolean> {
+    if (!usesBrowserLocalResourceStore()) return false;
     const key = drawingKey(projectId, drawingId, getActiveUserScope());
-    if (usesBrowserLocalResourceStore()) {
-        const render = await activeDrawingRenderStore.getItem(key);
-        const doc = unwrapBrowserSnapshot(await activeDrawingStore.getItem(key));
-        if (!render || render.revision !== revision) return false;
-        if (doc && doc.revision !== revision) return false;
-        await activeDrawingRenderStore.setItem(key, { ...render, ...liveRenderPublication({ ...render, ...publication }) });
-        return true;
-    }
-    const cached = lastKnownRecords.get(key);
-    if (cached) return cached.revision === revision;
-    const record = await readCanonicalDrawingRecord(projectId, drawingId);
-    return Boolean(record && record.revision === revision);
+    const render = await activeDrawingRenderStore.getItem(key);
+    const doc = unwrapBrowserSnapshot(await activeDrawingStore.getItem(key));
+    if (!render || render.revision !== revision) return false;
+    if (doc && doc.revision !== revision) return false;
+    await activeDrawingRenderStore.setItem(key, { ...render, ...liveRenderPublication({ ...render, ...publication }) });
+    return true;
 }
 
 export async function removeCanvasDrawing(projectId: string, drawingId: string): Promise<void> {

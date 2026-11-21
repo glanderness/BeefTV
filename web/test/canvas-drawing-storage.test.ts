@@ -40,12 +40,13 @@ function switchScope(userId: string) {
     return () => setActiveUserScope(previous);
 }
 
-function memoryStore<T>(values: Map<string, T>) {
+function memoryStore<T>(values: Map<string, T>, hooks?: { beforeSet?: (key: string, value: T) => Promise<void> | void }) {
     return {
         async getItem(key: string) {
             return values.get(key) ?? null;
         },
         async setItem(key: string, value: T) {
+            await hooks?.beforeSet?.(key, value);
             values.set(key, value);
             return value;
         },
@@ -116,13 +117,16 @@ function browserLocalMode() {
     spies.push(spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(true));
 }
 
-function installStores() {
+function installStores(hooks?: {
+    docBeforeSet?: (key: string, value: unknown) => Promise<void> | void;
+    previewBeforeSet?: (key: string, value: Blob) => Promise<void> | void;
+}) {
     documents.clear();
     previews.clear();
     renders.clear();
     replaceCanvasDrawingStoresForTests({
-        documents: memoryStore(documents as Map<string, never>),
-        previews: memoryStore(previews),
+        documents: memoryStore(documents as Map<string, never>, { beforeSet: hooks?.docBeforeSet }),
+        previews: memoryStore(previews, { beforeSet: hooks?.previewBeforeSet }),
         renders: memoryStore(renders as Map<string, never>),
     });
 }
@@ -458,6 +462,90 @@ describe("canvas drawing storage", () => {
             else delete (globalThis as { document?: unknown }).document;
             if (originalWindow) globalThis.window = originalWindow;
             else delete (globalThis as { window?: unknown }).window;
+            restore();
+        }
+    });
+
+    test("SQLite mode handles render upload, omission, and explicit clear, and refuses fake publication", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        const bodies: Array<Record<string, unknown>> = [];
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "post" && String(config.url).includes("/resources")) {
+                    return envelope({ resource: { id: "res-render-1", status: "ready" } });
+                }
+                if (String(config.method).toLowerCase() === "put" && String(config.url).includes("/drawings/d1")) {
+                    const body = requestBody(config) as { drawing: Record<string, unknown> };
+                    bodies.push(body.drawing);
+                    return envelope(drawingRecord(body.drawing.snapshot, Number(body.drawing.revision || 0) + 1, {
+                        render: body.drawing.render && (body.drawing.render as { resourceId?: string }).resourceId ? body.drawing.render : undefined,
+                    }));
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                const first = await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("with-render"), null, undefined, {
+                    blob: new Blob(["rd"]),
+                    pageId: "page",
+                    width: 32,
+                    height: 32,
+                    mimeType: "image/png",
+                    background: "white",
+                });
+                const second = await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep-render"), first, undefined, undefined);
+                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("clear-render"), second, undefined, null);
+                expect(await saveCanvasDrawingRenderPublication("p1", "d1", 3, { storageKey: "resource:x", url: "/api/resources/x/file" })).toBe(false);
+            });
+            expect((bodies[0]?.render as { resourceId?: string; storageKey?: string } | undefined)).toMatchObject({
+                resourceId: "res-render-1",
+                storageKey: "resource:res-render-1",
+            });
+            expect("render" in (bodies[1] || {})).toBe(false);
+            expect(bodies[2]?.render).toEqual({ resourceId: "" });
+        } finally {
+            restore();
+        }
+    });
+
+    test("browser-local mode commits blobs before document, rolls back on write error, and keeps revisions monotonic", async () => {
+        const restore = switchScope("browser-only");
+        browserLocalMode();
+        let failPreview = false;
+        let failDoc = false;
+        installStores({
+            previewBeforeSet: async () => {
+                if (failPreview) throw new Error("quota exceeded");
+            },
+            docBeforeSet: async () => {
+                if (failDoc) throw new Error("doc write failed");
+            },
+        });
+        try {
+            const first = await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("v1"), null, new Blob(["pv-v1"]));
+            expect(first.revision).toBe(1);
+
+            failPreview = true;
+            await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("v2-fail"), first, new Blob(["pv-v2"]))).rejects.toThrow(/quota exceeded/);
+            failPreview = false;
+            expect((await loadCanvasDrawing("p1", "d1"))?.revision).toBe(1);
+            expect(await loadCanvasDrawingPreview("p1", "d1").then((blob) => blob?.text())).toBe("pv-v1");
+
+            failDoc = true;
+            await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("v2-doc-fail"), first, new Blob(["pv-rollback"]))).rejects.toThrow(/doc write failed/);
+            failDoc = false;
+            expect((await loadCanvasDrawing("p1", "d1"))?.revision).toBe(1);
+            expect(await loadCanvasDrawingPreview("p1", "d1").then((blob) => blob?.text())).toBe("pv-v1");
+
+            // Concurrent double-save with the same stale `previous` must advance revisions strictly monotonically.
+            const [a, b] = await Promise.all([
+                saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("v2"), first, new Blob(["pv-2"])),
+                saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("v3"), first, new Blob(["pv-3"])),
+            ]);
+            expect(a.revision).toBe(2);
+            expect(b.revision).toBe(3);
+            expect((await loadCanvasDrawing("p1", "d1"))?.snapshot).toEqual(snapshotOf("v3"));
+        } finally {
             restore();
         }
     });

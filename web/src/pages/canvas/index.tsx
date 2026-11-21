@@ -515,7 +515,7 @@ export default function CanvasPage() {
     );
 }
 
-function CanvasLibraryFolderTile({ folder, onOpen, onRename, onExport, onDelete, onCoverChange, onCoverError }: { folder: { id: string; name: string; updatedAt: string; coverDataUrl?: string; unsaved?: boolean; saveError?: string }; onOpen: () => void; onRename: () => void; onExport: () => void; onDelete: () => void; onCoverChange: (dataUrl: string) => void; onCoverError: (error: string) => void }) {
+function CanvasLibraryFolderTile({ folder, onOpen, onRename, onExport, onDelete, onCoverChange, onCoverError }: { folder: { id: string; name: string; updatedAt: string; coverDataUrl?: string }; onOpen: () => void; onRename: () => void; onExport: () => void; onDelete: () => void; onCoverChange: (dataUrl: string) => void; onCoverError: (error: string) => void }) {
     const coverInputRef = useRef<HTMLInputElement>(null);
     const chooseCover = async (event: ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -534,7 +534,7 @@ function CanvasLibraryFolderTile({ folder, onOpen, onRename, onExport, onDelete,
             className="libtv-folder-card"
             updatedAt={folder.updatedAt}
             onOpen={onOpen}
-            title={folder.saveError ? `${folder.name} · 保存失败` : folder.unsaved ? `${folder.name} · 未保存` : folder.name}
+            title={folder.name}
             cover={<div className={cn("libtv-folder-cover-art", folder.coverDataUrl && "has-custom-cover")} style={folder.coverDataUrl ? { backgroundImage: `url(${folder.coverDataUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined} />}
             actions={<>
                 <Dropdown

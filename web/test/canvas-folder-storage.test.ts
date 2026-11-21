@@ -8,7 +8,6 @@ import {
     deleteCanvasLibraryFolder,
     hydrateCanvasLibraryFolders,
     persistCanvasFolderCover,
-    persistCanvasLibraryFolder,
     renameCanvasLibraryFolder,
     resetCanvasFolderStorageForTests,
 } from "@/lib/canvas/canvas-folder-storage";
@@ -164,7 +163,6 @@ describe("canvas folder storage", () => {
             expect(folders[0]?.name).toBe("已同步");
             expect(folders[0]?.coverResourceId).toBe("res-cover");
             expect(folders[0]?.coverDataUrl).toContain("/resources/res-cover/file");
-            expect(folders[0]?.unsaved).toBeUndefined();
         } finally {
             restoreWindow();
             restore();
@@ -431,6 +429,68 @@ describe("canvas folder storage", () => {
         }
     });
 
+    test("cover PUT failure and delete failure reject while preserving existing folder state", async () => {
+        const restore = switchScope("owner-a");
+        const restoreWindow = installWindow();
+        desktopBackend();
+        useCanvasStore.setState({ folders: [record("folder-1", "封面", { coverResourceId: "res-old" })], hydrated: true });
+        const cover = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "post" && String(config.url).includes("/resources")) {
+                    return envelope({ resource: { id: "res-new", status: "ready" } });
+                }
+                if (String(config.method).toLowerCase() === "put") {
+                    return failure(500, "封面没有保存成功");
+                }
+                if (String(config.method).toLowerCase() === "delete") {
+                    return failure(500, "删除失败");
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await expect(persistCanvasFolderCover("folder-1", cover)).rejects.toThrow(/封面没有保存成功/);
+                expect(useCanvasStore.getState().folders[0]?.coverResourceId).toBe("res-old");
+
+                await expect(deleteCanvasLibraryFolder("folder-1")).rejects.toThrow(/删除失败/);
+                expect(useCanvasStore.getState().folders.map((folder) => folder.id)).toEqual(["folder-1"]);
+            });
+        } finally {
+            restoreWindow();
+            restore();
+        }
+    });
+
+    test("folder delete clears local folderId even if subsequent canvas refresh fails", async () => {
+        const restore = switchScope("owner-a");
+        const restoreWindow = installWindow();
+        desktopBackend();
+        stubJournalStorage();
+        const project = canvasProject("c1", "folder-1", 1);
+        useCanvasStore.setState({
+            folders: [record("folder-1", "待删")],
+            projects: [project],
+            hydrated: true,
+        });
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "delete" && String(config.url).includes("/canvas-folders/folder-1")) {
+                    return envelope({ id: "folder-1" });
+                }
+                if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/canvas-projects/c1")) {
+                    return failure(503, "画布刷新暂时不可用");
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await deleteCanvasLibraryFolder("folder-1");
+            });
+            expect(useCanvasStore.getState().folders).toEqual([]);
+            expect(useCanvasStore.getState().projects.find((item) => item.id === "c1")?.folderId).toBeUndefined();
+        } finally {
+            restoreWindow();
+            restore();
+        }
+    });
+
     test("browser-local mode manages folders directly in canvas store without backend requests", async () => {
         const restore = switchScope("browser-only");
         const restoreWindow = installWindow();
@@ -442,9 +502,9 @@ describe("canvas folder storage", () => {
                 const id = await createCanvasLibraryFolder("浏览器本地");
                 await renameCanvasLibraryFolder(id, "本地改名");
                 await persistCanvasFolderCover(id, "data:image/png;base64,abc");
-                const saved = await persistCanvasLibraryFolder(record(id, "直接保存", { coverDataUrl: "data:image/png;base64,xyz" }));
-                expect(saved.name).toBe("直接保存");
-                expect(useCanvasStore.getState().folders.find((folder) => folder.id === id)?.coverDataUrl).toBe("data:image/png;base64,xyz");
+                const current = useCanvasStore.getState().folders.find((folder) => folder.id === id);
+                expect(current?.name).toBe("本地改名");
+                expect(current?.coverDataUrl).toBe("data:image/png;base64,abc");
                 await deleteCanvasLibraryFolder(id);
                 expect(useCanvasStore.getState().folders).toEqual([]);
             });

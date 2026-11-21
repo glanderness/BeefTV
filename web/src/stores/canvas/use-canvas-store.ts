@@ -88,11 +88,12 @@ function readCanvasFolders(): CanvasFolder[] {
             const coverResourceId = typeof folder.coverResourceId === "string" ? folder.coverResourceId : undefined;
             const coverDataUrl = typeof folder.coverDataUrl === "string" && !isStaleProcessCoverUrl(folder.coverDataUrl) ? folder.coverDataUrl : undefined;
             return {
-                ...folder,
+                id: folder.id,
+                name: folder.name,
+                createdAt: folder.createdAt,
+                updatedAt: folder.updatedAt,
                 coverResourceId,
                 coverDataUrl,
-                unsaved: folder.unsaved === true ? true : undefined,
-                saveError: typeof folder.saveError === "string" && folder.saveError ? folder.saveError : undefined,
             };
         }) : [];
     } catch {

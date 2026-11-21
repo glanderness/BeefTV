@@ -47,8 +47,6 @@ export type CanvasFolder = {
     updatedAt: string;
     coverDataUrl?: string;
     coverResourceId?: string;
-    unsaved?: boolean;
-    saveError?: string;
 };
 
 export const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";

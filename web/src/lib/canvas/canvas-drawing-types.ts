@@ -10,8 +10,7 @@ export type CanvasDrawingSnapshot = {
     pageCount: number;
     previewResourceId?: string;
     renderResourceId?: string;
-    origin?: "canonical" | "draft" | "browser";
-    canonicalMissing?: boolean;
+    origin?: "canonical" | "browser";
 };
 
 export type CanvasDrawingRenderDraft = {

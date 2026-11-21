@@ -48,12 +48,12 @@ function isStaleProcessCoverUrl(value?: string) {
 
 function liveCover(folder: CanvasFolder): CanvasFolder {
     if (folder.coverResourceId) {
-        return { ...folder, coverDataUrl: resourceFileUrl(folder.coverResourceId), unsaved: undefined, saveError: undefined };
+        return { ...folder, coverDataUrl: resourceFileUrl(folder.coverResourceId) };
     }
     if (isStaleProcessCoverUrl(folder.coverDataUrl)) {
-        return { ...folder, coverDataUrl: undefined, unsaved: undefined, saveError: undefined };
+        return { ...folder, coverDataUrl: undefined };
     }
-    return { ...folder, unsaved: undefined, saveError: undefined };
+    return folder;
 }
 
 function mapRecord(record: CanvasLibraryFolderRecord): CanvasFolder {
@@ -131,23 +131,20 @@ async function reconcileCanvasesAfterFolderDelete(folderId: string) {
     const affected = useCanvasStore.getState().projects.filter((project) => project.folderId === folderId);
     if (!affected.length) return;
     const { refreshLocalCanvasProjectIfChanged } = await import("@/services/local-workspace-repository");
+    const staleIds: string[] = [];
     for (const project of affected) {
-        try {
-            await refreshLocalCanvasProjectIfChanged(project.id);
-        } catch {
-            // Best-effort canvas refresh; SQLite already cleared library_folder_id atomically.
-        }
+        const refreshed = await refreshLocalCanvasProjectIfChanged(project.id);
+        if (!refreshed) staleIds.push(project.id);
     }
-}
-
-export async function persistCanvasLibraryFolder(folder: CanvasFolder): Promise<CanvasFolder> {
-    if (usesBrowserLocalResourceStore()) {
-        const next = liveCover(folder);
-        upsertStoreFolder(next);
-        return next;
-    }
-    const userScope = getActiveUserScope();
-    return enqueueFolderOp(userScope, folder.id, () => saveFolderToBackend(userScope, folder));
+    if (!staleIds.length) return;
+    const staleSet = new Set(staleIds);
+    useCanvasStore.setState((state) => ({
+        projects: state.projects.map((project) =>
+            staleSet.has(project.id) && project.folderId === folderId
+                ? { ...project, folderId: undefined }
+                : project,
+        ),
+    }));
 }
 
 export async function createCanvasLibraryFolder(name = "未命名文件夹"): Promise<string> {
