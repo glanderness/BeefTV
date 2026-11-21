@@ -116,6 +116,7 @@ declare global {
         runtime?: {
             BrowserOpenURL?: (url: string) => void;
             EventsOn?: (eventName: string, callback: (...data: unknown[]) => void) => () => void;
+            EventsEmit?: (eventName: string, ...data: unknown[]) => void;
         };
         go?: {
             main?: {
@@ -132,10 +133,8 @@ export function getDesktopAppBinding(): DesktopRuntimeBinding | undefined {
 let wrappedFetch: typeof fetch | undefined;
 let underlyingFetch: typeof fetch | undefined;
 let upgradeProbeTimer: ReturnType<typeof setInterval> | null = null;
-let currentDesktopApiBaseURL = "/api";
 let desktopEventsBound = false;
 let legacyBlobPurgeTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingSafeModeAckId: number | null = null;
 let reloadFlushInFlight = false;
 let beforeReloadFlusher: (() => Promise<void>) | null = null;
 
@@ -146,30 +145,6 @@ let beforeReloadFlusher: (() => Promise<void>) | null = null;
  */
 export function registerBeforeReloadFlusher(flusher: (() => Promise<void>) | null) {
     beforeReloadFlusher = flusher;
-}
-
-function sendDesktopRuntimeAck(extra?: { reloadAckId?: number }): Promise<void> {
-    if (typeof window === "undefined" || !isDesktopShellOrigin(window.location)) return Promise.resolve();
-    if (typeof globalThis.fetch !== "function") return Promise.resolve();
-    const ackId = pendingSafeModeAckId ?? 0;
-    const reloadAckId = typeof extra?.reloadAckId === "number" && extra.reloadAckId > 0 ? extra.reloadAckId : 0;
-    if (ackId <= 0 && reloadAckId <= 0) return Promise.resolve();
-    const base = String(currentDesktopApiBaseURL || "/api").replace(/\/+$/u, "");
-    return globalThis.fetch(`${base}/client-runtime/heartbeat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            safeModeAckId: ackId,
-            reloadAckId,
-        }),
-        credentials: "include",
-    })
-        .then((res) => {
-            if (ackId > 0 && res.ok && pendingSafeModeAckId === ackId) {
-                pendingSafeModeAckId = null;
-            }
-        })
-        .catch(() => undefined);
 }
 
 async function flushAllWorkspacePersistenceBeforeReload() {
@@ -184,23 +159,8 @@ async function flushAllWorkspacePersistenceBeforeReload() {
     }
 }
 
-function flushPendingSafeModeAck(remainingRetries = 2): void {
-    const targetAckId = pendingSafeModeAckId;
-    if (!targetAckId || targetAckId <= 0) return;
-    void sendDesktopRuntimeAck().then(() => {
-        if (pendingSafeModeAckId !== targetAckId || remainingRetries <= 0) return;
-        const timer = setTimeout(() => {
-            flushPendingSafeModeAck(remainingRetries - 1);
-        }, 500);
-        (timer as { unref?: () => void }).unref?.();
-    });
-}
-
 function ensureDesktopLifecycleHelpers() {
     if (typeof window === "undefined" || !isDesktopShellOrigin(window.location)) return;
-    if (pendingSafeModeAckId && pendingSafeModeAckId > 0) {
-        flushPendingSafeModeAck();
-    }
     if (!desktopEventsBound && typeof window.runtime?.EventsOn === "function") {
         desktopEventsBound = true;
         window.runtime.EventsOn("diagnostics:last-crash-ready", (savedPath) => {
@@ -211,23 +171,13 @@ function ensureDesktopLifecycleHelpers() {
                 });
             }
         });
-        window.runtime.EventsOn("desktop:request-reload", (payload?: unknown) => {
+        window.runtime.EventsOn("desktop:request-reload", () => {
             // Check in-flight guard BEFORE acking: a duplicate event while a
-            // flush is already running must not silently ack its requestId and
-            // disable Go's native fallback.
+            // flush is already running must not emit a duplicate ack.
             if (reloadFlushInFlight) return;
             reloadFlushInFlight = true;
-            const rawId = payload && typeof payload === "object" && "requestId" in payload
-                ? Number((payload as { requestId?: unknown }).requestId)
-                : 0;
-            const reloadAckId = Number.isFinite(rawId) && rawId > 0 ? Math.trunc(rawId) : 0;
-            // Immediately ack so Go cancels its 1.5s unresponsive-renderer fallback
-            // before we run the full multi-store workspace flush.
-            const ackPromise = reloadAckId > 0
-                ? Promise.race([sendDesktopRuntimeAck({ reloadAckId }), waitMs(500)])
-                : Promise.resolve();
-            void ackPromise
-                .then(() => flushAllWorkspacePersistenceBeforeReload())
+            window.runtime?.EventsEmit?.("desktop:reload-ack");
+            void flushAllWorkspacePersistenceBeforeReload()
                 .finally(() => {
                     // Reset flag before/after calling reload so if beforeunload
                     // cancels navigation (user clicks Stay), subsequent menu
@@ -287,7 +237,6 @@ function isDesktopRuntimeConfig(value: unknown): value is DesktopRuntimeConfig {
 export function configureDesktopRuntime(config: DesktopRuntimeConfig) {
     stopLoopbackUpgradeProbe();
     const baseURL = config.baseURL.replace(/\/+$/u, "");
-    currentDesktopApiBaseURL = baseURL;
     configureApiRuntime(baseURL, config.launchToken, config.uiBootstrapToken);
     const baseFetch = getUnderlyingFetch();
     wrappedFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -352,7 +301,6 @@ export function configureSameOriginDesktopFallback(
 ) {
     stopLoopbackUpgradeProbe();
     restoreUnderlyingFetch();
-    currentDesktopApiBaseURL = "/api";
     configureApiRuntime("/api", upgradeCandidate?.launchToken, upgradeCandidate?.uiBootstrapToken);
     if (upgradeCandidate?.launchToken) {
         const baseFetch = getUnderlyingFetch();
@@ -529,12 +477,6 @@ export async function bootstrapDesktopRuntime(options?: {
             const prev = getDesktopBootSnapshot();
             if (stateCandidate.safeModeRequested) {
                 applySessionCanvasMemoryMode("thumbnail-only");
-                const reqId = typeof stateCandidate.safeModeRequestId === "number" && Number.isFinite(stateCandidate.safeModeRequestId)
-                    ? Math.trunc(stateCandidate.safeModeRequestId)
-                    : 0;
-                if (reqId > 0) {
-                    pendingSafeModeAckId = reqId;
-                }
             }
             updateDesktopBootSnapshot({
                 state: stateCandidate.state,

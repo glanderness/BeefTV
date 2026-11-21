@@ -45,19 +45,31 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     }, [bootSnapshot.transportMode]);
 
     useEffect(() => {
-        let stopped = false, pending = false;
+        let stopped = false, pending = false, queued = false;
         const read = async () => {
             const consume = getDesktopAppBinding()?.ConsumeSkillLink;
-            if (!consume || pending || !userId) return;
+            if (!consume || !userId) return;
+            if (pending) {
+                queued = true;
+                return;
+            }
             pending = true;
             try {
                 const route = await consume();
-                if (!stopped && route.startsWith("/skills?")) window.location.assign(appHref(route));
-            } finally { pending = false; }
+                if (route.startsWith("/skills?")) window.location.assign(appHref(route));
+            } finally {
+                pending = false;
+                if (queued && !stopped) {
+                    queued = false;
+                    void read().catch(() => {});
+                }
+            }
         };
-        const timer = window.setInterval(() => void read().catch(() => {}), 1000);
+        const unsub = window.runtime?.EventsOn?.("desktop:skill-link", () => {
+            void read().catch(() => {});
+        });
         void read().catch(() => {});
-        return () => { stopped = true; clearInterval(timer); };
+        return () => { stopped = true; unsub?.(); };
     }, [userId]);
 
     useEffect(() => {

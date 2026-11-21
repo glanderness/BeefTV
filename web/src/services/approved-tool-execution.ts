@@ -38,7 +38,7 @@ export class ApprovedToolExecution {
             this.options.onRun(this.run.id);
             this.heartbeat = setInterval(() => {
                 if (this.disposed) return;
-                void (async () => { this.assertLive(); await this.api.heartbeat(this.run!.id, this.guard(), this.controller.signal); })().catch(() => this.abort(new Error("分析连接已中断，请重新打开后继续")));
+                void (async () => { this.assertLive(); await this.api.heartbeat(this.run!.id, this.guard(), this.controller.signal); })().catch(() => undefined);
             }, 15_000);
         })();
     }

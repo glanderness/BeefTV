@@ -25,7 +25,6 @@ type DesktopStartupState struct {
 	UncleanPreviousShutdown bool   `json:"uncleanPreviousShutdown,omitempty"`
 	LastCrashDiagnosticPath string `json:"lastCrashDiagnosticPath,omitempty"`
 	SafeModeRequested       bool   `json:"safeModeRequested,omitempty"`
-	SafeModeRequestID       uint64 `json:"safeModeRequestId,omitempty"`
 	BaseURL                 string `json:"baseURL,omitempty"`
 	LaunchToken             string `json:"launchToken,omitempty"`
 	UIBootstrapToken        string `json:"uiBootstrapToken,omitempty"`
@@ -42,10 +41,17 @@ type desktopBootAttempt struct {
 }
 
 func (a *DesktopApp) StartupState() DesktopStartupState {
+	return a.startupStateSnapshot(true)
+}
+
+func (a *DesktopApp) startupStateSnapshot(consumeSafeMode bool) DesktopStartupState {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if rt := a.runtime(); rt != nil {
-		safeModeID := rt.SafeModeRequestID()
+		safeMode := rt.SafeModeRequested()
+		if consumeSafeMode {
+			safeMode = rt.ConsumeSafeMode()
+		}
 		return DesktopStartupState{
 			State:                   "ready",
 			Phase:                   "ready",
@@ -53,8 +59,7 @@ func (a *DesktopApp) StartupState() DesktopStartupState {
 			DataDir:                 a.dataDir,
 			UncleanPreviousShutdown: a.uncleanPreviousSession,
 			LastCrashDiagnosticPath: a.lastCrashDiagnosticPath,
-			SafeModeRequested:       safeModeID > 0,
-			SafeModeRequestID:       safeModeID,
+			SafeModeRequested:       safeMode,
 			BaseURL:                 rt.BaseURL(),
 			LaunchToken:             rt.LaunchToken(),
 			UIBootstrapToken:        rt.UIBootstrapToken(),

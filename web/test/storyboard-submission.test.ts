@@ -33,3 +33,28 @@ test("确认期间编辑分镜会阻止提交", async () => {
 	await expect(submitStoryboardTask(request, { signal: new AbortController().signal, assertCurrent() { throw new Error("分镜已编辑"); }, confirm: async () => true }, h.api)).rejects.toThrow();
 	expect(h.calls).toEqual(["prepare", "release"]);
 });
+test("确认期间单次心跳抖动不会阻止提交", async () => {
+    const originalSetInterval = globalThis.setInterval;
+    let heartbeatTick: (() => void) | undefined;
+    globalThis.setInterval = ((fn: () => void) => {
+        heartbeatTick = fn;
+        return 1 as unknown as ReturnType<typeof setInterval>;
+    }) as typeof setInterval;
+    try {
+        const h = harness();
+        h.api.heartbeat = async () => { throw new Error("transient hiccup"); };
+        const result = await submitStoryboardTask(request, {
+            signal: new AbortController().signal,
+            assertCurrent() {},
+            confirm: async () => {
+                heartbeatTick?.();
+                await new Promise((r) => setTimeout(r, 10));
+                return true;
+            },
+        }, h.api);
+        expect(result?.id).toBe("task");
+        expect(h.calls).toEqual(["prepare", "approve", "execute", "release"]);
+    } finally {
+        globalThis.setInterval = originalSetInterval;
+    }
+});

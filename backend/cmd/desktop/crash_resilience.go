@@ -23,6 +23,7 @@ const (
 	crashSentinelFileName      = ".session-running"
 	lastCrashReadyEventName    = "diagnostics:last-crash-ready"
 	requestReloadEventName     = "desktop:request-reload"
+	reloadAckEventName         = "desktop:reload-ack"
 	rendererGracefulReloadWait = 1500 * time.Millisecond
 )
 
@@ -137,22 +138,20 @@ func (a *DesktopApp) ExportRuntimeDiagnosticsToDownloads(clientPayload string) (
 	return a.ExportStartupDiagnostics(clientPayload)
 }
 
-// ReloadWindow reloads the WebView window. It arms safeMode in Go state,
-// notifies a live renderer to ack and flush workspace saves (SQLite + IndexedDB
-// + settings) before reloading, and falls back to native browser-process reload
-// after 1.5s ONLY if the renderer failed to ack the reload request.
+// ReloadWindow reloads the WebView window. It arms one-shot safeMode in Go
+// state, notifies a live renderer to ack via Wails event and flush workspace
+// saves before reloading, and falls back to native browser-process reload
+// after 1.5s ONLY if the renderer failed to ack.
 func (a *DesktopApp) ReloadWindow(safeMode bool) error {
 	ctx, err := a.dialogContext()
 	if err != nil {
 		return err
 	}
-	rt := a.runtime()
-	var reqID uint64
-	if rt != nil {
+	if rt := a.runtime(); rt != nil {
 		rt.RequestSafeMode(safeMode)
-		reqID = rt.BeginReloadRequest()
 	}
 	emitFn := a.emitReloadEvent
+	subAckFn := a.subscribeReloadAck
 	nativeFn := a.nativeReloadFn
 	if emitFn == nil {
 		if ctx.Value("frontend") == nil {
@@ -160,6 +159,13 @@ func (a *DesktopApp) ReloadWindow(safeMode bool) error {
 		}
 		emitFn = func(c context.Context, payload map[string]any) {
 			wailsruntime.EventsEmit(c, requestReloadEventName, payload)
+		}
+	}
+	if subAckFn == nil && ctx.Value("frontend") != nil {
+		subAckFn = func(c context.Context, onAck func()) func() {
+			return wailsruntime.EventsOnce(c, reloadAckEventName, func(...any) {
+				onAck()
+			})
 		}
 	}
 	if nativeFn == nil {
@@ -173,21 +179,33 @@ func (a *DesktopApp) ReloadWindow(safeMode bool) error {
 	if wait <= 0 {
 		wait = rendererGracefulReloadWait
 	}
-	emitFn(ctx, map[string]any{"safeMode": safeMode, "requestId": reqID})
+	acked := make(chan struct{}, 1)
+	var unsub func()
+	if subAckFn != nil {
+		unsub = subAckFn(ctx, func() {
+			select {
+			case acked <- struct{}{}:
+			default:
+			}
+		})
+	}
+	emitFn(ctx, map[string]any{"safeMode": safeMode})
 	go func() {
+		defer func() {
+			if unsub != nil {
+				unsub()
+			}
+		}()
 		timer := time.NewTimer(wait)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
-		}
-		// Once the renderer explicitly acks this reload request, it owns the
-		// full multi-store flush and reload; never trigger a duplicate reload.
-		if rt != nil && reqID > 0 && rt.ReloadRequestAcked(reqID) {
+		case <-acked:
 			return
+		case <-timer.C:
+			nativeFn(ctx)
 		}
-		nativeFn(ctx)
 	}()
 	return nil
 }
