@@ -15,7 +15,7 @@ describe("workspace project repository", () => {
         spies.push(spy);
 
         const created = await createWorkspaceCanvasProject("新项目", "domain-1", { nodes: [] }, "ws-root-1");
-        expect(created).toEqual({ id: "canvas-new-1" });
+        expect(created).toStrictEqual({ id: "canvas-new-1" });
         expect(spy).toHaveBeenCalledTimes(1);
         expect(spy).toHaveBeenCalledWith("新项目", "domain-1", { nodes: [] }, "ws-root-1");
     });

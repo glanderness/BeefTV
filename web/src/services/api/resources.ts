@@ -172,18 +172,6 @@ export function readLocalCanvasDocumentLimitMB(): number {
     return DEFAULT_CANVAS_DOCUMENT_LIMIT_MB;
 }
 
-export async function getAccountFileStorageUsage() {
-    const data = await http.get<{ usage: AccountFileStorageUsage; canvasDocumentMB?: number }>("/resources/storage-usage");
-    if (typeof data.canvasDocumentMB === "number" && Number.isInteger(data.canvasDocumentMB) && data.canvasDocumentMB >= 0) {
-        try {
-            localStorage.setItem(CANVAS_DOCUMENT_LIMIT_STORAGE_KEY, String(data.canvasDocumentMB));
-        } catch {
-            // Ignore storage write failures.
-        }
-    }
-    return data.usage;
-}
-
 export async function getCanvasDocumentLimitMB(): Promise<number> {
     try {
         const data = await http.get<{ usage?: AccountFileStorageUsage; canvasDocumentMB?: number }>("/resources/storage-usage");

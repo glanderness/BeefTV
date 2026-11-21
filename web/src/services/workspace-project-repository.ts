@@ -5,8 +5,7 @@ type InitialCanvasContent = Partial<Pick<CanvasProject, "nodes" | "connections" 
 
 /** Single project-storage boundary for workspace UI code. */
 export async function createWorkspaceCanvasProject(title: string, projectId?: string, initialContent?: InitialCanvasContent, workspaceProjectId?: string) {
-    const local = await createLocalCanvasProject(title, projectId, initialContent, workspaceProjectId);
-    return { ...local, syncError: undefined as undefined };
+    return createLocalCanvasProject(title, projectId, initialContent, workspaceProjectId);
 }
 
 export async function deleteWorkspaceCanvasProjects(ids: readonly string[]) {

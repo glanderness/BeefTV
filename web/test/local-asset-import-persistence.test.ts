@@ -33,7 +33,6 @@ describe("local asset package import", () => {
         let resetCalled = false;
 
         const ok = await importAssetArchiveFile(file, {
-            localWorkspace: true,
             addAsset: () => {
                 events.push("add");
                 return "new-1";

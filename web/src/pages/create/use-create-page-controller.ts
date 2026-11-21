@@ -8,7 +8,6 @@ import { createReferenceLinkResolver } from "@/components/generation-reference-l
 import { explainGenerationError, generationErrorMessage } from "@/lib/generation-error";
 import { confirmCreationRetryIfNeeded } from "@/lib/generation-failure-ux";
 import { normalizeTaskOutcome } from "@/lib/task-outcome";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue } from "@/lib/model-capabilities";
 import { hasDeclaredModelCapability, resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
@@ -62,7 +61,6 @@ export function useCreatePageController() {
     const userId = useUserStore((state) => state.user?.id);
     const navigate = useNavigate();
     const brandName = useAppearanceStore((state) => state.appearance.brandName);
-    const localMode = isLocalWorkspaceMode();
     const config = useEffectiveConfig();
     const composerPreferencesHydrated = useCreationPreferencesStore((state) => state.hydrated);
     const rememberMode = useCreationPreferencesStore((state) => state.rememberMode);
@@ -121,7 +119,6 @@ export function useCreatePageController() {
 
     const conversationsState = useCreateConversations({
         demoConversation,
-        localMode,
         userId,
         navigate,
         toast,

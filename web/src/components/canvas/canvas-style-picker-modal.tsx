@@ -8,7 +8,11 @@ import { nanoid } from "nanoid";
 import { StyleProfileEditorModal } from "@/components/canvas/style-profile-editor-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
-import { createStyleProfileSnapshot, parseStyleProfile, serializeStyleProfile, type StyleProfileSnapshot } from "@/lib/canvas/style-profile";
+import { createStyleProfileSnapshot, parseStyleProfile, type StyleProfileSnapshot } from "@/lib/canvas/style-profile";
+import {
+    createLocalStyleProfileStore,
+    type UserStyleProfile,
+} from "@/lib/canvas/local-style-profiles";
 import {
     canvasStylePresets,
     resolveCanvasStylePreset,
@@ -17,61 +21,10 @@ import {
 } from "@/lib/canvas/canvas-style-catalog";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 
-export type UserStyleProfile = {
-    id: string;
-    userId: string;
-    name: string;
-    description: string;
-    coverUrl: string;
-    tagsJson: string;
-    profileJson: string;
-    favorite: boolean;
-    lastUsedAt?: string;
-    revision: number;
-    createdAt: string;
-    updatedAt: string;
-};
-
-export function saveLocalStyleProfileEntry(
-    profiles: UserStyleProfile[],
-    input: { id: string; profile: StyleProfileSnapshot; now?: string; apply?: boolean },
-): { entity: UserStyleProfile; profiles: UserStyleProfile[] } {
-    const now = input.now || new Date().toISOString();
-    const existing = profiles.find((item) => item.id === input.id);
-    const entity: UserStyleProfile = {
-        id: input.id,
-        userId: "local",
-        name: input.profile.title || "未命名风格",
-        description: input.profile.description || "",
-        coverUrl: input.profile.coverUrl || "",
-        tagsJson: JSON.stringify(input.profile.tags || []),
-        profileJson: serializeStyleProfile(input.profile),
-        favorite: existing?.favorite ?? false,
-        lastUsedAt: input.apply ? now : existing?.lastUsedAt,
-        revision: (existing?.revision || 0) + 1,
-        createdAt: existing?.createdAt || now,
-        updatedAt: now,
-    };
-    return {
-        entity,
-        profiles: [entity, ...profiles.filter((item) => item.id !== input.id)],
-    };
-}
-
-export function touchLocalStyleProfileUsed(
-    profiles: UserStyleProfile[],
-    id: string,
-    now = new Date().toISOString(),
-): UserStyleProfile[] {
-    return profiles.map((entity) => (entity.id === id ? { ...entity, lastUsedAt: now, updatedAt: now } : entity));
-}
-
-
 export { canvasStylePresets, resolveCanvasStylePreset, resolveProjectCanvasStyle, type CanvasStylePreset };
 
 const STYLE_FAVORITES_KEY = "canvas:style-library:favorites";
 const STYLE_RECENT_KEY = "canvas:style-library:recent";
-const LOCAL_STYLE_PROFILES_KEY = "canvas:style-library:profiles";
 
 type StyleCenterTab = "system" | "mine" | "favorites" | "recent";
 type SystemStyleLibraryItem = { kind: "system"; preset: CanvasStylePreset };
@@ -97,16 +50,10 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
     const [systemFavoriteIds, setSystemFavoriteIds] = useState<string[]>([]);
     const [recentIds, setRecentIds] = useState<string[]>([]);
     const [editor, setEditor] = useState<StyleEditorState | null>(null);
-    const [localProfiles, setLocalProfiles] = useState<UserStyleProfile[]>(readLocalStyleProfiles);
-    const localProfilesRef = useRef(localProfiles);
-    localProfilesRef.current = localProfiles;
-    const commitLocalProfiles = (updater: (current: UserStyleProfile[]) => UserStyleProfile[]) => {
-        const next = updater(localProfilesRef.current);
-        localProfilesRef.current = next;
-        setLocalProfiles(next);
-        persistLocalStyleProfiles(next);
-        return next;
-    };
+    const profileStoreRef = useRef<ReturnType<typeof createLocalStyleProfileStore> | null>(null);
+    if (!profileStoreRef.current) profileStoreRef.current = createLocalStyleProfileStore();
+    const profileStore = profileStoreRef.current;
+    const [localProfiles, setLocalProfiles] = useState<UserStyleProfile[]>(() => profileStore.getAll());
 
     useEffect(() => {
         if (!open) return;
@@ -115,11 +62,9 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
         setCategory("全部");
         setSystemFavoriteIds(readStyleIds(STYLE_FAVORITES_KEY));
         setRecentIds(readStyleIds(STYLE_RECENT_KEY));
-        const loaded = readLocalStyleProfiles();
-        localProfilesRef.current = loaded;
-        setLocalProfiles(loaded);
+        setLocalProfiles(profileStore.reload());
         setEditor(startInEditor && currentProfile?.source !== "user" && currentProfile ? { profile: editableCopy(currentProfile) } : null);
-    }, [currentProfile, open, startInEditor]);
+    }, [currentProfile, open, profileStore, startInEditor]);
 
     const userItems = useMemo<UserStyleLibraryItem[]>(() => localProfiles.flatMap((entity) => {
         const preset = userStylePreset(entity);
@@ -153,13 +98,9 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
     const saveMutation = useMutation({
         mutationFn: ({ profile, apply }: { profile: StyleProfileSnapshot; apply: boolean }) => {
             const id = editor?.entityId || nanoid();
-            let savedEntity!: UserStyleProfile;
-            commitLocalProfiles((current) => {
-                const saved = saveLocalStyleProfileEntry(current, { id, profile, apply });
-                savedEntity = saved.entity;
-                return saved.profiles;
-            });
-            return Promise.resolve({ profile: savedEntity, apply });
+            const saved = profileStore.save({ id, profile, apply });
+            setLocalProfiles(saved.profiles);
+            return Promise.resolve({ profile: saved.entity, apply });
         },
         onSuccess: ({ profile, apply }) => {
             const preset = userStylePreset(profile);
@@ -172,14 +113,14 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
     });
     const favoriteMutation = useMutation({
         mutationFn: ({ id, favorite }: { id: string; favorite: boolean }) => {
-            commitLocalProfiles((current) => current.map((item) => item.id === id ? { ...item, favorite, updatedAt: new Date().toISOString() } : item));
+            setLocalProfiles(profileStore.setFavorite(id, favorite));
             return Promise.resolve({ id, favorite });
         },
         onError: (error) => message.error(error instanceof Error ? error.message : "收藏状态更新失败"),
     });
     const deleteMutation = useMutation({
         mutationFn: (id: string) => {
-            commitLocalProfiles((current) => current.filter((item) => item.id !== id));
+            setLocalProfiles(profileStore.remove(id));
             return Promise.resolve({ id });
         },
         onSuccess: () => { message.success("风格已删除"); },
@@ -193,7 +134,7 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
         setRecentIds(next);
         localStorage.setItem(STYLE_RECENT_KEY, JSON.stringify(next));
         if (item.kind === "user") {
-            commitLocalProfiles((current) => touchLocalStyleProfileUsed(current, item.entity.id));
+            setLocalProfiles(profileStore.markUsed(item.entity.id));
         }
         onSelect(preset);
     }
@@ -283,23 +224,6 @@ function readStyleIds(key: string) {
         return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string").slice(0, 100) : [];
     } catch {
         return [];
-    }
-}
-
-function readLocalStyleProfiles(): UserStyleProfile[] {
-    try {
-        const parsed = JSON.parse(localStorage.getItem(LOCAL_STYLE_PROFILES_KEY) || "[]") as unknown;
-        return Array.isArray(parsed) ? parsed.filter((value): value is UserStyleProfile => Boolean(value && typeof value === "object" && typeof (value as UserStyleProfile).id === "string" && typeof (value as UserStyleProfile).profileJson === "string")) : [];
-    } catch {
-        return [];
-    }
-}
-
-function persistLocalStyleProfiles(profiles: UserStyleProfile[]) {
-    try {
-        localStorage.setItem(LOCAL_STYLE_PROFILES_KEY, JSON.stringify(profiles));
-    } catch {
-        // Private browsing or a full local quota should not make system styles unusable.
     }
 }
 

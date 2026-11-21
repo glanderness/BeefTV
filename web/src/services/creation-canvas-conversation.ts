@@ -34,7 +34,6 @@ export async function continueCreationConversationOnCanvas(source: SourceConvers
     const local = useCanvasStore.getState().projects.find((item) => item.chatSessions?.some((session) => session.id === sessionId));
     const existingId = source.canvasId || local?.id;
     let id: string;
-    let syncError: unknown;
     if (existingId) {
         const project = await loadCanvasProjectForEditing(existingId);
         assertScope();
@@ -56,9 +55,8 @@ export async function continueCreationConversationOnCanvas(source: SourceConvers
         const session: CanvasAssistantSession = { id: sessionId, title: source.title, createdAt: source.messages[0].createdAt, updatedAt: source.updatedAt, messages };
         const created = await createWorkspaceCanvasProject(source.title || "创作画布", undefined, { chatSessions: [session], activeChatId: sessionId });
         id = created.id;
-        syncError = created.syncError;
         await flushCanvasStorePersistence();
     }
     assertScope();
-    return { id, sessionId, syncError };
+    return { id, sessionId };
 }
