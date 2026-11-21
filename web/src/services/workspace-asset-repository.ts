@@ -1,8 +1,10 @@
 import { linkProjectAsset, moveProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
 import { ApiError } from "@/services/api/request";
+import { lookupWorkspaceAssetsByIds } from "@/services/api/workspace-assets";
 import { deleteWorkspaceAssetRecord, putWorkspaceAsset } from "@/services/api/workspace-data";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { normalizeAssetCategory } from "@/lib/asset-category";
+import { parseWorkspaceAssetPayloads } from "@/lib/workspace-asset-normalize";
 import { usesBrowserLocalResourceStore, workspaceAssetHasCanonicalMediaPersist } from "@/services/workspace-resource-storage";
 import {
     ackAssetStoreDraft,
@@ -101,8 +103,15 @@ export function mergeWorkspaceAssetReceipt(submitted: Asset, live: Asset, receip
 }
 
 function projectLinkedMetadata(live: Asset, domainProjectId: string | undefined) {
-    if (!domainProjectId) return live.metadata;
-    return { ...live.metadata, projectIds: linkedProjectIds(live, domainProjectId) };
+    const base = stripGenerationLookupUnverifiedMetadata(live.metadata);
+    if (!domainProjectId) return base;
+    return { ...base, projectIds: linkedProjectIds(live, domainProjectId) };
+}
+
+function stripGenerationLookupUnverifiedMetadata(metadata: Asset["metadata"]) {
+    if (!metadata || metadata.generationLookupUnverified !== true) return metadata;
+    const { generationLookupUnverified: _omitted, ...rest } = metadata;
+    return Object.keys(rest).length ? rest : undefined;
 }
 
 function applyReceiptProjection(id: string, submitted: Asset, receipt: AssetWriteReceipt, domainProjectId?: string) {
@@ -116,6 +125,49 @@ function applyReceiptProjection(id: string, submitted: Asset, receipt: AssetWrit
         useAssetStore.getState().updateAsset(id, metadataChanged ? { ...patch, metadata } : patch);
     });
     return true;
+}
+
+function stripGenerationLookupUnverified(asset: Asset): Asset {
+    if (!asset.metadata || asset.metadata.generationLookupUnverified !== true) return asset;
+    return { ...asset, metadata: stripGenerationLookupUnverifiedMetadata(asset.metadata) };
+}
+
+async function removeProjectedAssetAfterDelete(assetId: string) {
+    const liveAsset = useAssetStore.getState().assets.find((item) => item.id === assetId);
+    if (!liveAsset) return;
+    // Canonical resource:* and text rows have no browser-local blobs to sweep;
+    // degraded fallback media rows still reclaim their IndexedDB blobs via full-graph GC.
+    const hasLocalFallback = !workspaceAssetHasCanonicalMediaPersist(liveAsset);
+    await runAssetStoreProjection(() => useAssetStore.getState().removeAsset(assetId, { cleanupMedia: hasLocalFallback }));
+}
+
+type GenerationReconcileResult =
+    | { kind: "passthrough"; asset: Asset }
+    | { kind: "absent"; asset: Asset }
+    | { kind: "adopted"; asset: Asset }
+    | { kind: "superseded" };
+
+async function reconcileUnverifiedGenerationAsset(
+    asset: Asset,
+    submittedVersion: number | undefined,
+    signal?: AbortSignal,
+): Promise<GenerationReconcileResult> {
+    if (asset.metadata?.generationLookupUnverified !== true) return { kind: "passthrough", asset };
+    const remote = await lookupWorkspaceAssetsByIds([asset.id], { signal });
+    throwIfAborted(signal);
+    const latestDraft = peekAssetStoreDraft(getActiveUserScope(), asset.id);
+    if (latestDraft && (submittedVersion === undefined || latestDraft.version !== submittedVersion)) {
+        return { kind: "superseded" };
+    }
+    const existing = parseWorkspaceAssetPayloads(remote.assets).find((item) => item.id === asset.id) ?? null;
+    if (!existing) return { kind: "absent", asset: stripGenerationLookupUnverified(asset) };
+    runAssetStoreProjection(() => {
+        useAssetStore.setState((state) => {
+            const has = state.assets.some((item) => item.id === existing.id);
+            return { assets: has ? state.assets.map((item) => (item.id === existing.id ? existing : item)) : [existing, ...state.assets] };
+        });
+    });
+    return { kind: "adopted", asset: existing };
 }
 
 async function commitTrackedAssetDraft(id: string, signal?: AbortSignal) {
@@ -133,9 +185,7 @@ async function commitTrackedAssetDraft(id: string, signal?: AbortSignal) {
         ackAssetStoreDraft(id, submittedVersion);
         const later = peekAssetStoreDraft(getActiveUserScope(), id);
         if (later?.kind === "upsert") return;
-        if (useAssetStore.getState().assets.some((item) => item.id === id)) {
-            await runAssetStoreProjection(() => useAssetStore.getState().removeAsset(id));
-        }
+        await removeProjectedAssetAfterDelete(id);
         return;
     }
 
@@ -145,7 +195,13 @@ async function commitTrackedAssetDraft(id: string, signal?: AbortSignal) {
         await flushAssetStorePersistence();
         throw new WorkspaceAssetMediaPendingError();
     }
-    const submitted = asset;
+    const reconciled = await reconcileUnverifiedGenerationAsset(asset, submittedVersion, signal);
+    if (reconciled.kind === "superseded") return;
+    if (reconciled.kind === "adopted") {
+        ackAssetStoreDraft(id, submittedVersion);
+        return;
+    }
+    const submitted = reconciled.asset;
     const saved = await putWorkspaceAsset(id, submitted, { signal });
     throwIfAborted(signal);
     assertAssetWriteReceipt(saved?.asset, id);
@@ -182,19 +238,26 @@ export async function persistWorkspaceAssetLink({ asset, domainProjectId, catego
             await commitTrackedAssetDraft(live.id, signal);
             return;
         }
-        const submitted = live;
-        const saved = await putWorkspaceAsset(live.id, submitted, { signal });
-        throwIfAborted(signal);
-        assertAssetWriteReceipt(saved?.asset, live.id);
-        if (submittedVersion) ackAssetStoreDraft(live.id, submittedVersion);
+        const reconciled = await reconcileUnverifiedGenerationAsset(live, submittedVersion, signal);
+        if (reconciled.kind === "superseded") return;
+        const submitted = reconciled.asset;
+        let receipt: AssetWriteReceipt;
+        if (reconciled.kind === "adopted") {
+            if (submittedVersion) ackAssetStoreDraft(live.id, submittedVersion);
+            receipt = reconciled.asset;
+        } else {
+            const saved = await putWorkspaceAsset(live.id, submitted, { signal });
+            throwIfAborted(signal);
+            assertAssetWriteReceipt(saved?.asset, live.id);
+            if (submittedVersion) ackAssetStoreDraft(live.id, submittedVersion);
+            receipt = saved.asset;
+        }
         const afterPut = peekAssetStoreDraft(getActiveUserScope(), live.id);
         if (afterPut?.kind === "delete") {
             await commitTrackedAssetDraft(live.id, signal);
             return;
         }
         if (!useAssetStore.getState().assets.some((item) => item.id === live.id)) return;
-
-        let receipt: AssetWriteReceipt = saved.asset;
         if (domainProjectId) {
             const { asset: linkedAsset } = await linkProjectAsset(
                 domainProjectId,
@@ -255,9 +318,7 @@ export async function deleteWorkspaceAsset(id: string, options?: DeleteWorkspace
         const later = peekAssetStoreDraft(getActiveUserScope(), assetId);
         if (later && later.version !== submittedVersion && later.kind === "upsert") return;
         if (later && later.version === submittedVersion) ackAssetStoreDraft(assetId, submittedVersion);
-        if (useAssetStore.getState().assets.some((item) => item.id === assetId)) {
-            await runAssetStoreProjection(() => useAssetStore.getState().removeAsset(assetId, { cleanupMedia: false }));
-        }
+        await removeProjectedAssetAfterDelete(assetId);
     });
 }
 
