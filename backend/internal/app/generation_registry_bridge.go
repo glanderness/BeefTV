@@ -18,9 +18,6 @@ func ensureOfficialProtocolAdapter(ctx context.Context, interfaceType string) co
 func declarativeProtocolAdapterForContext(ctx context.Context, id string) (protocol.Adapter, bool) {
 	return generation.DeclarativeProtocolAdapterForContext(ctx, id)
 }
-func agentProtocolAdapterForContext(ctx context.Context, id string) (protocol.AgentAdapter, bool) {
-	return generation.AgentProtocolAdapterForContext(ctx, id)
-}
 func loadOfficialFallbackRegistry() *protocol.Registry {
 	return generation.LoadOfficialFallbackRegistry()
 }

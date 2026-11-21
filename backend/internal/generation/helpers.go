@@ -187,14 +187,6 @@ func validateVideoReferenceVideo(refs VideoReferenceConfig, index int, media Med
 	return modelcatalog.ValidateVideoReferenceVideo(refs, index, taskMediaFromProvider(media))
 }
 
-func applySeedanceDocumentedVideoPixelFloor(config Config, refs *VideoReferenceConfig) {
-	modelcatalog.ApplySeedanceDocumentedVideoPixelFloor(modelcatalog.TaskConfig{
-		InterfaceType: config.InterfaceType,
-		Model:         config.Model,
-		BaseURL:       config.BaseURL,
-	}, refs)
-}
-
 func videoResolutionNameRequest(profile *VideoCapabilityConfig, value string) string {
 	return modelcatalog.VideoResolutionNameRequest(profile, value)
 }

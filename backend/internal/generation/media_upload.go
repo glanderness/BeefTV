@@ -3,12 +3,10 @@ package generation
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -232,14 +230,6 @@ func validateSeedanceReferenceCapability(input *Input, kind string, index int, m
 	return nil
 }
 
-func CreateBeefTVSeedanceUpload(ctx context.Context, config Config, request BeefTVSeedanceUploadRequest) (BeefTVSeedanceUploadSession, error) {
-	session, err := managedMediaClient(ctx, config).CreateUpload(referenceUploadStage(ctx, "create"), request)
-	if err != nil {
-		return session, referenceMediaUploadError(referenceUploadStage(ctx, "create"), err)
-	}
-	return session, nil
-}
-
 func CompleteBeefTVSeedanceUpload(ctx context.Context, config Config, session BeefTVSeedanceUploadSession, data []byte) (BeefTVSeedanceUploadComplete, error) {
 	uploaded, err := managedMediaClient(ctx, config).CompleteUpload(ctx, session, data, "参考素材")
 	if err != nil {
@@ -278,27 +268,9 @@ func PutBeefTVSeedanceBytes(ctx context.Context, session BeefTVSeedanceUploadSes
 	return nil
 }
 
-func ValidateBeefTVSeedanceSession(ctx context.Context, session BeefTVSeedanceUploadSession) error {
-	runtime, _ := RuntimeFromContext(ctx)
-	return (&beeftv.MediaClient{AllowHTTPTest: runtime.Endpoints.BeefTVVideoBaseURL != ""}).ValidateUploadSession(ctx, session, 0)
-}
-
 func ValidateBeefTVSeedanceSecureURL(ctx context.Context, raw string) error {
 	runtime, _ := RuntimeFromContext(ctx)
 	return (&beeftv.MediaClient{AllowHTTPTest: runtime.Endpoints.BeefTVVideoBaseURL != ""}).ValidateUploadURL(ctx, raw)
-}
-
-func BeefTVSeedanceAllowInsecureTestURL(ctx context.Context, parsed *url.URL) bool {
-	return parsed != nil && parsed.Scheme == "http" && beefTVTestBaseURL(ctx) != ""
-}
-
-func SkipBeefTVSeedancePutHeader(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "authorization", "proxy-authorization", "cookie", "set-cookie", "host", "content-length", "connection", "transfer-encoding", "te", "trailer", "upgrade", "x-api-key", "x-goog-api-key":
-		return true
-	default:
-		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "x-canvas-")
-	}
 }
 
 func BeefTVSeedancePreuploadUnavailable(err error) bool {
@@ -307,63 +279,6 @@ func BeefTVSeedancePreuploadUnavailable(err error) bool {
 		return false
 	}
 	return httpErr.StatusCode == http.StatusNotFound || httpErr.StatusCode == http.StatusNotImplemented
-}
-
-func MapBeefTVSeedanceUploadError(err error, completing bool) error {
-	if err == nil {
-		return nil
-	}
-	var upload *ReferenceUploadError
-	if errors.As(err, &upload) {
-		return err
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
-	}
-	if errors.Is(err, errBeefTVSeedanceUploadRedirect) {
-		return errBeefTVSeedanceUploadUnavailable
-	}
-	var httpErr HTTPError
-	if errors.As(err, &httpErr) {
-		switch httpErr.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return err
-		case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout:
-			return errBeefTVSeedanceUploadUnavailable
-		case http.StatusBadRequest:
-			if message := BeefTVSeedanceUserErrorMessage(httpErr.Body); message != "" {
-				return errors.New(message)
-			}
-			if completing {
-				return errBeefTVSeedanceUploadIncomplete
-			}
-			return errors.New("请检查文件类型、大小后再提交")
-		}
-	}
-	if completing {
-		return errBeefTVSeedanceUploadIncomplete
-	}
-	return errBeefTVSeedanceUploadUnavailable
-}
-
-func BeefTVSeedanceUserErrorMessage(body string) string {
-	var payload struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal([]byte(body), &payload) != nil {
-		return ""
-	}
-	message := strings.TrimSpace(payload.Error.Message)
-	if message == "" {
-		return ""
-	}
-	lower := strings.ToLower(message)
-	if strings.Contains(lower, "ticket") || strings.Contains(lower, "sha256") || strings.Contains(lower, "r2") || strings.Contains(lower, "upload_url") {
-		return ""
-	}
-	return message
 }
 
 func BeefTVSeedanceKindMaxBytes(kind string) int64 {

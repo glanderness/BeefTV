@@ -73,7 +73,3 @@ func saveState(dataDir string, state persistedState) error {
 	}
 	return nil
 }
-
-func clearState(dataDir string) error {
-	return saveState(dataDir, persistedState{Status: StateDisconnected, Balance: BalanceUnknown})
-}

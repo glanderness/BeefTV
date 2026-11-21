@@ -102,17 +102,6 @@ func OfficialDeclarativeImageInterface(interfaceType string) (string, bool) {
 	}
 }
 
-func OfficialDeclarativeAudioInterface(interfaceType string) (string, bool) {
-	switch strings.TrimSpace(interfaceType) {
-	case string(model.ChannelInterfaceOpenAIAudio):
-		return "OpenAI Audio", true
-	case string(model.ChannelInterfaceAsyncAudio):
-		return "异步音频", true
-	default:
-		return "", false
-	}
-}
-
 // DeclarativeProtocolAdapterForContext 返回插件清单声明的生成接口：JSON 描述的，或插件 JS 实现的。
 func DeclarativeProtocolAdapterForContext(ctx context.Context, id string) (protocol.Adapter, bool) {
 	adapter, ok := ProtocolAdapterForContext(ctx, id)
@@ -296,24 +285,6 @@ func officialBundledPluginDirCandidates(officialPackageDir, pluginName string) [
 // 兼容包内未导出旧名（service 薄包装与未改调用点）。
 func withProtocolRegistry(ctx context.Context, registry *protocol.Registry) context.Context {
 	return WithProtocolRegistry(ctx, registry)
-}
-func protocolRegistryFromContext(ctx context.Context) (*protocol.Registry, bool) {
-	return ProtocolRegistryFromContext(ctx)
-}
-func protocolAdapterForContext(ctx context.Context, id string) (protocol.Adapter, bool) {
-	return ProtocolAdapterForContext(ctx, id)
-}
-func ensureOfficialProtocolAdapter(ctx context.Context, interfaceType string) context.Context {
-	return EnsureOfficialProtocolAdapter(ctx, interfaceType)
-}
-func officialDeclarativeVideoInterface(interfaceType string) (string, bool) {
-	return OfficialDeclarativeVideoInterface(interfaceType)
-}
-func officialDeclarativeImageInterface(interfaceType string) (string, bool) {
-	return OfficialDeclarativeImageInterface(interfaceType)
-}
-func officialDeclarativeAudioInterface(interfaceType string) (string, bool) {
-	return OfficialDeclarativeAudioInterface(interfaceType)
 }
 func declarativeProtocolAdapterForContext(ctx context.Context, id string) (protocol.Adapter, bool) {
 	return DeclarativeProtocolAdapterForContext(ctx, id)

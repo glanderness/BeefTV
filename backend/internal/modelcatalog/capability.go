@@ -470,14 +470,6 @@ func metadataString(metadata map[string]any, key string) string {
 	return ""
 }
 
-func NormalizedChannelModelCapability(channelModel *model.ChannelModel) (*ModelCapabilityConfig, error) {
-	return normalizedChannelModelCapability(channelModel)
-}
-
-func ValidateTextCapabilityConfig(value *TextCapabilityConfig) error {
-	return validateTextCapabilityConfig(value)
-}
-
 func ContainsCapabilityString(values []string, target string) bool {
 	return containsCapabilityString(values, target)
 }

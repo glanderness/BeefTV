@@ -125,10 +125,6 @@ func BundledNodePath() string {
 	return assistantruntime.BundledConfig(exe, runtime.GOOS).HostCommand
 }
 
-func ResolveScriptInterpreter(kind, bundledNodePath, goos string) (string, []string, error) {
-	return resolveScriptInterpreterWithLookPath(kind, bundledNodePath, goos, exec.LookPath)
-}
-
 func resolveScriptInterpreterWithLookPath(kind, bundledNodePath, goos string, lookPath func(string) (string, error)) (string, []string, error) {
 	if lookPath == nil {
 		lookPath = exec.LookPath

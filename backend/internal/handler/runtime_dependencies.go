@@ -160,13 +160,6 @@ func requestAssetPort(c *gin.Context, fallback localapp.AssetPort) localapp.Asse
 	return fallback
 }
 
-func requestProjectPort(c *gin.Context, fallback serviceRuntimeSource) localapp.ProjectPort {
-	if dependencies, ok := runtimeDependencies(c); ok && dependencies.Projects != nil {
-		return dependencies.Projects
-	}
-	return newServiceRuntimeAdapter(fallback)
-}
-
 func requestTaskPort(c *gin.Context, fallback serviceRuntimeSource) localapp.TaskPort {
 	if dependencies, ok := runtimeDependencies(c); ok && dependencies.Tasks != nil {
 		return dependencies.Tasks

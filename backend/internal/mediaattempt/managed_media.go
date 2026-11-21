@@ -340,23 +340,6 @@ const (
 	managedVideoUnreportedAge    = 7 * 24 * time.Hour
 )
 
-func ManagedFailureInfo(err error) (statusCode int, explicitRejection, terminalFailure bool) {
-	var managedHTTP *beeftv.MediaHTTPError
-	if errors.As(err, &managedHTTP) {
-		statusCode = managedHTTP.StatusCode
-		explicitRejection = beeftv.IsDefiniteMediaRejection(err)
-	}
-	var managedTask *beeftv.MediaTaskError
-	if errors.As(err, &managedTask) && !managedTask.Pending() {
-		if managedTask.Code == "media_submission_rejected" && strings.TrimSpace(managedTask.TaskID) == "" {
-			explicitRejection = true
-		} else {
-			terminalFailure = true
-		}
-	}
-	return statusCode, explicitRejection, terminalFailure
-}
-
 func ClassifyFailedVideoQueryOutcome(task model.Task, providerStatus string, err error, now time.Time) string {
 	if mediaErr := (*beeftv.MediaTaskError)(nil); (errors.As(err, &mediaErr) && mediaErr.Code == "media_submission_rejected") || isUnreportedManagedInvalidQuery(task, providerStatus, err) {
 		return localtask.RecoveryNoResult

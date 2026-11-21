@@ -62,14 +62,6 @@ func UnreadableAssetDocument(kind string) error {
 	}
 }
 
-func HistoryReferenced() error {
-	return kernel.BadAuthRequest("素材仍被画布历史版本引用，已保留文件")
-}
-
-func StillReferenced() error {
-	return kernel.BadAuthRequest("素材仍被引用，请先在对应画布、任务或业务记录中解除引用后再删除")
-}
-
 func TrashStatusConflict() error {
 	return kernel.NewAppError(http.StatusConflict, "素材已不在回收站，未删除")
 }

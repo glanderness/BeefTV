@@ -311,10 +311,6 @@ func matchesMarketQuery(item View, query string) bool {
 		strings.Contains(strings.ToLower(item.PackageSpec), q)
 }
 
-func fetchNpmMarketPlugins(ctx context.Context, query string, installed map[string]View) []MarketPluginItem {
-	return fetchNpmMarketPluginsWithRegistry(ctx, query, NpmMirrorRegistry, installed)
-}
-
 func fetchNpmMarketPluginsWithRegistry(ctx context.Context, query, registry string, installed map[string]View) []MarketPluginItem {
 	for _, reg := range npmRegistryOrder(registry) {
 		if ctx != nil && ctx.Err() != nil {

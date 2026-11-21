@@ -99,14 +99,8 @@ func (s *Service) ValidateRuntime() error {
 func ChannelSlotFailureDetails(err error) (string, string) {
 	return platform.ChannelSlotFailureDetails(err)
 }
-func SanitizeAPICallPayload(data []byte, contentType string) string {
-	return platform.SanitizeAPICallPayload(data, contentType)
-}
 func optionalJSONString(p map[string]any, key string) (string, error) {
 	return platform.OptionalJSONString(p, key)
-}
-func firstJSONString(p map[string]any, keys ...string) (string, error) {
-	return platform.FirstJSONString(p, keys...)
 }
 func megabytes(value int64) int64                { return kernel.Megabytes(value) }
 func gigabytes(value int64) int64                { return kernel.Gigabytes(value) }

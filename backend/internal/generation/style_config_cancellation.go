@@ -490,18 +490,6 @@ func AllowedSystemModelKey(value, sku, authorizedUpstream string) bool {
 	return value == "" || value == sku || (authorizedUpstream != "" && value == authorizedUpstream)
 }
 
-func TaskMediaFromProvider(media Media) modelcatalog.MediaRef {
-	return taskMediaFromProvider(media)
-}
-
-func TaskMediaListFromProvider(items []Media) []modelcatalog.MediaRef {
-	return taskMediaListFromProvider(items)
-}
-
 func TaskInputFromCanvas(input Input) modelcatalog.TaskInput {
 	return taskInputFromCanvas(input)
-}
-
-func ApplyTaskConfigToCanvas(input *Input, task modelcatalog.TaskInput) {
-	applyTaskConfigToCanvas(input, task)
 }

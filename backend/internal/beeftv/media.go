@@ -221,9 +221,6 @@ func (c *MediaClient) httpClient() *http.Client {
 	}
 	return outbound.OutboundHTTPClient(5 * time.Minute)
 }
-func (c *MediaClient) validURL(raw string) error {
-	return c.validURLContext(context.Background(), raw)
-}
 func (c *MediaClient) validURLContext(ctx context.Context, raw string) error {
 	if !c.AllowHTTPTest {
 		_, err := outbound.ValidatePublicHTTPSURLContext(ctx, raw)

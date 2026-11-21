@@ -95,13 +95,3 @@ func referenceUploadError(ctx context.Context, cause error) *ReferenceUploadErro
 	upload.Detail = DiagnosticSummary(upload.Detail)
 	return upload
 }
-
-func referenceUploadAddressError(ctx context.Context, cause error) *ReferenceUploadError {
-	upload := referenceUploadError(referenceUploadStage(ctx, "put"), cause)
-	upload.Code = "upload_address_invalid"
-	// These are local DNS validation results, never upstream-provided messages.
-	if strings.Contains(cause.Error(), "外部服务域名解析失败") || strings.Contains(cause.Error(), "外部服务域名没有可用地址") {
-		upload.Code = "upload_transport_error"
-	}
-	return upload
-}

@@ -349,11 +349,6 @@ func configuredProxyAddress(address string) bool {
 	return desktopnet.ConfiguredProxyAddress(address)
 }
 
-func ValidateOutboundHost(host string) error {
-	_, err := resolveOutboundHost(context.Background(), host)
-	return err
-}
-
 func validateCustomRelayHost(host string) error {
 	_, err := resolveCustomRelayHost(context.Background(), host)
 	return err

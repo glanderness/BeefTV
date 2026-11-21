@@ -447,10 +447,6 @@ func IsSeedance25Model(modelName string) bool {
 	return isSeedance25Model(modelName)
 }
 
-func OverlayOfficialSeedance2References(base VideoReferenceConfig, is25 bool) VideoReferenceConfig {
-	return overlayOfficialSeedance2References(base, is25)
-}
-
 func ApplySeedanceDocumentedVideoPixelFloor(config TaskConfig, refs *VideoReferenceConfig) {
 	applySeedanceDocumentedVideoPixelFloor(config, refs)
 }

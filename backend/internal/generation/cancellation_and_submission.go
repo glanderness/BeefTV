@@ -251,11 +251,6 @@ func providerCancellationUncertainMessage(base string) string {
 	return base + "，取消状态待确认"
 }
 
-func DeferProviderCancellation(repo *repository.Repository, task *model.Task, errorText string) error {
-	next := time.Now().Add(30 * time.Second)
-	return repo.UpdateTaskProviderCancellation(task.ID, model.ProviderCancelStatusRequested, model.ProviderCancelStatusRequested, truncateRunes(errorText, 1000), &next, nil)
-}
-
 func MarkProviderCancellationUncertain(repo *repository.Repository, task *model.Task, errorText string, logTask func(userID, taskID, level, msg, payload string) error) error {
 	message := truncateRunes(errorText, 1000)
 	if err := repo.UpdateTaskProviderCancellation(task.ID, model.ProviderCancelStatusRequested, model.ProviderCancelStatusUncertain, message, nil, nil); err != nil {
@@ -571,19 +566,6 @@ func SameCredentialOrigin(targetURL, baseURL string) bool {
 		return false
 	}
 	return strings.EqualFold(target.Scheme, base.Scheme) && strings.EqualFold(target.Host, base.Host)
-}
-
-func NoteBeefTVProviderError(beef *beeftv.Service, message string) {
-	if beef == nil {
-		return
-	}
-	normalized := strings.ToLower(message)
-	if strings.Contains(normalized, "unauthorized") || strings.Contains(message, "连接已失效") {
-		beef.MarkRevoked()
-	}
-	if strings.Contains(message, "额度不足") || strings.Contains(normalized, "insufficient") || strings.Contains(message, "余额不足") {
-		beef.MarkZeroBalance()
-	}
 }
 
 func PortraitModel(id string) bool {

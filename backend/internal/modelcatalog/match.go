@@ -99,11 +99,6 @@ func DecodeCapabilitySpec(raw string) (CapabilitySpec, error) {
 	return normalized, nil
 }
 
-func ValidateCapabilitySpec(spec CapabilitySpec) error {
-	_, err := NormalizeCapabilitySpec(spec)
-	return err
-}
-
 func NormalizeCapabilitySpec(spec CapabilitySpec) (CapabilitySpec, error) {
 	spec.Capability = normalizeCapability(spec.Capability)
 	if spec.Version != 1 {
@@ -532,32 +527,8 @@ func SKUSelectorForIntent(intent ModelRequestIntent) map[string]string {
 	return skuSelectorForIntent(intent)
 }
 
-func SKUSelectorForTier(tier model.ChannelModelVariant) map[string]string {
-	return skuSelectorForTier(tier)
-}
-
-func MatchSKUSelector(tier map[string]string, requested map[string]string) (bool, int) {
-	return matchSKUSelector(tier, requested)
-}
-
-func MergeIntentDefaults(options map[string]any, defaults map[string]any) map[string]any {
-	return mergeIntentDefaults(options, defaults)
-}
-
-func CanonicalCapabilityOptionName(value string) string {
-	return canonicalCapabilityOptionName(value)
-}
-
 func NormalizeModelRequestOption(name string, value any) any {
 	return normalizeModelRequestOption(name, value)
-}
-
-func IsCapabilityOptionFor(capability string, name string) bool {
-	return isCapabilityOptionFor(capability, name)
-}
-
-func IsProviderCapabilityOption(name string) bool {
-	return isProviderCapabilityOption(name)
 }
 
 func CapabilityOptionValuesEqual(name string, candidate any, value any) bool {

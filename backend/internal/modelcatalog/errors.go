@@ -51,20 +51,6 @@ func ModelCapabilityNotSupported(message string) error {
 	return NewModelError(ErrCodeModelCapabilityNotSupported, message)
 }
 
-func ModelRouteUnavailable(message string) error {
-	if message == "" {
-		message = "没有可用供应线路"
-	}
-	return NewModelError(ErrCodeModelRouteUnavailable, message)
-}
-
-func ProviderRequestFailed(message string) error {
-	if message == "" {
-		message = "模型服务返回失败，请检查请求内容或渠道配置"
-	}
-	return NewModelError(ErrCodeProviderRequestFailed, message)
-}
-
 func ModelCatalogMismatch(message string) error {
 	if message == "" {
 		message = "模型目录已更新，请重新选择"
@@ -77,32 +63,4 @@ func InvalidModelSelection(message string) error {
 		message = "无效的模型选择"
 	}
 	return NewModelError(ErrCodeInvalidModelSelection, message)
-}
-
-func IsModelError(err error) bool {
-	_, ok := err.(*ModelError)
-	return ok
-}
-
-func GetModelErrorCode(err error) ModelErrorCode {
-	if modelErr, ok := err.(*ModelError); ok {
-		return modelErr.ErrorCode
-	}
-	return ""
-}
-
-func FormatModelError(err error) string {
-	if modelErr, ok := err.(*ModelError); ok {
-		if modelErr.AppError == nil {
-			return string(modelErr.ErrorCode)
-		}
-		if len(modelErr.Details) > 0 {
-			return kernel.StringValue(modelErr.Message) + " (错误码: " + string(modelErr.ErrorCode) + ")"
-		}
-		return modelErr.Message
-	}
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }

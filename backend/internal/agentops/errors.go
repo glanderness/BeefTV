@@ -30,8 +30,6 @@ func PreconditionFailed(reason, message string, details map[string]any) *Error {
 	return operations.PreconditionFailed(reason, message, details)
 }
 
-func Unsupported(reason, message string) *Error { return operations.Unsupported(reason, message) }
-
 func AsError(err error) *Error { return operations.AsError(err) }
 
 func HTTPStatus(code Code) int { return operations.HTTPStatus(code) }

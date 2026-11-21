@@ -364,7 +364,3 @@ func assetPayloadWithFolder(payloadJSON string, folderID string, updatedAt time.
 	encoded, err := json.Marshal(payload)
 	return string(encoded), err
 }
-
-func IsAssetFolderNotFound(err error) bool {
-	return errors.Is(err, gorm.ErrRecordNotFound)
-}

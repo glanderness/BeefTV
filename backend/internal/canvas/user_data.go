@@ -151,14 +151,6 @@ type CanvasSaveAudit struct {
 	NodesAfter  int
 }
 
-func canvasNodeCount(payload string) int {
-	var document struct {
-		Nodes []json.RawMessage `json:"nodes"`
-	}
-	_ = json.Unmarshal([]byte(payload), &document)
-	return len(document.Nodes)
-}
-
 func rawJSONSliceCount(raw json.RawMessage) int {
 	if len(raw) == 0 {
 		return 0

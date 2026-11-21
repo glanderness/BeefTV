@@ -51,10 +51,6 @@ type configLifecycle struct {
 	cfg LifecycleConfig
 }
 
-func NewLifecycle(cfg LifecycleConfig) localasset.Lifecycle {
-	return configLifecycle{cfg: cfg}
-}
-
 func (l configLifecycle) RecordActivity(userID string, kind string, count int) {
 	if l.cfg.RecordActivity != nil {
 		l.cfg.RecordActivity(userID, kind, count)

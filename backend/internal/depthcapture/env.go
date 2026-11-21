@@ -3,16 +3,11 @@ package depthcapture
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"infinite-canvas/backend/internal/desktopnet"
 	"infinite-canvas/backend/internal/mediatools"
 )
-
-func WorkerEnv(toolDir string) []string {
-	return WorkerEnvForPlatform(toolDir, runtime.GOOS)
-}
 
 func WorkerEnvForPlatform(toolDir, platform string) []string {
 	env := workerEnv(toolDir, platform, os.Environ(), os.Getenv)

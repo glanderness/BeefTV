@@ -111,28 +111,6 @@ func LoadInstalledProviders(data []byte) ([]Adapter, error) {
 	return result, nil
 }
 
-func validatePluginMetadata(metadata Metadata) error {
-	if strings.TrimSpace(metadata.ID) == "" || strings.TrimSpace(metadata.Version) == "" || !validManifestIdentifier(metadata.ID) {
-		return fmt.Errorf("protocol plugin metadata is invalid")
-	}
-	if len(metadata.Categories) == 0 || len(metadata.Scopes) == 0 {
-		return fmt.Errorf("protocol plugin metadata requires categories and scopes")
-	}
-	for _, capability := range metadata.Categories {
-		if capability != CapabilityText && capability != CapabilityImage && capability != CapabilityVideo && capability != CapabilityAudio {
-			return fmt.Errorf("unsupported protocol capability %q", capability)
-		}
-	}
-	for _, scope := range metadata.Scopes {
-		switch scope {
-		case SurfaceAdminSystemChannel, SurfaceUserCustomChannel, SurfaceCanvas, SurfaceCreation, SurfaceAgent:
-		default:
-			return fmt.Errorf("unsupported protocol scope %q", scope)
-		}
-	}
-	return nil
-}
-
 type metadataAdapter struct {
 	metadata Metadata
 	delegate Adapter

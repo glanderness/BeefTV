@@ -151,9 +151,6 @@ func legacyUpscaleInput(input Input) beeftv.LegacyUpscaleInput {
 	}
 	return request
 }
-func upscaleBody(input Input) map[string]any {
-	return beeftv.LegacyUpscaleBody(legacyUpscaleInput(input))
-}
 
 type UpscaleEstimate = beeftv.UpscaleEstimate
 

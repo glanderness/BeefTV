@@ -19,11 +19,6 @@ func ReadHostToken(dataDir string) string {
 	return readTokenFile(dataDir, hostTokenFile)
 }
 
-// ReadOwnerToken 只读数据目录中的 owner 凭据；环境变量不覆盖该文件。
-func ReadOwnerToken(dataDir string) string {
-	return readTokenFile(dataDir, ownerTokenFile)
-}
-
 func readTokenFile(dataDir, name string) string {
 	if strings.TrimSpace(dataDir) == "" {
 		return ""

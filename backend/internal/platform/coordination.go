@@ -63,10 +63,6 @@ type Coordinator struct {
 	localSlots map[string]map[string]time.Time
 }
 
-func NewCoordinator(_ string) (*Coordinator, error) {
-	return NewLocalCoordinator(), nil
-}
-
 // NewLocalCoordinator deliberately ignores REDIS_URL. Desktop runs as a
 // single local process, so process-local rate limits and leases are the
 // correct source of truth and the app must not inherit hosted infrastructure
@@ -223,8 +219,6 @@ func (c *Coordinator) RouteCatalogVersion(ctx context.Context) (int64, error) {
 func (c *Coordinator) BumpRouteCatalogVersion(ctx context.Context) error {
 	return ctx.Err()
 }
-
-func routeHealthKey(key string) string { return "canvas:logical-route-health:" + key }
 
 func (c *Coordinator) RouteBlockedUntil(ctx context.Context, key string) (time.Time, error) {
 	return time.Time{}, ctx.Err()

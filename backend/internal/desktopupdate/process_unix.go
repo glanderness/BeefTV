@@ -49,20 +49,6 @@ func resolvePlatformWebViewProfileDir(string, string) string { return "" }
 
 func waitPlatformWebViewReleased(string) {}
 
-func isCrossDevice(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, syscall.EXDEV) {
-		return true
-	}
-	var link *os.LinkError
-	if errors.As(err, &link) && (errors.Is(link.Err, syscall.EXDEV) || link.Err == syscall.EXDEV) {
-		return true
-	}
-	return false
-}
-
 func detachedSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true}
 }

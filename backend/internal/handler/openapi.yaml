@@ -607,24 +607,6 @@ paths:
             application/yaml:
               schema:
                 type: string
-  /admin/channels/{id}/duplicate:
-    post:
-      tags: [admin]
-      summary: 复制系统渠道
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
   /auth/session:
     get:
       tags: [auth]
