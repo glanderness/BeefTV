@@ -450,29 +450,3 @@ func ExtractResponseText(payload map[string]interface{}) string {
 	}
 	return strings.Join(chunks, "")
 }
-
-func ExtractChatCompletionText(payload map[string]interface{}) string {
-	if data, ok := payload["data"].(map[string]interface{}); ok {
-		payload = data
-	}
-	choices, ok := payload["choices"].([]interface{})
-	if !ok {
-		return ""
-	}
-	var chunks []string
-	for _, choice := range choices {
-		record, ok := choice.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if message, ok := record["message"].(map[string]interface{}); ok {
-			if text := stringField(message, "content"); text != "" {
-				chunks = append(chunks, text)
-			}
-		}
-		if text := stringField(record, "text"); text != "" {
-			chunks = append(chunks, text)
-		}
-	}
-	return strings.Join(chunks, "")
-}

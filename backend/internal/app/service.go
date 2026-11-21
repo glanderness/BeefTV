@@ -51,11 +51,10 @@ type Service struct {
 	coordinator              *platform.Coordinator
 	platform                 *platform.Service
 	platformOnce             sync.Once
-	taskTerminalCoordinator  *taskTerminalCoordinator
-	taskRouteExecutor        *taskRouteExecutor
-	taskWorkerCoordinator    *taskWorkerCoordinator
-	taskLifecycleCoordinator *taskLifecycleCoordinator
-	runtimeErr               error
+	taskTerminalCoordinator *taskTerminalCoordinator
+	taskRouteExecutor       *taskRouteExecutor
+	taskWorkerCoordinator   *taskWorkerCoordinator
+	runtimeErr              error
 	localResourceStorage     bool
 	pluginRuntime            *pluginRuntime
 	pluginRuntimeErr         error
@@ -178,7 +177,6 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)
 	service.taskRouteExecutor = newTaskRouteExecutor(service)
 	service.taskWorkerCoordinator = newTaskWorkerCoordinator(service)
-	service.taskLifecycleCoordinator = newTaskLifecycleCoordinator(service)
 	service.skills = skills.New(service.repo, service.dataDir, service.runWorkerLoop)
 	service.prompts = prompts.New(service.repo)
 	service.projects = localproject.New(repo, localproject.Dependencies{})

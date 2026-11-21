@@ -23,7 +23,6 @@ type (
 	streamingAgentToolCall       = generation.StreamingAgentToolCall
 	streamingAgentParser         = generation.StreamingAgentParser
 	providerTextResult           = generation.ProviderTextResult
-	streamingTextDeltaParser     = generation.StreamingTextDeltaParser
 	videoPollPolicy              = generation.VideoPollPolicy
 	videoPollEvent               = generation.VideoPollEvent
 	videoPollOutcome             = generation.VideoPollOutcome

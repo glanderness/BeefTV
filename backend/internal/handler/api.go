@@ -77,7 +77,7 @@ func defaultRuntimeDependencies(svc CanvasAPIService) RuntimeDependencies {
 	}
 	adapter := newServiceRuntimeAdapter(svc)
 	dependencies := RuntimeDependencies{
-		RequestCoordinator: adapter, ProviderConfig: adapter, Assets: adapter, Projects: adapter, Tasks: adapter, Generation: adapter,
+		RequestCoordinator: adapter, ProviderConfig: adapter, Assets: adapter, Tasks: adapter, Generation: adapter,
 		Eagle:       eagle.New(),
 		Diagnostics: svc.DiagnosticsDomain(),
 		Appearance:  svc.AppearanceDomain(),

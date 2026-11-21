@@ -3,7 +3,6 @@ package playback
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -68,11 +67,4 @@ func localizedObjectKey(objectKey string) (string, error) {
 		return "", errors.New("playback object key is invalid")
 	}
 	return clean, nil
-}
-
-func ensureDir(path string) error {
-	if err := os.MkdirAll(path, 0o750); err != nil {
-		return err
-	}
-	return nil
 }

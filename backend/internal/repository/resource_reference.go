@@ -510,10 +510,6 @@ func guardCanvasLibraryResourceReferences(tx *gorm.DB, userID string, resourceID
 	return nil
 }
 
-func guardActiveTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []string) error {
-	return guardTaskResourceReferences(tx, userID, resourceIDs, true)
-}
-
 func guardTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []string, skipCompletedOutput bool) error {
 	if len(resourceIDs) == 0 {
 		return nil

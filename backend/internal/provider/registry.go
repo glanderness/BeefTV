@@ -50,19 +50,6 @@ func Register(discovery ModelCatalogPlugin) {
 	globalRegistry.providers = append(globalRegistry.providers, discovery)
 }
 
-// GetProvider 根据 ID 获取插件
-func GetProvider(id string) (ModelCatalogPlugin, bool) {
-	globalRegistry.mu.RLock()
-	defer globalRegistry.mu.RUnlock()
-
-	for _, registered := range globalRegistry.providers {
-		if registered.GetProviderID() == id {
-			return registered, true
-		}
-	}
-	return nil, false
-}
-
 // MatchProvider 根据配置匹配插件
 func MatchProvider(baseURL string, headers map[string]string) ModelCatalogPlugin {
 	globalRegistry.mu.RLock()
@@ -75,16 +62,4 @@ func MatchProvider(baseURL string, headers map[string]string) ModelCatalogPlugin
 		}
 	}
 	return nil
-}
-
-// ListProviders 列出所有已注册插件
-func ListProviders() []ProviderMetadata {
-	globalRegistry.mu.RLock()
-	defer globalRegistry.mu.RUnlock()
-
-	result := make([]ProviderMetadata, 0, len(globalRegistry.providers))
-	for _, registered := range globalRegistry.providers {
-		result = append(result, registered.GetMetadata())
-	}
-	return result
 }

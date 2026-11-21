@@ -11,5 +11,3 @@ func (s *Service) fileQuota() *asset.FileQuota {
 	})
 	return s.fileQuotaService
 }
-
-func formatStorageLimit(value int64) string { return asset.FormatStorageLimit(value) }

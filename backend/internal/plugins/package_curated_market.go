@@ -159,10 +159,6 @@ func curatedRegistryCandidateURLs(registry string) []string {
 	}
 }
 
-func readCuratedRegistry(ctx context.Context) []byte {
-	return readCuratedRegistryWithCache(ctx, NpmMirrorRegistry, "")
-}
-
 func readBundledCuratedRegistry() []byte {
 	if marketDir, ok := BundledSampleDir("beeftv-plugin-market"); ok {
 		if bundled, err := os.ReadFile(filepath.Join(marketDir, "registry.json")); err == nil && validCuratedRegistryPayload(bundled) {

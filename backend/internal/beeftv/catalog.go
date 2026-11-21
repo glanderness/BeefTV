@@ -206,16 +206,6 @@ func clearBeefTVModels(store *workspace.ProviderConfig) error {
 	return store.SaveLocalModelConfig(body)
 }
 
-func catalogCapability(model CatalogModel) string {
-	capability, _ := catalogCapabilityAndProtocol(model)
-	return capability
-}
-
-func catalogProtocol(model CatalogModel) string {
-	_, protocol := catalogCapabilityAndProtocol(model)
-	return protocol
-}
-
 func catalogCapabilityAndProtocol(model CatalogModel) (capability, protocol string) {
 	if audio, ok := model.MediaCapabilities["audio"]; ok && model.MediaCapabilitiesVersion != "" && len(audio.Operations) > 0 {
 		return "audio", "openai-audio"

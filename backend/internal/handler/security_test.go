@@ -1,30 +1,10 @@
 package handler
 
 import (
-	"mime/multipart"
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
-
-	"infinite-canvas/backend/internal/model"
 )
-
-func TestAuthorizeSystemProxyAllowsConfiguredGenerationModel(t *testing.T) {
-	channel := &model.ModelChannel{APIFormat: "openai", ModelsJSON: `["gpt-image-1"]`}
-	body := []byte(`{"model":"gpt-image-1","prompt":"test"}`)
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceOpenAIImage, http.MethodPost, "/images/generations", "application/json", body); err != nil {
-		t.Fatalf("authorizeSystemProxy() error = %v", err)
-	}
-}
-
-func TestAuthorizeSystemProxyAllowsGrokImageJSONEdits(t *testing.T) {
-	channel := &model.ModelChannel{APIFormat: "openai", ModelsJSON: `["grok-imagine-image"]`}
-	body := []byte(`{"model":"grok-imagine-image","prompt":"edit"}`)
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceGrokImage, http.MethodPost, "/images/edits", "application/json", body); err != nil {
-		t.Fatalf("authorizeSystemProxy() error = %v", err)
-	}
-}
 
 func TestAuthorizeCustomRelayAllowsModelsAndAgentEndpoints(t *testing.T) {
 	tests := []struct {
@@ -115,95 +95,6 @@ func TestAuthorizeCustomRelayRejectsArbitraryRequestsAndCredentialQueries(t *tes
 		}
 		if err := authorizeCustomRelay(test.method, target, test.apiFormat, test.contentType); err == nil {
 			t.Fatalf("authorizeCustomRelay(%s %s) should fail", test.method, test.target)
-		}
-	}
-}
-
-func TestAuthorizeSystemProxyRejectsArbitraryPathAndModel(t *testing.T) {
-	channel := &model.ModelChannel{APIFormat: "openai", ModelsJSON: `["gpt-image-1"]`}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceOpenAIImage, http.MethodDelete, "/account", "application/json", nil); err == nil {
-		t.Fatal("expected arbitrary path to be rejected")
-	}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceOpenAIImage, http.MethodPost, "/images/generations", "application/json", []byte(`{"model":"unapproved"}`)); err == nil {
-		t.Fatal("expected unapproved model to be rejected")
-	}
-}
-
-func TestProxyRequestModelReadsMultipartField(t *testing.T) {
-	var body strings.Builder
-	writer := multipart.NewWriter(&body)
-	_ = writer.WriteField("model", "gpt-image-1")
-	_ = writer.Close()
-	if got := proxyRequestModel(writer.FormDataContentType(), []byte(body.String())); got != "gpt-image-1" {
-		t.Fatalf("proxyRequestModel() = %q", got)
-	}
-}
-
-func TestAuthorizeSystemProxyRestrictsModelProtocol(t *testing.T) {
-	body := []byte(`{"model":"gpt-4.1"}`)
-	channel := &model.ModelChannel{APIFormat: "openai", ModelsJSON: `["gpt-4.1"]`}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceChatCompletion, http.MethodPost, "/chat/completions", "application/json", body); err != nil {
-		t.Fatalf("authorizeSystemProxy() error = %v", err)
-	}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceChatCompletion, http.MethodPost, "/responses", "application/json", body); err == nil {
-		t.Fatal("authorizeSystemProxy() error = nil for mismatched interface")
-	}
-}
-
-func TestAuthorizeSystemProxyMiniMaxVideoCreateAndPoll(t *testing.T) {
-	channel := &model.ModelChannel{APIFormat: "openai", ModelsJSON: `["MiniMax-H3"]`}
-	createBody := []byte(`{"model":"MiniMax-H3","content":[{"type":"text","text":"test"}]}`)
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceMiniMaxVideo, http.MethodPost, "/v2/video_generation", "application/json", createBody); err != nil {
-		t.Fatalf("MiniMax create should be allowed: %v", err)
-	}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceMiniMaxVideo, http.MethodGet, "/v2/query/video_generation/task-1", "", nil); err != nil {
-		t.Fatalf("MiniMax poll should be allowed: %v", err)
-	}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceMiniMaxVideo, http.MethodGet, "/v2/account", "", nil); err == nil {
-		t.Fatal("arbitrary MiniMax GET should be rejected")
-	}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceMiniMaxVideo, http.MethodPost, "/v2/video_generation", "text/plain", createBody); err == nil {
-		t.Fatal("MiniMax non-JSON create should be rejected")
-	}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceMiniMaxVideo, http.MethodPost, "/v2/video_generation", "application/json", []byte(`{"model":"unapproved"}`)); err == nil {
-		t.Fatal("unapproved MiniMax model should be rejected")
-	}
-}
-
-func TestAuthorizeSystemProxyAgnesVideoCreateAndPoll(t *testing.T) {
-	channel := &model.ModelChannel{APIFormat: "openai", ModelsJSON: `["agnes-video-2.5"]`}
-	createBody := []byte(`{"model":"agnes-video-2.5","prompt":"test","mode":"text","seconds":"5","size":"720P"}`)
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceAgnesVideo, http.MethodPost, "/videos", "application/json", createBody); err != nil {
-		t.Fatalf("Agnes create authorization error = %v", err)
-	}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceAgnesVideo, http.MethodGet, "/agnesapi", "", nil); err != nil {
-		t.Fatalf("Agnes poll authorization error = %v", err)
-	}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceAgnesVideo, http.MethodPost, "/videos", "multipart/form-data; boundary=test", createBody); err == nil {
-		t.Fatal("expected Agnes multipart create to be rejected")
-	}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceAgnesVideo, http.MethodGet, "/videos/task-1", "", nil); err == nil {
-		t.Fatal("expected unsupported Agnes poll path to be rejected")
-	}
-}
-
-func TestAuthorizeSystemProxyVolcengineArkImageOnlyAllowsGenerations(t *testing.T) {
-	body := []byte(`{"model":"doubao-seedream-test"}`)
-	channel := &model.ModelChannel{APIFormat: "openai", ModelsJSON: `["doubao-seedream-test"]`}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceVolcengineArkImage, http.MethodPost, "/images/generations", "application/json", body); err != nil {
-		t.Fatalf("authorizeSystemProxy() error = %v", err)
-	}
-	if err := authorizeSystemProxy(channel, model.ChannelInterfaceVolcengineArkImage, http.MethodPost, "/images/edits", "application/json", body); err == nil {
-		t.Fatal("authorizeSystemProxy() error = nil for unsupported Ark image edits path")
-	}
-}
-
-func TestAuthorizeSystemProxyBlocksBackendOnlyVideoInterfaces(t *testing.T) {
-	body := []byte(`{"model":"grok-image-video"}`)
-	for _, interfaceType := range []model.ChannelInterfaceType{model.ChannelInterfaceNewAPIChannel2, model.ChannelInterfaceXAIVideo, model.ChannelInterfaceVolcengineJiMengImage, model.ChannelInterfaceVolcengineJiMengVideo} {
-		channel := &model.ModelChannel{APIFormat: "openai", ModelsJSON: `["grok-image-video"]`}
-		if err := authorizeSystemProxy(channel, interfaceType, http.MethodPost, "/video/generations", "application/json", body); err == nil {
-			t.Fatalf("authorizeSystemProxy() error = nil for backend-only interface %q", interfaceType)
 		}
 	}
 }

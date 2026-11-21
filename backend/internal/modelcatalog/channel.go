@@ -17,7 +17,3 @@ func normalizeChannelModelTierResolution(raw string) string {
 func protocolCapabilityFromMetadata(metadata ProtocolMeta) string {
 	return strings.TrimSpace(metadata.PrimaryCapability)
 }
-
-func ProtocolCapabilityFromMetadata(metadata ProtocolMeta) string {
-	return protocolCapabilityFromMetadata(metadata)
-}

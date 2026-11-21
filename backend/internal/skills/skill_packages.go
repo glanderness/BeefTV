@@ -24,8 +24,6 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/skillhub"
-
-	"gorm.io/gorm"
 )
 
 const (
@@ -739,8 +737,4 @@ func shortCommit(value string) string {
 		return value
 	}
 	return value[:12]
-}
-
-func isSkillPackageNotFound(err error) bool {
-	return errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, os.ErrNotExist)
 }

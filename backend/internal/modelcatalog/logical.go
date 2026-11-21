@@ -214,62 +214,6 @@ func capabilitySpecWithVariants(spec CapabilitySpec, channelModel model.ChannelM
 	return result
 }
 
-func channelModelDefaultOptions(channelModel model.ChannelModel, spec CapabilitySpec) (map[string]any, error) {
-	config, err := DecodeModelCapabilityConfig(channelModel.CapabilityConfigJSON)
-	if err != nil {
-		return nil, kernel.BadAuthRequest("渠道模型能力配置无效，请先修复渠道模型")
-	}
-	if config != nil {
-		config, err = NormalizeModelCapabilityConfigForModel(normalizeCapability(channelModel.Capability), string(channelModel.Protocol), kernel.FirstNonEmpty(channelModel.ProviderModelKey, channelModel.ModelKey), config)
-		if err != nil {
-			return nil, err
-		}
-	}
-	defaults := make(map[string]any)
-	if config != nil {
-		switch normalizeCapability(channelModel.Capability) {
-		case "image":
-			if config.Image != nil {
-				defaults["size"] = config.Image.Size.Default
-				if config.Image.Quality.Supported {
-					defaults["quality"] = config.Image.Quality.Default
-				}
-				if config.Image.TransparentBackground.Supported {
-					defaults["transparentBackground"] = config.Image.TransparentBackground.Default
-				}
-			}
-		case "video":
-			if config.Video != nil {
-				defaults["videoSeconds"] = config.Video.Duration.Default
-				defaults["vquality"] = normalizeChannelModelTierResolution(config.Video.DefaultResolution)
-				defaults["size"] = config.Video.DefaultRatio
-				if config.Video.GenerateAudio.Supported {
-					defaults["videoGenerateAudio"] = config.Video.GenerateAudio.Default
-				}
-				if config.Video.Watermark.Supported {
-					defaults["videoWatermark"] = config.Video.Watermark.Default
-				}
-			}
-		}
-	}
-	// 当渠道默认规格没有变体时，优先选择第一个可用变体。
-	if normalizeCapability(channelModel.Capability) == "video" && channelModelVariantForIntent(channelModel, ModelRequestIntent{Capability: "video", Options: defaults}) == nil {
-		for _, tier := range channelModel.Variants {
-			if !tier.Enabled {
-				continue
-			}
-			if tier.Resolution != "*" {
-				defaults["vquality"] = normalizeChannelModelTierResolution(tier.Resolution)
-			}
-			if tier.VideoSeconds > 0 {
-				defaults["videoSeconds"] = tier.VideoSeconds
-			}
-			break
-		}
-	}
-	return normalizeLogicalDefaults(spec, defaults)
-}
-
 func validateProductSpecWithinRoutes(product CapabilitySpec, routeSpecs []CapabilitySpec) error {
 	for _, routeSpec := range routeSpecs {
 		if normalizeCapability(routeSpec.Capability) != normalizeCapability(product.Capability) {
@@ -461,26 +405,14 @@ func numericRange(minimum float64, maximum float64, step float64) OptionConstrai
 	return OptionConstraint{Min: &minimum, Max: &maximum, Step: &step}
 }
 
-func DecodeLegacyModelIDs(raw string) []string         { return decodeLegacyModelIDs(raw) }
-func NormalizeLegacyModelIDs(values []string) []string { return normalizeLegacyModelIDs(values) }
 func CapabilitySpecWithRoutePresets(spec CapabilitySpec, routes []CapabilitySpec) CapabilitySpec {
 	return capabilitySpecWithRoutePresets(spec, routes)
-}
-func MergeCapabilityImageSize(specs []CapabilitySpec) *CapabilityImageSize {
-	return mergeCapabilityImageSize(specs)
-}
-func CapabilityFingerprint(spec CapabilitySpec) string { return capabilityFingerprint(spec) }
-func NormalizeLogicalDefaults(spec CapabilitySpec, defaults map[string]any) (map[string]any, error) {
-	return normalizeLogicalDefaults(spec, defaults)
 }
 func ChannelModelCapabilitySpec(channelModel model.ChannelModel) (CapabilitySpec, error) {
 	return channelModelCapabilitySpec(channelModel)
 }
 func CapabilitySpecWithVariants(spec CapabilitySpec, channelModel model.ChannelModel) CapabilitySpec {
 	return capabilitySpecWithVariants(spec, channelModel)
-}
-func ChannelModelDefaultOptions(channelModel model.ChannelModel, spec CapabilitySpec) (map[string]any, error) {
-	return channelModelDefaultOptions(channelModel, spec)
 }
 func ValidateProductSpecWithinRoutes(product CapabilitySpec, routeSpecs []CapabilitySpec) error {
 	return validateProductSpecWithinRoutes(product, routeSpecs)

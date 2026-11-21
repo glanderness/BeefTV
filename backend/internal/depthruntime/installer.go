@@ -388,8 +388,7 @@ func componentProgress(report func(string, Progress), component string) func(Pro
 	return func(progress Progress) { report(component, progress) }
 }
 
-func fileMatches(path string, artifact Artifact) bool { return verifyFile(path, artifact) == nil }
-func pathExists(path string) bool                     { _, err := os.Stat(path); return err == nil }
+func pathExists(path string) bool { _, err := os.Stat(path); return err == nil }
 func pathExecutable(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0

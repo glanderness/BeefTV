@@ -176,20 +176,6 @@ func CanvasBindingIntents(deliverer *Deliverer, task model.Task, blocksRetry boo
 	return localtask.CanvasBindingIntents(task.ID, proj.Outputs)
 }
 
-func EnsureSucceededTaskDelivery(deliverer *Deliverer, task *model.Task, deliver func(model.Task) error) error {
-	if task == nil || task.Status != model.TaskStatusSucceeded {
-		return nil
-	}
-	stored, err := deliverer.LoadedOutputs(task.ID)
-	if err != nil {
-		return err
-	}
-	if localtask.DeliveryComplete(task.ResultJSON, stored, task.Type) {
-		return nil
-	}
-	return deliver(*task)
-}
-
 func AttachTaskDelivery(
 	deliverer *Deliverer,
 	task *model.Task,

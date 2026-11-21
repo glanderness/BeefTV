@@ -13,7 +13,6 @@ type ImportProjectUnitsRequest = localproject.ImportProjectUnitsRequest
 type ReorderProjectUnitsRequest = localproject.ReorderProjectUnitsRequest
 type LinkCanvasUnitRequest = localproject.LinkCanvasUnitRequest
 type CreateProjectFolderRequest = localproject.CreateProjectFolderRequest
-type ProjectSummary = localproject.Summary
 type ProjectListPage = localproject.ListPage
 type ProjectCore = localproject.Core
 type ProjectUnitSummaries = localproject.UnitSummaries
@@ -38,10 +37,6 @@ type ProjectDetail struct {
 	ShotReferences  []model.ShotAssetReference    `json:"shotReferences"`
 	AssetCandidates []model.ProjectAssetCandidate `json:"assetCandidates"`
 	Tasks           []TaskSummary                 `json:"tasks"`
-}
-
-func (s *Service) ListProjects(userID string) ([]ProjectSummary, error) {
-	return s.projectDomain().ListProjects(userID)
 }
 
 func (s *Service) ProjectDetail(userID string, id string) (ProjectDetail, error) {

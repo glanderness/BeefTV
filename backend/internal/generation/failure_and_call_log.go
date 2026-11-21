@@ -70,14 +70,6 @@ func TaskAnalyticsContext(task model.Task) AnalyticsContext {
 	return metadata
 }
 
-func ResumedProviderRequestIDFromAnalytics(ctx context.Context) string {
-	if id := ResumedProviderRequestID(ctx); id != "" {
-		return id
-	}
-	metadata, _ := ctx.Value(AnalyticsKey{}).(AnalyticsContext)
-	return strings.TrimSpace(metadata.ProviderRequestID)
-}
-
 func WithProviderRequestKind(ctx context.Context, requestKind string) context.Context {
 	metadata, ok := ctx.Value(AnalyticsKey{}).(AnalyticsContext)
 	if !ok {
@@ -441,21 +433,6 @@ func ProviderRequestKind(method string, path string) string {
 		return "repair"
 	}
 	return "create"
-}
-
-func EnsureChatCompletionStreamUsageRequest(data []byte) ([]byte, error) {
-	var payload map[string]any
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
-	}
-	stream, _ := payload["stream"].(bool)
-	if !stream {
-		return data, nil
-	}
-	if err := ensureChatCompletionStreamUsage(payload); err != nil {
-		return nil, err
-	}
-	return json.Marshal(payload)
 }
 
 func PrepareBeefTVSeedanceReferencesForUser(ctx context.Context, userID string, input *Input, openResource func(userID, resourceID string) (*model.Resource, io.ReadCloser, error)) error {

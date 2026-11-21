@@ -85,26 +85,6 @@ func normalizeFeedURL(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
-func configFromVars() (feed string, key ed25519.PublicKey, enabled bool, reason string) {
-	feedRaw := strings.TrimSpace(FeedURL)
-	keyRaw := strings.TrimSpace(PublicKey)
-	if feedRaw == "" && keyRaw == "" {
-		return "", nil, false, ""
-	}
-	if feedRaw == "" || keyRaw == "" {
-		return "", nil, false, ErrIncompleteConfig.Error()
-	}
-	feed, err := normalizeFeedURL(feedRaw)
-	if err != nil {
-		return "", nil, false, "更新地址无效。"
-	}
-	key, err = ParsePublicKey(keyRaw)
-	if err != nil {
-		return "", nil, false, "更新配置无效。"
-	}
-	return feed, key, true, ""
-}
-
 func preferDomesticSource(locale, timezone string) bool {
 	if strings.TrimSpace(locale) == "" && strings.TrimSpace(timezone) == "" {
 		locale = systemLocale()

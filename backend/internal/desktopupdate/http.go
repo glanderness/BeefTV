@@ -191,10 +191,6 @@ func (e *Engine) fetchPartial(ctx context.Context, artifact PlatformArtifact, pa
 	return resumedFrom, err
 }
 
-func (e *Engine) fetchRange(ctx context.Context, artifact PlatformArtifact, path string, offset int64) (int64, error) {
-	return e.fetchRangeFromURL(ctx, artifact, artifact.URL, false, path, offset)
-}
-
 func (e *Engine) fetchRangeFromURL(ctx context.Context, artifact PlatformArtifact, targetURL string, multiSource bool, path string, offset int64) (int64, error) {
 	reqCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -428,10 +424,6 @@ type idleWatch struct {
 	totalBytes  int64
 	stopSlow    chan struct{}
 	stopOnce    sync.Once
-}
-
-func watchIdle(window time.Duration, cancel context.CancelFunc) *idleWatch {
-	return watchTransfer(window, 0, 0, cancel)
 }
 
 func watchTransfer(window time.Duration, minSpeed int64, slowWindow time.Duration, cancel context.CancelFunc) *idleWatch {

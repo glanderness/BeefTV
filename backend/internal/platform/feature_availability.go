@@ -157,9 +157,3 @@ func publicFeatureAvailability(setting *model.SystemSetting, value FeatureAvaila
 	}
 	return result
 }
-
-// PublicFeatureAvailability projects the persisted feature flags without
-// exposing the platform service internals to compatibility callers.
-func ProjectFeatureAvailability(setting *model.SystemSetting, value FeatureAvailability) *PublicFeatureAvailability {
-	return publicFeatureAvailability(setting, value)
-}

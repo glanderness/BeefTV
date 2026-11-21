@@ -217,9 +217,6 @@ func (a taskActivityAdapter) Record(userID, kind string, n int) {
 func clientOperationHash(req CreateTaskRequest) (string, error) {
 	return localtask.ClientOperationHash(toTaskCreateRequest(req))
 }
-func clientOperationID(input map[string]any) (string, error) {
-	return localtask.ClientOperationID(input)
-}
 func normalizeTaskInput(input map[string]any) (map[string]any, error) {
 	return localtask.NormalizeInput(input)
 }

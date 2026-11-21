@@ -19,10 +19,6 @@ type skillSyncs interface {
 	SyncGitHubSkill(userID string, skillID string) (*skills.SkillItem, error)
 }
 
-func RegisterSkillRoutes(r *gin.RouterGroup, owners workspaceOwners, domain *skills.Service, syncs skillSyncs) {
-	registerSkillRoutes(r, owners, domain, syncs, true)
-}
-
 // RegisterDesktopSkillRoutes registers local, market, and GitHub skill routes
 // for the desktop workspace API.
 func RegisterDesktopSkillRoutes(r *gin.RouterGroup, owners workspaceOwners, domain *skills.Service) {

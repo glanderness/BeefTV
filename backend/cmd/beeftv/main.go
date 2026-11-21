@@ -5,8 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -1082,14 +1080,6 @@ func mustJSON(value any) json.RawMessage {
 		return json.RawMessage("{}")
 	}
 	return encoded
-}
-
-func newRequestID() string {
-	buf := make([]byte, 8)
-	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("cli-%d", time.Now().UnixNano())
-	}
-	return "cli-" + hex.EncodeToString(buf)
 }
 
 type stringList []string

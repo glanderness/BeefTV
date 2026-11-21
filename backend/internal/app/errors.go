@@ -55,39 +55,3 @@ const (
 	ErrCodeModelCatalogMismatch        = modelcatalog.ErrCodeModelCatalogMismatch
 	ErrCodeInvalidModelSelection       = modelcatalog.ErrCodeInvalidModelSelection
 )
-
-func NewModelError(code ModelErrorCode, message string) *ModelError {
-	return modelcatalog.NewModelError(code, message)
-}
-
-func ModelCapabilityNotSupported(message string) error {
-	return modelcatalog.ModelCapabilityNotSupported(message)
-}
-
-func ModelRouteUnavailable(message string) error {
-	return modelcatalog.ModelRouteUnavailable(message)
-}
-
-func ProviderRequestFailed(message string) error {
-	return modelcatalog.ProviderRequestFailed(message)
-}
-
-func ModelCatalogMismatch(message string) error {
-	return modelcatalog.ModelCatalogMismatch(message)
-}
-
-func InvalidModelSelection(message string) error {
-	return modelcatalog.InvalidModelSelection(message)
-}
-
-func IsModelError(err error) bool {
-	return modelcatalog.IsModelError(err)
-}
-
-func GetModelErrorCode(err error) ModelErrorCode {
-	return modelcatalog.GetModelErrorCode(err)
-}
-
-func FormatModelError(err error) string {
-	return modelcatalog.FormatModelError(err)
-}

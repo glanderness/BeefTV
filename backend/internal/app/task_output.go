@@ -1,7 +1,6 @@
 package app
 
 import (
-	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
 )
@@ -27,10 +26,6 @@ func taskMediaPreview(raw string, taskType string) (string, string) {
 
 func taskMediaPreviewWithPoster(raw string, taskType string) (string, string, string) {
 	return localtask.MediaPreviewWithPoster(raw, taskType)
-}
-
-func truncateRunes(value string, limit int) string {
-	return kernel.TruncateRunes(value, limit)
 }
 
 func taskForOutput(task model.Task) *model.Task {

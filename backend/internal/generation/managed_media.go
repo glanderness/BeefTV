@@ -120,15 +120,6 @@ func managedReference(media Media, role string) beeftv.LocalMediaReference {
 	return beeftv.LocalMediaReference{MediaReference: beeftv.MediaReference{Kind: "image", Role: role, URL: media.URL}, StorageKey: media.StorageKey, DataURL: media.DataURL, MIME: media.MimeType, Bytes: media.Bytes}
 }
 
-func validateManagedImageReference(input *Input, size int64) error {
-	if size <= 0 {
-		return errors.New("参考素材为空")
-	}
-	if input.ImageCapability != nil && input.ImageCapability.References.MaxImageBytes > 0 && size > input.ImageCapability.References.MaxImageBytes {
-		return errors.New("参考图片文件超过当前模型大小限制")
-	}
-	return nil
-}
 func managedImageOptions(input Input) map[string]any {
 	config := input.Config
 	options := map[string]any{}

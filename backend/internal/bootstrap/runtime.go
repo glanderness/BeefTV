@@ -268,7 +268,6 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		ProviderConfig:     localRoot.ProviderConfig,
 		ModelCapability:    localRoot.ModelCapability,
 		Assets:             localRoot.Assets,
-		Projects:           localRoot.Projects,
 		Tasks:              localRoot.Tasks,
 		Generation:         localRoot.Generation,
 		BeefTV:             beefTVConnection,

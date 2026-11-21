@@ -275,25 +275,3 @@ func SplitDataURL(value string) (string, string, bool) {
 	}
 	return strings.TrimSuffix(header, ";base64"), value[separator+1:], value[separator+1:] != ""
 }
-
-func ExtractTextPayload(payload map[string]interface{}, protocol string) string {
-	if protocol == "claude-api" {
-		content, _ := payload["content"].([]interface{})
-		var result strings.Builder
-		for _, item := range content {
-			record, _ := item.(map[string]interface{})
-			if stringField(record, "type") == "text" {
-				result.WriteString(stringField(record, "text"))
-			}
-		}
-		return result.String()
-	}
-	if protocol == "responses" {
-		text := stringField(payload, "output_text")
-		if text == "" {
-			text = ExtractResponseText(payload)
-		}
-		return text
-	}
-	return ExtractChatCompletionText(payload)
-}

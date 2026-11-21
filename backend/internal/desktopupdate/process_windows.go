@@ -5,7 +5,6 @@ package desktopupdate
 import (
 	"errors"
 	"fmt"
-	"os"
 	"syscall"
 	"time"
 
@@ -19,7 +18,6 @@ const (
 	synchronizeAccess            = 0x00100000
 	waitObject0           uint32 = 0
 	errorInvalidParameter        = syscall.Errno(87)
-	errorNotSameDevice           = syscall.Errno(17)
 )
 
 func openParentExitWait(pid int) (func(time.Duration) error, func(), error) {
@@ -60,23 +58,6 @@ func waitPlatformWebViewReleased(profileDir string) {
 		return
 	}
 	_ = webviewlock.WaitAndReclaimUnownedProfile(profileDir, webviewlock.DefaultGracefulWait, webviewlock.DefaultReclaimWait)
-}
-
-func isCrossDevice(err error) bool {
-	if err == nil {
-		return false
-	}
-	var errno syscall.Errno
-	if errors.As(err, &errno) && errno == errorNotSameDevice {
-		return true
-	}
-	var link *os.LinkError
-	if errors.As(err, &link) {
-		if errors.As(link.Err, &errno) && errno == errorNotSameDevice {
-			return true
-		}
-	}
-	return false
 }
 
 func detachedSysProcAttr() *syscall.SysProcAttr {

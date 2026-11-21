@@ -405,15 +405,6 @@ func SeedanceVideosRequestBody(input Input) (SeedanceVideosRequest, error) {
 	return body, nil
 }
 
-// 兼容旧的 map 断言调用；实际请求路径使用类型化 Seedance DTO。
-func SeedanceVideosBody(input Input) (map[string]interface{}, error) {
-	body, err := SeedanceVideosRequestBody(input)
-	if err != nil {
-		return nil, err
-	}
-	return RequestAsMap(body)
-}
-
 func SeedancePromptText(input Input) string {
 	return strings.TrimSpace(input.Prompt)
 }

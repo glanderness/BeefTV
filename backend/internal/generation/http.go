@@ -31,10 +31,6 @@ type submissionKeyContext struct{}
 type binaryNoRedirectContext struct{}
 type providerDownloadContext struct{}
 
-func doBinaryWithoutRedirect(req *http.Request) ([]byte, string, error) {
-	return DoBinary(req.WithContext(context.WithValue(req.Context(), binaryNoRedirectContext{}, true)))
-}
-
 func WithSubmissionKey(ctx context.Context, key string) context.Context {
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -96,16 +92,6 @@ func PostForm(ctx context.Context, config Config, path string, contentType strin
 	req.Header.Set("Content-Type", contentType)
 	outbound.ApplyOutboundHeaders(req, config.Headers)
 	return DoJSON(req, target)
-}
-
-func PostBinary(ctx context.Context, config Config, path string, body interface{}) ([]byte, string, error) {
-	req, err := newJSONRequest(ctx, http.MethodPost, APIURL(config.BaseURL, path), config, body)
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	outbound.ApplyOutboundHeaders(req, config.Headers)
-	return DoBinary(req)
 }
 
 func GetBinary(ctx context.Context, config Config, path string) ([]byte, string, error) {
@@ -173,16 +159,6 @@ func GetGeminiJSON(ctx context.Context, config Config, path string, target inter
 	req.Header.Set("x-goog-api-key", config.APIKey)
 	outbound.ApplyOutboundHeaders(req, config.Headers)
 	return DoJSON(req, target)
-}
-
-func GetGeminiBinary(ctx context.Context, config Config, rawURL string) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("x-goog-api-key", config.APIKey)
-	outbound.ApplyOutboundHeaders(req, config.Headers)
-	return DoBinary(req)
 }
 
 func newJSONRequest(ctx context.Context, method, rawURL string, config Config, body interface{}) (*http.Request, error) {
