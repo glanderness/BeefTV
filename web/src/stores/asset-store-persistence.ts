@@ -12,6 +12,7 @@ import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-
 import {
     flushAssetStoreDraftWrites,
     hasActiveAssetStoreDraftWrites,
+    hydrateAssetStoreDrafts,
     isDeletedGenerationAsset,
     peekAssetStoreDraft,
     recordDeletedGenerationAssetIds,
@@ -54,6 +55,10 @@ const desktopLegacyAssetCaches = new Map<string, LegacyDesktopAssetCacheState>()
 
 export function clearDesktopLegacyAssetCacheScopesForTests() {
     desktopLegacyAssetCaches.clear();
+}
+
+export function readLegacyDeletedGenerationIdsForScope(scope: string): readonly string[] {
+    return desktopLegacyAssetCaches.get(scope)?.deletedGenerationIds ?? [];
 }
 
 export function observedAssetPersistForScope(scope: string) {
@@ -225,6 +230,7 @@ export async function clearLegacyDesktopAssetCache(scope = getActiveUserScope(),
         return false;
     }
     if (legacy.deletedGenerationIds.length) {
+        await hydrateAssetStoreDrafts(scope);
         recordDeletedGenerationAssetIds(scope, legacy.deletedGenerationIds);
     }
     retryFailedAssetStoreDraftPersist(scope);
@@ -312,15 +318,13 @@ export const assetStorage: PersistStorage<AssetStore> = {
         }
         const document = recovery.document;
         if (usesSingleSourceLocalPersistence()) {
-            const deletedGenerationIds = Object.keys(document.tombstones.assets || {}).filter((id) => id.startsWith("generation_"));
+            // Capture legacy tombstones in memory only; never persist into ASSET_STORE_DRAFTS_KEY
+            // before hydrateAssetStoreDrafts merges existing durable drafts and clocks.
             desktopLegacyAssetCaches.set(scope, {
                 assetIds: document.state.assets.map((asset) => asset.id),
-                deletedGenerationIds,
+                deletedGenerationIds: Object.keys(document.tombstones.assets || {}).filter((id) => id.startsWith("generation_")),
                 hasInvalidRecords: recovery.invalid.length > 0,
             });
-            if (deletedGenerationIds.length) {
-                recordDeletedGenerationAssetIds(scope, deletedGenerationIds);
-            }
         }
         // 持久化恢复只恢复结构化记录，不能为每个 resource: key 逐条读取资源元数据或 Blob。
         // 远程资源直接使用受鉴权的 file URL；本地 legacy key 仍恢复为 Blob URL，避免兼容性回归。

@@ -14,6 +14,7 @@ type AssetDraftStoreHooks = {
     applyDrafts: (updater: (assets: Asset[]) => Asset[]) => void;
     trackOperation: <T>(operation: Promise<T>) => Promise<T>;
     clearDesktopLegacyScopes?: () => void;
+    readLegacyDeletedGenerationIds?: (userScope: string) => readonly string[];
 };
 
 export const ASSET_STORE_DRAFTS_KEY = "infinite-canvas:asset_store_drafts";
@@ -246,6 +247,10 @@ function applyAssetStoreDraftsToEffectiveAssets(drafts: Map<string, AssetStoreDr
 
 export async function hydrateAssetStoreDrafts(userScope = getActiveUserScope(), options?: { reproject?: boolean }) {
     if (hydratedAssetDraftScopes.has(userScope)) {
+        const legacyDeleted = hooks.readLegacyDeletedGenerationIds?.(userScope) ?? [];
+        if (legacyDeleted.length) {
+            recordDeletedGenerationAssetIds(userScope, legacyDeleted);
+        }
         if (options?.reproject && userScope === getActiveUserScope()) {
             const existing = assetStoreDrafts.get(userScope);
             const tombstones = deletedGenerationAssetIds.get(userScope);
@@ -267,12 +272,14 @@ export async function hydrateAssetStoreDrafts(userScope = getActiveUserScope(), 
         else assetStoreDrafts.delete(userScope);
         if (clocks.size) assetStoreDraftClocks.set(userScope, clocks);
         else assetStoreDraftClocks.delete(userScope);
-        const mergedDeleted = new Set([...durable.deletedGenerationIds, ...(deletedGenerationAssetIds.get(userScope) ?? [])]);
+        const legacyDeleted = (hooks.readLegacyDeletedGenerationIds?.(userScope) ?? []).filter(isGenerationAssetId);
+        const mergedDeleted = new Set([...durable.deletedGenerationIds, ...(deletedGenerationAssetIds.get(userScope) ?? []), ...legacyDeleted]);
+        const addedLegacyTombstones = legacyDeleted.some((id) => !durable.deletedGenerationIds.has(id));
         if (mergedDeleted.size) deletedGenerationAssetIds.set(userScope, mergedDeleted);
         else deletedGenerationAssetIds.delete(userScope);
         hydratedAssetDraftScopes.add(userScope);
         if (userScope === getActiveUserScope()) applyAssetStoreDraftsToEffectiveAssets(merged, mergedDeleted);
-        if (memoryDrafts.size > 0 || bumped) scheduleAssetStoreDraftPersist(userScope);
+        if (memoryDrafts.size > 0 || bumped || addedLegacyTombstones) scheduleAssetStoreDraftPersist(userScope);
     })();
 
     hydratingAssetDraftScopes.set(userScope, done);
@@ -352,7 +359,8 @@ export function peekAssetStoreDraft(userScope: string, id: string) {
 
 export function isDeletedGenerationAsset(userScope: string, id: string) {
     return assetStoreDrafts.get(userScope)?.get(id)?.kind === "delete"
-        || Boolean(deletedGenerationAssetIds.get(userScope)?.has(id));
+        || Boolean(deletedGenerationAssetIds.get(userScope)?.has(id))
+        || Boolean(hooks.readLegacyDeletedGenerationIds?.(userScope).includes(id));
 }
 
 export function recordDeletedGenerationAssetIds(userScope: string, ids: Iterable<string>) {

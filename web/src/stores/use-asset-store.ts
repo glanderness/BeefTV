@@ -37,6 +37,7 @@ import {
     clearDesktopLegacyAssetCacheScopesForTests,
     commitPendingAssetStorePersistenceLocked,
     observedAssetPersistForScope,
+    readLegacyDeletedGenerationIdsForScope,
     readPersistedAssetDocumentForScope,
     recordAssetStorageDocument,
     recordGenerationAssetFailure,
@@ -267,7 +268,15 @@ export const useAssetStore = create<AssetStore>()(
             },
             updateAsset: (id, patch) => {
                 set((state) => ({
-                    assets: state.assets.map((asset) => (asset.id === id ? parseAssetRecord({ ...asset, ...patch, updatedAt: new Date().toISOString() }) : asset)),
+                    assets: state.assets.map((asset) => {
+                        if (asset.id !== id) return asset;
+                        const merged = { ...asset, ...patch, updatedAt: new Date().toISOString() };
+                        if (merged.metadata?.generationLookupUnverified === true && patch.metadata?.generationLookupUnverified !== true) {
+                            const { generationLookupUnverified: _omitted, ...rest } = merged.metadata;
+                            merged.metadata = Object.keys(rest).length ? rest : undefined;
+                        }
+                        return parseAssetRecord(merged);
+                    }),
                 }));
                 markAssetStoreDraft(id, "upsert");
             },
@@ -360,4 +369,5 @@ bindAssetDraftStoreHooks({
     },
     trackOperation: trackAssetOperation,
     clearDesktopLegacyScopes: clearDesktopLegacyAssetCacheScopesForTests,
+    readLegacyDeletedGenerationIds: readLegacyDeletedGenerationIdsForScope,
 });

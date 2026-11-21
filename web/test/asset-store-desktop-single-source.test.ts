@@ -348,19 +348,20 @@ describe("asset store single-source persistence", () => {
         }
     });
 
-    test("legacy ASSET_STORE_KEY tombstones migrate into deletedGenerationIds before legacy cache cleanup and block resurrection", async () => {
+    test("legacy ASSET_STORE_KEY tombstones migrate after draft hydration without clobbering existing durable drafts and block resurrection", async () => {
         const scope = "desktop-legacy-tombstone";
         const restore = switchScope(scope);
         enterDesktopSingleSourceMode();
         const memory = new Map<string, string>();
         const legacyKey = scopedStorageKey(ASSET_STORE_KEY, scope);
+        const draftsKey = scopedStorageKey(ASSET_STORE_DRAFTS_KEY, scope);
 
         const effectKeyLegacyDeleted = "task-legacy-tombstone:output:0";
         const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKeyLegacyDeleted));
         const legacyDeletedId = `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 
-        // Seed ONLY legacy ASSET_STORE_KEY (no ASSET_STORE_DRAFTS_KEY): pre-upgrade tombstone
-        // lives in legacy document.tombstones.assets and a stale generation item also lingers in assets.
+        // Seed BOTH legacy ASSET_STORE_KEY (with pre-upgrade tombstone) AND an unrelated
+        // durable draft in ASSET_STORE_DRAFTS_KEY to prove rehydrate never clobbers drafts!
         memory.set(legacyKey, serializeAssetStorageDocument({
             state: {
                 assets: [
@@ -371,6 +372,12 @@ describe("asset store single-source persistence", () => {
             version: 0,
             storageRevision: 4,
             tombstones: { assets: { [legacyDeletedId]: 4 } },
+        }));
+        memory.set(draftsKey, JSON.stringify({
+            drafts: {
+                "draft-keep-1": { kind: "upsert", version: 3, asset: textAsset("draft-keep-1", "未提交草稿必须保留") },
+            },
+            clocks: { "draft-keep-1": 3 },
         }));
 
         spies.push(spyOn(localforage, "getItem").mockImplementation(async (key) => memory.get(String(key)) ?? null));
@@ -385,7 +392,8 @@ describe("asset store single-source persistence", () => {
         try {
             await useAssetStore.persist.rehydrate();
             await hydrateAssetStoreDrafts(scope, { reproject: true });
-            expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual(["in-sqlite"]);
+            expect(useAssetStore.getState().assets.map((item) => item.id).sort()).toEqual(["draft-keep-1", "in-sqlite"]);
+            expect(peekAssetStoreDraft(scope, "draft-keep-1")?.asset?.title).toBe("未提交草稿必须保留");
 
             const result = await withAdapter(async () => envelope({
                 assets: [{ id: "in-sqlite", title: "已在库里", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }],
@@ -393,13 +401,18 @@ describe("asset store single-source persistence", () => {
 
             expect(result.preservedIds).toEqual([]);
             expect(peekAssetStoreDraft(scope, legacyDeletedId)).toBeUndefined();
+            expect(peekAssetStoreDraft(scope, "draft-keep-1")?.asset?.title).toBe("未提交草稿必须保留");
             expect(memory.has(legacyKey)).toBe(false);
+            expect(memory.get(draftsKey)).toContain("draft-keep-1");
+            expect(memory.get(draftsKey)).toContain(legacyDeletedId);
 
-            // Cold restart after ASSET_STORE_KEY removal: migrated tombstone in ASSET_STORE_DRAFTS_KEY
-            // must still block addGenerationAsset from resurrecting the deleted output.
+            // Cold restart after ASSET_STORE_KEY removal: both the unrelated draft AND the
+            // migrated tombstone must survive in ASSET_STORE_DRAFTS_KEY.
             unloadAssetStoreDraftsForTests();
             useAssetStore.setState({ assets: [] });
             await hydrateAssetStoreDrafts(scope);
+            expect(peekAssetStoreDraft(scope, "draft-keep-1")?.asset?.title).toBe("未提交草稿必须保留");
+            expect(useAssetStore.getState().assets.find((item) => item.id === "draft-keep-1")?.title).toBe("未提交草稿必须保留");
             await withAdapter(async () => envelope({ assets: [] }), async () => {
                 await expect(useAssetStore.getState().addGenerationAsset(effectKeyLegacyDeleted, {
                     kind: "text",
@@ -675,6 +688,98 @@ describe("asset store single-source persistence", () => {
             expect(putRequests).toEqual([]);
             expect(useAssetStore.getState().assets.find((item) => item.id === offlineId)?.title).toBe("用户早已改过的标题");
             expect(peekAssetStoreDraft(scope, offlineId)).toBeUndefined();
+
+            // Case 4b: absent on server -> reconcile strips generationLookupUnverified on PUT AND
+            // clears it in live state, so a subsequent user rename PUTs cleanly instead of reverting!
+            const effectKeyAbsent = "task-offline-absent:output:0";
+            const absentId = await withAdapter(async () => {
+                throw new Error("sqlite busy");
+            }, async () => useAssetStore.getState().addGenerationAsset(effectKeyAbsent, {
+                kind: "text",
+                title: "初版生成标题",
+                coverUrl: "",
+                tags: ["生成"],
+                status: "confirmed",
+                source: "生成任务",
+                data: { content: "new-output" },
+            }));
+            await flushAssetStorePersistence();
+            const absentPutBodies: Array<{ title?: string; metadata?: Record<string, unknown> }> = [];
+            await withAdapter(async (config) => {
+                const method = String(config.method || "get").toUpperCase();
+                const url = String(config.url || "");
+                if (url.includes("/assets/batch")) return envelope({ assets: [] });
+                if (method === "PUT") {
+                    const raw = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+                    const body = raw?.asset ?? raw;
+                    absentPutBodies.push(body);
+                    return envelope({ asset: { id: absentId, title: body.title, updatedAt: "2026-10-02T00:05:00.000Z" } });
+                }
+                throw new Error(`unexpected ${method} ${url}`);
+            }, async () => {
+                await persistWorkspaceAssetChanges();
+            });
+            expect(absentPutBodies).toHaveLength(1);
+            expect(absentPutBodies[0]?.title).toBe("初版生成标题");
+            expect(absentPutBodies[0]?.metadata?.generationLookupUnverified).toBeUndefined();
+            expect(useAssetStore.getState().assets.find((item) => item.id === absentId)?.metadata?.generationLookupUnverified).toBeUndefined();
+
+            // Now user edits the title -> MUST PUT the new title (never revert via reconcile)!
+            useAssetStore.getState().updateAsset(absentId, { title: "二次编辑后的标题" });
+            await withAdapter(async (config) => {
+                const method = String(config.method || "get").toUpperCase();
+                const url = String(config.url || "");
+                if (url.includes("/assets/batch")) throw new Error("should not reconcile after marker was cleared");
+                if (method === "PUT") {
+                    const raw = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+                    const body = raw?.asset ?? raw;
+                    absentPutBodies.push(body);
+                    return envelope({ asset: { id: absentId, title: body.title, updatedAt: "2026-10-02T00:06:00.000Z" } });
+                }
+                throw new Error(`unexpected ${method} ${url}`);
+            }, async () => {
+                await persistWorkspaceAssetChanges();
+            });
+            expect(absentPutBodies).toHaveLength(2);
+            expect(absentPutBodies[1]?.title).toBe("二次编辑后的标题");
+
+            // Case 4c: concurrent user edit while reconcile lookup is in flight must not be overwritten!
+            const effectKeyRace = "task-offline-race:output:0";
+            const raceId = await withAdapter(async () => {
+                throw new Error("sqlite busy");
+            }, async () => useAssetStore.getState().addGenerationAsset(effectKeyRace, {
+                kind: "text",
+                title: "竞态初始标题",
+                coverUrl: "",
+                tags: ["生成"],
+                status: "confirmed",
+                source: "生成任务",
+                data: { content: "race-output" },
+            }));
+            await flushAssetStorePersistence();
+            let releaseLookup!: () => void;
+            const lookupStarted = new Promise<void>((resolve) => {
+                void withAdapter(async (config) => {
+                    const url = String(config.url || "");
+                    if (url.includes("/assets/batch")) {
+                        resolve();
+                        await new Promise<void>((done) => { releaseLookup = done; });
+                        return envelope({
+                            assets: [{ ...textAsset(raceId, "旧服务端标题"), metadata: { generationEffectKey: effectKeyRace } }],
+                        });
+                    }
+                    throw new Error(`unexpected ${url}`);
+                }, async () => {
+                    await persistWorkspaceAssetChanges();
+                });
+            });
+            await lookupStarted;
+            // User edits while lookup is in flight -> bumps draft version & clears marker!
+            useAssetStore.getState().updateAsset(raceId, { title: "用户并发改名" });
+            releaseLookup();
+            await new Promise((done) => setTimeout(done, 10));
+            expect(useAssetStore.getState().assets.find((item) => item.id === raceId)?.title).toBe("用户并发改名");
+            expect(peekAssetStoreDraft(scope, raceId)?.asset?.title).toBe("用户并发改名");
             expect(catalogWrites).toEqual([]);
         } finally {
             restore();
