@@ -163,7 +163,7 @@ func quoteVideo(table *Table, target Target, count int) Estimate {
 				return variableUnknown("按量结算", fmt.Sprintf("含参考视频，按生成和参考视频的实际秒数结算（%s %s/秒）", resolution, yuan(rate)))
 			}
 		}
-		if invoice := table.ReferenceInvoice; invoice != nil && target.ReferenceImages > 0 {
+		if invoice := table.ReferenceInvoice; invoice != nil && (target.ReferenceImages > 0 || target.ReferenceVideos > 0) {
 			reserve := round(invoice.ReserveUSD * invoice.USDCNY * 1.5 * float64(count))
 			return reserved(reserve, fmt.Sprintf("参考生成先扣 %s，出账后按实际美元账单 × %s × 1.5 结算", total(reserve), number(invoice.USDCNY)))
 		}

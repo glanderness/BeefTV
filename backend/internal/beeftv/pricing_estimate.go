@@ -1,12 +1,8 @@
 package beeftv
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"strings"
@@ -89,35 +85,12 @@ func (s *Service) EstimatePricing(ctx context.Context, req PricingEstimateReques
 	}
 	boundedCtx, cancel := context.WithTimeout(reqCtx, pricingEstimateTimeout)
 	defer cancel()
-	encoded, err := json.Marshal(req)
-	if err != nil {
-		return PricingEstimateResponse{}, err
+	origin := s.Origin()
+	client := &MediaClient{
+		BaseURL:       TokenBaseURL(origin),
+		APIKey:        cred.APIKey,
+		Client:        s.httpClient,
+		AllowHTTPTest: strings.HasPrefix(origin, "http://"),
 	}
-	request, err := http.NewRequestWithContext(boundedCtx, http.MethodPost, TokenBaseURL(s.Origin())+"/pricing/estimate", bytes.NewReader(encoded))
-	if err != nil {
-		return PricingEstimateResponse{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+cred.APIKey)
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Content-Type", "application/json")
-	response, err := s.httpClient.Do(request)
-	if err != nil {
-		return PricingEstimateResponse{}, err
-	}
-	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if err != nil {
-		return PricingEstimateResponse{}, err
-	}
-	if response.StatusCode != http.StatusOK {
-		return PricingEstimateResponse{}, fmt.Errorf("服务端估价接口返回 HTTP %d", response.StatusCode)
-	}
-	var resp PricingEstimateResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return PricingEstimateResponse{}, err
-	}
-	if err := validatePricingEstimateResponse(resp, len(req.Targets)); err != nil {
-		return PricingEstimateResponse{}, err
-	}
-	return resp, nil
+	return client.EstimatePricing(boundedCtx, req)
 }

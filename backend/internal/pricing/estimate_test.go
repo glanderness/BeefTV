@@ -201,3 +201,20 @@ func TestQuoteSeedream55ChargesFirstReferenceAndUses2601123PixelThreshold(t *tes
 		t.Fatalf("layers with 1 paid reference got %+v", layersWithRef)
 	}
 }
+
+func TestQuoteVideoReferenceInvoiceAppliesToReferenceVideo(t *testing.T) {
+	table, ok := Normalize(json.RawMessage(`{
+		"mode": "per_request",
+		"display_kind": "video",
+		"per_second_cny": {"768p": 0.4882608},
+		"video_input_per_second_cny": {"768p": 0},
+		"reference_invoice": {"usd_cny": 6.7814, "reserve_usd": 2}
+	}`))
+	if !ok {
+		t.Fatal("reference invoice video row did not normalize")
+	}
+	got := Quote(table, Target{Kind: "video", Resolution: "768p", Seconds: 5, ReferenceVideos: 1})
+	if got.Amount != nil || got.Reserve == nil || *got.Reserve != 20.3442 || got.Label != "先扣 ¥20.34" {
+		t.Fatalf("expected fal reference invoice reserve for reference video, got %+v", got)
+	}
+}
