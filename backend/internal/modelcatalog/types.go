@@ -257,26 +257,6 @@ type PublicChannelModel struct {
 	ManagedBeefTV      *bool                   `json:"-"`
 }
 
-type ChannelModelRequest struct {
-	ModelKey         string                       `json:"modelKey"`
-	ProviderModelKey string                       `json:"providerModelKey"`
-	DisplayName      string                       `json:"displayName"`
-	Icon             string                       `json:"icon"`
-	Capability       string                       `json:"capability"`
-	Protocol         string                       `json:"protocol"`
-	Enabled          *bool                        `json:"enabled"`
-	CapabilityConfig *ModelCapabilityConfig       `json:"capabilityConfig"`
-	Variants         []ChannelModelVariantRequest `json:"variants"`
-}
-
-type ChannelModelVariantRequest struct {
-	Selector         map[string]string `json:"selector"`
-	Resolution       string            `json:"resolution"`
-	VideoSeconds     int               `json:"videoSeconds"`
-	ProviderModelKey string            `json:"providerModelKey"`
-	Enabled          *bool             `json:"enabled"`
-}
-
 type ChannelModelCatalogOption struct {
 	Value string `json:"value"`
 	Label string `json:"label,omitempty"`

@@ -36,9 +36,11 @@ func TestProcessCanvasGenerationNoVariantSKUPostsOnceWithProviderKey(t *testing.
 		ID: "channel-sku", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Seedance",
 		BaseURL: server.URL, APIKey: "test-key", APIFormat: "openai",
 	}
-	if err := service.encryptSystemChannelSecrets(&channel); err != nil {
+	encryptedKey, err := service.encryptSettingSecret(channel.APIKey)
+	if err != nil {
 		t.Fatal(err)
 	}
+	channel.APIKey = encryptedKey
 	item := model.ChannelModel{
 		ID: "model-sku", ChannelID: channel.ID, ModelKey: "seedance-2-5-480p", ProviderModelKey: "doubao-seedance-2-5",
 		Capability: "text", Protocol: model.ChannelInterfaceChatCompletion, Enabled: true,

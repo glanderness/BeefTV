@@ -188,6 +188,13 @@ func TestLocalSourceExcludesHostedContentVerticals(t *testing.T) {
 		"internal/handler/logical_models.go",
 		"internal/handler/response_interception.go",
 		"internal/handler/channel_order.go",
+		"internal/app/response_interception.go",
+		"internal/app/channel_order.go",
+		"internal/app/channel_presentation.go",
+		"internal/app/channel_models.go",
+		"internal/modelcatalog/channel_crud.go",
+		"internal/repository/channel_order.go",
+		"internal/repository/channel_presentation.go",
 	} {
 		if _, err := os.Stat(filepath.Join(moduleRoot, relative)); err == nil {
 			t.Errorf("local-only source still contains hosted content vertical %q", relative)

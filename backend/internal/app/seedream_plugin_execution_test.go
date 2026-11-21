@@ -59,44 +59,6 @@ func TestSeedreamPluginRunsThroughTaskRoute(t *testing.T) {
 	}
 }
 
-func TestSeedreamPluginUsedByAdminModelTest(t *testing.T) {
-	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
-	svc, db, _, _ := creationTestService(t)
-	svc.coordinator = platform.NewLocalCoordinator()
-	var posts atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		posts.Add(1)
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/images/generations" {
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
-		if body["model"] != "doubao-seedream-5-0-pro-260628" || body["response_format"] != "url" {
-			t.Errorf("body=%#v", body)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"b64_json":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII="}]}`))
-	}))
-	t.Cleanup(server.Close)
-	admin := &model.User{ID: "admin", Role: model.UserRoleAdmin}
-	channel := model.ModelChannel{ID: "ark", UserID: admin.ID, Scope: model.ChannelScopeSystem, Enabled: true, Name: "Ark", BaseURL: server.URL, APIKey: "synthetic", APIFormat: "openai", ModelsJSON: `[]`}
-	if err := db.Create(&channel).Error; err != nil {
-		t.Fatal(err)
-	}
-	profile := DefaultModelCapabilityConfigForModel("openai-image", "fixture")
-	profile.Image.Size.Values = []string{"2K"}
-	profile.Image.Size.Default = "2K"
-	_, err := svc.TestAdminChannelModel(context.Background(), admin, channel.ID, ChannelModelRequest{
-		ModelKey: "doubao-seedream-5-0-pro-260628", ProviderModelKey: "doubao-seedream-5-0-pro-260628", Capability: "image", Protocol: "volcengine-ark-image",
-		CapabilityConfig: profile,
-	})
-	if err != nil || posts.Load() != 1 {
-		t.Fatalf("posts=%d err=%v", posts.Load(), err)
-	}
-}
-
 func TestYsduiPluginCreateRejectionWithTraceRequestIDKeepsRegenerateAllowed(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	for _, tc := range []struct {

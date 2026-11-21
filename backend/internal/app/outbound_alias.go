@@ -26,11 +26,6 @@ func ApplyOutboundHeaders(req *http.Request, headers []OutboundHeader) {
 	outbound.ApplyOutboundHeaders(req, headers)
 }
 
-func ParseOutboundHeadersJSON(raw string) ([]OutboundHeader, error) {
-	decoded, err := outbound.ParseOutboundHeadersJSON(raw)
-	return decoded, mapOutboundError(err)
-}
-
 func DecodeRelayOutboundHeaders(encoded string) ([]OutboundHeader, error) {
 	decoded, err := outbound.DecodeRelayOutboundHeaders(encoded)
 	return decoded, mapOutboundError(err)

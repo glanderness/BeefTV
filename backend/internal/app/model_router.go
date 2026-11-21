@@ -8,12 +8,6 @@ import (
 	"infinite-canvas/backend/internal/modelcatalog"
 )
 
-func (s *Service) invalidateRouteCatalog() {
-	if s != nil {
-		s.ensureRouter().Invalidate(context.Background())
-	}
-}
-
 func (s *Service) routeCatalogSnapshot() (*routeCatalogSnapshot, error) {
 	return s.ensureRouter().Snapshot()
 }

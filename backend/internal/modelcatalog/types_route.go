@@ -63,40 +63,7 @@ type PublicLogicalModel struct {
 	Available          bool             `json:"available"`
 }
 
-type RouteSimulationCandidate struct {
-	RouteID          string   `json:"routeId"`
-	ChannelModelID   string   `json:"channelModelId"`
-	ChannelModelKey  string   `json:"channelModelKey"`
-	ChannelModelName string   `json:"channelModelName"`
-	Priority         int      `json:"priority"`
-	Weight           int      `json:"weight"`
-	Enabled          bool     `json:"enabled"`
-	Matched          bool     `json:"matched"`
-	Blocked          bool     `json:"blocked"`
-	InPool           bool     `json:"inPool"`
-	Reasons          []string `json:"reasons,omitempty"`
-}
-
-type RouteSimulationResult struct {
-	ProductMatch CapabilityMatch            `json:"productMatch"`
-	Candidates   []RouteSimulationCandidate `json:"candidates"`
-}
-
 type ChannelHeader = outbound.OutboundHeader
-
-type ChannelRequest struct {
-	Name                 string          `json:"name"`
-	PublicAlias          *string         `json:"publicAlias"`
-	SortOrder            *int            `json:"sortOrder"`
-	BaseURL              string          `json:"baseUrl"`
-	APIKey               string          `json:"apiKey"`
-	SecretKey            string          `json:"secretKey"`
-	ConcurrencyLimit     *int            `json:"concurrencyLimit"`
-	UseGlobalConcurrency *bool           `json:"useGlobalConcurrency"`
-	Models               []string        `json:"models"`
-	Headers              []ChannelHeader `json:"headers"`
-	Enabled              *bool           `json:"enabled"`
-}
 
 type PublicChannelModelProfile struct {
 	Model            string                     `json:"model"`
@@ -128,13 +95,6 @@ type PublicModelChannel struct {
 	UpdatedAt        time.Time                   `json:"updatedAt"`
 }
 
-type AdminChannelPage struct {
-	Channels []PublicModelChannel `json:"channels"`
-	Total    int64                `json:"total"`
-	Page     int                  `json:"page"`
-	Limit    int                  `json:"pageSize"`
-}
-
 type ChannelModelCatalogItem struct {
 	ID                       string                               `json:"id"`
 	DisplayName              string                               `json:"displayName,omitempty"`
@@ -164,11 +124,6 @@ type ChannelModelCatalogOptions struct {
 	AspectRatio     []ChannelModelCatalogOption `json:"aspectRatio,omitempty"`
 	DurationSeconds []ChannelModelCatalogOption `json:"durationSeconds,omitempty"`
 	Resolution      []ChannelModelCatalogOption `json:"resolution,omitempty"`
-}
-
-type AdminChannelModelFetchResult struct {
-	Models []string `json:"models"`
-	Added  int64    `json:"added"`
 }
 
 type FailureInfo struct {

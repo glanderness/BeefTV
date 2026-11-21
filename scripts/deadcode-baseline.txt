@@ -40,15 +40,12 @@ internal/app.Service.assistantTurnChangeFromReceipts
 internal/app.Service.canvasExists
 internal/app.Service.canvasRevision
 internal/app.Service.canvasWorkflowChannelID
-internal/app.Service.channelFromRequest
 internal/app.Service.channelModelMatchesIntent
 internal/app.Service.cleanupDetachedUserResources
 internal/app.Service.cleanupExpiredArchivedAssets
 internal/app.Service.compileCanvasWorkflow
-internal/app.Service.decryptSystemChannelSecrets
 internal/app.Service.deleteLocalResourceObject
 internal/app.Service.drainResourceDeletionJobs
-internal/app.Service.encryptSystemChannelSecrets
 internal/app.Service.generationLocalArtifactPresent
 internal/app.Service.hydrateGenerationMedia
 internal/app.Service.hydrateGenerationMediaWithContext
@@ -71,7 +68,6 @@ internal/app.Service.selectWorkflowModel
 internal/app.Service.shouldDeferVideoProviderTask
 internal/app.Service.storeResource
 internal/app.Service.storeResourceObject
-internal/app.Service.validateCanvasMediaAssets
 internal/app.Service.validateGenerationInterface
 internal/app.Service.validateResolvedImageCapability
 internal/app.Service.validateResolvedVideoCapability
@@ -92,7 +88,6 @@ internal/app.canonicalCallMeta
 internal/app.canvasAssociatedReferences
 internal/app.canvasNodeCapabilityForType
 internal/app.capabilityFromTaskType
-internal/app.channelFromRequest
 internal/app.channelModelsUpstreamError
 internal/app.clientOperationHash
 internal/app.clientOperationID
@@ -127,7 +122,6 @@ internal/app.generationModeSupported
 internal/app.getJSON
 internal/app.imageDataURLs
 internal/app.imageDimensions
-internal/app.imageTestDefaults
 internal/app.intValue
 internal/app.isArkPlanVideoConfig
 internal/app.isBeefTVSeedancePreuploadConfig
@@ -137,17 +131,14 @@ internal/app.isSupportedVoiceSampleMimeType
 internal/app.managedTaskConnection
 internal/app.mapConversationAttachError
 internal/app.mediaBytes
-internal/app.mergeChannelRequest
 internal/app.mergeCreationMaps
 internal/app.modelTaskOutputs
 internal/app.mp4Payloads
 internal/app.newPluginRuntime
 internal/app.newPluginRuntimeWithStore
 internal/app.newProviderPayloadError
-internal/app.normalizeAdminChannelModelDeleteIDs
 internal/app.normalizeAppearanceSkinThemes
 internal/app.normalizeCapability
-internal/app.normalizeChannelModelContract
 internal/app.normalizeSingleByteRange
 internal/app.normalizeTaskInput
 internal/app.normalizedResourceUploadKey
@@ -193,7 +184,6 @@ internal/app.resourceFileExtension
 internal/app.resourceOccupiedMessage
 internal/app.resourceUsesObjectStorage
 internal/app.restoreBeefTVSeedanceAudioControl
-internal/app.retiredChannelModelKeys
 internal/app.retryableVideoPollError
 internal/app.routeFailureCode
 internal/app.routeFailureInfo
@@ -242,7 +232,6 @@ internal/app.validateTaskType
 internal/app.validateVideoTask
 internal/app.validateVideoTaskParameters
 internal/app.videoRecoveryNeedsPolling
-internal/app.videoTestDefaults
 internal/app.withHTTPRequestRuntime
 internal/app.withTaskRequestEvidence
 internal/app.withoutProviderAnalytics
@@ -266,7 +255,6 @@ internal/beeftv.normalizeCatalogDuration
 internal/canvas.AssetFromJSON
 internal/canvas.ClientAssetPayload
 internal/canvas.RepairAssetBytes
-internal/canvas.Service.validateCanvasMediaAssetsWithCandidates
 internal/canvas.SetEffectiveCanvasDocumentLimitMB
 internal/canvas.assetHasNonNegativeBytes
 internal/canvas.canvasNodeCount
@@ -283,7 +271,6 @@ internal/depthcapture.WorkerEnv
 internal/depthruntime.extractRuntimeArchive
 internal/depthruntime.fileMatches
 internal/depthruntime.verifyFile
-internal/desktopstorage.Save
 internal/desktopupdate.Engine.fetchRange
 internal/desktopupdate.SignEnvelope
 internal/desktopupdate.SignEnvelopeBytes
@@ -397,7 +384,6 @@ internal/modelcatalog.CapabilitySpecWithRoutePresets
 internal/modelcatalog.CapabilitySpecWithVariants
 internal/modelcatalog.CatalogModelName
 internal/modelcatalog.ChannelModelCapabilitySpec
-internal/modelcatalog.ChannelModelCatalogKey
 internal/modelcatalog.ChannelModelDefaultOptions
 internal/modelcatalog.ChannelModelVariantForIntent
 internal/modelcatalog.CoerceCatalogModels
@@ -418,8 +404,6 @@ internal/modelcatalog.MergeCapabilityImageSize
 internal/modelcatalog.MergeIntentDefaults
 internal/modelcatalog.ModelRouteUnavailable
 internal/modelcatalog.NormalizeCatalogDuration
-internal/modelcatalog.NormalizeChannelModelTierResolution
-internal/modelcatalog.NormalizeChannelModelTierSelector
 internal/modelcatalog.NormalizeLegacyModelIDs
 internal/modelcatalog.NormalizeLogicalDefaults
 internal/modelcatalog.NormalizeModelCapabilityConfig
@@ -432,12 +416,10 @@ internal/modelcatalog.ProviderRequestFailed
 internal/modelcatalog.SKUSelectorForIntent
 internal/modelcatalog.SKUSelectorForTier
 internal/modelcatalog.ValidateCapabilitySpec
-internal/modelcatalog.ValidateChannelModelTierCapabilities
 internal/modelcatalog.ValidateProductSpecWithinRoutes
 internal/modelcatalog.ValidateReferenceDuration
 internal/modelcatalog.ValidateTextCapabilityConfig
 internal/modelcatalog.ValidateVideoReferenceMedia
-internal/modelcatalog.VideoDurationSupported
 internal/modelcatalog.channelModelDefaultOptions
 internal/modelcatalog.localSnapshotChannelModel
 internal/operations.ExternalCaller
