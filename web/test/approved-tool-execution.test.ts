@@ -78,3 +78,47 @@ test("abort prevents a new local provider submission", async () => {
         expect(h.executions).toEqual([]);
     } finally { h.execution.dispose(); }
 });
+
+test("transient heartbeat failure does not abort an in-flight local execution", async () => {
+    const originalSetInterval = globalThis.setInterval;
+    let heartbeatTick: (() => void) | undefined;
+    globalThis.setInterval = ((fn: () => void) => {
+        heartbeatTick = fn;
+        return 1 as unknown as ReturnType<typeof setInterval>;
+    }) as typeof setInterval;
+    try {
+        let releaseWait!: () => void;
+        let run: CreationRun = { id: "run", userId: "local", revision: 1, executionEpoch: 0, executionOwner: "", status: "idle", state: identity, createdAt: "", updatedAt: "" };
+        const api = {
+            ...creationRuns,
+            create: async () => ({ run, submissions: [] }),
+            claim: async (_id: string, input: { owner: string }) => (run = { ...run, executionEpoch: 1, executionOwner: input.owner }),
+            heartbeat: async () => { throw new Error("transient sleep/network hiccup"); },
+            prepare: async () => submission("sub-1", "scene"),
+            approve: async () => ({ submissions: [{ ...submission("sub-1", "scene"), approvedAt: "2026-01-01" }] }),
+            execute: async () => ({ id: "task-1" } as GenerationTask),
+            release: async () => ({ released: true }),
+        } as typeof creationRuns;
+        const execution = new ApprovedToolExecution(
+            { clientKey: "test", identity, signal: new AbortController().signal, onRun: () => {} },
+            api,
+            async (id, opts) => {
+                await new Promise<void>((resolve) => { releaseWait = resolve; });
+                expect(opts?.signal?.aborted).toBe(false);
+                return { id, status: "succeeded", resultJson: JSON.stringify({ text: "ok" }) } as GenerationTask;
+            },
+        );
+        try {
+            const pending = execution.execute(request("scene"));
+            await new Promise((r) => setTimeout(r, 10));
+            heartbeatTick?.();
+            await new Promise((r) => setTimeout(r, 10));
+            releaseWait();
+            expect((await pending).content).toBe("ok");
+        } finally {
+            execution.dispose();
+        }
+    } finally {
+        globalThis.setInterval = originalSetInterval;
+    }
+});

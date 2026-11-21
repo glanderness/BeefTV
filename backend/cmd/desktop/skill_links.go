@@ -25,6 +25,8 @@ func skillLinkRoute(raw string) (string, error) {
 	return "/skills?" + url.Values{"skillId": {q.Get("id")}, "releaseId": {q.Get("version")}}.Encode(), nil
 }
 
+const skillLinkEventName = "desktop:skill-link"
+
 func (a *DesktopApp) queueSkillLink(raw string) {
 	route, err := skillLinkRoute(raw)
 	if err != nil {
@@ -37,6 +39,9 @@ func (a *DesktopApp) queueSkillLink(raw string) {
 	if ctx != nil {
 		wailsruntime.WindowUnminimise(ctx)
 		wailsruntime.Show(ctx)
+		if ctx.Value("frontend") != nil {
+			wailsruntime.EventsEmit(ctx, skillLinkEventName, route)
+		}
 	}
 }
 

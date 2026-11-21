@@ -60,13 +60,10 @@ type Runtime struct {
 	pipePath         string
 	httpServer       *http.Server
 	serveErr            chan error
-	started             atomic.Bool
-	closed              atomic.Bool
-	safeModeRequestSeq  atomic.Uint64
-	safeModeRequestID   atomic.Uint64
-	reloadRequestSeq    atomic.Uint64
-	reloadAckedID       atomic.Uint64
-	closeOnce           sync.Once
+	started           atomic.Bool
+	closed            atomic.Bool
+	safeModeRequested atomic.Bool
+	closeOnce         sync.Once
 	backgroundDone      chan struct{}
 	closeErr            error
 }
@@ -367,23 +364,6 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		assistantHost:    assistantHost,
 		serveErr:         make(chan error, 1),
 	}
-	api.POST("/client-runtime/heartbeat", func(c *gin.Context) {
-		var body struct {
-			SafeModeAckID uint64 `json:"safeModeAckId"`
-			ReloadAckID   uint64 `json:"reloadAckId"`
-		}
-		if c.Request.Body != nil && c.Request.ContentLength != 0 {
-			_ = c.ShouldBindJSON(&body)
-		}
-		if body.ReloadAckID > 0 {
-			rt.AckReloadRequest(body.ReloadAckID)
-		}
-		if body.SafeModeAckID > 0 {
-			rt.AckSafeMode(body.SafeModeAckID)
-		}
-		c.Header("Cache-Control", "no-store")
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"ok": true}, "msg": ""})
-	})
 	return rt, nil
 }
 

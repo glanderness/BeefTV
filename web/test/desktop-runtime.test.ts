@@ -497,9 +497,9 @@ test("initializeWorkspaceState never fabricates a local session on bootstrap fai
     expect(fallbackPayload.clientEvents).toEqual([]);
 });
 
-test("desktop:request-reload checks in-flight guard before acking and resets after cancelled navigation", async () => {
+test("desktop:request-reload checks in-flight guard before acking via Wails event and resets after cancelled navigation", async () => {
     const eventHandlers = new Map<string, (...args: unknown[]) => void>();
-    const reloadAckIds: number[] = [];
+    const emittedEvents: string[] = [];
     let reloadCalls = 0;
     let releaseFirstFlush!: () => void;
     let flushCount = 0;
@@ -519,6 +519,9 @@ test("desktop:request-reload checks in-flight guard before acking and resets aft
                     eventHandlers.set(name, cb);
                     return () => eventHandlers.delete(name);
                 },
+                EventsEmit: (name: string) => {
+                    emittedEvents.push(name);
+                },
             },
             go: {
                 main: {
@@ -529,6 +532,7 @@ test("desktop:request-reload checks in-flight guard before acking and resets aft
                             baseURL: "http://127.0.0.1:43131/api",
                             launchToken: "reload-test-token",
                             uiBootstrapToken: "reload-ui-token",
+                            safeModeRequested: true,
                         }),
                     },
                 },
@@ -536,19 +540,12 @@ test("desktop:request-reload checks in-flight guard before acking and resets aft
         },
     });
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchedUrls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        fetchedUrls.push(url);
         if (url.endsWith("/health/live")) {
             return new Response(JSON.stringify({ code: 0, data: { status: "ok" }, msg: "ok" }), {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-            });
-        }
-        if (url.endsWith("/client-runtime/heartbeat")) {
-            const rawBody = input instanceof Request ? await input.clone().text() : String(init?.body || "{}");
-            const body = JSON.parse(rawBody || "{}") as { reloadAckId?: number };
-            if (body.reloadAckId) reloadAckIds.push(body.reloadAckId);
-            return new Response(JSON.stringify({ code: 0, data: { ok: true }, msg: "" }), {
                 status: 200,
                 headers: { "Content-Type": "application/json" },
             });
@@ -569,88 +566,29 @@ test("desktop:request-reload checks in-flight guard before acking and resets aft
         expect(await bootstrapDesktopRuntime({ loopbackProbeTimeoutMs: 50, loopbackRetryDelaysMs: [] })).toBe(true);
         const onReload = eventHandlers.get("desktop:request-reload");
         expect(typeof onReload).toBe("function");
+        expect(fetchedUrls.some((url) => url.includes("/client-runtime/heartbeat"))).toBe(false);
 
         // Trigger first reload (slow flush holds reloadFlushInFlight=true)
-        onReload!({ safeMode: true, requestId: 101 });
+        onReload!({ safeMode: true });
         await new Promise((r) => setTimeout(r, 15));
-        expect(reloadAckIds).toEqual([101]);
+        expect(emittedEvents).toEqual(["desktop:reload-ack"]);
 
-        // Duplicate event while first flush is still in flight MUST NOT ack requestId 102
-        onReload!({ safeMode: true, requestId: 102 });
+        // Duplicate event while first flush is still in flight MUST NOT emit a duplicate ack
+        onReload!({ safeMode: true });
         await new Promise((r) => setTimeout(r, 15));
-        expect(reloadAckIds).toEqual([101]);
+        expect(emittedEvents).toEqual(["desktop:reload-ack"]);
 
         // Finish first flush; simulate user cancelling beforeunload (page stays alive)
         releaseFirstFlush();
         await new Promise((r) => setTimeout(r, 20));
         expect(reloadCalls).toBe(1);
 
-        // Next user reload attempt MUST succeed (flag was reset, requestId 103 acked & reloaded)
-        onReload!({ safeMode: true, requestId: 103 });
+        // Next user reload attempt MUST succeed (flag was reset)
+        onReload!({ safeMode: true });
         await new Promise((r) => setTimeout(r, 25));
-        expect(reloadAckIds).toEqual([101, 103]);
+        expect(emittedEvents).toEqual(["desktop:reload-ack", "desktop:reload-ack"]);
         expect(reloadCalls).toBe(2);
     } finally {
         registerBeforeReloadFlusher(null);
     }
-});
-
-test("safeModeAckId retries once after transient failure without periodic heartbeat polling", async () => {
-    const safeModeAckIds: number[] = [];
-    let ackAttempts = 0;
-
-    Object.assign(globalThis, {
-        window: {
-            location: {
-                protocol: "http:",
-                hostname: "wails.localhost",
-                host: "wails.localhost",
-                reload: () => undefined,
-            },
-            go: {
-                main: {
-                    DesktopApp: {
-                        StartupState: async () => ({
-                            state: "ready" as const,
-                            phase: "ready",
-                            baseURL: "http://127.0.0.1:43127/api",
-                            launchToken: "safe-mode-token",
-                            uiBootstrapToken: "safe-mode-ui-token",
-                            safeModeRequested: true,
-                            safeModeRequestId: 77,
-                        }),
-                    },
-                },
-            },
-        },
-    });
-
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-        if (url.endsWith("/health/live")) {
-            return new Response(JSON.stringify({ code: 0, data: { status: "ok" }, msg: "ok" }), {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-            });
-        }
-        if (url.endsWith("/client-runtime/heartbeat")) {
-            ackAttempts += 1;
-            const rawBody = input instanceof Request ? await input.clone().text() : String(init?.body || "{}");
-            const body = JSON.parse(rawBody || "{}") as { safeModeAckId?: number };
-            if (body.safeModeAckId) safeModeAckIds.push(body.safeModeAckId);
-            if (ackAttempts === 1) {
-                return new Response("transient error", { status: 503 });
-            }
-            return new Response(JSON.stringify({ code: 0, data: { ok: true }, msg: "" }), {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-            });
-        }
-        return new Response("not found", { status: 404 });
-    }) as typeof fetch;
-
-    expect(await bootstrapDesktopRuntime({ loopbackProbeTimeoutMs: 50, loopbackRetryDelaysMs: [] })).toBe(true);
-    await new Promise((r) => setTimeout(r, 650));
-    expect(ackAttempts).toBe(2);
-    expect(safeModeAckIds).toEqual([77, 77]);
 });

@@ -12,15 +12,13 @@ export async function submitStoryboardTask(request: CreateTaskInput, options: {
     const detail = await api.create({ clientKey: `storyboard:${nanoid()}`, canvasId: request.projectId, state: { kind: "storyboard" } }, signal);
     const run = await api.claim(detail.run.id, { expectedEpoch: detail.run.executionEpoch, owner: `storyboard:${nanoid()}` }, signal);
     const guard = { executionEpoch: run.executionEpoch, owner: run.executionOwner };
-    let connectionError: unknown;
     const heartbeat = setInterval(() => {
-        void api.heartbeat(run.id, guard, signal).catch((error) => { connectionError = error; });
+        void api.heartbeat(run.id, guard, signal).catch(() => undefined);
     }, 15_000);
     try {
         const submission = await api.prepare(run.id, { ...guard, itemKey: "storyboard", request }, signal);
         if (!await options.confirm(submission)) return undefined;
         signal.throwIfAborted();
-        if (connectionError) throw connectionError;
         assertCurrent();
 		const approved = await api.approve(run.id, { ...guard, submissionIds: [submission.id] }, signal);
         if (!approved.submissions.some((item) => item.id === submission.id && item.approvedAt)) throw new Error("本地任务准入回执不完整，尚未提交拆镜任务");

@@ -60,6 +60,7 @@ type DesktopApp struct {
 	copyOwnedMedia          func(resourceID, destPath string) error
 	copyEagleMedia          func(baseURL, itemID, destPath string) error
 	emitReloadEvent         func(ctx context.Context, payload map[string]any)
+	subscribeReloadAck      func(ctx context.Context, onAck func()) func()
 	nativeReloadFn          func(ctx context.Context)
 	gracefulReloadWait      time.Duration
 }
@@ -154,7 +155,7 @@ func (a *DesktopApp) stop(ctx context.Context) error {
 // RuntimeConfig preserves the v2.2.x Wails binding for existing desktop plugins
 // that read local runtime credentials before migrating to host.channels.
 func (a *DesktopApp) RuntimeConfig() DesktopRuntimeConfig {
-	state := a.StartupState()
+	state := a.startupStateSnapshot(false)
 	return DesktopRuntimeConfig{
 		BaseURL:          state.BaseURL,
 		LaunchToken:      state.LaunchToken,
@@ -405,7 +406,7 @@ func (h desktopAssetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeUntrustedDesktopOrigin(w)
 			return
 		}
-		state := h.app.StartupState()
+		state := h.app.startupStateSnapshot(false)
 		if state.State == "idle" {
 			state = h.app.ensureBootStarted()
 		}

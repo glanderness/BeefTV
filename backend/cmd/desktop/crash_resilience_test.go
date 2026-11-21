@@ -3,6 +3,8 @@ package main
 import (
 	"archive/zip"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,14 +155,20 @@ func TestReloadWindowAckPreventsDoubleReloadAndUnresponsiveFallsBack(t *testing.
 		t.Fatal("expected active runtime")
 	}
 
-	// Case 1: Live renderer acks requestId -> slow flush/boot must NEVER trigger native fallback double-reload.
+	// Case 1: Live renderer acks via Wails event -> slow flush must NEVER trigger native fallback double-reload.
 	nativeCalls := 0
-	var emittedReqID uint64
 	app.gracefulReloadWait = 40 * time.Millisecond
+	var triggerAck func()
+	app.subscribeReloadAck = func(_ context.Context, onAck func()) func() {
+		triggerAck = onAck
+		return func() {}
+	}
 	app.emitReloadEvent = func(_ context.Context, payload map[string]any) {
-		if id, ok := payload["requestId"].(uint64); ok {
-			emittedReqID = id
-			rt.AckReloadRequest(id)
+		if safe, _ := payload["safeMode"].(bool); !safe {
+			t.Fatalf("expected safeMode=true in reload payload, got %+v", payload)
+		}
+		if triggerAck != nil {
+			triggerAck()
 		}
 	}
 	app.nativeReloadFn = func(context.Context) {
@@ -169,39 +177,31 @@ func TestReloadWindowAckPreventsDoubleReloadAndUnresponsiveFallsBack(t *testing.
 	if err := app.ReloadWindow(true); err != nil {
 		t.Fatalf("ReloadWindow(true) failed: %v", err)
 	}
-	if emittedReqID == 0 {
-		t.Fatal("expected non-zero reload requestId in emitted event")
-	}
 	time.Sleep(90 * time.Millisecond)
 	if nativeCalls != 0 {
 		t.Fatalf("expected 0 native fallback reloads after renderer ack, got %d", nativeCalls)
 	}
+	// Non-boot reads (RuntimeConfig / desktopAssetHandler /api proxy) must NOT consume safeMode.
+	_ = app.RuntimeConfig()
+	req := httptest.NewRequest(http.MethodGet, "http://wails.localhost/api/health/live", nil)
+	req.Header.Set("Origin", "http://wails.localhost")
+	rec := httptest.NewRecorder()
+	(&desktopAssetHandler{app: app}).ServeHTTP(rec, req)
+
+	// StartupState consumes safeMode once so subsequent reloads return to normal mode.
 	state := app.StartupState()
-	if !state.SafeModeRequested || state.SafeModeRequestID == 0 {
-		t.Fatalf("expected SafeModeRequested=true with non-zero requestId, got %+v", state)
+	if !state.SafeModeRequested {
+		t.Fatalf("expected SafeModeRequested=true on first StartupState(), got %+v", state)
 	}
-	firstSafeID := state.SafeModeRequestID
-
-	// Case 2: Zero or stale safe-mode ack from an older request must NOT wipe a newer safe-mode request.
-	secondSafeID := rt.RequestSafeMode(true)
-	if secondSafeID <= firstSafeID {
-		t.Fatalf("expected monotonic safeModeRequestID: %d <= %d", secondSafeID, firstSafeID)
-	}
-	rt.AckSafeMode(0)
-	if !rt.SafeModeRequested() {
-		t.Fatal("zero AckSafeMode(0) cleared active safe-mode request")
-	}
-	rt.AckSafeMode(firstSafeID)
-	if !rt.SafeModeRequested() {
-		t.Fatal("stale AckSafeMode(firstSafeID) cleared newer safe-mode request")
-	}
-	rt.AckSafeMode(secondSafeID)
-	if rt.SafeModeRequested() {
-		t.Fatal("matching AckSafeMode(secondSafeID) failed to clear safe-mode request")
+	if next := app.StartupState(); next.SafeModeRequested {
+		t.Fatalf("expected SafeModeRequested=false after one-shot consume, got %+v", next)
 	}
 
-	// Case 3: Unresponsive renderer never acks -> fallback native reload MUST fire once.
+	// Case 2: Unresponsive renderer never acks -> fallback native reload MUST fire once.
 	fallbackDone := make(chan struct{}, 1)
+	app.subscribeReloadAck = func(_ context.Context, _ func()) func() {
+		return func() {}
+	}
 	app.emitReloadEvent = func(context.Context, map[string]any) {
 		// Intentionally do NOT ack.
 	}
