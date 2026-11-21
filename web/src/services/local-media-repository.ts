@@ -1,5 +1,5 @@
 import { MEDIA_FILES_STORE_NAME, localForageInstance } from "@/lib/localforage-storage";
-import { bumpMediaReferenceEpoch } from "@/lib/media-gc-epoch";
+import { bumpMediaReferenceEpoch, withMediaKeyLock } from "@/lib/media-gc-epoch";
 import { getActiveUserScope } from "@/lib/user-scope";
 
 const store = localForageInstance(MEDIA_FILES_STORE_NAME);
@@ -8,7 +8,7 @@ const objectUrls = new Map<string, string>();
 /** Local-only media persistence. This module never calls a network or resource API. */
 export async function saveLocalMedia(storageKey: string, blob: Blob, previewUrl?: string) {
     bumpMediaReferenceEpoch();
-    await store.setItem(storageKey, blob);
+    await withMediaKeyLock(storageKey, () => store.setItem(storageKey, blob));
     const url = previewUrl || URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
@@ -47,17 +47,23 @@ export async function cleanupLocalMedia(
     usedKeys: Set<string>,
     scope = getActiveUserScope(),
     options?: { shouldAbort?: () => boolean },
-) {
+): Promise<boolean> {
     const unused: string[] = [];
     await store.iterate((_value, key) => {
         const parts = key.split(":");
         if (parts.length >= 3 && parts[1] === scope && !usedKeys.has(key)) unused.push(key);
     });
     for (const key of unused) {
-        if (options?.shouldAbort?.()) return;
-        const url = objectUrls.get(key);
-        if (url) URL.revokeObjectURL(url);
-        objectUrls.delete(key);
-        await store.removeItem(key);
+        if (options?.shouldAbort?.()) return false;
+        const deleted = await withMediaKeyLock(key, async () => {
+            if (options?.shouldAbort?.()) return false;
+            const url = objectUrls.get(key);
+            if (url) URL.revokeObjectURL(url);
+            objectUrls.delete(key);
+            await store.removeItem(key);
+            return true;
+        });
+        if (!deleted) return false;
     }
+    return true;
 }

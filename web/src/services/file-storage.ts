@@ -239,10 +239,10 @@ export async function cleanupUnusedMedia(
     usedData: unknown,
     scope = getActiveUserScope(),
     options?: { shouldAbort?: () => boolean },
-) {
+): Promise<boolean> {
     const usedKeys = collectMediaStorageKeys(usedData);
     const currentScope = scope;
-    await cleanupLocalMedia(usedKeys, currentScope, options);
+    return cleanupLocalMedia(usedKeys, currentScope, options);
 }
 
 export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()) {

@@ -2,6 +2,8 @@ package canvas
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -149,5 +151,36 @@ func TestScanLocalMediaStorageKeysStreamingEdgeCases(t *testing.T) {
 	wantMixed := []string{"external-video:u1:ext-1", "generation-image:u1:gen-1"}
 	if len(nonStringParsed.localMediaKeys) != len(wantMixed) || nonStringParsed.localMediaKeys[0] != wantMixed[0] || nonStringParsed.localMediaKeys[1] != wantMixed[1] {
 		t.Fatalf("nonStringParsed.localMediaKeys = %#v, want %#v", nonStringParsed.localMediaKeys, wantMixed)
+	}
+}
+
+func TestLocalMediaKeysSharedCrossLanguageContract(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "local_media_keys_contract.json"))
+	if err != nil {
+		t.Fatalf("read shared contract fixture: %v", err)
+	}
+	var cases []struct {
+		Name                   string          `json:"name"`
+		Payload                json.RawMessage `json:"payload"`
+		ExpectedLocalMediaKeys []string        `json:"expectedLocalMediaKeys"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatalf("parse shared contract fixture: %v", err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			parsed, err := parseCanvasSummaryPayload(string(tc.Payload))
+			if err != nil {
+				t.Fatalf("parseCanvasSummaryPayload: %v", err)
+			}
+			if len(parsed.localMediaKeys) != len(tc.ExpectedLocalMediaKeys) {
+				t.Fatalf("localMediaKeys = %#v, want %#v", parsed.localMediaKeys, tc.ExpectedLocalMediaKeys)
+			}
+			for i, want := range tc.ExpectedLocalMediaKeys {
+				if parsed.localMediaKeys[i] != want {
+					t.Fatalf("localMediaKeys[%d] = %q, want %q", i, parsed.localMediaKeys[i], want)
+				}
+			}
+		})
 	}
 }

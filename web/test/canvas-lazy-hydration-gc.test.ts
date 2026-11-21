@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
     APP_STATE_STORE_NAME,
     IMAGE_FILES_STORE_NAME,
@@ -17,8 +19,8 @@ import {
     resetCanvasOperationJournalMemory,
     updateCanvasOperationJournal,
 } from "@/services/canvas-operation-journal";
-import { setMediaBlob } from "@/services/file-storage";
-import { getImageBlob, setImageBlob } from "@/services/image-storage";
+import { collectMediaStorageKeys, setMediaBlob } from "@/services/file-storage";
+import { collectImageStorageKeys, getImageBlob, setImageBlob } from "@/services/image-storage";
 import { prepareRestoredDeletedCanvas } from "@/services/workspace-project-repository";
 import { CANVAS_DRAFTS_KEY, CANVAS_HISTORY_STORE_KEY } from "@/stores/canvas/canvas-store-persistence";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
@@ -27,6 +29,7 @@ import { ASSET_STORE_DRAFTS_KEY, unloadAssetStoreDraftsForTests, useAssetStore }
 
 function createMemoryForageFactory(hooks?: {
     onIterate?: (storeName: string) => void | Promise<void>;
+    beforeRemove?: (storeName: string, key: string) => void | Promise<void>;
     onRemove?: (storeName: string, key: string) => void | Promise<void>;
 }) {
     const stores = new Map<string, Map<string, unknown>>();
@@ -45,6 +48,7 @@ function createMemoryForageFactory(hooks?: {
                 return value;
             },
             removeItem: async (key: string) => {
+                await hooks?.beforeRemove?.(storeName, key);
                 map!.delete(key);
                 await hooks?.onRemove?.(storeName, key);
             },
@@ -571,5 +575,79 @@ describe("lazy hydration GC reference completeness", () => {
         expect(await imageStore.getItem(draftImg)).not.toBeNull();
         expect(await imageStore.getItem(orphanImg)).toBeNull();
         unloadAssetStoreDraftsForTests(scope);
+    });
+
+    it("serializes a same-key rewrite started during removeItem via per-key lock, returns false on skipped sweeps, and decouples removeAsset from corrupt-GC rejection", async () => {
+        // 1. Same-key rewrite launched inside beforeRemove (while removeItem is mid-flight) queues behind
+        // withMediaKeyLock and writes fresh bytes after removal so the rewrite is NEVER lost.
+        const racingKey = `image:${scope}:before-remove-race`;
+        let concurrentRewrite: Promise<unknown> | null = null;
+        installLocalForageStoreFactoryForTests(
+            createMemoryForageFactory({
+                beforeRemove: (storeName, key) => {
+                    if (storeName === IMAGE_FILES_STORE_NAME && key === racingKey && !concurrentRewrite) {
+                        concurrentRewrite = setImageBlob(racingKey, new Blob(["fresh-during-remove"]));
+                    }
+                },
+            }),
+        );
+        const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
+        await imageStore.setItem(racingKey, new Blob(["old-bytes"]));
+
+        const loadingAttempt = beginCanvasHydration();
+        expect(await useAssetStore.getState().cleanupImages()).toBe(false);
+        finishCanvasHydration(loadingAttempt, "");
+
+        // Interrupted by concurrent same-key rewrite -> returns false AND preserves fresh rewritten bytes!
+        expect(await useAssetStore.getState().cleanupImages()).toBe(false);
+        expect(concurrentRewrite).not.toBeNull();
+        await concurrentRewrite;
+        const surviving = await getImageBlob(racingKey);
+        expect(surviving).not.toBeNull();
+        expect(await surviving!.text()).toBe("fresh-during-remove");
+
+        // Quiet sweep with no concurrent mutations completes and returns true.
+        expect(await useAssetStore.getState().cleanupImages()).toBe(true);
+
+        // 2. removeAsset succeeds cleanly even when corrupt history causes fail-closed GC to reject.
+        const appState = localForageInstance(APP_STATE_STORE_NAME);
+        const localAssetKey = `image:${scope}:asset-remove-corrupt-gc`;
+        await imageStore.setItem(localAssetKey, new Blob(["asset-img"]));
+        await appState.setItem(scopedStorageKey(CANVAS_HISTORY_STORE_KEY, scope), "{corrupt-json");
+        const assetId = useAssetStore.getState().addAsset({
+            kind: "image",
+            title: "待删本地素材",
+            coverUrl: "",
+            tags: [],
+            category: "other",
+            status: "confirmed",
+            source: "手动添加",
+            data: { dataUrl: "", storageKey: localAssetKey, width: 100, height: 100, bytes: 9, mimeType: "image/png" },
+        });
+        await expect(useAssetStore.getState().removeAsset(assetId)).resolves.toBeUndefined();
+        expect(useAssetStore.getState().assets.some((item) => item.id === assetId)).toBe(false);
+        expect(await imageStore.getItem(localAssetKey)).not.toBeNull();
+        await appState.removeItem(scopedStorageKey(CANVAS_HISTORY_STORE_KEY, scope));
+    });
+
+    it("matches the shared Go/TS cross-language localMediaKeys fixture contract", () => {
+        const fixturePath = resolve(import.meta.dir, "../../backend/internal/canvas/testdata/local_media_keys_contract.json");
+        const cases = JSON.parse(readFileSync(fixturePath, "utf8")) as Array<{
+            name: string;
+            payload: unknown;
+            expectedLocalMediaKeys: string[];
+            expectedImageKeys: string[];
+        }>;
+        expect(cases.length).toBeGreaterThanOrEqual(2);
+        for (const tc of cases) {
+            const tsMediaKeys = [...collectMediaStorageKeys(tc.payload)]
+                .filter((key) => !key.startsWith("resource:"))
+                .sort();
+            const tsImageKeys = [...collectImageStorageKeys(tc.payload)]
+                .filter((key) => !key.startsWith("resource:"))
+                .sort();
+            expect(tsMediaKeys).toEqual(tc.expectedLocalMediaKeys);
+            expect(tsImageKeys).toEqual(tc.expectedImageKeys);
+        }
     });
 });
