@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { Check, Clock3, Copy, Eye, Palette, Pencil, Plus, Search, SlidersHorizontal, Star, Trash2, UserRound } from "lucide-react";
 import { App, Button, Input } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
@@ -15,9 +15,22 @@ import {
     resolveProjectCanvasStyle,
     type CanvasStylePreset,
 } from "@/lib/canvas/canvas-style-catalog";
-import { createStyleProfile, deleteStyleProfile, listStyleProfiles, setStyleProfileFavorite, touchStyleProfile, updateStyleProfile, type UserStyleProfile } from "@/services/api/style-profiles";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+
+type UserStyleProfile = {
+    id: string;
+    userId: string;
+    name: string;
+    description: string;
+    coverUrl: string;
+    tagsJson: string;
+    profileJson: string;
+    favorite: boolean;
+    lastUsedAt?: string;
+    revision: number;
+    createdAt: string;
+    updatedAt: string;
+};
 
 
 export { canvasStylePresets, resolveCanvasStylePreset, resolveProjectCanvasStyle, type CanvasStylePreset };
@@ -42,9 +55,7 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
     onSelect: (preset: CanvasStylePreset) => void;
 }) {
     const { message, modal } = App.useApp();
-    const queryClient = useQueryClient();
     const theme = canvasThemes[useActiveTheme()];
-    const localMode = isLocalWorkspaceMode();
     const [detailPreset, setDetailPreset] = useState<CanvasStylePreset | null>(null);
     const [tab, setTab] = useState<StyleCenterTab>("system");
     const [query, setQuery] = useState("");
@@ -53,8 +64,6 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
     const [recentIds, setRecentIds] = useState<string[]>([]);
     const [editor, setEditor] = useState<StyleEditorState | null>(null);
     const [localProfiles, setLocalProfiles] = useState<UserStyleProfile[]>(readLocalStyleProfiles);
-    const profilesQuery = useQuery({ queryKey: ["style-profiles"], queryFn: listStyleProfiles, enabled: open && !localMode });
-    const profileEntities = localMode ? localProfiles : profilesQuery.data?.profiles || [];
 
     useEffect(() => {
         if (!open) return;
@@ -63,28 +72,28 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
         setCategory("全部");
         setSystemFavoriteIds(readStyleIds(STYLE_FAVORITES_KEY));
         setRecentIds(readStyleIds(STYLE_RECENT_KEY));
-        if (localMode) setLocalProfiles(readLocalStyleProfiles());
+        setLocalProfiles(readLocalStyleProfiles());
         setEditor(startInEditor && currentProfile?.source !== "user" && currentProfile ? { profile: editableCopy(currentProfile) } : null);
-    }, [currentProfile, localMode, open, startInEditor]);
+    }, [currentProfile, open, startInEditor]);
 
-    const userItems = useMemo<UserStyleLibraryItem[]>(() => profileEntities.flatMap((entity) => {
+    const userItems = useMemo<UserStyleLibraryItem[]>(() => localProfiles.flatMap((entity) => {
         const preset = userStylePreset(entity);
         return preset ? [{ kind: "user" as const, preset, entity }] : [];
-    }), [profileEntities]);
+    }), [localProfiles]);
     const systemItems = useMemo<SystemStyleLibraryItem[]>(() => canvasStylePresets.map((preset) => ({ kind: "system", preset })), []);
     const categories = useMemo(() => ["全部", ...Array.from(new Set(canvasStylePresets.map((preset) => preset.category)))], []);
 
     useEffect(() => {
-        if (!open || !startInEditor || !currentProfile || currentProfile.source !== "user" || editor || (!localMode && (profilesQuery.isFetching || profilesQuery.isError))) return;
+        if (!open || !startInEditor || !currentProfile || currentProfile.source !== "user" || editor) return;
         const sourceId = currentProfile.sourceProfileId || currentProfile.presetId;
-        const sourceEntity = profileEntities.find((profile) => profile.id === sourceId);
+        const sourceEntity = localProfiles.find((profile) => profile.id === sourceId);
         const sourceProfile = sourceEntity ? parseStyleProfile(sourceEntity.profileJson) : null;
         if (sourceEntity && sourceProfile) {
             setEditor({ profile: editableCopy(sourceProfile, sourceEntity.id), entityId: sourceEntity.id });
             return;
         }
-        if (localMode || profilesQuery.isFetched) setEditor({ profile: editableCopy(currentProfile) });
-    }, [currentProfile, editor, localMode, open, profileEntities, profilesQuery.isError, profilesQuery.isFetched, profilesQuery.isFetching, startInEditor]);
+        setEditor({ profile: editableCopy(currentProfile) });
+    }, [currentProfile, editor, localProfiles, open, startInEditor]);
 
     const visibleItems = useMemo(() => {
         const keyword = query.trim().toLocaleLowerCase("zh-CN");
@@ -98,35 +107,29 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
 
     const saveMutation = useMutation({
         mutationFn: ({ profile, apply }: { profile: StyleProfileSnapshot; apply: boolean }) => {
-            if (localMode) {
-                const id = editor?.entityId || nanoid();
-                const now = new Date().toISOString();
-                const existing = localProfiles.find((item) => item.id === id);
-                const entity: UserStyleProfile = {
-                    id,
-                    userId: "local",
-                    name: profile.title || "未命名风格",
-                    description: profile.description || "",
-                    coverUrl: profile.coverUrl || "",
-                    tagsJson: JSON.stringify(profile.tags || []),
-                    profileJson: serializeStyleProfile(profile),
-                    favorite: existing?.favorite ?? false,
-                    lastUsedAt: existing?.lastUsedAt,
-                    revision: (existing?.revision || 0) + 1,
-                    createdAt: existing?.createdAt || now,
-                    updatedAt: now,
-                };
-                const next = [entity, ...localProfiles.filter((item) => item.id !== id)];
-                setLocalProfiles(next);
-                persistLocalStyleProfiles(next);
-                return Promise.resolve({ profile: entity, apply });
-            }
-            return editor?.entityId
-                ? updateStyleProfile(editor.entityId, serializeStyleProfile(profile)).then((result) => ({ ...result, apply }))
-                : createStyleProfile(serializeStyleProfile(profile)).then((result) => ({ ...result, apply }));
+            const id = editor?.entityId || nanoid();
+            const now = new Date().toISOString();
+            const existing = localProfiles.find((item) => item.id === id);
+            const entity: UserStyleProfile = {
+                id,
+                userId: "local",
+                name: profile.title || "未命名风格",
+                description: profile.description || "",
+                coverUrl: profile.coverUrl || "",
+                tagsJson: JSON.stringify(profile.tags || []),
+                profileJson: serializeStyleProfile(profile),
+                favorite: existing?.favorite ?? false,
+                lastUsedAt: existing?.lastUsedAt,
+                revision: (existing?.revision || 0) + 1,
+                createdAt: existing?.createdAt || now,
+                updatedAt: now,
+            };
+            const next = [entity, ...localProfiles.filter((item) => item.id !== id)];
+            setLocalProfiles(next);
+            persistLocalStyleProfiles(next);
+            return Promise.resolve({ profile: entity, apply });
         },
-        onSuccess: async ({ profile, apply }) => {
-            await queryClient.invalidateQueries({ queryKey: ["style-profiles"] });
+        onSuccess: ({ profile, apply }) => {
             const preset = userStylePreset(profile);
             setEditor(null);
             setTab("mine");
@@ -137,28 +140,21 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
     });
     const favoriteMutation = useMutation({
         mutationFn: ({ id, favorite }: { id: string; favorite: boolean }) => {
-            if (localMode) {
-                const next = localProfiles.map((item) => item.id === id ? { ...item, favorite, updatedAt: new Date().toISOString() } : item);
-                setLocalProfiles(next);
-                persistLocalStyleProfiles(next);
-                return Promise.resolve({ id, favorite });
-            }
-            return setStyleProfileFavorite(id, favorite);
+            const next = localProfiles.map((item) => item.id === id ? { ...item, favorite, updatedAt: new Date().toISOString() } : item);
+            setLocalProfiles(next);
+            persistLocalStyleProfiles(next);
+            return Promise.resolve({ id, favorite });
         },
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["style-profiles"] }),
         onError: (error) => message.error(error instanceof Error ? error.message : "收藏状态更新失败"),
     });
     const deleteMutation = useMutation({
         mutationFn: (id: string) => {
-            if (localMode) {
-                const next = localProfiles.filter((item) => item.id !== id);
-                setLocalProfiles(next);
-                persistLocalStyleProfiles(next);
-                return Promise.resolve({ id });
-            }
-            return deleteStyleProfile(id);
+            const next = localProfiles.filter((item) => item.id !== id);
+            setLocalProfiles(next);
+            persistLocalStyleProfiles(next);
+            return Promise.resolve({ id });
         },
-        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["style-profiles"] }); message.success("风格已删除"); },
+        onSuccess: () => { message.success("风格已删除"); },
         onError: (error) => message.error(error instanceof Error ? error.message : "风格删除失败"),
     });
 
@@ -169,13 +165,9 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
         setRecentIds(next);
         localStorage.setItem(STYLE_RECENT_KEY, JSON.stringify(next));
         if (item.kind === "user") {
-            if (localMode) {
-                const nextProfiles = localProfiles.map((entity) => entity.id === item.entity.id ? { ...entity, lastUsedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : entity);
-                setLocalProfiles(nextProfiles);
-                persistLocalStyleProfiles(nextProfiles);
-            } else {
-                void touchStyleProfile(item.entity.id).then(() => queryClient.invalidateQueries({ queryKey: ["style-profiles"] })).catch((error) => message.warning(error instanceof Error ? error.message : "最近使用记录更新失败"));
-            }
+            const nextProfiles = localProfiles.map((entity) => entity.id === item.entity.id ? { ...entity, lastUsedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : entity);
+            setLocalProfiles(nextProfiles);
+            persistLocalStyleProfiles(nextProfiles);
         }
         onSelect(preset);
     }
@@ -247,7 +239,7 @@ export function CanvasStylePickerModal({ open, value, currentProfile, startInEdi
                                     onDelete={item.kind === "user" ? () => confirmDelete(item.entity) : undefined}
                                 />
                             ))}
-                            {!visibleItems.length ? <EmptyStyleCenter tab={tab} loading={!localMode && profilesQuery.isLoading} failed={!localMode && profilesQuery.isError} color={theme.node.muted} onCreate={createNewStyle} onBrowse={() => { setTab("system"); setQuery(""); }} /> : null}
+                            {!visibleItems.length ? <EmptyStyleCenter tab={tab} loading={false} failed={false} color={theme.node.muted} onCreate={createNewStyle} onBrowse={() => { setTab("system"); setQuery(""); }} /> : null}
                             </div>
                         </main>
                     </div>

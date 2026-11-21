@@ -5,7 +5,6 @@ import { RotateCcw, Trash2, X } from "lucide-react";
 
 import { ProjectPreview } from "@/components/canvas/canvas-project-card";
 import { cn } from "@/lib/utils";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 
@@ -16,7 +15,6 @@ export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: ()
     const removeDeletedItem = useCanvasHistoryStore((state) => state.removeDeletedHistoryItem);
     const [selectedDeleted, setSelectedDeleted] = useState<string[]>([]);
     const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
-    const localOnly = isLocalWorkspaceMode();
 
     const allDeletedProjectIds = useMemo(() => deletedProjects.map((project) => project.id), [deletedProjects]);
     const allDeletedSelected = allDeletedProjectIds.length > 0 && allDeletedProjectIds.every((id) => selectedDeleted.includes(id));
@@ -51,7 +49,7 @@ export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: ()
     const restoreSelectedProjects = async () => {
         for (const id of selectedDeleted) {
             const item = deletedProjects.find((entry) => entry.id === id);
-            if (localOnly && item?.project) restoreProject(item.project);
+            if (item?.project) restoreProject(item.project);
             removeDeletedItem(id);
         }
         await flushCanvasStorePersistence();

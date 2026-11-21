@@ -4,7 +4,6 @@ import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
 import { getImageBlob, setImageBlob } from "@/services/image-storage";
 import type { Asset } from "@/stores/use-asset-store";
 import { normalizeLocalAsset } from "@/lib/local-workspace-migration";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
 import { startOperation } from "@/stores/use-operation-progress";
 
@@ -66,7 +65,7 @@ export async function exportAssets(assets: Asset[]): Promise<OwnedMediaSaveResul
         if (!file.storageKey || file.path === file.storageKey) throw new Error("备份未完成：文件引用不一致，未生成备份。");
     }
 
-    const exportedAssets = isLocalWorkspaceMode() ? assets.map(normalizeLocalAsset) : assets;
+    const exportedAssets = assets.map(normalizeLocalAsset);
     const data: AssetExportFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), assets: exportedAssets, files };
     progress.update({ phase: "processing", detail: "正在打包素材文件" });
     const zip = await createZip([{ name: "assets.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);

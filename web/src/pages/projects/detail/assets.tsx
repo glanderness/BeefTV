@@ -40,7 +40,6 @@ import {
     type ProjectAsset,
     type ProjectAssetFolder,
 } from "@/services/api/projects";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useAssetStore, type Asset, type AssetCategory, type AssetStatus, type EntityAsset, type ImageAsset } from "@/stores/use-asset-store";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData } from "@/types/canvas";
@@ -66,7 +65,6 @@ type CharacterForm = { name: string } & Record<(typeof characterFields)[number][
 
 export default function ProjectAssetsView({ detail, refreshProject }: ProjectDetailViewProps) {
     const { message, modal } = App.useApp();
-    const localMode = isLocalWorkspaceMode();
     const personalAssets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const updatePersonalAsset = useAssetStore((state) => state.updateAsset);
@@ -344,7 +342,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
             const selected = pickerItem?.asset || latest.find((asset) => asset.id === selectedAssetId) || (pickerItem?.external ? await externalAssetSources.importExternalAsset(pickerItem.external) : undefined);
             if (selected?.kind !== "image") throw new Error("请选择一张包含正面、侧面和背面的三视图设定图");
             const resourceId = resourceIdFromStorageKey((selected as ImageAsset).data.storageKey);
-            if (!resourceId) throw new Error(localMode ? "浏览器本地素材尚未写入桌面资源目录，请在 BeefTV APP 中完成绑定" : "所选图片尚未同步到后端资源库");
+            if (!resourceId) throw new Error("浏览器本地素材尚未写入桌面资源目录，请在 BeefTV APP 中完成绑定");
             return replaceProjectCharacterRepresentations(detail.project.id, imageAsset.id, [{ role: "turnaround_sheet", resourceId, metadata: { sourceAssetId: selected.id } }, { role: "primary", resourceId, metadata: { source: "turnaround_sheet", sourceAssetId: selected.id } }]);
         },
         onSuccess: (result) => {
@@ -560,7 +558,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
                         if (!isSupportedCharacterVoiceFile(file)) throw new Error(`声音素材支持 ${CHARACTER_VOICE_FORMAT_LABEL}`);
                         const uploaded = await uploadMediaFile(file, "character-voice");
                         const resourceId = resourceIdFromStorageKey(uploaded.storageKey);
-                        if (!resourceId) throw new Error(localMode ? "浏览器本地声音已保存，但角色绑定需要 BeefTV APP 的本地资源目录" : "声音上传未同步到服务端资源库，请检查后端连接");
+                        if (!resourceId) throw new Error("浏览器本地声音已保存，但角色绑定需要 BeefTV APP 的本地资源目录");
                         ids.push(addAsset({ kind: "audio", title: characterVoiceTitleFromFileName(file.name), coverUrl: "", tags: ["角色声音"], status: "confirmed", source: "角色卡", data: { url: uploaded.url, storageKey: uploaded.storageKey, durationMs: uploaded.durationMs, bytes: uploaded.bytes, mimeType: uploaded.mimeType || file.type || "application/octet-stream" } }));
                     }
                     return ids;
@@ -571,7 +569,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
                     const selectedItem = selectedItems[0];
                     const remoteResourceId = selectedItem?.asset?.kind === "audio" ? resourceIdFromStorageKey(selectedItem.asset.data.storageKey) : "";
                     const resourceId = (id ? audioResourceByItemId.get(id) : "") || remoteResourceId;
-                    if (!resourceId) throw new Error(localMode ? "浏览器本地声音已保存，但角色绑定需要 BeefTV APP 的本地资源目录" : "所选声音素材尚未同步到服务端资源库");
+                    if (!resourceId) throw new Error("浏览器本地声音已保存，但角色绑定需要 BeefTV APP 的本地资源目录");
                     const item = selectedItem || audioPickerItems.find((entry) => entry.id === id);
                     setVoiceSample({ resourceId, name: item?.title || "角色声音", url: resourceFileUrl(resourceId) });
                     setVoicePickerOpen(false);

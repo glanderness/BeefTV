@@ -11,7 +11,6 @@ import { localSavedRemotePendingMessage } from "@/services/local-workspace-sync"
 import { persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
 import { flushAssetStorePersistence, type Asset, type NewAsset } from "@/stores/use-asset-store";
 import { startOperation } from "@/stores/use-operation-progress";
-import { assetStorageUsageQueryKey } from "./asset-storage-usage";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import type { LibraryAsset } from "./assets-shared";
 
@@ -53,7 +52,7 @@ export async function saveUploadedModelFile(
     },
 ) {
     if (!file || !/\.(glb|gltf)$/i.test(file.name)) return false;
-    const { localWorkspace, addAsset, persistChanges = persistWorkspaceAssetChanges, uploadFile = uploadMediaFile, invalidateAssetLibrary, queryClient, message } = options;
+    const { localWorkspace, addAsset, persistChanges = persistWorkspaceAssetChanges, uploadFile = uploadMediaFile, invalidateAssetLibrary, message } = options;
     try {
         const uploaded = await uploadFile(file, "model");
         addAsset({
@@ -66,7 +65,6 @@ export async function saveUploadedModelFile(
             metadata: { source: "manual" },
         });
         await persistChanges();
-        void queryClient.invalidateQueries({ queryKey: assetStorageUsageQueryKey });
         await invalidateAssetLibrary();
         // Hosted mode may retry the remote copy; local mode intentionally keeps
         // the browser fallback local and does not expose a cloud-upload warning.

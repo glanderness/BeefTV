@@ -30,7 +30,6 @@ test("local project library exposes the complete local workspace lifecycle", () 
     expect(card).toContain("创建副本");
     expect(card).toContain("删除");
     expect(recycleBin).toContain("恢复到项目列表");
-    expect(recycleBin).toContain("isLocalWorkspaceMode()");
     expect(recycleBin).not.toContain('import.meta.env.VITE_CANVAS_LOCAL_MODE !== "false"');
     expect(exportService).toContain("folders?: CanvasFolder[]");
     expect(exportService).toContain("projectFolderIds");
@@ -42,9 +41,8 @@ test("local project library exposes the complete local workspace lifecycle", () 
     expect(deleteDialog).toContain("deleteWorkspaceCanvasProjects");
     expect(lifecycle).toContain("createWorkspaceCanvasProject");
     expect(lifecycle).toContain("deleteWorkspaceCanvasProjects");
-    expect(projectRepository).toContain("isLocalWorkspaceMode()");
     expect(projectRepository).toContain("createLocalCanvasProject");
-    expect(projectRepository).toContain("createCanvasProjectWithRemoteSync");
     expect(projectRepository).toContain("deleteLocalCanvasProjects");
-    expect(projectRepository).toContain("deleteCanvasProjectsWithRemoteSync");
+    expect(projectRepository).not.toContain("createCanvasProjectWithRemoteSync");
+    expect(projectRepository).not.toContain("deleteCanvasProjectsWithRemoteSync");
 });

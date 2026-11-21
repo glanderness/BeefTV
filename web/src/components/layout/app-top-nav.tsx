@@ -2,14 +2,11 @@ import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { PanelLeftOpen } from "lucide-react";
 
-import { ModelSetupGuide } from "@/components/layout/model-setup-guide";
 import { WorkspaceSidebarNav } from "@/components/layout/workspace-sidebar-nav";
 import { readWorkspaceSidebarCollapsed, writeWorkspaceSidebarCollapsed } from "@/components/layout/workspace-sidebar-state";
 import { useDesktopUpdateBootstrap } from "@/hooks/use-desktop-update";
 import { cn } from "@/lib/utils";
 import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
-import { useUserStore } from "@/stores/use-user-store";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
 const WorkspaceCommandPalette = lazy(() => import("@/components/layout/workspace-command-palette").then((module) => ({ default: module.WorkspaceCommandPalette })));
 
@@ -19,10 +16,6 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
     const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(readWorkspaceSidebarCollapsed);
     const [paletteOpen, setPaletteOpen] = useState(false);
-    const sessionHydrated = useUserStore((state) => state.hydrated);
-    const storageMode = useUserStore((state) => state.storageMode);
-    const user = useUserStore((state) => state.user);
-    const localMode = isLocalWorkspaceMode() || storageMode === "local" || user?.username === "local";
     useDesktopUpdateBootstrap();
 
     const hideChrome = pathname.startsWith("/admin") || /^\/canvas\/[^/]+/.test(pathname);
@@ -116,7 +109,6 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
 
                 {paletteOpen ? <Suspense fallback={null}><WorkspaceCommandPalette open onClose={() => setPaletteOpen(false)} /></Suspense> : null}
             </div>
-            <ModelSetupGuide hidden={!sessionHydrated || localMode || pathname === "/login" || pathname === "/register" || pathname.startsWith("/admin") || pathname.startsWith("/assets")} />
         </>
     );
 }

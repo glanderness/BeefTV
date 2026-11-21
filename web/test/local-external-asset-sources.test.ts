@@ -1,10 +1,32 @@
-import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
 
-const source = readFileSync(new URL("../src/hooks/use-external-asset-sources.ts", import.meta.url), "utf8");
+import { externalAssetSyncFailures, uploadGeneratedAssetToConfiguredSources } from "@/services/external-asset-sources";
+import type { Asset } from "@/stores/use-asset-store";
 
-test("local asset pickers do not enumerate or write external plugin sources", () => {
-    expect(source).toContain("const localMode = isLocalWorkspaceMode();");
-    expect(source).toContain("localMode ? [] : createHostedAssetSources");
-    expect(source).toContain('throw new Error("本地工作区仅支持本地素材")');
+describe("local external asset sources", () => {
+    test("uploadGeneratedAssetToConfiguredSources never uploads generated assets and preserves historical sync records", async () => {
+        const asset = {
+            id: "asset-1",
+            kind: "image",
+            title: "镜头",
+            coverUrl: "",
+            tags: [],
+            status: "confirmed",
+            source: "生成任务",
+            createdAt: "2026-10-01T00:00:00.000Z",
+            updatedAt: "2026-10-01T00:00:00.000Z",
+            data: { dataUrl: "", width: 100, height: 100 },
+            metadata: {
+                externalSync: [
+                    { sourceId: "legacy-cloud", sourceName: "Legacy", status: "failed", error: "offline", updatedAt: "2026-10-01T00:00:00.000Z" },
+                ],
+            },
+        } as Asset;
+
+        const result = await uploadGeneratedAssetToConfiguredSources(asset);
+        expect(result.uploaded).toEqual([]);
+        expect(result.failures).toEqual([]);
+        expect(result.records).toHaveLength(1);
+        expect(externalAssetSyncFailures(asset)).toHaveLength(1);
+    });
 });

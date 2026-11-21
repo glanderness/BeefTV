@@ -5,13 +5,10 @@ import { App } from "antd";
 import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { initializeClientDiagnostics, setDiagnosticUserScope } from "@/services/diagnostics/client-diagnostics";
-import { fetchPluginRuntimeState, setUserPluginEnabled } from "@/services/api/plugins";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { appQueryClient } from "@/lib/query-client";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { confirmDesktopUpdateStartup } from "@/services/desktop-update-startup";
 import { runStartupEnvironmentCheck } from "@/services/diagnostics/environment-startup";
@@ -21,19 +18,13 @@ import { appHref } from "@/lib/app-routing";
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const config = useConfigStore((state) => state.config);
     const userId = useUserStore((state) => state.user?.id || "");
-    const storageMode = useUserStore((state) => state.storageMode);
-    const user = useUserStore((state) => state.user);
     const assetsHydrated = useAssetStore((state) => state.hydrated);
     const canvasHydrated = useCanvasStore((state) => state.hydrated);
-    const localMode = isLocalWorkspaceMode() || storageMode === "local" || user?.username === "local";
     const bootSnapshot = useSyncExternalStore(subscribeDesktopBootSnapshot, getDesktopBootSnapshot, getDesktopBootSnapshot);
     const [fallbackNoticeDismissed, setFallbackNoticeDismissed] = useState(false);
     const { message } = App.useApp();
     const handledConfigParams = useRef(false);
     const updateConfig = useConfigStore((state) => state.updateConfig);
-    const setRuntimeStatuses = usePluginStore((state) => state.setRuntimeStatuses);
-    const setPluginStates = usePluginStore((state) => state.setPluginStates);
-    const pluginStoreHydrated = usePluginStore((state) => state.hydrated);
     const localMediaCleanupScope = useRef("");
     const updateStartupConfirmed = useRef(false);
     const environmentScope = useRef("");
@@ -61,7 +52,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     }, [userId]);
 
     useEffect(() => {
-        if (!userId || !localMode || environmentScope.current === userId) return;
+        if (!userId || environmentScope.current === userId) return;
         environmentScope.current = userId;
         const controller = new AbortController();
         void runStartupEnvironmentCheck(controller.signal).then((report) => {
@@ -73,10 +64,9 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             controller.abort();
             if (environmentScope.current === userId) environmentScope.current = "";
         };
-    }, [localMode, userId, message]);
+    }, [userId, message]);
 
     useEffect(() => {
-        if (!localMode) return;
         const confirm = () => {
             if (updateStartupConfirmed.current || !useAssetStore.persist.hasHydrated() || !useCanvasStore.persist.hasHydrated()) return;
             updateStartupConfirmed.current = true;
@@ -86,7 +76,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         const stopCanvases = useCanvasStore.persist.onFinishHydration(confirm);
         confirm();
         return () => { stopAssets(); stopCanvases(); };
-    }, [localMode]);
+    }, []);
 
     useEffect(() => () => {
         usePluginStore.getState().setRuntimeStatuses({});
@@ -94,46 +84,11 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
-        if (!userId || localMode || !pluginStoreHydrated) return;
-        let cancelled = false;
-        void appQueryClient.fetchQuery({ queryKey: ["plugin-runtime", userId], queryFn: fetchPluginRuntimeState, staleTime: 30_000 })
-            .then(async (runtime) => {
-                if (cancelled || useUserStore.getState().user?.id !== userId) return;
-                const states = { ...runtime.states };
-                const legacyEnabledIds = usePluginStore
-                    .getState()
-                    .installations.filter((installation) => installation.enabled && states[installation.manifest.id]?.canToggle && !states[installation.manifest.id]?.userConfigured)
-                    .map((installation) => installation.manifest.id);
-                if (legacyEnabledIds.length) {
-                    try {
-                        const migrated = await Promise.all(legacyEnabledIds.map((pluginId) => setUserPluginEnabled(pluginId, true)));
-                        for (const state of migrated) states[state.pluginId] = state;
-                    } catch (error) {
-                        console.warn("迁移用户插件启用状态失败，已保留服务端状态", error);
-                    }
-                }
-                if (!cancelled && useUserStore.getState().user?.id === userId) {
-                    setRuntimeStatuses({});
-                    setPluginStates(states);
-                }
-            })
-            .catch(() => {
-                if (!cancelled) {
-                    setRuntimeStatuses({});
-                    setPluginStates({});
-                }
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [localMode, pluginStoreHydrated, setPluginStates, setRuntimeStatuses, userId]);
-
-    useEffect(() => {
         initializeClientDiagnostics();
     }, []);
 
     useEffect(() => {
-        if (!localMode || !assetsHydrated || !canvasHydrated) return;
+        if (!assetsHydrated || !canvasHydrated) return;
         const scope = getActiveUserScope();
         if (localMediaCleanupScope.current === scope) return;
         localMediaCleanupScope.current = scope;
@@ -141,7 +96,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             // Cache cleanup is best effort; it must never block opening the local workspace.
             console.warn("本地媒体缓存清理失败，已保留当前工作区", { scope, error });
         });
-    }, [assetsHydrated, canvasHydrated, localMode]);
+    }, [assetsHydrated, canvasHydrated]);
 
     useEffect(() => {
         setDiagnosticUserScope(userId);
@@ -197,7 +152,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     return (
         <>
             {children}
-            {localMode && bootSnapshot.transportMode === "same-origin-fallback" && !fallbackNoticeDismissed ? (
+            {bootSnapshot.transportMode === "same-origin-fallback" && !fallbackNoticeDismissed ? (
                 <aside
                     role="status"
                     aria-live="polite"

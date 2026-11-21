@@ -4,8 +4,8 @@ import { resolve } from "node:path";
 
 test("local new canvas waits for local-store hydration but not browser session hydration", () => {
     const source = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/index.tsx"), "utf8");
-    expect(source).toContain("if (!hydrated || (remoteMode && (!sessionHydrated || !libraryQuery.isSuccess))");
-    expect(source).not.toContain("if (!hydrated || !sessionHydrated ||");
+    expect(source).toContain("if (!hydrated || autoOpenRef.current ||");
+    expect(source).not.toContain("sessionHydrated");
 });
 
 test("local canvas editor lifecycle does not disable persistence while browser stores hydrate", () => {
