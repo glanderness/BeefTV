@@ -103,7 +103,7 @@ func seedanceMaterialLibraryHost(baseURL string) bool {
 		return false
 	}
 	switch strings.ToLower(u.Hostname()) {
-	case "beeftv.app", "www.whatstoken.ai", "whatstoken.ai":
+	case "beeftv.app":
 		return true
 	default:
 		return false

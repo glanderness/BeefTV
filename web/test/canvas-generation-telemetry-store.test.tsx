@@ -4,7 +4,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { CanvasNodeGenerationProgress } from "@/components/canvas/canvas-node-generation-progress";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { getCanvasGenerationTasks } from "@/lib/canvas/canvas-context-discovery";
 import { depthCaptureTaskMetadata } from "@/lib/canvas/canvas-depth-capture";
 import { recoverOwnedDepthCaptureNode } from "@/lib/canvas/canvas-depth-recover";
 import { rebaseCanvasDocumentThreeWay } from "@/lib/canvas/canvas-document-rebase";
@@ -143,10 +142,6 @@ describe("useGenerationTaskTelemetry", () => {
                 selectedNodeIds: [],
                 viewport: { x: 0, y: 0, k: 1 },
             };
-            const discovered = getCanvasGenerationTasks(snapshot, {});
-            expect(discovered.tasks[0]?.progress).toBe(90);
-            expect(discovered.tasks[0]?.stage).toBe("rendering");
-            expect(discovered.tasks[0]?.officialStatus).toBe("processing");
 
             const verified = verifyCanvasOperations(
                 { ...snapshot, nodes: [makeNode("video-1", { status: "idle" })] },
@@ -248,21 +243,6 @@ describe("useGenerationTaskTelemetry", () => {
                 taskCompletedAt: "2026-06-01T10:00:25.000Z",
                 taskUpdatedAt: "2026-06-01T10:00:25.000Z",
             });
-
-            const discovered = getCanvasGenerationTasks(
-                {
-                    projectId: "canvas-telemetry-test",
-                    title: "遥测隔离测试",
-                    nodes: [boundNode],
-                    connections: [],
-                    selectedNodeIds: [],
-                    viewport: { x: 0, y: 0, k: 1 },
-                },
-                {},
-            );
-            expect(discovered.tasks[0]?.status).toBe("succeeded");
-            expect(discovered.tasks[0]?.progress).toBe(100);
-            expect(discovered.tasks[0]?.stage).toBeUndefined();
 
             const history = localTaskHistoryFromProjects([makeProject([boundNode])]);
             expect(history[0]?.status).toBe("succeeded");

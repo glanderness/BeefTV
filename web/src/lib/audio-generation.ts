@@ -268,38 +268,6 @@ export function audioSettingsSummary(config: { model?: string; audioVoice?: stri
     return parts.join(" · ");
 }
 
-export function buildAudioSpeechRequest(
-    config: {
-        model: string;
-        audioVoice?: string;
-        audioFormat?: string;
-        audioSpeed?: string;
-        audioPitch?: string;
-        audioVolume?: string;
-        audioInstructions?: string;
-    },
-    prompt: string,
-) {
-    const model = config.model.trim();
-    const profile = audioSpeechProfile(model);
-    const settings = resolveAudioSpeechSettings(model, config);
-    const payload: Record<string, unknown> = {
-        model,
-        input: prompt,
-        response_format: settings.audioFormat,
-    };
-    if (profile.showVoice && settings.audioVoice && settings.audioVoice !== "auto") payload.voice = settings.audioVoice;
-    if (profile.showSpeed) payload.speed = Number(settings.audioSpeed);
-    if (profile.showPitch && Number(settings.audioPitch) !== 0) payload.pitch = Number(settings.audioPitch);
-    if (profile.showVolume && Number(settings.audioVolume) !== 1) payload.volume = Number(settings.audioVolume);
-    if (profile.kind === "minimax-music") {
-        payload.metadata = { audio_setting: { sample_rate: 44100, bitrate: 256000, format: "mp3" } };
-    }
-    const instructions = settings.audioInstructions.trim();
-    if (profile.showInstructions && instructions) payload.instructions = instructions;
-    return payload;
-}
-
 export function audioMimeType(format: string) {
     if (format === "wav") return "audio/wav";
     if (format === "opus") return "audio/opus";

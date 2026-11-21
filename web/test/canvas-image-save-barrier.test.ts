@@ -3,7 +3,6 @@ import { generationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib
 import { removeCanvasNodes } from "@/lib/canvas/canvas-project-domain";
 import { cancelIncompleteImageBatch } from "@/lib/canvas/canvas-image-batch-retry";
 import { isolateCopiedNodeMetadata } from "@/lib/canvas/canvas-node-copy";
-import { prepareInPlaceMediaVersion } from "@/lib/canvas/canvas-media-versions";
 import { assistantProposalProgress } from "@/pages/canvas/canvas-assistant-copy";
 import { canvasGenerationFailureMetadata, canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "@/pages/canvas/canvas-generation-failure";
 import { canReloadCanvasNodeResource, isNodeRegenerateBlocked } from "@/lib/task-outcome";
@@ -301,8 +300,6 @@ test("executor retains original batch outputs after layout deletion, cancellatio
     const finished = receipts.map(node => outputs.includes(node.id) ? { ...node, metadata: { ...node.metadata, taskStatus: "succeeded", status: "success" as const, content: "resource:ready" } } : node);
     expect(assistantProposalProgress(proposal, finished).ready).toBe(true);
     expect(isolateCopiedNodeMetadata(root, new Map()).generationOutputNodeIds).toBeUndefined();
-    const snapshot = prepareInPlaceMediaVersion([{ ...root, metadata: { ...root.metadata, content: "resource:ready" } }], root.id).find(node => node.id !== root.id)!;
-    expect(snapshot.metadata?.generationOutputNodeIds).toBeUndefined();
     const regenerated = await createTargets(root, finished, "2");
     expect(regenerated.find(node => node.id === root.id)?.metadata?.generationOutputNodeIds?.some(id => outputs.includes(id))).toBe(false);
     const single = await createTargets(root, finished, "1");

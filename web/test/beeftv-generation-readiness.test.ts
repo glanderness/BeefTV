@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { listVideoReferenceModels } from "../src/lib/canvas/canvas-video-regeneration";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
-import { assertAudioConfig } from "../src/services/api/audio";
 import { channelHasGenerationCredential, createModelChannel, defaultConfig, encodeChannelModel, MANAGED_BEEFTV_CREDENTIAL_REF, resolveModelRequestConfig, useConfigStore, type AiConfig } from "../src/stores/use-config-store";
 
 function videoCapability(model: string) {
@@ -68,7 +66,6 @@ describe("managed BeefTV generation readiness", () => {
         expect(channelHasGenerationCredential(config.channels[0])).toBe(true);
         expect(ready(config, config.imageModel)).toBe(true);
         expect(ready(config, config.videoModel)).toBe(true);
-        expect(listVideoReferenceModels(config)).toEqual([config.videoModel]);
     });
 
     test("disconnected empty-key enterprise channel is not canvas-ready", () => {
@@ -77,7 +74,6 @@ describe("managed BeefTV generation readiness", () => {
         expect(channelHasGenerationCredential(config.channels[0])).toBe(false);
         expect(ready(config, config.imageModel)).toBe(false);
         expect(ready(config, config.videoModel)).toBe(false);
-        expect(listVideoReferenceModels(config)).toEqual([]);
     });
 
     test("manual provider keys stay required and are not treated as managed", () => {
@@ -86,15 +82,12 @@ describe("managed BeefTV generation readiness", () => {
         const withoutKey = manualConfig("");
         expect(ready(withKey, withKey.imageModel)).toBe(true);
         expect(ready(withKey, withKey.videoModel)).toBe(true);
-        expect(listVideoReferenceModels(withKey)).toEqual([withKey.videoModel]);
         expect(ready(withoutKey, withoutKey.imageModel)).toBe(false);
-        expect(listVideoReferenceModels(withoutKey)).toEqual([]);
 
         const spoofed = manualConfig("");
         spoofed.channels[0].credentialRef = MANAGED_BEEFTV_CREDENTIAL_REF;
         spoofed.channels[0].hasApiKey = true;
         expect(ready(spoofed, spoofed.imageModel)).toBe(false);
-        expect(listVideoReferenceModels(spoofed)).toEqual([]);
     });
 
     test("duplicate model names keep the selected channel credential in both orders", () => {
@@ -137,7 +130,6 @@ describe("managed BeefTV generation readiness", () => {
             const selectedManaged = arrange(manualEmpty);
             expect(ready(selectedManaged, selectedManaged.videoModel)).toBe(true);
             expect(ready(selectedManaged, selectedManaged.audioModel)).toBe(true);
-            expect(() => assertAudioConfig(resolveModelRequestConfig(selectedManaged, selectedManaged.audioModel), selectedManaged.audioModel)).not.toThrow();
             expect(resolveModelRequestConfig(selectedManaged, selectedManaged.videoModel).model).toBe(sharedVideo);
 
             const selectedManualEmpty = {
@@ -148,7 +140,6 @@ describe("managed BeefTV generation readiness", () => {
             };
             expect(ready(selectedManualEmpty, selectedManualEmpty.videoModel)).toBe(false);
             expect(ready(selectedManualEmpty, selectedManualEmpty.audioModel)).toBe(false);
-            expect(() => assertAudioConfig(resolveModelRequestConfig(selectedManualEmpty, selectedManualEmpty.audioModel), selectedManualEmpty.audioModel)).toThrow("请先配置 API Key");
 
             const selectedManualKeyed = arrange(manualKeyed);
             selectedManualKeyed.videoModel = encodeChannelModel("manual", sharedVideo);
@@ -156,7 +147,6 @@ describe("managed BeefTV generation readiness", () => {
             selectedManualKeyed.model = encodeChannelModel("manual", sharedVideo);
             expect(ready(selectedManualKeyed, selectedManualKeyed.videoModel)).toBe(true);
             expect(ready(selectedManualKeyed, selectedManualKeyed.audioModel)).toBe(true);
-            expect(() => assertAudioConfig(resolveModelRequestConfig(selectedManualKeyed, selectedManualKeyed.audioModel), selectedManualKeyed.audioModel)).not.toThrow();
             expect(resolveModelRequestConfig(selectedManualKeyed, selectedManualKeyed.videoModel).model).toBe(sharedVideo);
         }
     });

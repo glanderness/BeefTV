@@ -34,7 +34,5 @@ type beefTVSeedanceMediaGroup = generation.BeefTVSeedanceMediaGroup
 
 const beefTVSeedanceImageMaxBytes = generation.BeefTVSeedanceImageMaxBytes
 const beefTVSeedanceVideoMaxBytes = generation.BeefTVSeedanceVideoMaxBytes
-const beefTVSeedanceUploadTimeout = generation.BeefTVSeedanceUploadTimeout
-
 var errBeefTVSeedanceUploadUnavailable = generation.ErrBeefTVSeedanceUploadUnavailable
 var errBeefTVSeedanceUploadIncomplete = generation.ErrBeefTVSeedanceUploadIncomplete

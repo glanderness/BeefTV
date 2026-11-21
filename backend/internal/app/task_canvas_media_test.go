@@ -51,7 +51,7 @@ func TestCanvasMediaNativeCropAndRecovery(t *testing.T) {
 		t.Fatalf("crop failed: %s", task.Error)
 	}
 	id := cw.OutputResource(task.ResultJSON)
-	output, err := svc.workflowResource("owner", id, "image")
+	output, err := cw.ReadyResource(svc.repo, "owner", id, "image")
 	if err != nil || output.Width != 32 || output.Height != 32 {
 		t.Fatalf("output %+v %v", output, err)
 	}

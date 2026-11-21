@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"mime/multipart"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -163,36 +162,6 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 		result["usage"] = payload.Usage
 	}
 	return result, nil
-}
-
-func MaterializeImageDataURLs(ctx context.Context, config Config, payload ImageResponse) ([]map[string]string, error) {
-	images, err := ImageDataURLs(payload)
-	if err != nil {
-		return nil, err
-	}
-	for _, image := range images {
-		value := strings.TrimSpace(image["dataUrl"])
-		if strings.HasPrefix(value, "data:image/") {
-			continue
-		}
-		if !IsPublicMediaURL(value) {
-			return nil, errors.New("图片接口没有返回可下载的图片")
-		}
-		// URL results must become bytes before task persistence. Keep provider
-		// authentication on same-origin content routes, never on external CDNs.
-		data, mimeType, err := GetProviderExternalBinary(WithRequestKind(ctx, "download"), config, value)
-		if err != nil {
-			return nil, fmt.Errorf("图片结果下载失败：%w", err)
-		}
-		detected := strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0]))
-		mimeType = strings.ToLower(NormalizedMediaMIMEType(mimeType, data))
-		if len(data) == 0 || strings.Contains(detected, "json") || strings.HasPrefix(detected, "text/") || !strings.HasPrefix(mimeType, "image/") {
-			return nil, fmt.Errorf("图片结果无效：%s", defaultString(detected, mimeType))
-		}
-		image["dataUrl"] = DataURL(mimeType, data)
-		image["mimeType"] = mimeType
-	}
-	return images, nil
 }
 
 func ImageDataURLs(payload ImageResponse) ([]map[string]string, error) {

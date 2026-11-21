@@ -8,6 +8,8 @@ import (
 
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/database"
+	"infinite-canvas/backend/internal/eagle"
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/repository"
 
 	"github.com/gin-gonic/gin"
@@ -15,10 +17,31 @@ import (
 	"gorm.io/gorm"
 )
 
+func defaultRuntimeDependencies(svc CanvasAPIService) RuntimeDependencies {
+	if isNilService(svc) {
+		return RuntimeDependencies{Eagle: eagle.New()}
+	}
+	adapter := newServiceRuntimeAdapter(svc)
+	dependencies := RuntimeDependencies{
+		RequestCoordinator: adapter, ProviderConfig: adapter, Assets: adapter, Tasks: adapter, Generation: adapter,
+		Eagle:       eagle.New(),
+		Diagnostics: svc.DiagnosticsDomain(),
+		Appearance:  svc.AppearanceDomain(),
+	}
+	if pluginsDomain := svc.PluginDomain(); pluginsDomain != nil {
+		dependencies.ModelCapability = modelcatalog.NewCapabilityNormalizer(pluginsDomain.LookupWorkflow)
+	}
+	return dependencies
+}
+
+func registerTestCanvasAPI(api *gin.RouterGroup, svc CanvasAPIService) {
+	RegisterDesktopCanvasAPIWithDependencies(api, svc, defaultRuntimeDependencies(svc))
+}
+
 func TestRegisterCanvasAPIExposesOpenAPIAndProjects(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	RegisterCanvasAPI(router.Group("/api"), &app.Service{})
+	registerTestCanvasAPI(router.Group("/api"), &app.Service{})
 
 	wanted := map[string]bool{
 		"GET /api/openapi.yaml":          false,
@@ -49,7 +72,7 @@ func TestRegisterCanvasAPIExposesOpenAPIAndProjects(t *testing.T) {
 func TestRegisterDesktopCanvasAPIExcludesHostedOnlyRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	RegisterDesktopCanvasAPI(router.Group("/api"), &app.Service{})
+	registerTestCanvasAPI(router.Group("/api"), &app.Service{})
 
 	for _, route := range router.Routes() {
 		key := route.Method + " " + route.Path
@@ -152,24 +175,17 @@ func TestRegisterDesktopCanvasAPIExcludesHostedOnlyRoutes(t *testing.T) {
 
 func TestRegisterCanvasAPIOmitsLegacyNodeMutationRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for name, register := range map[string]func(*gin.RouterGroup, CanvasAPIService){
-		"canvas":  RegisterCanvasAPI,
-		"desktop": RegisterDesktopCanvasAPI,
-	} {
-		t.Run(name, func(t *testing.T) {
-			router := gin.New()
-			register(router.Group("/api"), &app.Service{})
-			for _, route := range router.Routes() {
-				key := route.Method + " " + route.Path
-				switch key {
-				case "DELETE /api/canvas-projects/:id/nodes/:nodeId",
-					"PATCH /api/canvas-projects/:id/nodes/:nodeId",
-					"POST /api/canvas-projects/:id/connections",
-					"PUT /api/canvas-projects/:id/generated-assets":
-					t.Fatalf("%s still registers retired canvas route %s", name, key)
-				}
-			}
-		})
+	router := gin.New()
+	registerTestCanvasAPI(router.Group("/api"), &app.Service{})
+	for _, route := range router.Routes() {
+		key := route.Method + " " + route.Path
+		switch key {
+		case "DELETE /api/canvas-projects/:id/nodes/:nodeId",
+			"PATCH /api/canvas-projects/:id/nodes/:nodeId",
+			"POST /api/canvas-projects/:id/connections",
+			"PUT /api/canvas-projects/:id/generated-assets":
+			t.Fatalf("desktop API still registers retired canvas route %s", key)
+		}
 	}
 }
 
@@ -184,7 +200,7 @@ func TestRegisterCanvasAPIDerivesLocalProfileFromService(t *testing.T) {
 	}
 	svc := app.NewLocal(repository.New(db), t.TempDir())
 	router := gin.New()
-	RegisterCanvasAPI(router.Group("/api"), svc)
+	registerTestCanvasAPI(router.Group("/api"), svc)
 
 	for _, route := range router.Routes() {
 		key := route.Method + " " + route.Path
@@ -207,38 +223,33 @@ func TestRegisterCanvasAPIHandlesNilAndTypedNilService(t *testing.T) {
 	}
 
 	baseline := gin.New()
-	RegisterCanvasAPI(baseline.Group("/api"), &app.Service{})
+	registerTestCanvasAPI(baseline.Group("/api"), &app.Service{})
 	expectedRoutes := collectRoutes(baseline)
 
 	var typedNil *app.Service
-	for name, register := range map[string]func(*gin.RouterGroup, CanvasAPIService){
-		"canvas":  RegisterCanvasAPI,
-		"desktop": RegisterDesktopCanvasAPI,
+	for variant, svc := range map[string]CanvasAPIService{
+		"nil":      nil,
+		"typedNil": typedNil,
 	} {
-		for variant, svc := range map[string]CanvasAPIService{
-			"nil":      nil,
-			"typedNil": typedNil,
-		} {
-			t.Run(name+"/"+variant, func(t *testing.T) {
-				router := gin.New()
-				register(router.Group("/api"), svc)
+		t.Run(variant, func(t *testing.T) {
+			router := gin.New()
+			registerTestCanvasAPI(router.Group("/api"), svc)
 
-				recorder := httptest.NewRecorder()
-				router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil))
-				if recorder.Code != http.StatusOK {
-					t.Fatalf("%s (%s) openapi.yaml status = %d", name, variant, recorder.Code)
-				}
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("(%s) openapi.yaml status = %d", variant, recorder.Code)
+			}
 
-				gotRoutes := collectRoutes(router)
-				if len(gotRoutes) != len(expectedRoutes) {
-					t.Fatalf("%s (%s) registered %d routes, want %d", name, variant, len(gotRoutes), len(expectedRoutes))
+			gotRoutes := collectRoutes(router)
+			if len(gotRoutes) != len(expectedRoutes) {
+				t.Fatalf("(%s) registered %d routes, want %d", variant, len(gotRoutes), len(expectedRoutes))
+			}
+			for key := range expectedRoutes {
+				if _, exists := gotRoutes[key]; !exists {
+					t.Fatalf("(%s) missing route %s", variant, key)
 				}
-				for key := range expectedRoutes {
-					if _, exists := gotRoutes[key]; !exists {
-						t.Fatalf("%s (%s) missing route %s", name, variant, key)
-					}
-				}
-			})
-		}
+			}
+		})
 	}
 }

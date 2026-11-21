@@ -20,13 +20,10 @@ describe("desktop update UI contract", () => {
         const sidebar = read("src/components/layout/workspace-sidebar-nav.tsx");
         const update = read("src/components/layout/workspace-sidebar-update.tsx");
         const changelog = read("src/components/layout/app-changelog-modal.tsx");
-        const account = read("src/components/layout/workspace-account-menu.tsx");
         const shell = read("src/components/layout/app-top-nav.tsx");
 
         expect(sidebar).toContain("WorkspaceSidebarUpdate");
         expect(sidebar).toContain("app-workspace-sidebar-footer");
-        expect(account).toContain("AppChangelogButton");
-        expect(account).toContain("showVersion");
         expect(changelog).toContain("查看更新日志");
         expect(shell).toContain("useDesktopUpdateBootstrap");
         expect(update).toContain("AppChangelogButton");

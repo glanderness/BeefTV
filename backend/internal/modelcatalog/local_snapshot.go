@@ -131,41 +131,6 @@ func ParseLocalChannelModels(body []byte) []LocalChannelModel {
 	return result
 }
 
-func FilterLocalChannelModels(items []LocalChannelModel, intent *ModelRequestIntent) []LocalChannelModel {
-	result := make([]LocalChannelModel, 0, len(items))
-	for _, item := range items {
-		if !item.Enabled || item.Model == "" || !GenerationModeSupported(item.Capability) {
-			continue
-		}
-		if intent != nil && (item.Protocol == "" || (normalizeCapability(intent.Capability) != "" && normalizeCapability(item.Capability) != normalizeCapability(intent.Capability))) {
-			continue
-		}
-		if intent != nil {
-			cm := localSnapshotChannelModel(item)
-			matched, err := ChannelModelMatchesIntent(&cm, intent)
-			if err != nil || !matched {
-				continue
-			}
-		}
-		result = append(result, item)
-	}
-	return result
-}
-
-func localSnapshotChannelModel(item LocalChannelModel) model.ChannelModel {
-	cm := model.ChannelModel{ModelKey: item.Model, Capability: item.Capability, Protocol: model.ChannelInterfaceType(item.Protocol), Enabled: true}
-	if item.CapabilityConfig != nil {
-		if raw, err := json.Marshal(item.CapabilityConfig); err == nil {
-			cm.CapabilityConfigJSON = string(raw)
-		}
-	} else if defaults := DefaultModelCapabilityConfigForModel(item.Protocol, item.Model); defaults != nil {
-		if raw, err := json.Marshal(defaults); err == nil {
-			cm.CapabilityConfigJSON = string(raw)
-		}
-	}
-	return cm
-}
-
 // PublicPrices returns the validated quotes a public catalog may show: the
 // video quote, and the price row only on the managed channel that wrote it.
 // Arbitrary profile fields are never forwarded.

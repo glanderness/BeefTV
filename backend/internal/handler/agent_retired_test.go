@@ -12,6 +12,7 @@ import (
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/workspace"
 
@@ -183,7 +184,7 @@ func TestManualCanvasTaskCreationStillReachesTaskAdmission(t *testing.T) {
 
 func seedSystemTextChannel(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	capabilityConfig, err := json.Marshal(app.DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test"))
+	capabilityConfig, err := json.Marshal(modelcatalog.DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test"))
 	if err != nil {
 		t.Fatal(err)
 	}

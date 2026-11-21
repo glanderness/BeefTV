@@ -39,10 +39,6 @@ type userDataWorkflows interface {
 	localapp.AssetPort
 }
 
-func RegisterUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasData *canvas.Service, promptsDomain *prompts.Service, library *asset.Library, resources *asset.Service, playbackRuntime *localplayback.Service, usage userDataUsage, canvasWrites canvasLibraryWrites, workflows userDataWorkflows) {
-	registerUserDataRoutes(r, owners, canvasData, promptsDomain, library, resources, playbackRuntime, usage, canvasWrites, workflows)
-}
-
 // RegisterDesktopUserDataRoutes keeps hosted object-storage controls out of
 // the native app while retaining local resource and workspace CRUD.
 func RegisterDesktopUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasData *canvas.Service, promptsDomain *prompts.Service, library *asset.Library, resources *asset.Service, playbackRuntime *localplayback.Service, usage userDataUsage, canvasWrites canvasLibraryWrites, workflows userDataWorkflows) {

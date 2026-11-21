@@ -473,61 +473,6 @@ func TestDeclarativeManifestRequiresDocumentation(t *testing.T) {
 	}
 }
 
-func TestBuiltinDocumentationMatchesTextRequestShape(t *testing.T) {
-	cases := []struct {
-		id, mapping, requestField string
-	}{
-		{"chat-completion", "messages[0].content", `"messages"`},
-		{"openai-response", "input", `"input"`},
-		{"claude-api", "messages[0].content", `"messages"`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.id, func(t *testing.T) {
-			adapter, ok := Builtins().Get(tc.id)
-			if !ok {
-				t.Fatal("adapter missing")
-			}
-			metadata := adapter.Metadata()
-			AttachDocumentation(&metadata)
-			if !strings.Contains(metadata.Documentation, tc.mapping) || !strings.Contains(metadata.Documentation, tc.requestField) {
-				t.Fatalf("documentation does not match request shape:\n%s", metadata.Documentation)
-			}
-		})
-	}
-}
-
-func TestEveryBuiltinHasDetailedDocumentation(t *testing.T) {
-	requiredSections := []string{"## 接口", "## 模型", "## 参数", "## 官方", "## 宿主运行时合同"}
-	for _, metadata := range Builtins().List("", "", true) {
-		t.Run(metadata.ID, func(t *testing.T) {
-			AttachDocumentation(&metadata)
-			document := metadata.Documentation
-			if len([]rune(document)) < 900 {
-				t.Fatalf("documentation is too short: %d runes", len([]rune(document)))
-			}
-			for _, section := range requiredSections {
-				if !strings.Contains(document, section) {
-					t.Errorf("documentation is missing section %q", section)
-				}
-			}
-			for _, operation := range []string{metadata.Create, metadata.Poll} {
-				parts := strings.SplitN(operation, " ", 2)
-				if len(parts) == 2 && !strings.Contains(document, parts[1]) {
-					t.Errorf("documentation is missing operation path %q", parts[1])
-				}
-			}
-			for _, parameter := range metadata.Parameters {
-				if !strings.Contains(document, "`"+parameter.Name+"`") {
-					t.Errorf("documentation is missing parameter %q", parameter.Name)
-				}
-			}
-			if strings.Contains(document, "{{") {
-				t.Errorf("documentation contains an unresolved template marker")
-			}
-		})
-	}
-}
-
 func TestImageResponseKeepsBase64AsDataURL(t *testing.T) {
 	adapter := officialPackageAdapter(t, "openai-images.beeftv-plugin", "openai-image")
 	result, err := adapter.ParseCreate(context.Background(), []byte(`{"data":[{"b64_json":"aW1hZ2U="}]}`))

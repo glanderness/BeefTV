@@ -8,22 +8,18 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"infinite-canvas/backend/internal/beeftv"
 	"infinite-canvas/backend/internal/playback"
 )
 
 const (
-	beefTVSeedanceJSONOverheadBytes = int64(64 << 10)
-	beefTVSeedanceImageMaxBytes     = int64(30 << 20)
-	beefTVSeedanceVideoMaxBytes     = int64(200 << 20)
-	beefTVSeedanceAudioMaxBytes     = int64(15 << 20)
-	beefTVSeedanceUploadTimeout     = 15 * time.Minute
+	beefTVSeedanceImageMaxBytes = int64(30 << 20)
+	beefTVSeedanceVideoMaxBytes = int64(200 << 20)
+	beefTVSeedanceAudioMaxBytes = int64(15 << 20)
 )
 
 var (
-	errBeefTVSeedanceUploadRedirect    = beeftv.ErrUploadRedirect
 	errBeefTVSeedanceUploadUnavailable = errors.New("暂时无法接收参考素材")
 	errBeefTVSeedanceUploadIncomplete  = beeftv.ErrUploadIncomplete
 	errBeefTVSeedanceUploadFormat      = errors.New("无法识别文件。图片用 PNG、JPEG、WebP、GIF、BMP 或 TIFF。视频用 MP4 或 MOV。音频用 MP3 或 WAV。")
@@ -33,7 +29,6 @@ var (
 const (
 	BeefTVSeedanceImageMaxBytes = beefTVSeedanceImageMaxBytes
 	BeefTVSeedanceVideoMaxBytes = beefTVSeedanceVideoMaxBytes
-	BeefTVSeedanceUploadTimeout = beefTVSeedanceUploadTimeout
 )
 
 var (
@@ -230,49 +225,6 @@ func validateSeedanceReferenceCapability(input *Input, kind string, index int, m
 	return nil
 }
 
-func CompleteBeefTVSeedanceUpload(ctx context.Context, config Config, session BeefTVSeedanceUploadSession, data []byte) (BeefTVSeedanceUploadComplete, error) {
-	uploaded, err := managedMediaClient(ctx, config).CompleteUpload(ctx, session, data, "参考素材")
-	if err != nil {
-		return uploaded, referenceMediaUploadError(ctx, err)
-	}
-	return uploaded, nil
-}
-
-func BeefTVSeedancePutTimeout(ctx context.Context) time.Duration {
-	timeout := beefTVSeedanceUploadTimeout
-	if deadline, ok := ctx.Deadline(); ok {
-		if remaining := time.Until(deadline); remaining > 0 && remaining < timeout {
-			return remaining
-		}
-	}
-	return timeout
-}
-
-func PutBeefTVSeedanceBytes(ctx context.Context, session BeefTVSeedanceUploadSession, data []byte) error {
-	client := managedMediaClient(ctx, Config{})
-	var dispatched bool
-	var phase string
-	observe := client.StorageObserve
-	client.StorageObserve = func(value beeftv.UploadObservation) {
-		dispatched, phase = value.Dispatched, value.Phase
-		if observe != nil {
-			observe(value)
-		}
-	}
-	err := client.PutUploadBytes(ctx, session, data)
-	if err != nil {
-		upload := referenceUploadError(referenceUploadStage(ctx, "put"), legacyMediaError(err))
-		upload.Dispatched, upload.TransportPhase = dispatched, phase
-		return upload
-	}
-	return nil
-}
-
-func ValidateBeefTVSeedanceSecureURL(ctx context.Context, raw string) error {
-	runtime, _ := RuntimeFromContext(ctx)
-	return (&beeftv.MediaClient{AllowHTTPTest: runtime.Endpoints.BeefTVVideoBaseURL != ""}).ValidateUploadURL(ctx, raw)
-}
-
 func BeefTVSeedancePreuploadUnavailable(err error) bool {
 	var httpErr HTTPError
 	if !errors.As(err, &httpErr) {
@@ -315,67 +267,4 @@ func ValidateBeefTVSeedanceMediaSize(kind string, size int64) error {
 		}
 	}
 	return nil
-}
-
-func CanonicalBeefTVSeedanceMime(kind string, declared string, data []byte) (string, error) {
-	detected := detectSeedanceMediaContentType(data)
-	if mime, ok := CanonicalBeefTVSeedanceDeclaredMime(kind, detected); ok {
-		return mime, nil
-	}
-	if detected != "image/avif" && detected != "image/heic" {
-		if mime, ok := CanonicalBeefTVSeedanceDeclaredMime(kind, declared); ok {
-			return mime, nil
-		}
-	}
-	return "", errBeefTVSeedanceUploadFormat
-}
-
-func detectSeedanceMediaContentType(data []byte) string {
-	if len(data) >= 4 && ((data[0] == 'I' && data[1] == 'I' && data[2] == '*' && data[3] == 0) || (data[0] == 'M' && data[1] == 'M' && data[2] == 0 && data[3] == '*')) {
-		return "image/tiff"
-	}
-	if len(data) >= 12 && string(data[4:8]) == "ftyp" {
-		switch string(data[8:12]) {
-		case "avif", "avis":
-			return "image/avif"
-		case "heic", "heix", "mif1", "msf1":
-			return "image/heic"
-		case "qt  ":
-			return "video/quicktime"
-		}
-	}
-	return strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0]))
-}
-
-func CanonicalBeefTVSeedanceDeclaredMime(kind, raw string) (string, bool) {
-	mime := strings.ToLower(strings.TrimSpace(raw))
-	if slash := strings.IndexByte(mime, ';'); slash >= 0 {
-		mime = strings.TrimSpace(mime[:slash])
-	}
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "image":
-		switch mime {
-		case "image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp", "image/tiff":
-			return mime, true
-		case "image/jpg", "image/pjpeg":
-			return "image/jpeg", true
-		case "image/x-png":
-			return "image/png", true
-		case "image/x-bmp":
-			return "image/bmp", true
-		}
-	case "video":
-		switch mime {
-		case "video/mp4", "video/quicktime":
-			return mime, true
-		}
-	case "audio":
-		switch mime {
-		case "audio/mpeg", "audio/mp3":
-			return "audio/mpeg", true
-		case "audio/wav", "audio/wave", "audio/x-wav":
-			return "audio/wav", true
-		}
-	}
-	return "", false
 }

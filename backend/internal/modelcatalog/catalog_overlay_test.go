@@ -124,7 +124,7 @@ func TestLoadChannelModelCatalogCustomGeminiAndBeefTV(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(beef[0].VideoCapabilities, wantRaw) {
-		t.Fatalf("BeefTV/WhatsToken overlay drifted: got %s", beef[0].VideoCapabilities)
+		t.Fatalf("BeefTV overlay drifted: got %s", beef[0].VideoCapabilities)
 	}
 }
 

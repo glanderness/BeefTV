@@ -30,7 +30,7 @@ func TestCanvasWorkflowModelSelectionUsesCurrentChannelAndClearsOldRoute(t *test
 		t.Fatal(err)
 	}
 	r := workflowRecipe{Request: cw.RecipeRequest{Model: "old", LogicalModelID: "old-route", Input: map[string]any{"mode": "video", "config": map[string]any{"model": "old", "apiKey": "old-key", "providerOptions": map[string]any{"old": true}, "videoSeconds": "5"}}}}
-	changed, err := s.selectWorkflowModel(cw.Node{MediaType: "video", Config: map[string]any{"modelOption": "custom::video-model"}}, &r)
+	changed, err := cw.SelectModel(s.compileHost(), cw.Node{MediaType: "video", Config: map[string]any{"modelOption": "custom::video-model"}}, &r)
 	if err != nil || !changed || r.Request.Model != "video-model" || r.Request.LogicalModelID != "" {
 		t.Fatalf("selection=%+v %v", r.Request, err)
 	}
@@ -38,7 +38,7 @@ func TestCanvasWorkflowModelSelectionUsesCurrentChannelAndClearsOldRoute(t *test
 	if c["apiKey"] != nil || c["providerOptions"] != nil || c["videoSeconds"] != "5" {
 		t.Fatalf("unsafe config=%+v", c)
 	}
-	if _, err = s.selectWorkflowModel(cw.Node{MediaType: "image", Config: map[string]any{"modelOption": "custom::video-model"}}, &r); err == nil {
+	if _, err = cw.SelectModel(s.compileHost(), cw.Node{MediaType: "image", Config: map[string]any{"modelOption": "custom::video-model"}}, &r); err == nil {
 		t.Fatal("cross-media model accepted")
 	}
 }

@@ -97,7 +97,7 @@ func TestCanvasWorkflowSourceSurvivesCompletionAndDeliveryCleanup(t *testing.T) 
 				t.Fatal(err)
 			}
 			ref := request.Input["referenceImages"].([]any)[0]
-			if workflowReferenceID(ref) != "new-person" {
+			if cw.ReferenceID(ref) != "new-person" {
 				t.Fatal("recovered compact task did not replace original reference")
 			}
 		})

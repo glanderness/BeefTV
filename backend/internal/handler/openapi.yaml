@@ -16,7 +16,6 @@ security:
   - sessionCookie: []
 tags:
   - name: meta
-  - name: auth
   - name: projects
   - name: canvas
   - name: resources
@@ -607,35 +606,6 @@ paths:
             application/yaml:
               schema:
                 type: string
-  /auth/session:
-    get:
-      tags: [auth]
-      summary: 当前登录会话
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "401":
-          $ref: "#/components/responses/Error"
-  /auth/login:
-    post:
-      tags: [auth]
-      security: []
-      summary: 登录并设置会话 Cookie
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [username, password]
-              properties:
-                username: { type: string }
-                password: { type: string }
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "401":
-          $ref: "#/components/responses/Error"
   /projects:
     get:
       tags: [projects]

@@ -14,7 +14,7 @@ import { explainGenerationError } from "@/lib/generation-error";
 import { seedanceTaskRetryWarning } from "@/lib/seedance-channel-warning";
 import { formatTaskKind, generationTaskStatusLabel, operationOptions } from "@/lib/generation-task-display";
 import { buildVideoOperationPrompt } from "@/lib/prompts";
-import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
+import { backendProviderConfig } from "@/services/api/generation-task";
 
 import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryGenerationTask, recoverTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { isTaskRegenerateBlocked, readTaskOutcome } from "@/lib/task-outcome";
@@ -464,7 +464,6 @@ export default function TasksPage() {
                     prompt: values.prompt,
                     provider: values.operation === "compare_versions" ? "internal-agent" : "openai-compatible",
                     model: values.operation === "compare_versions" ? "version-router" : requestConfig.model,
-					...(values.operation !== "compare_versions" && logicalModelIDForConfig(requestConfig) ? { logicalModelId: logicalModelIDForConfig(requestConfig) } : {}),
                     input: {
                         source: "tasks-page",
                         mode: values.operation === "compare_versions" ? "workflow" : "video",

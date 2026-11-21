@@ -8,7 +8,6 @@ import { defaultImageCapabilityConfig, normalizeImageValue, normalizeModelCapabi
 import { IMAGE_RATIOS, IMAGE_RESOLUTIONS, imagePresetForRatio, imagePresetValue, imageQualityForSelection, imageQualityForTier, imageSizeConfigWithPresets, imageSizePresets, imageTierAvailable } from "../src/lib/image-size-presets";
 import { buildImageResolutionOptions } from "../src/lib/image-resolution-tiers";
 import { resolveImageRequestSize, validateImageSize } from "../src/services/api/image-validation";
-import { buildGeminiImageGenerationConfig } from "../src/lib/gemini-image";
 
 describe("统一图片分辨率与宽高比", () => {
     test("默认 Gemini 质量枚举不能把未启用的 1K 显示出来", () => {
@@ -50,7 +49,6 @@ describe("统一图片分辨率与宽高比", () => {
         expect(imageTierAvailable(profile, "2k")).toBe(false);
         expect(imageQualityForSelection(profile, "4k")).toBe("4k");
         expect(normalizeImageValue(profile, { size: "16:9", quality: "4k" }).quality).toBe("4k");
-        expect(buildGeminiImageGenerationConfig("16:9", "4k").imageConfig).toEqual({ aspectRatio: "16:9", imageSize: "4K" });
         const picker = renderToStaticMarkup(<ImageSizePicker profile={profile} size="16:9" onChange={() => {}} />);
         expect(picker).toMatch(/<button[^>]*>1K/);
         expect(picker).toMatch(/<button[^>]*>4K/);
@@ -150,7 +148,8 @@ describe("统一图片分辨率与宽高比", () => {
         expect(imageSizePresets(grok).some((preset) => preset.tier === "4k")).toBe(false);
         const gemini = defaultImageCapabilityConfig("gemini-image", "test");
         const preset = imagePresetForRatio("4k", "16:9");
-        expect(buildGeminiImageGenerationConfig(imagePresetValue(gemini, preset), imageQualityForTier(gemini, "4k")).imageConfig).toEqual({ aspectRatio: "16:9", imageSize: "4K" });
+        expect(imagePresetValue(gemini, preset)).toBe("16:9");
+        expect(imageQualityForTier(gemini, "4k")).toBe("high");
         gemini.size.allowCustom = true;
         const reopened = renderToStaticMarkup(<ImageSizePicker profile={gemini} size="17:11" quality="high" onChange={() => {}} />);
         expect(reopened).toMatch(/aria-pressed="true"[^>]*>4K/);

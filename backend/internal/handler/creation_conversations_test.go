@@ -46,7 +46,7 @@ func conversationRouter(t *testing.T) (*gin.Engine, *app.Service) {
 func TestCreationConversationRoutesRegisterOnDesktopAPI(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	RegisterDesktopCanvasAPI(router.Group("/api"), &app.Service{})
+	registerTestCanvasAPI(router.Group("/api"), &app.Service{})
 	wanted := map[string]bool{
 		"GET /api/creation-conversations":        false,
 		"GET /api/creation-conversations/:id":    false,

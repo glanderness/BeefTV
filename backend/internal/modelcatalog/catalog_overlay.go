@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// OverlayCatalogVideoCapabilities applies the official BeefTV/WhatsToken
+// OverlayCatalogVideoCapabilities applies the official BeefTV
 // video capability contract to a fetched /models catalog. Invalid payloads
 // are dropped so callers never persist implicit zeros.
 func OverlayCatalogVideoCapabilities(items []ChannelModelCatalogItem) []ChannelModelCatalogItem {

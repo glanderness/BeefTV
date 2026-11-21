@@ -7,6 +7,39 @@ import (
 	"testing"
 )
 
+func CompleteBeefTVSeedanceUpload(ctx context.Context, config Config, session BeefTVSeedanceUploadSession, data []byte) (BeefTVSeedanceUploadComplete, error) {
+	uploaded, err := managedMediaClient(ctx, config).CompleteUpload(ctx, session, data, "参考素材")
+	if err != nil {
+		return uploaded, referenceMediaUploadError(ctx, err)
+	}
+	return uploaded, nil
+}
+
+func PutBeefTVSeedanceBytes(ctx context.Context, session BeefTVSeedanceUploadSession, data []byte) error {
+	client := managedMediaClient(ctx, Config{})
+	var dispatched bool
+	var phase string
+	observe := client.StorageObserve
+	client.StorageObserve = func(value beeftv.UploadObservation) {
+		dispatched, phase = value.Dispatched, value.Phase
+		if observe != nil {
+			observe(value)
+		}
+	}
+	err := client.PutUploadBytes(ctx, session, data)
+	if err != nil {
+		upload := referenceUploadError(referenceUploadStage(ctx, "put"), legacyMediaError(err))
+		upload.Dispatched, upload.TransportPhase = dispatched, phase
+		return upload
+	}
+	return nil
+}
+
+func ValidateBeefTVSeedanceSecureURL(ctx context.Context, raw string) error {
+	runtime, _ := RuntimeFromContext(ctx)
+	return (&beeftv.MediaClient{AllowHTTPTest: runtime.Endpoints.BeefTVVideoBaseURL != ""}).ValidateUploadURL(ctx, raw)
+}
+
 func completeBeefTVSeedanceMultipart(ctx context.Context, config Config, session BeefTVSeedanceUploadSession, data []byte) (BeefTVSeedanceUploadComplete, error) {
 	return CompleteBeefTVSeedanceUpload(ctx, config, session, data)
 }

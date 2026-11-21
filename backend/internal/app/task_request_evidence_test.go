@@ -21,13 +21,17 @@ import (
 
 func TestReferenceRecoveryEvidenceSurvivesSQLiteAndDiagnosticZIP(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
-	puts, confirms, other := 0, 0, 0
+	creates, puts, confirms, other := 0, 0, 0, 0
 	var mu sync.Mutex
+	var serverURL string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/v1/media/uploads":
+			creates++
+			_, _ = w.Write([]byte(`{"ticket":"private-ticket","upload_url":"` + serverURL + `/storage?X-Amz-Signature=PRIVATE","upload_method":"PUT"}`))
 		case "/storage":
 			puts++
 			w.WriteHeader(503)
@@ -40,14 +44,20 @@ func TestReferenceRecoveryEvidenceSurvivesSQLiteAndDiagnosticZIP(t *testing.T) {
 			w.WriteHeader(500)
 		}
 	}))
+	serverURL = server.URL
 	defer server.Close()
 	ctx := generation.WithRuntime(context.Background(), generation.Runtime{Endpoints: generation.Endpoints{BeefTVVideoBaseURL: server.URL}})
 	ctx, recorder := withTaskRequestEvidence(ctx)
-	_, uploadErr := generation.CompleteBeefTVSeedanceUpload(ctx, generation.Config{BaseURL: server.URL + "/v1"}, generation.BeefTVSeedanceUploadSession{Ticket: "private-ticket", UploadURL: server.URL + "/storage?X-Amz-Signature=PRIVATE"}, []byte("owned"))
+	input := generation.Input{
+		Mode:            "video",
+		Config:          generation.Config{BaseURL: server.URL + "/v1", APIKey: "k", InterfaceType: "newapi-channel-1", Model: "seedance-2.0"},
+		ReferenceImages: []generation.Media{{DataURL: testReferenceImageDataURL, MimeType: "image/png"}},
+	}
+	uploadErr := generation.PrepareBeefTVVideoReferences(ctx, input.Config, &input, nil)
 	mu.Lock()
 	defer mu.Unlock()
-	if uploadErr == nil || puts != 3 || confirms != 3 || other != 0 {
-		t.Fatalf("err=%v put=%d confirm=%d other=%d", uploadErr, puts, confirms, other)
+	if uploadErr == nil || creates != 1 || puts != 3 || confirms != 3 || other != 0 {
+		t.Fatalf("err=%v create=%d put=%d confirm=%d other=%d", uploadErr, creates, puts, confirms, other)
 	}
 	now := time.Now().UTC()
 	task := model.Task{ID: "owned-failed", UserID: "owner", Status: model.TaskStatusFailed, FailureDiagnostics: recorder.snapshot(false), CreatedAt: now, UpdatedAt: now}
@@ -86,7 +96,7 @@ func TestReferenceRecoveryEvidenceSurvivesSQLiteAndDiagnosticZIP(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := restored.FailureDiagnostics
-	if d.Source != "reference_upload" || d.Requests[4].Attempt != 3 || d.Requests[5].Operation != "reference_complete" || strings.Contains(d.Summary, "PRIVATE") || strings.Contains(d.Summary, "private-ticket") {
+	if d.Source != "reference_upload" || len(d.Requests) < 7 || d.Requests[5].Attempt != 3 || d.Requests[6].Operation != "reference_complete" || strings.Contains(d.Summary, "PRIVATE") || strings.Contains(d.Summary, "private-ticket") {
 		t.Fatalf("lost or unsafe recovery evidence: %+v", d)
 	}
 }

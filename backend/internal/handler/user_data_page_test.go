@@ -12,7 +12,7 @@ func TestUserDataIncrementalRoutesAreRegistered(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	svc := &app.Service{}
-	RegisterUserDataRoutes(router.Group("/api"), svc, svc.CanvasService(), svc.PromptService(), svc.AssetLibraryService(), svc.ResourceService(), svc.PlaybackService(), svc, svc, svc)
+	RegisterDesktopUserDataRoutes(router.Group("/api"), svc, svc.CanvasService(), svc.PromptService(), svc.AssetLibraryService(), svc.ResourceService(), svc.PlaybackService(), svc, svc, svc)
 	wanted := map[string]bool{
 		"GET /api/canvas-projects":           false,
 		"GET /api/canvas-projects/:id":       false,

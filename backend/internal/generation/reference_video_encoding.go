@@ -4,8 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"net/url"
-	"strings"
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -154,12 +152,7 @@ func SeedanceFrameRatePreflight(config Config) bool {
 	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) {
 		return modelcatalog.IsSeedance2Family(config.InterfaceType, config.Model)
 	}
-	u, err := url.Parse(config.BaseURL)
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(u.Hostname())
-	return host == "whatstoken.ai" || host == "www.whatstoken.ai"
+	return false
 }
 
 func ReferenceVideoFrameRateError(config Config, index int, fps float64) error {

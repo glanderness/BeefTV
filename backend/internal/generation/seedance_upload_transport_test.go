@@ -55,14 +55,7 @@ func TestReferenceUploadTLSDeadlineIsRecordedBeforeGeneration(t *testing.T) {
 	}
 }
 
-func TestReferenceUpload400PrependsReferenceIndexAndSupportsTIFF(t *testing.T) {
-	mime, err := CanonicalBeefTVSeedanceMime("image", "application/octet-stream", []byte{'I', 'I', '*', 0, 8, 0, 0, 0})
-	if err != nil || mime != "image/tiff" {
-		t.Fatalf("TIFF detection = %q, %v", mime, err)
-	}
-	if _, err := CanonicalBeefTVSeedanceMime("image", "image/png", []byte{0, 0, 0, 28, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f'}); err == nil {
-		t.Fatal("raw AVIF masquerading as image/png was accepted without conversion")
-	}
+func TestReferenceUpload400PrependsReferenceIndex(t *testing.T) {
 	cause := HTTPError{
 		StatusCode: 400,
 		Body:       `{"error":{"code":"invalid_media_format","message":"无法识别文件。图片用 PNG、JPEG、WebP、GIF、BMP 或 TIFF。视频用 MP4 或 MOV。音频用 MP3 或 WAV。"}}`,

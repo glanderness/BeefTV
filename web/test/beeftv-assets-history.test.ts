@@ -5,7 +5,6 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 
-import { WorkspaceTopBar } from "../src/components/layout/workspace-top-bar";
 import { setActiveUserScope } from "../src/lib/user-scope";
 import AssetsPage from "../src/pages/assets/index";
 import { useUserStore } from "../src/stores/use-user-store";
@@ -25,7 +24,6 @@ test("assets history keeps LibTV source tabs and local media filtering", () => {
                     createElement(
                         App,
                         null,
-                        createElement(WorkspaceTopBar, { sidebarOpen: true, onToggleSidebar: () => undefined }),
                         createElement(AssetsPage),
                     ),
                 ),

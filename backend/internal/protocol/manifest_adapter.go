@@ -157,7 +157,7 @@ func (a manifestAdapter) parse(payload map[string]any, c PollContext) CreateResu
 	result.Images = manifestResponseMedia(response.Images, env, "image", response.ResultEphemeral)
 	result.Videos = manifestResponseMedia(response.Videos, env, "video", response.ResultEphemeral)
 	result.Audios = manifestResponseMedia(response.Audios, env, "audio", response.ResultEphemeral)
-	// WhatsToken returns completed /v1/videos results as data[].url. Older
+	// Managed /v1/videos gateways return completed results as data[].url. Older
 	// channel-1 manifests only declared the common top-level URL fields, so
 	// accept this stable gateway shape without requiring a package migration.
 	if a.manifest.Metadata.ID == "newapi-channel-1" && len(result.Videos) == 0 {

@@ -8,32 +8,11 @@ import (
 type Registry struct {
 	mu        sync.RWMutex
 	providers []ModelCatalogPlugin
-	manifests map[string]Manifest
 }
 
 var globalRegistry = NewRegistry()
 
-func NewRegistry() *Registry { return &Registry{manifests: make(map[string]Manifest)} }
-
-func (r *Registry) RegisterManifest(manifest Manifest) error {
-	if err := manifest.Validate(); err != nil {
-		return err
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.manifests == nil {
-		r.manifests = make(map[string]Manifest)
-	}
-	r.manifests[manifest.ID] = manifest
-	return nil
-}
-
-func (r *Registry) ResolveManifest(id string) (Manifest, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	manifest, ok := r.manifests[id]
-	return manifest, ok
-}
+func NewRegistry() *Registry { return &Registry{} }
 
 // Register 注册插件
 func Register(discovery ModelCatalogPlugin) {

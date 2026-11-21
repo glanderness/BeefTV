@@ -8,10 +8,10 @@ const request = { model: "seedance-2.5", credentialRef: "beeftv", videoCount: 1,
 test("only affected routes and reference-video requests require informed consent", () => {
     expect(seedanceReferenceRatioWarning(request)?.content).toContain("不会自动退款");
     expect(seedanceReferenceRatioWarning({ ...request, model: "seedance-2.0" })?.okText).toBe("接受风险并生成");
-    for (const patch of [{ model: "seedance-2.0-fast" }, { model: "seedance-2.0-mini" }, { videoCount: 0 }, { ratio: "adaptive" }, { operation: "extend" }, { operation: "inpaint" }, { credentialRef: "", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }, { credentialRef: "", baseUrl: "https://whatstoken.ai.attacker.invalid" }]) {
+    for (const patch of [{ model: "seedance-2.0-fast" }, { model: "seedance-2.0-mini" }, { videoCount: 0 }, { ratio: "adaptive" }, { operation: "extend" }, { operation: "inpaint" }, { credentialRef: "", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }, { credentialRef: "", baseUrl: "https://beeftv.app.attacker.invalid" }, { credentialRef: "", baseUrl: "https://www.whatstoken.ai/api/v3" }]) {
         expect(seedanceReferenceRatioWarning({ ...request, ...patch })).toBeUndefined();
     }
-    expect(seedanceReferenceRatioWarning({ ...request, credentialRef: "", baseUrl: "https://www.whatstoken.ai/api/v3" })).toBeDefined();
+    expect(seedanceReferenceRatioWarning({ ...request, credentialRef: "", baseUrl: "https://api.beeftv.app/api/v3" })).toBeDefined();
 });
 
 test("mode-specific controls keep free ratio in reference mode and unlock on model change", () => {
@@ -38,14 +38,13 @@ test("isManagedGatewayEndpoint matches official gateway domains and subdomains w
     expect(isManagedGatewayEndpoint("https://api.beeftv.app./v1")).toBe(true);
     expect(isManagedGatewayEndpoint("https://beeftv.app")).toBe(true);
     expect(isManagedGatewayEndpoint("https://beeftv.app/v1#")).toBe(true);
-    expect(isManagedGatewayEndpoint("https://whatstoken.ai/v1")).toBe(true);
-    expect(isManagedGatewayEndpoint("https://www.whatstoken.ai/api/v3")).toBe(true);
-    expect(isManagedGatewayEndpoint("https://sub.whatstoken.ai/api/v3")).toBe(true);
-    expect(isManagedGatewayEndpoint("https://whatstoken.ai.attacker.invalid")).toBe(false);
-    expect(isManagedGatewayEndpoint("https://evilwhatstoken.ai/v1")).toBe(false);
+    expect(isManagedGatewayEndpoint("https://whatstoken.ai/v1")).toBe(false);
+    expect(isManagedGatewayEndpoint("https://www.whatstoken.ai/api/v3")).toBe(false);
+    expect(isManagedGatewayEndpoint("https://sub.whatstoken.ai/api/v3")).toBe(false);
+    expect(isManagedGatewayEndpoint("https://beeftv.app.attacker.invalid")).toBe(false);
     expect(isManagedGatewayEndpoint("https://evilbeeftv.app/v1")).toBe(false);
     expect(isManagedGatewayEndpoint("https://user@beeftv.app/v1")).toBe(false);
-    expect(isManagedGatewayEndpoint("https://user:pass@api.whatstoken.ai/v1")).toBe(false);
+    expect(isManagedGatewayEndpoint("https://user:pass@api.beeftv.app/v1")).toBe(false);
     expect(isManagedGatewayEndpoint("ftp://beeftv.app/v1")).toBe(false);
     expect(isManagedGatewayEndpoint("https://ark.cn-beijing.volces.com/api/v3")).toBe(false);
 });
