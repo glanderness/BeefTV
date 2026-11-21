@@ -274,7 +274,7 @@ func TestProviderConfigRedactedUpdatePreservesCredentialsAcrossHandles(t *testin
 	}
 }
 
-func TestProviderConfigCorruptExistingFileIsUnchanged(t *testing.T) {
+func TestProviderConfigCorruptExistingFileWithoutBackupIsUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewProviderConfig(dir)
 	if err != nil {
@@ -283,24 +283,18 @@ func TestProviderConfigCorruptExistingFileIsUnchanged(t *testing.T) {
 	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"kept-secret"}]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"kept-secret","label":"second"}]}`)); err != nil {
-		t.Fatal(err)
-	}
 	path := filepath.Join(dir, LocalProviderConfigFile)
 	corrupt := []byte(`{"schemaVersion":`)
 	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"replacement"}]}`)); err == nil {
-		t.Fatal("corrupt existing file was replaced")
-	}
+	requireSafeError(t, store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"replacement"}]}`)), ErrMalformedProviderConfig, "kept-secret", "replacement")
 	other, err := NewProviderConfig(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := other.SaveLocalModelConfigRevision([]byte(`{"channels":[]}`), 1); err == nil {
-		t.Fatal("corrupt existing file accepted a revision write")
-	}
+	_, revErr := other.SaveLocalModelConfigRevision([]byte(`{"channels":[]}`), 1)
+	requireSafeError(t, revErr, ErrMalformedProviderConfig)
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -525,7 +519,7 @@ func TestProviderConfigDuplicateAndInvalidIDsDoNotAlias(t *testing.T) {
 	requireFileUnchanged(t, path, storedDuplicate)
 }
 
-func TestProviderConfigNullPrimaryUnchangedWhenBackupExists(t *testing.T) {
+func TestProviderConfigNullPrimaryWithoutBackupIsUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewProviderConfig(dir)
 	if err != nil {
@@ -534,23 +528,17 @@ func TestProviderConfigNullPrimaryUnchangedWhenBackupExists(t *testing.T) {
 	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"first-secret"}]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"second-secret"}]}`)); err != nil {
-		t.Fatal(err)
-	}
 	path := filepath.Join(dir, LocalProviderConfigFile)
 	if err := os.WriteFile(path, []byte("null"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	requireSafeError(t, store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"replacement"}]}`)), ErrProviderConfigNotObject, "first-secret", "second-secret", "replacement")
+	requireSafeError(t, store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"replacement"}]}`)), ErrProviderConfigNotObject, "first-secret", "replacement")
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(bytes.TrimSpace(after)) != "null" {
 		t.Fatal("null primary was modified")
-	}
-	if _, err := os.Stat(filepath.Join(dir, LocalProviderConfigFile+".bak")); err != nil {
-		t.Fatal(err)
 	}
 
 	envelope := []byte(`{"schemaVersion":1,"revision":1,"config":null}`)
