@@ -239,7 +239,12 @@ export function CanvasSyncStatus({ projectId, onOpenVersions }: { projectId: str
                                         const ids = resolveWorkspaceExportCanvasIds(store.projects, [projectId]);
                                         await exportCanvasProjectsByIds(
                                             ids,
-                                            async (id) => (await loadCanvasProjectForEditing(id).catch(() => undefined)) || store.openProject(id),
+                                            async (id) => {
+                                                const loaded = await loadCanvasProjectForEditing(id).catch(() => undefined);
+                                                if (loaded) return loaded;
+                                                const cached = store.openProject(id);
+                                                return cached && !cached.summaryOnly ? cached : undefined;
+                                            },
                                             {
                                                 folders: store.folders,
                                                 allowMissingMedia: true,

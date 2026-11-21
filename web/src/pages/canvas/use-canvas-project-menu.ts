@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 
 import { appHref } from "@/lib/app-routing";
 import { canvasWorkspaceProjectId } from "@/lib/canvas/canvas-workspace-project";
+import { loadCanvasProjectForEditing } from "@/services/local-workspace-sync";
 import { deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 
@@ -54,30 +55,53 @@ export function useCanvasProjectMenu({ projectId, currentProject, canvasProjects
     }, []);
 
     const renameCanvas = useCallback(async (canvasId: string, canvasTitle: string) => {
-        updateProject(canvasId, { canvasTitle });
-        await flushCanvasStorePersistence();
-        message.success("画布已重命名");
-    }, [message, updateProject]);
+        try {
+            if (canvasId !== projectId && useCanvasStore.getState().openProject(canvasId)?.summaryOnly) {
+                const loaded = await loadCanvasProjectForEditing(canvasId);
+                if (!loaded) {
+                    message.error("画布不存在或已被删除");
+                    return;
+                }
+            }
+            updateProject(canvasId, { canvasTitle });
+            await flushCanvasStorePersistence();
+            message.success("画布已重命名");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "重命名画布失败");
+        }
+    }, [message, projectId, updateProject]);
 
     const duplicateCanvas = useCallback(async (canvasId: string) => {
-        const source = useCanvasStore.getState().openProject(canvasId);
-        if (!source) {
-            message.error("画布不存在或已被删除");
-            return;
+        try {
+            let source = useCanvasStore.getState().openProject(canvasId);
+            if (!source) {
+                message.error("画布不存在或已被删除");
+                return;
+            }
+            if (canvasId !== projectId && source.summaryOnly) {
+                const loaded = await loadCanvasProjectForEditing(canvasId);
+                if (!loaded) {
+                    message.error("画布不存在或已被删除");
+                    return;
+                }
+                source = loaded;
+            }
+            const sourceSnapshot = canvasId === projectId ? { ...source, ...readLiveContent() } : source;
+            const fallbackTitle = canvasProjects.find((canvas) => canvas.id === canvasId)?.title || "画布";
+            const now = new Date().toISOString();
+            importCanvasProject({
+                ...sourceSnapshot,
+                canvasTitle: `${sourceSnapshot.canvasTitle?.trim() || fallbackTitle} 副本`,
+                revision: 0,
+                remoteContentHash: undefined,
+                createdAt: now,
+                updatedAt: now,
+            }, canvasWorkspaceProjectId(sourceSnapshot));
+            await flushCanvasStorePersistence();
+            message.success("画布副本已创建");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "复制画布失败");
         }
-        const sourceSnapshot = canvasId === projectId ? { ...source, ...readLiveContent() } : source;
-        const fallbackTitle = canvasProjects.find((canvas) => canvas.id === canvasId)?.title || "画布";
-        const now = new Date().toISOString();
-        importCanvasProject({
-            ...sourceSnapshot,
-            canvasTitle: `${sourceSnapshot.canvasTitle?.trim() || fallbackTitle} 副本`,
-            revision: 0,
-            remoteContentHash: undefined,
-            createdAt: now,
-            updatedAt: now,
-        }, canvasWorkspaceProjectId(sourceSnapshot));
-        await flushCanvasStorePersistence();
-        message.success("画布副本已创建");
     }, [canvasProjects, importCanvasProject, message, projectId, readLiveContent]);
 
     const requestDeleteCanvas = useCallback((id: string) => setDeletingCanvas({ id }), []);

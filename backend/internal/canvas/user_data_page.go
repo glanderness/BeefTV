@@ -12,15 +12,16 @@ func (s *Service) UserAssetsByIDs(userID string, ids []string) ([]json.RawMessag
 }
 
 type CanvasLibrarySummary struct {
-	ID           string           `json:"id"`
-	ProjectID    string           `json:"projectId,omitempty"`
-	FolderID     string           `json:"folderId,omitempty"`
-	Title        string           `json:"title"`
-	Revision     int64            `json:"revision"`
-	CreatedAt    time.Time        `json:"createdAt"`
-	UpdatedAt    time.Time        `json:"updatedAt"`
-	NodeCount    int              `json:"nodeCount"`
-	PreviewNodes []map[string]any `json:"previewNodes"`
+	ID                 string           `json:"id"`
+	WorkspaceProjectID string           `json:"workspaceProjectId,omitempty"`
+	ProjectID          string           `json:"projectId,omitempty"`
+	FolderID           string           `json:"folderId,omitempty"`
+	Title              string           `json:"title"`
+	Revision           int64            `json:"revision"`
+	CreatedAt          time.Time        `json:"createdAt"`
+	UpdatedAt          time.Time        `json:"updatedAt"`
+	NodeCount          int              `json:"nodeCount"`
+	PreviewNodes       []map[string]any `json:"previewNodes"`
 }
 
 type CanvasLibraryPage struct {
@@ -51,13 +52,25 @@ func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, 
 	result := CanvasLibraryPage{Projects: make([]CanvasLibrarySummary, 0, len(projects)), Page: page, PageSize: pageSize, Total: total, HasMore: int64(page)*int64(pageSize) < total}
 	for _, project := range projects {
 		var document struct {
-			Nodes []map[string]any `json:"nodes"`
+			WorkspaceProjectID string           `json:"workspaceProjectId"`
+			Nodes              []map[string]any `json:"nodes"`
 		}
 		if err := json.Unmarshal([]byte(project.PayloadJSON), &document); err != nil {
 			return CanvasLibraryPage{}, err
 		}
 		preview := canvasLibraryPreviewNodes(document.Nodes)
-		result.Projects = append(result.Projects, CanvasLibrarySummary{ID: project.ID, ProjectID: project.ProjectID, FolderID: project.LibraryFolderID, Title: project.Title, Revision: project.Revision, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, NodeCount: len(document.Nodes), PreviewNodes: preview})
+		result.Projects = append(result.Projects, CanvasLibrarySummary{
+			ID:                 project.ID,
+			WorkspaceProjectID: strings.TrimSpace(document.WorkspaceProjectID),
+			ProjectID:          project.ProjectID,
+			FolderID:           project.LibraryFolderID,
+			Title:              project.Title,
+			Revision:           project.Revision,
+			CreatedAt:          project.CreatedAt,
+			UpdatedAt:          project.UpdatedAt,
+			NodeCount:          len(document.Nodes),
+			PreviewNodes:       preview,
+		})
 	}
 	return result, nil
 }
@@ -79,8 +92,15 @@ func canvasLibraryPreviewNodes(nodes []map[string]any) []map[string]any {
 			}
 		}
 		if videoPreview, ok := original["videoPreview"].(map[string]any); ok {
+			previewMeta := map[string]any{}
 			if value, ok := videoPreview["content"].(string); ok && safeCanvasPreviewURL(value) {
-				metadata["videoPreview"] = map[string]any{"content": value}
+				previewMeta["content"] = value
+			}
+			if key, ok := videoPreview["storageKey"].(string); ok && len(key) <= 512 {
+				previewMeta["storageKey"] = key
+			}
+			if len(previewMeta) > 0 {
+				metadata["videoPreview"] = previewMeta
 			}
 		}
 		if len(metadata) == 0 {

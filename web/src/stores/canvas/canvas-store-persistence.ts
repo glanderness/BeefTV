@@ -37,6 +37,14 @@ export type CanvasProject = {
     viewport: ViewportTransform;
     directorScenes: DirectorScene[];
     timeline?: TimelineProject;
+    /**
+     * Runtime-only library projection hydrated from `GET /canvas-projects`
+     * without fetching the full `GET /canvas-projects/:id` document yet.
+     * `nodes` holds preview media nodes only; full editing/saving must load
+     * the authoritative document first.
+     */
+    summaryOnly?: true;
+    summaryNodeCount?: number;
 };
 
 export type CanvasFolder = {
@@ -171,6 +179,7 @@ export function recordCanvasStorageDocument(
 
 function selectUnsavedDesktopDrafts(scope: string, projects: CanvasProject[]): CanvasProject[] {
     return projects.filter((project) => {
+        if (project.summaryOnly) return false;
         const base = canvasDocumentBase(project.id, scope);
         if (!base) {
             return (project.revision ?? 0) === 0;

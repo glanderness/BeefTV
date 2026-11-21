@@ -220,6 +220,9 @@ async function queueAndSendLiveCanvasDocument(id: string, confirmed: CanvasProje
     const scope = getActiveUserScope();
     const project = openLocalCanvasProject(id);
     if (!project) return undefined;
+    if (project.summaryOnly) {
+        throw new Error("画布尚未完整加载，请先打开画布后再保存");
+    }
     const settled = confirmed
         ? settleInFlightGenerationOverlay({ base: confirmed, local: project, remote: confirmed })
         : project;
@@ -400,6 +403,9 @@ export async function persistCanvasDocument(id: string, patch: CanvasDocumentPer
     const scope = getActiveUserScope();
     const localMode = isLocalWorkspaceMode();
     const previous = useCanvasStore.getState().openProject(id);
+    if (previous?.summaryOnly) {
+        throw new Error("画布尚未完整加载，请先打开画布后再保存");
+    }
     useCanvasStore.getState().updateProject(id, patch);
     const attempted = useCanvasStore.getState().openProject(id);
     try {
@@ -456,6 +462,13 @@ export async function adoptServerConfirmedGenerationPatch(rawProject: CanvasProj
             }
             const live = openLocalCanvasProject(project.id);
             if (!live) return undefined;
+            if (live.summaryOnly) {
+                applyLiveCanvasProject(project.id, project, false);
+                void flushCanvasStorePersistence().catch((error) => {
+                    console.error("画布本地缓存写入失败，生成结果已保存到桌面数据库", { id: project.id, error });
+                });
+                return project;
+            }
             // 同一份绑定回执也可能晚于编辑器的 loading/error 状态：
             // 版本没变仍须结算同任务结果，不解除已有冲突或覆盖用户编辑。
             const settled = settleInFlightGenerationOverlay({ base: journal.confirmedSnapshot, local: live, remote: project });

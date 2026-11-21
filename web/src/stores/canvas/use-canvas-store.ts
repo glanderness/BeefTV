@@ -268,7 +268,13 @@ export const useCanvasStore = create<CanvasStore>()(
                     if (seen.has(project.id)) continue;
                     seen.add(project.id);
                     const applied = appliedById.get(project.id);
-                    projects.push(applied && (project.revision ?? 0) < (applied.revision ?? 0) ? applied : project);
+                    if (applied && !applied.summaryOnly && (project.summaryOnly || (project.revision ?? 0) < (applied.revision ?? 0))) {
+                        projects.push(applied);
+                    } else if (applied && project.summaryOnly && (project.revision ?? 0) < (applied.revision ?? 0)) {
+                        projects.push(applied);
+                    } else {
+                        projects.push(project);
+                    }
                 }
                 for (const project of current.projects) {
                     if (!seen.has(project.id)) {

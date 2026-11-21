@@ -390,7 +390,9 @@ describe("local workspace stale backend protection", () => {
         const raced = project({ id: "canvas-raced-delete", revision: 2 });
         resetProjects([surviving, raced]);
         bases.set(raced.id, { revision: 2, snapshot: raced });
-        setRemotePages([[surviving, raced]]);
+        // Bump raced revision in list summary so lazy hydration performs a detail read
+        // and exercises a concurrent delete (list hit -> detail 404).
+        setRemotePages([[surviving, { ...raced, revision: 3 }]]);
         remoteDetailsById.set(surviving.id, surviving);
         remoteDetailsById.set(raced.id, "404");
 

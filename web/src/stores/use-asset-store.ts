@@ -324,6 +324,9 @@ export const useAssetStore = create<AssetStore>()(
                                 const durableCanvas = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY));
                                 const durableCanvasDrafts = parseCanvasStorageDocument(await storage.getItem(CANVAS_DRAFTS_KEY));
                                 const liveProjects = scope === getActiveUserScope() ? useCanvasStore.getState().projects : [];
+                                if (liveProjects.some((project) => project.summaryOnly)) {
+                                    return null;
+                                }
                                 return [
                                     ...liveProjects,
                                     ...(pendingCanvasStorePersistence(scope)?.projects ?? []),
@@ -331,6 +334,7 @@ export const useAssetStore = create<AssetStore>()(
                                     ...durableCanvasDrafts.state.projects,
                                 ];
                             });
+                            if (!canvasReferences) return;
                             await withGenerationAssetStorageLock(scope, async () => {
                                 await commitPendingAssetStorePersistenceLocked(scope);
                                 await hydrateAssetStoreDrafts(scope);

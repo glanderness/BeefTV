@@ -35,13 +35,13 @@ export function alignLiveAfterConfirmedRemote(input: {
         invokeProjectionListener(input.onApplied, input.remote, undefined);
         return input.remote;
     }
-    if (sameCanvasDocument(live, input.remote) || (input.base && sameCanvasDocument(live, input.base))) {
+    if (live.summaryOnly || sameCanvasDocument(live, input.remote) || (input.base && sameCanvasDocument(live, input.base))) {
         const applied: CanvasProject = {
             ...input.remote,
-            viewport: live.viewport || input.remote.viewport,
-            appearance: live.appearance || input.remote.appearance,
-            backgroundMode: live.backgroundMode || input.remote.backgroundMode,
-            showImageInfo: live.showImageInfo ?? input.remote.showImageInfo,
+            viewport: live.summaryOnly ? input.remote.viewport : (live.viewport || input.remote.viewport),
+            appearance: live.summaryOnly ? input.remote.appearance : (live.appearance || input.remote.appearance),
+            backgroundMode: live.summaryOnly ? input.remote.backgroundMode : (live.backgroundMode || input.remote.backgroundMode),
+            showImageInfo: live.summaryOnly ? input.remote.showImageInfo : (live.showImageInfo ?? input.remote.showImageInfo),
         };
         applyLiveCanvasProject(input.id, applied, true);
         invokeProjectionListener(input.onApplied, applied, live);
@@ -91,7 +91,7 @@ export async function replayPendingCanvasProjection(id: string, scope: string, o
  * 桌面本地：已提交真相是服务端 revision；仅当本地 revision 高于已记录基线（或无基线时高于后端且内容不同）才保留本地草稿。
  */
 export function selectPreferredCanvasProject(local: CanvasProject | null | undefined, backend: CanvasProject, scope = getActiveUserScope()) {
-    if (!local) return backend;
+    if (!local || local.summaryOnly) return backend;
     const recorded = canvasDocumentBase(local.id, scope);
     if (recorded) {
         if ((local.revision ?? 0) <= recorded.revision || sameCanvasDocument(local, recorded.snapshot) || sameCanvasDocument(local, backend)) return backend;
