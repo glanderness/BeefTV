@@ -509,17 +509,10 @@ const materializeGenerationOutput: MaterializeGenerationTaskOutput = createIdemp
     },
 });
 
-function remoteGenerationTaskMaterializer() {
-    return createGenerationTaskMaterializer({
-        // 每个页面实例持有自己的租约；共享浏览器 storage + Web Lock 提供跨标签原子权威。
-        effects: createProviderNeutralGenerationTaskEffectStore(),
-        materializeOutput: materializeGenerationOutput,
-    });
-}
-
-function generationTaskMaterializer(task: GenerationTask) {
-    return remoteGenerationTaskMaterializer();
-}
+const defaultGenerationTaskMaterializer = createGenerationTaskMaterializer({
+    effects: createProviderNeutralGenerationTaskEffectStore(),
+    materializeOutput: materializeGenerationOutput,
+});
 
 export async function materializeGenerationTaskAssets(task: GenerationTask, signal?: AbortSignal): Promise<GenerationTask> {
     if (hasBackendDeliveredGenerationOutputs(task)) {
@@ -527,52 +520,18 @@ export async function materializeGenerationTaskAssets(task: GenerationTask, sign
         throwIfAborted(signal);
         return task;
     }
-    const materialized = await generationTaskMaterializer(task).materialize(projectGenerationTaskResult(task), signal);
+    const materialized = await defaultGenerationTaskMaterializer.materialize(projectGenerationTaskResult(task), signal);
     await registerMaterializedTaskAssets(materialized, useAssetStore.getState().assets);
     throwIfAborted(signal);
     return materialized;
 }
 
-export function attachGenerationTaskNode(task: GenerationTask, nodeId: string, outputIndex: number, consumer: Parameters<ReturnType<typeof generationTaskMaterializer>["attachNode"]>[3], signal?: AbortSignal) {
-    return generationTaskMaterializer(task).attachNode(task, nodeId, outputIndex, consumer, signal);
+export function attachGenerationTaskMessage(task: GenerationTask, messageId: string, outputIndex: number, consumer: Parameters<typeof defaultGenerationTaskMaterializer.attachMessage>[3], signal?: AbortSignal) {
+    return defaultGenerationTaskMaterializer.attachMessage(task, messageId, outputIndex, consumer, signal);
 }
 
-export function attachGenerationTaskMessage(task: GenerationTask, messageId: string, outputIndex: number, consumer: Parameters<ReturnType<typeof generationTaskMaterializer>["attachMessage"]>[3], signal?: AbortSignal) {
-    return generationTaskMaterializer(task).attachMessage(task, messageId, outputIndex, consumer, signal);
-}
-
-export function resumeGenerationTaskAgent(task: GenerationTask, continuationId: string, consumer: Parameters<ReturnType<typeof generationTaskMaterializer>["resumeAgent"]>[2], signal?: AbortSignal) {
-    return generationTaskMaterializer(task).resumeAgent(task, continuationId, consumer, signal);
-}
-
-export async function consumeGenerationTaskNode(
-    task: GenerationTask,
-    nodeId: string,
-    outputIndex: number,
-    consumer: (input: { task: GenerationTask; output: GenerationTaskOutput; effectKey: string; signal?: AbortSignal }) => Promise<void> | void,
-    dependencies: {
-        signal?: AbortSignal;
-        managed?: true;
-        materialize?: typeof materializeGenerationTaskAssets;
-        attachNode?: typeof attachGenerationTaskNode;
-    } = {},
-): Promise<GenerationTask> {
-    if (!dependencies.managed) {
-        return runGenerationConsumer(dependencies.signal, (signal) => consumeGenerationTaskNode(task, nodeId, outputIndex, consumer, { ...dependencies, signal, managed: true }));
-    }
-    const materialized = await (dependencies.materialize ?? materializeGenerationTaskAssets)(task, dependencies.signal);
-    const output = materialized.outputs?.find((candidate) => candidate.outputIndex === outputIndex);
-    if (!output?.materializedAssetId) throw new Error("生成任务输出尚未物化");
-    await (dependencies.attachNode ?? attachGenerationTaskNode)(
-        materialized,
-        nodeId,
-        outputIndex,
-        async ({ effectKey, signal }) => {
-            await consumer({ task: materialized, output, effectKey, signal });
-        },
-        dependencies.signal,
-    );
-    return materialized;
+export function resumeGenerationTaskAgent(task: GenerationTask, continuationId: string, consumer: Parameters<typeof defaultGenerationTaskMaterializer.resumeAgent>[2], signal?: AbortSignal) {
+    return defaultGenerationTaskMaterializer.resumeAgent(task, continuationId, consumer, signal);
 }
 
 export async function consumeGenerationTaskAgent(
