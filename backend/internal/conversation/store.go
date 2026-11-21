@@ -15,7 +15,6 @@ type Store interface {
 	CurrentTx() *gorm.DB
 	BoundTo(tx *gorm.DB) Store
 	Get(tx *gorm.DB, userID, conversationID string) (*model.CreationConversation, error)
-	GetByImportOperation(tx *gorm.DB, userID, operationID string) (*model.CreationConversation, error)
 	List(tx *gorm.DB, userID string) ([]model.CreationConversation, error)
 	ListDeletedIDs(tx *gorm.DB, userID string) ([]string, error)
 	Insert(tx *gorm.DB, row *model.CreationConversation) (bool, error)
@@ -63,10 +62,6 @@ func (s gormStore) BoundTo(tx *gorm.DB) Store {
 
 func (s gormStore) Get(tx *gorm.DB, userID, conversationID string) (*model.CreationConversation, error) {
 	return s.repo.CreationConversation(firstTx(tx, s.tx), userID, conversationID)
-}
-
-func (s gormStore) GetByImportOperation(tx *gorm.DB, userID, operationID string) (*model.CreationConversation, error) {
-	return s.repo.CreationConversationByImportOperation(firstTx(tx, s.tx), userID, operationID)
 }
 
 func (s gormStore) List(tx *gorm.DB, userID string) ([]model.CreationConversation, error) {

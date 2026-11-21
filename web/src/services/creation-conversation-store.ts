@@ -25,6 +25,7 @@ type CommittedState = {
 type PendingWrite = {
     generation: number;
     document: StoredCreationConversation;
+    adoptedRevision?: number;
 };
 
 const committed = new Map<string, CommittedState>();
@@ -241,21 +242,54 @@ function mergeValue(base: unknown, ours: unknown, theirs: unknown): unknown {
     return ours;
 }
 
+function mergeMessagesWithoutBase(local: unknown[], canonical: unknown[]) {
+    const canonicalIds = new Set<string>();
+    const merged: unknown[] = [];
+    for (const item of canonical) {
+        if (isPlainObject(item) && typeof item.id === "string") canonicalIds.add(item.id);
+        merged.push(cloneConversation(item));
+    }
+    for (const item of local) {
+        if (isPlainObject(item) && typeof item.id === "string") {
+            if (canonicalIds.has(item.id)) continue;
+            canonicalIds.add(item.id);
+        }
+        merged.push(cloneConversation(item));
+    }
+    return merged;
+}
+
 function projectLocalOnCanonical(
     base: StoredCreationConversation | undefined,
     local: StoredCreationConversation,
     canonical: StoredCreationConversation,
 ): StoredCreationConversation {
-    if (!base) return cloneConversation(local);
+    if (!base) {
+        const merged = cloneConversation(canonical) as Record<string, unknown>;
+        for (const [key, value] of Object.entries(local)) {
+            if (key === "id" || key === "messages") continue;
+            if (!(key in merged)) merged[key] = cloneConversation(value);
+        }
+        const canonicalTitle = typeof merged.title === "string" ? merged.title.trim() : "";
+        const localTitle = typeof local.title === "string" ? local.title.trim() : "";
+        if ((!canonicalTitle || canonicalTitle === "新创作") && localTitle && localTitle !== "新创作") {
+            merged.title = localTitle;
+        }
+        const messages = mergeMessagesWithoutBase(
+            Array.isArray(local.messages) ? local.messages : [],
+            Array.isArray(canonical.messages) ? canonical.messages : [],
+        );
+        return { ...merged, id: canonical.id || local.id, messages } as StoredCreationConversation;
+    }
     try {
         if (fingerprintOf(local) === fingerprintOf(base)) return cloneConversation(canonical);
     } catch {
         // Keep merging when an unvalidated local document differs from base.
     }
     const merged = mergeValue(base, local, canonical);
-    if (!isPlainObject(merged)) return cloneConversation(local);
-    const messages = Array.isArray(merged.messages) ? merged.messages : local.messages;
-    return { ...merged, id: local.id || canonical.id, messages } as StoredCreationConversation;
+    if (!isPlainObject(merged)) return cloneConversation(canonical);
+    const messages = Array.isArray(merged.messages) ? merged.messages : canonical.messages;
+    return { ...merged, id: canonical.id || local.id, messages } as StoredCreationConversation;
 }
 
 function documentFromRecord(record: { id: string; document?: CreationConversationDocument }): StoredCreationConversation {
@@ -325,8 +359,23 @@ export async function loadCreationConversations<T extends StoredCreationConversa
             continue;
         }
         rememberCommitted(scope, record.id, record.revision, document);
-        const pending = pendingWrites.get(key)?.document;
-        loaded.push(cloneConversation(pending ?? document) as T);
+        const pending = pendingWrites.get(key);
+        if (!pending) {
+            loaded.push(cloneConversation(document) as T);
+            continue;
+        }
+        const live = projectLocalOnCanonical(existing?.document, pending.document, document);
+        if (fingerprintOf(live) === fingerprintOf(document)) {
+            pendingWrites.delete(key);
+            loaded.push(cloneConversation(document) as T);
+        } else {
+            pendingWrites.set(key, {
+                generation: nextGeneration(key),
+                document: cloneConversation(live),
+                adoptedRevision: record.revision,
+            });
+            loaded.push(cloneConversation(live) as T);
+        }
     }
     return loaded.length ? loaded : null;
 }
@@ -355,21 +404,25 @@ async function flushConversation(scope: string, id: string) {
         try {
             saved = await creationConversationsApi.put(id, { expectedRevision, document: payload });
         } catch (error) {
+            // Retain pendingWrites as the latest local intent on transient errors so a
+            // subsequent adopt or retry preserves unsaved user edits.
             if (!isConflictError(error)) {
-                if (pendingWrites.get(key)?.generation === snapshot.generation) pendingWrites.delete(key);
                 throw error;
             }
-            // If adoptServerConfirmedConversationDocument already advanced committed
-            // and rebased pendingWrites while this PUT was in flight, retry with the
-            // merged document and new revision without an extra GET.
             const latestCommitted = committed.get(key);
             const latestPending = pendingWrites.get(key);
+            if (!latestPending) {
+                if (latestCommitted && latestCommitted.revision > expectedRevision) return;
+                throw error;
+            }
+            // If adopt/load already advanced committed and projected pendingWrites onto
+            // that exact revision while this PUT was in flight, retry without an extra GET.
             if (
                 rebaseAttempts < MAX_CONFLICT_REBASE_ATTEMPTS
                 && latestCommitted
                 && latestCommitted.revision > expectedRevision
-                && latestPending
                 && latestPending.generation > snapshot.generation
+                && latestPending.adoptedRevision === latestCommitted.revision
             ) {
                 rebaseAttempts += 1;
                 continue;
@@ -378,8 +431,10 @@ async function flushConversation(scope: string, id: string) {
             try {
                 remote = await creationConversationsApi.get(id);
             } catch (getError) {
-                if (pendingWrites.get(key)?.generation === snapshot.generation) pendingWrites.delete(key);
-                if (isNotFoundError(getError)) throw error;
+                if (isNotFoundError(getError)) {
+                    if (pendingWrites.get(key)?.generation === snapshot.generation) pendingWrites.delete(key);
+                    throw error;
+                }
                 throw getError;
             }
             if (remote.deleted) {
@@ -394,10 +449,13 @@ async function flushConversation(scope: string, id: string) {
                 const liveLocal = pendingWrites.get(key)?.document ?? snapshot.document;
                 const merged = projectLocalOnCanonical(state?.document, liveLocal, remoteDoc);
                 commitIfCurrent(scope, id, remote.revision, remoteDoc);
-                pendingWrites.set(key, { generation: nextGeneration(key), document: merged });
+                pendingWrites.set(key, {
+                    generation: nextGeneration(key),
+                    document: merged,
+                    adoptedRevision: remote.revision,
+                });
                 continue;
             } else {
-                if (pendingWrites.get(key)?.generation === snapshot.generation) pendingWrites.delete(key);
                 throw error;
             }
         }
@@ -431,11 +489,14 @@ export async function saveCreationConversations<T extends StoredCreationConversa
     scope = getActiveUserScope(),
 ) {
     const jobs = conversations.map((conversation) => {
-        if (!conversation?.id) throw new Error("缺少要保存的创作对话 ID");
+        if (!conversation?.id) return Promise.reject(new Error("缺少要保存的创作对话 ID"));
         const cloned = cloneConversation(conversation);
-        // Validate synchronously before mutating pendingWrites so invalid
-        // blob-only attachments fail cleanly without dirtying the queue.
-        const payloadFingerprint = fingerprintOf(cloned);
+        let payloadFingerprint: string;
+        try {
+            payloadFingerprint = fingerprintOf(cloned);
+        } catch (error) {
+            return Promise.reject(error);
+        }
         const key = scopeKey(scope, cloned.id);
         const current = committed.get(key);
         if (!pendingWrites.has(key) && current && current.fingerprint === payloadFingerprint) {
@@ -446,7 +507,9 @@ export async function saveCreationConversations<T extends StoredCreationConversa
         deletedAt.delete(key);
         return enqueue(scope, cloned.id, () => flushConversation(scope, cloned.id));
     });
-    await Promise.all(jobs);
+    const results = await Promise.allSettled(jobs);
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed) throw failed.reason;
 }
 
 export async function adoptServerConfirmedConversationDocument(
@@ -480,7 +543,11 @@ export async function adoptServerConfirmedConversationDocument(
         if (fingerprintOf(live) === fingerprintOf(canonical)) {
             pendingWrites.delete(key);
         } else {
-            pendingWrites.set(key, { generation: nextGeneration(key), document: cloneConversation(live) });
+            pendingWrites.set(key, {
+                generation: nextGeneration(key),
+                document: cloneConversation(live),
+                adoptedRevision: revision,
+            });
         }
     }
 

@@ -48,10 +48,10 @@ func TestCreationConversationRoutesRegisterOnDesktopAPI(t *testing.T) {
 	router := gin.New()
 	RegisterDesktopCanvasAPI(router.Group("/api"), &app.Service{})
 	wanted := map[string]bool{
-		"GET /api/creation-conversations":         false,
-		"POST /api/creation-conversations/import": false,
-		"PUT /api/creation-conversations/:id":     false,
-		"DELETE /api/creation-conversations/:id":  false,
+		"GET /api/creation-conversations":        false,
+		"GET /api/creation-conversations/:id":    false,
+		"PUT /api/creation-conversations/:id":    false,
+		"DELETE /api/creation-conversations/:id": false,
 	}
 	for _, route := range router.Routes() {
 		key := route.Method + " " + route.Path
@@ -108,7 +108,7 @@ func TestCreationConversationPutGetAndConflict(t *testing.T) {
 	}
 }
 
-func TestCreationConversationImportSkipsTombstone(t *testing.T) {
+func TestCreationConversationDeleteTombstoneRejectsPut(t *testing.T) {
 	router, _ := conversationRouter(t)
 	putBody := []byte(`{"expectedRevision":0,"document":{"id":"conversation-dead","title":"旧","messages":[]}}`)
 	put := httptest.NewRecorder()
@@ -123,22 +123,13 @@ func TestCreationConversationImportSkipsTombstone(t *testing.T) {
 	if del.Code != http.StatusOK {
 		t.Fatalf("delete status=%d body=%s", del.Code, del.Body.String())
 	}
-	importBody := []byte(`{"operationId":"creation-conversations-v1:conversation-dead","document":{"id":"conversation-dead","title":"复活","messages":[]}}`)
-	imp := httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/creation-conversations/import", bytes.NewReader(importBody))
+	resurrectBody := []byte(`{"expectedRevision":0,"document":{"id":"conversation-dead","title":"复活","messages":[]}}`)
+	resurrect := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/creation-conversations/conversation-dead", bytes.NewReader(resurrectBody))
 	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(imp, req)
-	if imp.Code != http.StatusOK {
-		t.Fatalf("import status=%d body=%s", imp.Code, imp.Body.String())
-	}
-	var envelope struct {
-		Data struct {
-			Imported bool
-			Deleted  bool
-		}
-	}
-	if err := json.Unmarshal(imp.Body.Bytes(), &envelope); err != nil || envelope.Data.Imported || !envelope.Data.Deleted {
-		t.Fatalf("import envelope=%s err=%v", imp.Body.String(), err)
+	router.ServeHTTP(resurrect, req)
+	if resurrect.Code != http.StatusConflict {
+		t.Fatalf("resurrect status=%d body=%s", resurrect.Code, resurrect.Body.String())
 	}
 }
 

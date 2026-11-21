@@ -66,13 +66,6 @@ type ListResult struct {
 	DeletedIDs    []string `json:"deletedIds"`
 }
 
-type ImportResult struct {
-	Imported     bool   `json:"imported"`
-	ID           string `json:"id"`
-	Deleted      bool   `json:"deleted,omitempty"`
-	Conversation Record `json:"conversation"`
-}
-
 type AttachInput struct {
 	ConversationID string
 	MessageID      string
@@ -321,108 +314,6 @@ func (s *Service) Delete(userID, conversationID string, expectedRevision int64) 
 	return record, err
 }
 
-func (s *Service) Import(userID, operationID, clientHash string, raw json.RawMessage) (ImportResult, error) {
-	userID = strings.TrimSpace(userID)
-	operationID = strings.TrimSpace(operationID)
-	clientHash = strings.TrimSpace(strings.ToLower(clientHash))
-	if userID == "" {
-		return ImportResult{}, errIdentity()
-	}
-	if operationID == "" {
-		return ImportResult{}, errInvalid("缺少导入操作标识")
-	}
-	if !importOperationPattern(operationID) {
-		return ImportResult{}, errInvalid("导入操作标识无效")
-	}
-	doc, err := NormalizeDocument("", raw)
-	if err != nil {
-		return ImportResult{}, err
-	}
-	hash := DocumentHash(doc.raw)
-	if clientHash != "" && clientHash != hash {
-		return ImportResult{}, errConflict()
-	}
-	if !s.storeReady() {
-		return ImportResult{}, errUnavailable()
-	}
-	var result ImportResult
-	err = s.inTx(func(tx *gorm.DB) error {
-		byOp, opErr := s.store.GetByImportOperation(tx, userID, operationID)
-		if opErr != nil && !errors.Is(opErr, gorm.ErrRecordNotFound) {
-			return opErr
-		}
-		if opErr == nil {
-			if byOp.ImportHash != hash {
-				return errConflict()
-			}
-			decoded, recErr := recordFromRow(byOp)
-			if recErr != nil {
-				return recErr
-			}
-			result = ImportResult{Imported: false, ID: decoded.ID, Deleted: byOp.Deleted, Conversation: decoded}
-			if byOp.Deleted {
-				result.Conversation.Document = nil
-			}
-			return nil
-		}
-		existing, getErr := s.store.Get(tx, userID, doc.id)
-		if getErr != nil && !errors.Is(getErr, gorm.ErrRecordNotFound) {
-			return getErr
-		}
-		if getErr == nil {
-			decoded, recErr := recordFromRow(existing)
-			if recErr != nil {
-				return recErr
-			}
-			result = ImportResult{Imported: false, ID: decoded.ID, Deleted: existing.Deleted, Conversation: decoded}
-			if existing.Deleted {
-				result.Conversation.Document = nil
-			}
-			return nil
-		}
-		now := s.now()
-		row := &model.CreationConversation{
-			UserID: userID, ConversationID: doc.id, Revision: 1,
-			Document: string(doc.raw), ImportOperationID: operationID, ImportHash: hash,
-			CreatedAt: now, UpdatedAt: now,
-		}
-		inserted, insErr := s.store.Insert(tx, row)
-		if insErr != nil {
-			if !isUniqueConflict(insErr) {
-				return insErr
-			}
-			return replayImportByOperation(s, tx, userID, operationID, hash, &result)
-		}
-		if !inserted {
-			if replayErr := replayImportByOperation(s, tx, userID, operationID, hash, &result); replayErr == nil {
-				return nil
-			} else if !isNotFound(replayErr) {
-				return replayErr
-			}
-			current, curErr := s.store.Get(tx, userID, doc.id)
-			if curErr != nil {
-				return errConflict()
-			}
-			decoded, recErr := recordFromRow(current)
-			if recErr != nil {
-				return recErr
-			}
-			result = ImportResult{Imported: false, ID: decoded.ID, Deleted: current.Deleted, Conversation: decoded}
-			if current.Deleted {
-				result.Conversation.Document = nil
-			}
-			return nil
-		}
-		decoded, recErr := recordFromRow(row)
-		if recErr != nil {
-			return recErr
-		}
-		result = ImportResult{Imported: true, ID: decoded.ID, Conversation: decoded}
-		return nil
-	})
-	return result, err
-}
-
 // AttachMessageResult updates only result fields of one existing message.
 // Task binding itself is not implemented here; a later binder must call this
 // inside the same caller transaction via WithTx/WithRepository after it has
@@ -596,57 +487,6 @@ func recordFromRow(row *model.CreationConversation) (Record, error) {
 		record.Document = json.RawMessage(row.Document)
 	}
 	return record, nil
-}
-
-func importOperationPattern(value string) bool {
-	if utf8Len(value) == 0 || utf8Len(value) > 160 {
-		return false
-	}
-	for _, r := range value {
-		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == ':' || r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-func utf8Len(value string) int {
-	return len([]rune(value))
-}
-
-func replayImportByOperation(s *Service, tx *gorm.DB, userID, operationID, hash string, result *ImportResult) error {
-	byOp, opErr := s.store.GetByImportOperation(tx, userID, operationID)
-	if errors.Is(opErr, gorm.ErrRecordNotFound) {
-		return errNotFound()
-	}
-	if opErr != nil {
-		return opErr
-	}
-	if byOp.ImportHash != hash {
-		return errConflict()
-	}
-	decoded, recErr := recordFromRow(byOp)
-	if recErr != nil {
-		return recErr
-	}
-	*result = ImportResult{Imported: false, ID: decoded.ID, Deleted: byOp.Deleted, Conversation: decoded}
-	if byOp.Deleted {
-		result.Conversation.Document = nil
-	}
-	return nil
-}
-
-func isUniqueConflict(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "unique constraint failed")
-}
-
-func isNotFound(err error) bool {
-	var convErr *Error
-	return errors.As(err, &convErr) && convErr.Reason == ReasonNotFound
 }
 
 func fmtString(value any) string {

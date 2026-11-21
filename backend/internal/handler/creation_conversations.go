@@ -38,37 +38,6 @@ func registerCreationConversationRoutes(r *gin.RouterGroup, svc workspaceOwners,
 		}
 		ok(c, result)
 	})
-	r.POST("/creation-conversations/import", func(c *gin.Context) {
-		if !conversationReady(conversations) {
-			failConversation(c, conversation.ErrUnavailable())
-			return
-		}
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		raw, readErr := readCreationConversationBody(c)
-		if readErr != nil {
-			fail(c, http.StatusBadRequest, readErr)
-			return
-		}
-		var req struct {
-			OperationID string          `json:"operationId"`
-			Hash        string          `json:"hash"`
-			Document    json.RawMessage `json:"document"`
-		}
-		if err := json.Unmarshal(raw, &req); err != nil {
-			fail(c, http.StatusBadRequest, errInvalidJSON())
-			return
-		}
-		result, importErr := conversations.Import(user.ID, req.OperationID, req.Hash, req.Document)
-		if importErr != nil {
-			failConversation(c, importErr)
-			return
-		}
-		ok(c, result)
-	})
 	r.GET("/creation-conversations/:id", func(c *gin.Context) {
 		if !conversationReady(conversations) {
 			failConversation(c, conversation.ErrUnavailable())

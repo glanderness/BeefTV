@@ -60,12 +60,15 @@ mock.module("@/services/api/creation-conversations", () => ({
     creationConversationsApi: {
         list: async () => {
             server.listEntered += 1;
-            if (server.listHold) await server.listHold;
-            failIfNeeded();
-            return {
-                conversations: Array.from(server.conversations.values()).filter((item) => !item.deleted),
+            const snapshot = {
+                conversations: Array.from(server.conversations.values())
+                    .filter((item) => !item.deleted)
+                    .map((item) => structuredClone(item)),
                 deletedIds: Array.from(server.deleted),
             };
+            if (server.listHold) await server.listHold;
+            failIfNeeded();
+            return snapshot;
         },
         get: async (id: string) => {
             failIfNeeded();
@@ -408,4 +411,149 @@ test("adopt keeps local title edit without resurrecting a remotely deleted messa
     server.releasePut?.();
     await saving;
     expect(server.conversations.get("conv-1")?.document).toMatchObject({ title: "本地标题", messages: [] });
+});
+
+test("failed PUT retains pending intent so subsequent adopt preserves user rename and appended message", async () => {
+    server.conversations.set("conv-fail", {
+        id: "conv-fail",
+        revision: 2,
+        updatedAt: "2026-10-02T00:00:00.000Z",
+        document: {
+            id: "conv-fail",
+            title: "原标题",
+            messages: [
+                { id: "u1", role: "user", content: "画一只猫" },
+                { id: "a1", role: "assistant", status: "pending", content: "", taskIds: ["task-1"] },
+            ],
+        },
+    });
+    await loadCreationConversations();
+
+    const edited = {
+        id: "conv-fail",
+        title: "失败前改名",
+        messages: [
+            { id: "u1", role: "user" as const, content: "画一只猫" },
+            { id: "a1", role: "assistant" as const, status: "pending", content: "", taskIds: ["task-1"] },
+            { id: "u2", role: "user" as const, content: "顺便加个背景" },
+        ],
+    };
+    server.failNext = { status: 500, message: "暂不可用" };
+    await expect(saveCreationConversations([edited])).rejects.toThrow("暂不可用");
+
+    // Backend task attach completes while the failed local edit is still pending.
+    const serverAttached = {
+        id: "conv-fail",
+        title: "原标题",
+        messages: [
+            { id: "u1", role: "user" as const, content: "画一只猫" },
+            { id: "a1", role: "assistant" as const, status: "done", content: "已生成", taskIds: ["task-1"], resultUrls: ["/api/resources/r1/file"] },
+        ],
+    };
+    server.conversations.set("conv-fail", {
+        id: "conv-fail",
+        revision: 3,
+        updatedAt: "2026-10-02T00:01:00.000Z",
+        document: serverAttached,
+    });
+
+    const adopted = await adoptServerConfirmedConversationDocument("conv-fail", serverAttached, 3);
+    expect(adopted.title).toBe("失败前改名");
+    expect((adopted.messages as Array<{ id: string }>).map((item) => item.id)).toEqual(["u1", "a1", "u2"]);
+    expect((adopted.messages as Array<{ id: string; content?: string }>).find((item) => item.id === "a1")?.content).toBe("已生成");
+
+    // Follow-up save persists both the merged server result and the local edits onto revision 3.
+    await saveCreationConversations([adopted]);
+    const final = server.conversations.get("conv-fail");
+    expect(final?.revision).toBe(4);
+    expect(final?.document?.title).toBe("失败前改名");
+    expect(final?.document?.messages.map((item) => item.id)).toEqual(["u1", "a1", "u2"]);
+    expect(final?.document?.messages.find((item) => item.id === "a1")?.content).toBe("已生成");
+});
+
+test("cold-start adopt and 409 rebase without committed base keep server-confirmed message results and append local-only messages", async () => {
+    // Case 1: cold-start adopt while initial PUT is still in flight (no committed base yet).
+    holdPuts();
+    const initial = saveCreationConversations([{
+        id: "cold-1",
+        title: "我的对话",
+        messages: [
+            { id: "u1", role: "user", content: "第一句" },
+            { id: "a1", role: "assistant", status: "pending", content: "", taskIds: ["task-1"] },
+            { id: "u2", role: "user", content: "本地追加" },
+        ],
+    }]);
+    while (server.putEntered === 0) await Promise.resolve();
+
+    const serverConfirmed = {
+        id: "cold-1",
+        title: "新创作",
+        messages: [
+            { id: "u1", role: "user" as const, content: "第一句" },
+            { id: "a1", role: "assistant" as const, status: "done", content: "云端回执", taskIds: ["task-1"], resultUrls: ["/api/resources/r9/file"] },
+            { id: "s1", role: "assistant" as const, status: "done", content: "服务端补齐" },
+        ],
+    };
+    server.conversations.set("cold-1", {
+        id: "cold-1",
+        revision: 2,
+        updatedAt: "2026-10-02T00:01:00.000Z",
+        document: serverConfirmed,
+    });
+
+    const adopted = await adoptServerConfirmedConversationDocument("cold-1", serverConfirmed, 2);
+    expect(adopted.title).toBe("我的对话");
+    expect((adopted.messages as Array<{ id: string }>).map((item) => item.id)).toEqual(["u1", "a1", "s1", "u2"]);
+    expect((adopted.messages as Array<{ id: string; content?: string }>).find((item) => item.id === "a1")?.content).toBe("云端回执");
+
+    server.releasePut?.();
+    await initial;
+    const savedCold1 = server.conversations.get("cold-1");
+    expect(savedCold1?.revision).toBe(3);
+    expect(savedCold1?.document?.messages.map((item) => item.id)).toEqual(["u1", "a1", "s1", "u2"]);
+    expect(savedCold1?.document?.messages.find((item) => item.id === "a1")?.content).toBe("云端回执");
+
+    // Case 2: cold-start 409 GET rebase with no committed base does not clobber canonical result.
+    server.conversations.set("cold-2", {
+        id: "cold-2",
+        revision: 2,
+        updatedAt: "2026-10-02T00:01:00.000Z",
+        document: {
+            id: "cold-2",
+            title: "服务端标题",
+            messages: [
+                { id: "u1", role: "user", content: "起稿" },
+                { id: "a1", role: "assistant", status: "done", content: "已完成", resultUrls: ["/api/resources/r2/file"] },
+            ],
+        },
+    });
+    await saveCreationConversations([{
+        id: "cold-2",
+        title: "旧本地标题",
+        messages: [
+            { id: "u1", role: "user", content: "起稿" },
+            { id: "a1", role: "assistant", status: "pending", content: "" },
+            { id: "u2", role: "user", content: "新追问" },
+        ],
+    }]);
+    const savedCold2 = server.conversations.get("cold-2");
+    expect(savedCold2?.revision).toBe(3);
+    expect(savedCold2?.document?.title).toBe("服务端标题");
+    expect(savedCold2?.document?.messages.map((item) => item.id)).toEqual(["u1", "a1", "u2"]);
+    expect(savedCold2?.document?.messages.find((item) => item.id === "a1")?.content).toBe("已完成");
+});
+
+test("invalid attachment in one conversation does not block saving valid sibling conversations", async () => {
+    const validBefore = { id: "valid-before", title: "前一条", messages: [{ id: "m1", role: "user" as const, content: "ok" }] };
+    const invalidMid = {
+        id: "invalid-mid",
+        title: "坏附件",
+        messages: [{ id: "m2", role: "user" as const, content: "bad", attachments: [{ id: "a1", dataUrl: "data:image/png;base64,aaaa" }] }],
+    };
+    const validAfter = { id: "valid-after", title: "后一条", messages: [{ id: "m3", role: "user" as const, content: "still ok" }] };
+
+    await expect(saveCreationConversations([validBefore, invalidMid, validAfter])).rejects.toThrow("附件没有可恢复的存储引用");
+    expect(server.conversations.get("valid-before")?.document?.title).toBe("前一条");
+    expect(server.conversations.get("valid-after")?.document?.title).toBe("后一条");
+    expect(server.conversations.has("invalid-mid")).toBe(false);
 });

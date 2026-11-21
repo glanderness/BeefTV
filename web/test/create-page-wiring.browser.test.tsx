@@ -294,12 +294,6 @@ beforeAll(async () => {
             if (path === "/api/creation-conversations" && request.method === "GET") {
                 return Response.json({ code: 0, data: { conversations: Array.from(records.values()), deletedIds: [] }, msg: "ok" });
             }
-            if (path === "/api/creation-conversations/import" && request.method === "POST") {
-                const body = (await request.json()) as { document: { id: string } };
-                const rec = { id: body.document.id, revision: 1, updatedAt: new Date().toISOString(), document: body.document };
-                records.set(rec.id, rec);
-                return Response.json({ code: 0, data: { imported: true, id: rec.id, conversation: rec }, msg: "ok" });
-            }
             if (path.startsWith("/api/creation-conversations/")) {
                 const id = decodeURIComponent(path.slice("/api/creation-conversations/".length));
                 if (request.method === "PUT") {
