@@ -192,14 +192,6 @@ func (c *MediaClient) validateUpload(ctx context.Context, s UploadSession, size 
 	return nil
 }
 
-func (c *MediaClient) ValidateUploadSession(ctx context.Context, session UploadSession, size int64) error {
-	if size == 0 && session.Multipart != nil {
-		for _, part := range session.Multipart.Parts {
-			size += part.Bytes
-		}
-	}
-	return c.validateUpload(ctx, session, size)
-}
 func (c *MediaClient) ValidateUploadURL(ctx context.Context, raw string) error {
 	return c.validURLContext(ctx, raw)
 }

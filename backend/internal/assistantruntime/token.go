@@ -6,10 +6,7 @@ import (
 	"strings"
 )
 
-const (
-	hostTokenFile  = "agent_host_token"
-	ownerTokenFile = "agent_owner_token"
-)
+const hostTokenFile = "agent_host_token"
 
 // ReadHostToken 取值顺序与 handler / agentops 一致：显式环境变量优先，其次数据目录文件。
 func ReadHostToken(dataDir string) string {

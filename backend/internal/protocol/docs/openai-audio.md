@@ -38,9 +38,9 @@ curl "{channel_base_url}/v1/audio/speech" \
 
 第二个示例包含当前 adapter 尚未发送的 `voice` 和 `response_format`，用于说明必须补齐的协议字段。
 
-## 响应与当前实现差异
+## 响应合同
 
-OpenAI 官方 Speech API 通常直接返回音频二进制流；当前 `parseAudioResponse` 却按 JSON 中的 `url/audio_url/data` 解析。因此本插件当前更适合“返回音频 URL JSON”的兼容渠道，不能宣称已经正确处理 OpenAI 官方二进制响应。直连官方服务前必须增加二进制响应合同、MIME/文件名处理和资源保存测试。
+OpenAI 官方 Speech API 通常直接返回音频二进制流，兼容渠道也可能返回包含音频链接的 JSON。该协议由声明式插件包（`plugin-packages/openai-audio`）通过 `binaryPayload` 与 JSON 字段映射合同统一承接。
 
 ## 官方资料
 

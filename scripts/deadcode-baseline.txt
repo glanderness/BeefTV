@@ -339,14 +339,6 @@ internal/provider.Registry.ResolveManifest
 internal/providerpreset.BeefTV
 internal/resource.IntValue
 internal/resource.RetryOwnedItem
-internal/resource.configLifecycle.AfterResourceReady
-internal/resource.configLifecycle.AppearanceReferencedIDs
-internal/resource.configLifecycle.DeleteUserAsset
-internal/resource.configLifecycle.RecordActivity
-internal/resource.configLifecycle.RecycleRetentionDays
-internal/resource.configLifecycle.RunBackground
-internal/resource.configLifecycle.WithStorageLock
-internal/resource.configLifecycle.WorkerID
 internal/skillhub.HasScripts
 internal/skillhub.IsScriptPath
 internal/task.MediaPreview
