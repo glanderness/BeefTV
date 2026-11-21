@@ -14,8 +14,8 @@ import { cleanupUnusedMedia, collectMediaStorageKeys } from "@/services/file-sto
 import { insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
 import { cleanupUnusedImages, collectImageStorageKeys } from "@/services/image-storage";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
+import { CANVAS_DRAFTS_KEY } from "@/stores/canvas/canvas-store-persistence";
 import {
-    CANVAS_DRAFTS_KEY,
     CANVAS_STORE_KEY,
     commitPendingCanvasStorePersistenceLocked,
     pendingCanvasStorePersistence,
