@@ -2,7 +2,6 @@ package repository
 
 import (
 	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 
@@ -65,14 +64,16 @@ func (r *Repository) ActiveTaskCountForProjectIDs(userID string, projectIDs []st
 }
 
 // 任务领取以数据库租约为真相；PostgreSQL 锁行跳过竞争任务，SQLite 继续依赖条件更新保证单实例原子性。
-func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*model.Task, error) {
+func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration, excludeIDs ...string) (*model.Task, error) {
 	var task model.Task
 	now := time.Now()
 	leaseExpiresAt := now.Add(leaseDuration)
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		query := tx.Where("(status = ? OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))) AND (next_poll_at IS NULL OR next_poll_at <= ?)", model.TaskStatusQueued, model.TaskStatusRunning, now, now).
-			Order("created_at asc").Limit(1)
-		result := query.Find(&task)
+		query := tx.Where("(status = ? OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))) AND (next_poll_at IS NULL OR next_poll_at <= ?)", model.TaskStatusQueued, model.TaskStatusRunning, now, now)
+		if len(excludeIDs) > 0 {
+			query = query.Where("id NOT IN ?", excludeIDs)
+		}
+		result := query.Order("created_at asc").Limit(1).Find(&task)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -110,14 +111,35 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 }
 
 func (r *Repository) RenewTaskLease(id string, owner string, leaseDuration time.Duration) error {
+	now := time.Now()
 	result := r.db.Model(&model.Task{}).
-		Where("id = ? AND status = ? AND lease_owner = ? AND lease_expires_at > ?", id, model.TaskStatusRunning, owner, time.Now()).
-		Updates(map[string]any{"lease_expires_at": time.Now().Add(leaseDuration), "updated_at": time.Now()})
+		Where("id = ? AND status = ? AND lease_owner = ? AND lease_expires_at > ?", id, model.TaskStatusRunning, owner, now).
+		Updates(map[string]any{"lease_expires_at": now.Add(leaseDuration), "updated_at": now})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return errors.New("任务租约已失效")
+		return ErrTaskLeaseLost
+	}
+	return nil
+}
+
+// ReacquireTaskLease 在单进程桌面模式下按 owner 围栏续租：即使 lease_expires_at
+// 因系统休眠/唤醒已过，只要任务仍处于 running 且 lease_owner 未被替换，就刷新租约到期时间；
+// 若任务状态变化或 owner 已被替换，仍返回 ErrTaskLeaseLost。
+func (r *Repository) ReacquireTaskLease(id string, owner string, leaseDuration time.Duration) error {
+	if strings.TrimSpace(owner) == "" {
+		return ErrTaskLeaseLost
+	}
+	now := time.Now()
+	result := r.db.Model(&model.Task{}).
+		Where("id = ? AND status = ? AND lease_owner = ?", id, model.TaskStatusRunning, owner).
+		Updates(map[string]any{"lease_expires_at": now.Add(leaseDuration), "updated_at": now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskLeaseLost
 	}
 	return nil
 }
@@ -140,7 +162,7 @@ func (r *Repository) DeferRunningTaskForProviderPoll(id string, owner string, st
 		}
 		updates["failure_diagnostics"] = string(data)
 	}
-	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
+	result := r.taskLeaseWriter(r.db.Model(&model.Task{}), owner).
 		Where("id = ? AND status = ?", id, model.TaskStatusRunning).
 		Updates(updates)
 	if result.Error != nil {
@@ -189,7 +211,7 @@ func (r *Repository) UpdateTaskProgress(id string, stage string, progress int) e
 }
 
 func (r *Repository) UpdateTaskProgressForLease(id string, owner string, stage string, progress int) error {
-	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
+	result := r.taskLeaseWriter(r.db.Model(&model.Task{}), owner).
 		Where("id = ? AND status = ?", id, model.TaskStatusRunning).
 		Updates(map[string]any{"stage": stage, "progress": progress, "updated_at": time.Now()})
 	if result.Error != nil {
@@ -203,7 +225,7 @@ func (r *Repository) UpdateTaskProgressForLease(id string, owner string, stage s
 
 // UpdateTaskStageForLease preserves the last provider-reported percentage.
 func (r *Repository) UpdateTaskStageForLease(id string, owner string, stage string) error {
-	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
+	result := r.taskLeaseWriter(r.db.Model(&model.Task{}), owner).
 		Where("id = ? AND status = ?", id, model.TaskStatusRunning).
 		Updates(map[string]any{"stage": stage, "updated_at": time.Now()})
 	if result.Error != nil {
@@ -216,9 +238,14 @@ func (r *Repository) UpdateTaskStageForLease(id string, owner string, stage stri
 }
 
 // 无租约任务仅能写无租约记录；有租约的执行者必须仍持有本次领取的有效 owner。
-func taskLeaseWriter(db *gorm.DB, owner string) *gorm.DB {
+// 单进程桌面模式下按 owner 围栏即可，避免系统休眠唤醒后在下次续期前误拒写回；
+// 多 worker 服务端模式保持严格的 lease_expires_at > now 围栏。
+func (r *Repository) taskLeaseWriter(db *gorm.DB, owner string) *gorm.DB {
 	if owner == "" {
 		return db.Where("(lease_owner = '' OR lease_owner IS NULL)")
+	}
+	if r.SingleProcess() {
+		return db.Where("lease_owner = ?", owner)
 	}
 	return db.Where("lease_owner = ? AND lease_expires_at > ?", owner, time.Now())
 }
@@ -236,7 +263,7 @@ func (r *Repository) UpdateTaskProviderProgress(id string, progress int) error {
 
 func (r *Repository) SaveTaskCompletion(task *model.Task, expected model.TaskStatus, results []model.Result) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		updated := taskLeaseWriter(tx.Model(&model.Task{}), task.LeaseOwner).
+		updated := r.taskLeaseWriter(tx.Model(&model.Task{}), task.LeaseOwner).
 			Where("id = ? AND status = ?", task.ID, expected).
 			// Completion owns the result, not the worker's routing, lease or
 			// cancellation snapshot, which may have changed during execution.
@@ -265,7 +292,7 @@ func (r *Repository) UpdateTaskTerminalState(id string, owner string, expected m
 		}
 		diagnosticJSON = string(data)
 	}
-	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
+	result := r.taskLeaseWriter(r.db.Model(&model.Task{}), owner).
 		Where("id = ? AND status = ?", id, expected).
 		Updates(map[string]any{
 			"status": status, "stage": stage, "error": errorText, "error_code": errorCode, "completed_at": &completedAt,

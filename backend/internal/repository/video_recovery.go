@@ -39,7 +39,7 @@ func (r *Repository) FinishFailedVideoRecovery(task model.Task, outcome *string,
 	} else if task.BeefUsageState != nil && !pendingVideoUsage(*task.BeefUsageState) {
 		updates["beef_reconcile_deadline"] = nil
 	}
-	result := taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
+	result := r.taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
 		Where("id = ? AND user_id = ? AND status = ? AND route_run = ?", task.ID, task.UserID, model.TaskStatusFailed, task.RouteRun).
 		Updates(updates)
 	if result.Error != nil {
