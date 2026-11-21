@@ -22,14 +22,14 @@ import { isWailsNativeShell } from "@/services/desktop-media-save";
 import { loadCanvasProjectForEditing } from "@/services/local-workspace-sync";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 import { beginLocalCanvasProject, deleteLocalCanvasProjects, hydrateLocalCanvasProjectsFromBackend, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
-import { createWorkspaceCanvasProject } from "@/services/workspace-project-repository";
+import { duplicateWorkspaceCanvasProject } from "@/services/workspace-project-repository";
 import type { CanvasLibrarySummary } from "@/services/api/workspace-data";
 import { loadCanvasProjectPage } from "@/lib/workspace-route-modules";
 import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { cn } from "@/lib/utils";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
-import { canvasIdsForWorkspaceProjects, canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases, listCanvasWorkspaceProjectRoots, previewNodesForWorkspaceProject, resolveWorkspaceExportCanvasIds } from "@/lib/canvas/canvas-workspace-project";
+import { canvasIdsForWorkspaceProjects, canvasWorkspaceProjectId, listCanvasWorkspaceProjectRoots, previewNodesForWorkspaceProject, resolveWorkspaceExportCanvasIds } from "@/lib/canvas/canvas-workspace-project";
 
 const CanvasDeleteProjectsDialog = lazy(() => import("@/components/canvas/canvas-delete-projects-dialog").then((module) => ({ default: module.CanvasDeleteProjectsDialog })));
 
@@ -84,7 +84,7 @@ export default function CanvasPage() {
     const projects = useMemo<CanvasLibrarySummary[]>(() => (
         listCanvasWorkspaceProjectRoots(localProjects).map((project) => ({
             ...project,
-            nodeCount: project.nodes.length,
+            nodeCount: project.summaryNodeCount ?? project.nodes.length,
             previewNodes: previewNodesForWorkspaceProject(localProjects, canvasWorkspaceProjectId(project)),
         }))
     ), [localProjects]);
@@ -123,20 +123,13 @@ export default function CanvasPage() {
         });
     };
     const duplicateCanvasProject = useCallback(async (project: CanvasLibrarySummary) => {
-        const sourceCanvases = listCanvasWorkspaceProjectCanvases(localProjects, project.id);
-        let copiedWorkspaceProjectId: string | undefined;
-        for (const [index, source] of sourceCanvases.entries()) {
-            const copy = await createWorkspaceCanvasProject(index === 0 ? `${project.title || "未命名项目"} 副本` : source.title, source.projectId, {
-                nodes: source.nodes,
-                connections: source.connections,
-                chatSessions: source.chatSessions,
-                activeChatId: source.activeChatId,
-            }, copiedWorkspaceProjectId);
-            copiedWorkspaceProjectId ||= copy.id;
+        try {
+            const { workspaceProjectId, count } = await duplicateWorkspaceCanvasProject(localProjects, project);
+            message.success(`项目副本已创建，共 ${count} 张画布`);
+            enterProject(workspaceProjectId);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "复制项目失败，请重试");
         }
-        if (!copiedWorkspaceProjectId) throw new Error("项目不存在");
-        message.success(`项目副本已创建，共 ${sourceCanvases.length} 张画布`);
-        enterProject(copiedWorkspaceProjectId);
     }, [enterProject, localProjects, message]);
     const filteredProjects = useMemo(() => {
         const query = keyword.trim().toLowerCase();
@@ -353,6 +346,12 @@ export default function CanvasPage() {
                                             throw new Error("目标文件夹不存在");
                                         }
                                         const projectCanvasIds = canvasIdsForWorkspaceProjects(localProjects, [project.id]);
+                                        for (const canvasId of projectCanvasIds) {
+                                            if (useCanvasStore.getState().openProject(canvasId)?.summaryOnly) {
+                                                const loaded = await loadCanvasProjectForEditing(canvasId);
+                                                if (!loaded) throw new Error("画布已不存在，无法移动");
+                                            }
+                                        }
                                         moveProjectsToFolder(projectCanvasIds, folderId);
                                         await flushCanvasStorePersistence();
                                         const movedProject = useCanvasStore.getState().projects.find((item) => item.id === project.id);

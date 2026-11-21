@@ -8,6 +8,7 @@ import * as runtimeMode from "@/lib/runtime-mode";
 import { getActiveUserScope, scopedStorageKey, setActiveUserScope } from "@/lib/user-scope";
 import { applyUserSession } from "@/lib/user-session";
 import { apiClient } from "@/services/api/request";
+import { getCanvasHydrationHealth, setCanvasHydrationHealth } from "@/services/canvas-hydration-health";
 import { deleteStoredMedia, getMediaBlob, setMediaBlob } from "@/services/file-storage";
 import {
     loadWorkspaceAssetLibraryPage,
@@ -224,6 +225,8 @@ describe("asset store single-source persistence", () => {
     test("deleteWorkspaceAsset and cleanupImages reclaim orphaned fallback blobs while protecting pending drafts and canvas references", async () => {
         const scope = "desktop-cleanup-safe";
         const restore = switchScope(scope);
+        const previousCanvasHealth = getCanvasHydrationHealth();
+        setCanvasHydrationHealth({ error: "", loading: false });
         enterDesktopSingleSourceMode();
         const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
         const removedImageKey = `image:${scope}:removed-fallback-1`;
@@ -346,6 +349,7 @@ describe("asset store single-source persistence", () => {
             await imageStore.removeItem(draftOnlyImageKey);
             await imageStore.removeItem(canvasSharedImageKey);
             await deleteStoredMedia([removedVideoKey, draftOnlyVideoKey]);
+            setCanvasHydrationHealth(previousCanvasHealth);
             restore();
         }
     });
@@ -893,6 +897,8 @@ describe("asset store single-source persistence", () => {
     test("cleanupImages protects fallback blobs referenced only by CANVAS_DRAFTS_KEY and reclaims them once removed", async () => {
         const scope = "desktop-canvas-drafts-gc";
         const restore = switchScope(scope);
+        const previousCanvasHealth = getCanvasHydrationHealth();
+        setCanvasHydrationHealth({ error: "", loading: false });
         enterDesktopSingleSourceMode();
         const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
         const scopedStorage = localForageStorageForScope(scope);
@@ -941,6 +947,7 @@ describe("asset store single-source persistence", () => {
             useCanvasStore.setState({ projects: [] });
             await scopedStorage.removeItem(CANVAS_DRAFTS_KEY);
             await imageStore.removeItem(canvasDraftImageKey);
+            setCanvasHydrationHealth(previousCanvasHealth);
             restore();
         }
     });

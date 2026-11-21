@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { App, Dropdown, Input } from "antd";
 
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { loadCanvasProjectForEditing } from "@/services/local-workspace-sync";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { reportOwnedMediaSave } from "@/services/desktop-media-save";
@@ -47,10 +48,19 @@ export function CanvasProjectCard({ project, projectName, variant = "library", r
     const editing = editingId === project.id;
     const selected = selectedIds.includes(project.id);
     const open = () => navigate(`/canvas/${project.id}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`);
-    const saveTitle = () => {
-        renameProject(project.id, editingTitle);
-        void flushCanvasStorePersistence();
+    const saveTitle = async () => {
+        if (!editing) return;
         stopEditing();
+        try {
+            if (project.summaryOnly) {
+                const loaded = await loadCanvasProjectForEditing(project.id);
+                if (!loaded) return;
+            }
+            renameProject(project.id, editingTitle);
+            await flushCanvasStorePersistence();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "重命名失败");
+        }
     };
 
     const compact = variant === "recent";
@@ -73,7 +83,7 @@ export function CanvasProjectCard({ project, projectName, variant = "library", r
                     </span>
                 ) : null}
                 <div className="canvas-project-cover-meta" aria-hidden="true">
-                    <span className="canvas-project-node-count">{project.nodes.length} 节点</span>
+                    <span className="canvas-project-node-count">{project.summaryNodeCount ?? project.nodes.length} 节点</span>
                 </div>
             </div>
 
@@ -119,7 +129,19 @@ export function CanvasProjectCard({ project, projectName, variant = "library", r
                                 menu={{
                                     onClick: ({ domEvent }) => domEvent.stopPropagation(),
                                     items: [
-                                        { key: "export", icon: <Download className="size-3.5" />, label: "导出画布", onClick: () => void reportOwnedMediaSave(message, exportCanvasProjects([project], project.title || "画布")) },
+                                        {
+                                            key: "export",
+                                            icon: <Download className="size-3.5" />,
+                                            label: "导出画布",
+                                            onClick: () => void reportOwnedMediaSave(
+                                                message,
+                                                (async () => {
+                                                    const full = project.summaryOnly ? await loadCanvasProjectForEditing(project.id) : project;
+                                                    if (!full || full.summaryOnly) throw new Error("画布尚未完整加载，请重试");
+                                                    return exportCanvasProjects([full], full.title || "画布");
+                                                })(),
+                                            ),
+                                        },
                                         { type: "divider" },
                                         { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除", onClick: () => setDeleteIds([project.id]) },
                                     ],
@@ -249,7 +271,10 @@ export function projectPreviewMediaCandidates(nodes: CanvasNodeData[], preferLat
             };
             if (node.type === CanvasNodeType.Video) {
                 const poster = metadata?.videoPreview;
-                if (poster?.content && poster.content !== metadata?.content) pushSource("image", resolveBackendApiUrl(poster.content), poster.storageKey);
+                const posterContent = poster?.content && poster.content !== metadata?.content ? resolveBackendApiUrl(poster.content) : "";
+                const posterResourceId = resourceIdFromStorageKey(poster?.storageKey);
+                const posterUrl = posterContent || (posterResourceId ? resourceFileUrl(posterResourceId) : "");
+                if (posterUrl || poster?.storageKey) pushSource("image", posterUrl, poster?.storageKey);
             }
             const kind = node.type === CanvasNodeType.Video ? "video" : "image";
             const resourceId = resourceIdFromStorageKey(metadata?.storageKey);

@@ -2,11 +2,12 @@ import { clearCanvasDocumentBase, flushCanvasStorePersistence, useCanvasStore, t
 import { ApiError, http } from "@/services/api/request";
 import { appPathname, type AppRoutingRuntime } from "@/lib/app-routing";
 import { beginCanvasHydration, finishCanvasHydration } from "./canvas-hydration-health";
-import { restoreCanvasHistory } from "@/services/api/workspace-data";
+import { restoreCanvasHistory, type CanvasLibrarySummary } from "@/services/api/workspace-data";
 import { CanvasBackendSubmitPausedError, isCanvasRevisionConflict } from "@/services/canvas-revision-conflict";
 import { CanvasJournalError, loadCanvasOperationJournal, peekCanvasOperationJournal, updateCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { normalizeCanvasProjectGraph } from "@/lib/canvas/canvas-content";
+import { DEFAULT_CANVAS_BACKGROUND_MODE } from "@/lib/canvas/canvas-appearance";
 import { applyBackendCanvasRead, replayPendingCanvasProjection } from "./local-workspace-reconcile";
 import {
     applyLiveCanvasProject,
@@ -22,7 +23,7 @@ import {
     withCanvasProjection,
 } from "./local-workspace-state";
 
-function isNotFoundApiError(error: unknown): boolean {
+export function isNotFoundApiError(error: unknown): boolean {
     if (!error || typeof error !== "object") return false;
     const candidate = error as { name?: unknown; status?: unknown };
     return (error instanceof ApiError || candidate.name === "ApiError") && candidate.status === 404;
@@ -78,10 +79,60 @@ async function evictDeletedCanvasIfClean(id: string, scope: string, options: { a
     });
 }
 
+type RawCanvasLibrarySummary = Partial<CanvasLibrarySummary> & Pick<CanvasProject, "id"> & {
+    nodes?: CanvasProject["nodes"];
+};
+
+function canvasProjectFromLibrarySummary(summary: RawCanvasLibrarySummary): CanvasProject {
+    const now = new Date().toISOString();
+    const previewNodes = Array.isArray(summary.previewNodes)
+        ? summary.previewNodes
+        : (Array.isArray(summary.nodes) ? summary.nodes : []);
+    const nodeCount = typeof summary.nodeCount === "number" && Number.isFinite(summary.nodeCount)
+        ? summary.nodeCount
+        : previewNodes.length;
+    return {
+        id: summary.id,
+        revision: typeof summary.revision === "number" ? summary.revision : 0,
+        workspaceProjectId: summary.workspaceProjectId?.trim() || summary.id,
+        projectId: summary.projectId || undefined,
+        folderId: summary.folderId || undefined,
+        title: summary.title || "未命名画布",
+        canvasTitle: summary.canvasTitle?.trim() || undefined,
+        createdAt: summary.createdAt || now,
+        updatedAt: summary.updatedAt || summary.createdAt || now,
+        nodes: previewNodes,
+        connections: [],
+        chatSessions: [],
+        activeChatId: null,
+        backgroundMode: DEFAULT_CANVAS_BACKGROUND_MODE,
+        showImageInfo: false,
+        viewport: { x: 0, y: 0, k: 1 },
+        directorScenes: [],
+        summaryOnly: true,
+        summaryNodeCount: nodeCount,
+        summaryMediaKeys: Array.isArray(summary.localMediaKeys) && summary.localMediaKeys.length ? summary.localMediaKeys : undefined,
+    };
+}
+
+function shouldFetchFullCanvasDuringHydration(
+    local: CanvasProject | null | undefined,
+    summary: RawCanvasLibrarySummary,
+): boolean {
+    if (!local || local.summaryOnly) return false;
+    const summaryRevision = typeof summary.revision === "number" ? summary.revision : 0;
+    const localRevision = local.revision ?? 0;
+    return summaryRevision !== localRevision
+        || hasUnconfirmedCanvasEdits(summary.id)
+        || isCanvasOpenInEditor(summary.id);
+}
+
 /**
  * Desktop local canvas documents come from SQLite (`GET /canvas-projects`).
- * IndexedDB persists UI state (selected node, inspector tab, viewport) as an offline
- * fallback so a stopped backend never prevents the UI from opening.
+ * Library boot hydrates lightweight summaries (title, cover preview nodes,
+ * folder/project grouping, nodeCount, revision) without N+1 per-canvas detail
+ * reads; full documents are fetched on demand when opening, editing,
+ * duplicating, moving, exporting, or reconciling an already-loaded canvas.
  */
 export async function hydrateLocalCanvasProjectsFromBackend() {
     const scope = getActiveUserScope();
@@ -89,11 +140,11 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
     const previouslyLoadedIds = new Set(useCanvasStore.getState().projects.map((project) => project.id));
     let failure = "";
     try {
-        const summaries: Array<Pick<CanvasProject, "id">> = [];
+        const summaries: RawCanvasLibrarySummary[] = [];
         let page = 1;
         let hasMore = true;
         while (hasMore) {
-            const response = await http.get<{ projects: Array<Pick<CanvasProject, "id">>; hasMore?: boolean }>("/canvas-projects", {
+            const response = await http.get<{ projects: RawCanvasLibrarySummary[]; hasMore?: boolean }>("/canvas-projects", {
                 params: { page, pageSize: 50, sort: "updated" },
             });
             const batch = Array.isArray(response.projects) ? response.projects : [];
@@ -104,7 +155,49 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
         }
         if (summaries.length === 0) return false;
         const backendIds = new Set(summaries.map((summary) => summary.id));
-        const projects = (await Promise.all(summaries.map(async (summary) => {
+        const summariesNeedingFullRead: RawCanvasLibrarySummary[] = [];
+        const summaryOnlyEntries: RawCanvasLibrarySummary[] = [];
+        for (const summary of summaries) {
+            const local = openLocalCanvasProject(summary.id);
+            if (shouldFetchFullCanvasDuringHydration(local, summary)) {
+                summariesNeedingFullRead.push(summary);
+            } else {
+                summaryOnlyEntries.push(summary);
+            }
+        }
+
+        let appliedCount = 0;
+
+        // Apply summary-only library projections without N+1 detail GETs.
+        for (const [index, summary] of summaryOnlyEntries.entries()) {
+            if (index > 0 && index % 50 === 0) {
+                await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            }
+            const projected = await withCanvasProjection(scope, summary.id, async () => {
+                if (canvasDeleting.has(saveKey(scope, summary.id))) return false;
+                const local = openLocalCanvasProject(summary.id);
+                if (!local && previouslyLoadedIds.has(summary.id)) return false;
+                // Keep an already-loaded full canvas in memory when it is clean
+                // and matches the server summary revision; never downgrade it.
+                if (local && !local.summaryOnly) {
+                    const summaryRevision = typeof summary.revision === "number" ? summary.revision : 0;
+                    if (summaryRevision === (local.revision ?? 0) && !hasUnconfirmedCanvasEdits(summary.id)) {
+                        return true;
+                    }
+                    // Local canvas changed mid-hydration; reconcile via full read below.
+                    summariesNeedingFullRead.push(summary);
+                    return false;
+                }
+                const nextSummary = canvasProjectFromLibrarySummary(summary);
+                applyLiveCanvasProject(summary.id, nextSummary, true);
+                return true;
+            });
+            if (projected) appliedCount += 1;
+        }
+
+        // Only fetch full JSON documents for canvases already loaded full in memory
+        // whose revision moved, that carry unconfirmed local drafts, or that are open.
+        const projects = (await Promise.all(summariesNeedingFullRead.map(async (summary) => {
             try {
                 const detail = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(summary.id)}`);
                 if (!detail.project) throw new Error("项目内容未返回");
@@ -141,6 +234,7 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
                 // publishing it. Keep the library entry available for first open.
                 applyLiveCanvasProject(project.id, applied, true);
             }
+            appliedCount += 1;
         }
         // Never prune solely from a paginated list: verify each missing server-backed
         // candidate via an authoritative per-ID read so pagination shifts keep the
@@ -168,7 +262,7 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
             }
         }
         await flushCanvasStorePersistence();
-        return projects.length > 0;
+        return appliedCount > 0;
     } catch (error) {
         console.error("项目列表同步失败", error);
         failure = "项目暂时无法读取，现有数据已保留。请重试或在设置中导出问题记录。";
@@ -205,7 +299,11 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
             useCanvasStore.setState((state) => state.projects.some((item) => item.id === id) ? state : { projects: [...state.projects, project] });
         }
         await flushCanvasStorePersistence();
-        return openLocalCanvasProject(id) ?? project;
+        const resolved = openLocalCanvasProject(id) ?? project;
+        if (resolved?.summaryOnly) {
+            throw new Error("画布正在同步，请稍后重试");
+        }
+        return resolved;
     } catch (error) {
         if (isNotFoundApiError(error)) {
             const evicted = await evictDeletedCanvasIfClean(id, scope, { allowOpenEditor: true });
@@ -214,7 +312,16 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
                 return null;
             }
         }
-        return openLocalCanvasProject(id);
+        const fallback = openLocalCanvasProject(id);
+        if (fallback && !fallback.summaryOnly) return fallback;
+        const inFlightDocument = peekCanvasOperationJournal(id, scope)?.inFlight?.payload?.document;
+        if (inFlightDocument && !inFlightDocument.summaryOnly && !canvasDeleting.has(saveKey(scope, id))) {
+            const recovered = normalizeCanvasProjectGraph(inFlightDocument);
+            applyLiveCanvasProject(id, recovered, true);
+            await flushCanvasStorePersistence();
+            return recovered;
+        }
+        throw error;
     }
 }
 

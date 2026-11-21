@@ -16,7 +16,9 @@ export function CanvasDeleteProjectsDialog() {
         const selected = [...useCanvasUiStore.getState().deleteProjectIds];
         if (!selected.length) return;
         await deleteWorkspaceCanvasProjects(selected);
-        void cleanupImages();
+        void cleanupImages().catch((error) => {
+            console.warn("画布删除后的本地媒体清理已跳过", error);
+        });
         removeSelectedIds(selected);
         message.success(`已删除 ${selected.length} 个${deletionLabel}`);
     };

@@ -235,10 +235,14 @@ export async function deleteStoredMedia(keys: Iterable<string>) {
     await deleteLocalMedia(Array.from(keys).filter((key) => !resourceIdFromStorageKey(key)));
 }
 
-export async function cleanupUnusedMedia(usedData: unknown, scope = getActiveUserScope()) {
+export async function cleanupUnusedMedia(
+    usedData: unknown,
+    scope = getActiveUserScope(),
+    options?: { shouldAbort?: () => boolean },
+): Promise<boolean> {
     const usedKeys = collectMediaStorageKeys(usedData);
     const currentScope = scope;
-    await cleanupLocalMedia(usedKeys, currentScope);
+    return cleanupLocalMedia(usedKeys, currentScope, options);
 }
 
 export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()) {

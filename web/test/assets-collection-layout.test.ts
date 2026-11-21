@@ -125,7 +125,6 @@ describe("project card actions", () => {
         expect(canvasPage).toContain('label: "删除文件夹"');
         expect(canvasPage).not.toContain('icon: <Pencil className="size-3.5" />');
         const recycleBin = readFileSync(resolve(import.meta.dir, "../src/components/canvas/recycle-bin-dialog.tsx"), "utf8");
-        expect(recycleBin).toContain("restoreProject");
         expect(recycleBin).toContain("恢复到项目列表");
         expect(recycleBin).toContain("彻底删除");
         expect(recycleBin).toContain("删除后无法恢复");

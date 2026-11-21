@@ -38,6 +38,15 @@ describe("project library covers", () => {
         expect(projectPreviewMediaCandidates([image]).map((media) => media.url)).toEqual(["https://example.com/broken.png", "https://example.com/working.png"]);
     });
 
+    test("uses a persisted video poster storageKey even when poster content is absent", () => {
+        const video = node("video", CanvasNodeType.Video, {
+            storageKey: "video:clip-1",
+            videoPreview: { storageKey: "image:poster-only" },
+        });
+        const candidates = projectPreviewMediaCandidates([video]);
+        expect(candidates[0]).toMatchObject({ kind: "image", storageKey: "image:poster-only" });
+    });
+
     test("empty cover contains only the centered icon", () => {
         const component = readFileSync(new URL("../src/components/canvas/canvas-project-card.tsx", import.meta.url), "utf8");
         const css = readStyleSheet("../src/styles/workspace-product.css");

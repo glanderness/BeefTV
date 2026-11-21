@@ -95,6 +95,9 @@ export function canvasExportProgressLabel(progress: CanvasExportProgress) {
 }
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = "画布", options: { includeLocalDrawings?: boolean; allowMissingMedia?: boolean; onSkippedFiles?: (missing: MissingExportFile[]) => void; folders?: CanvasFolder[]; signal?: AbortSignal; onProgress?: (progress: CanvasExportProgress) => void } = {}): Promise<OwnedMediaSaveResult> {
+    if (projects.some((project) => project.summaryOnly)) {
+        throw new Error("画布尚未完整加载，请先打开画布后再导出");
+    }
     const operation = startOperation("导出画布", { detail: "正在读取画布与媒体文件", totalFiles: projects.reduce((sum, project) => sum + collectStorageKeys(project).length, 0) });
     const finish = (result: OwnedMediaSaveResult) => {
         if (result === "cancelled") operation.dismiss(); else operation.done("画布备份已保存");

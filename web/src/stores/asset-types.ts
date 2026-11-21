@@ -47,7 +47,7 @@ export type AssetStore = {
     updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
     removeAsset: (id: string, options?: { cleanupMedia?: boolean }) => Promise<void>;
     replaceAssets: (assets: Asset[]) => void;
-    cleanupImages: (extra?: unknown) => Promise<void>;
+    cleanupImages: (extra?: unknown) => Promise<boolean>;
 };
 
 export type AssetStoreDraftKind = "upsert" | "delete";

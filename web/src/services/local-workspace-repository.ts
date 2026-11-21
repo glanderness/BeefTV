@@ -14,6 +14,7 @@ import { settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-re
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import {
     hydrateLocalCanvasProjectsFromBackend,
+    isNotFoundApiError,
     openLocalCanvasProjectFromBackend,
     readLocalCanvasProjectFromBackend,
     restoreLocalCanvasProjectFromHistory,
@@ -220,6 +221,9 @@ async function queueAndSendLiveCanvasDocument(id: string, confirmed: CanvasProje
     const scope = getActiveUserScope();
     const project = openLocalCanvasProject(id);
     if (!project) return undefined;
+    if (project.summaryOnly) {
+        throw new Error("画布尚未完整加载，请先打开画布后再保存");
+    }
     const settled = confirmed
         ? settleInFlightGenerationOverlay({ base: confirmed, local: project, remote: confirmed })
         : project;
@@ -400,6 +404,9 @@ export async function persistCanvasDocument(id: string, patch: CanvasDocumentPer
     const scope = getActiveUserScope();
     const localMode = isLocalWorkspaceMode();
     const previous = useCanvasStore.getState().openProject(id);
+    if (previous?.summaryOnly) {
+        throw new Error("画布尚未完整加载，请先打开画布后再保存");
+    }
     useCanvasStore.getState().updateProject(id, patch);
     const attempted = useCanvasStore.getState().openProject(id);
     try {
@@ -456,6 +463,13 @@ export async function adoptServerConfirmedGenerationPatch(rawProject: CanvasProj
             }
             const live = openLocalCanvasProject(project.id);
             if (!live) return undefined;
+            if (live.summaryOnly) {
+                applyLiveCanvasProject(project.id, project, false);
+                void flushCanvasStorePersistence().catch((error) => {
+                    console.error("画布本地缓存写入失败，生成结果已保存到桌面数据库", { id: project.id, error });
+                });
+                return project;
+            }
             // 同一份绑定回执也可能晚于编辑器的 loading/error 状态：
             // 版本没变仍须结算同任务结果，不解除已有冲突或覆盖用户编辑。
             const settled = settleInFlightGenerationOverlay({ base: journal.confirmedSnapshot, local: live, remote: project });
@@ -614,20 +628,65 @@ async function waitForCanvasBackendIdle(id: string, scope: string) {
     if (timer) publishCanvasSaveProgress(id, scope, true);
 }
 
-export async function deleteLocalCanvasProjects(ids: readonly string[]) {
+export async function deleteLocalCanvasProjects(ids: readonly string[], options: { recordHistory?: boolean } = {}) {
     const scope = getActiveUserScope();
+    const recordHistory = options.recordHistory !== false;
     const selected = [...new Set(ids)];
-    const snapshots = selected
-        .map((id) => useCanvasStore.getState().openProject(id))
-        .filter((project): project is CanvasProject => Boolean(project));
     for (const id of selected) canvasDeleting.add(saveKey(scope, id));
     try {
         await Promise.all(selected.map((id) => waitForCanvasBackendIdle(id, scope)));
+        const snapshots: CanvasProject[] = [];
+        for (const id of selected) {
+            const current = useCanvasStore.getState().openProject(id);
+            if (!current) continue;
+            if (current.summaryOnly && recordHistory) {
+                let journalInFlight: CanvasProject | undefined;
+                try {
+                    const journal = await loadCanvasOperationJournal(id, scope);
+                    const candidate = journal.inFlight?.payload?.document;
+                    if (candidate && !candidate.summaryOnly) {
+                        journalInFlight = normalizeCanvasProjectGraph(candidate);
+                    }
+                } catch {
+                    // 日记读取失败时回退到后端完整读取。
+                }
+                if (journalInFlight) {
+                    snapshots.push(journalInFlight);
+                    continue;
+                }
+                try {
+                    snapshots.push(await readLocalCanvasProjectFromBackend(id));
+                } catch (error) {
+                    if (!isNotFoundApiError(error)) {
+                        throw error;
+                    }
+                }
+            } else {
+                snapshots.push(current);
+            }
+        }
         const deleted: string[] = [];
         const failures: unknown[] = [];
         for (const id of selected) {
+            const snapshot = snapshots.find((item) => item.id === id);
+            const localOnlyRollback = !recordHistory
+                && (snapshot?.revision ?? 0) === 0
+                && !(peekCanvasOperationJournal(id, scope)?.confirmedRevision);
+            let backendDeleteWarning: unknown;
             try {
-                await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
+                try {
+                    await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
+                } catch (error) {
+                    if (isNotFoundApiError(error) && (!recordHistory || (snapshot?.revision ?? 0) === 0)) {
+                        // 回滚或 revision=0 草稿后端明确返回 404，视为后端已不存在。
+                    } else if (localOnlyRollback) {
+                        // 未曾确认落库的 revision=0 回滚草稿，即使后端 DELETE 返回 5xx 也必须清掉本地残留，
+                        // 同时保留该后端错误上报给调用方，避免静默吞掉响应丢失导致的潜在远端残留。
+                        backendDeleteWarning = error;
+                    } else {
+                        throw error;
+                    }
+                }
                 await flushPendingCanvasOverlapWrite(id, scope);
                 await clearCanvasOperationJournal(id, scope);
                 clearCanvasDocumentBase(id, scope);
@@ -635,19 +694,23 @@ export async function deleteLocalCanvasProjects(ids: readonly string[]) {
                 serverConfirmedCanvasSnapshots.delete(saveKey(scope, id));
                 clearCanvasBackendSaveProgress(id, scope);
                 deleted.push(id);
+                if (backendDeleteWarning !== undefined) {
+                    failures.push(backendDeleteWarning);
+                }
             } catch (error) {
                 console.error("画布后端删除失败", { id, error });
                 failures.push(error);
-                if (!useCanvasStore.getState().openProject(id)) {
-                    const snapshot = snapshots.find((item) => item.id === id);
-                    if (snapshot) useCanvasStore.getState().restoreProject(snapshot);
+                if (!useCanvasStore.getState().openProject(id) && snapshot) {
+                    useCanvasStore.getState().restoreProject(snapshot);
                 }
             }
         }
         if (deleted.length) {
             useCanvasStore.getState().deleteProjects(deleted);
-            const removed = snapshots.filter((item) => deleted.includes(item.id));
-            if (removed.length) useCanvasHistoryStore.getState().recordDeletedProjects(removed);
+            if (recordHistory) {
+                const removed = snapshots.filter((item) => deleted.includes(item.id) && !item.summaryOnly);
+                if (removed.length) useCanvasHistoryStore.getState().recordDeletedProjects(removed);
+            }
             await flushCanvasStorePersistence().catch((error) => {
                 console.error("画布本地缓存写入失败，已从桌面数据库删除", { ids: deleted, error });
             });

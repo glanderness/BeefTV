@@ -16,7 +16,7 @@ export default function HomePage() {
         .slice(0, 4)
         .map((project) => ({
             ...project,
-            nodeCount: project.nodes.length,
+            nodeCount: project.summaryNodeCount ?? project.nodes.length,
             previewNodes: previewNodesForWorkspaceProject(localProjects, project.id),
         })), [localProjects]);
 

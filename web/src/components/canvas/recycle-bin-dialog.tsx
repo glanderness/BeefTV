@@ -1,19 +1,20 @@
-import { Button } from "antd";
+import { App, Button } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { RotateCcw, Trash2, X } from "lucide-react";
 
 import { ProjectPreview } from "@/components/canvas/canvas-project-card";
 import { cn } from "@/lib/utils";
-import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { restoreDeletedCanvasProjects } from "@/services/workspace-project-repository";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 
 export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
     const closeButtonRef = useRef<HTMLButtonElement>(null);
-    const restoreProject = useCanvasStore((state) => state.restoreProject);
+    const { message } = App.useApp();
     const deletedProjects = useCanvasHistoryStore((state) => state.deletedProjects);
     const removeDeletedItem = useCanvasHistoryStore((state) => state.removeDeletedHistoryItem);
     const [selectedDeleted, setSelectedDeleted] = useState<string[]>([]);
+    const [restoring, setRestoring] = useState(false);
     const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
 
     const allDeletedProjectIds = useMemo(() => deletedProjects.map((project) => project.id), [deletedProjects]);
@@ -47,13 +48,27 @@ export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: ()
     if (!open || typeof document === "undefined") return null;
 
     const restoreSelectedProjects = async () => {
-        for (const id of selectedDeleted) {
-            const item = deletedProjects.find((entry) => entry.id === id);
-            if (item?.project) restoreProject(item.project);
-            removeDeletedItem(id);
+        if (restoring || selectedDeleted.length === 0) return;
+        setRestoring(true);
+        try {
+            const result = await restoreDeletedCanvasProjects(selectedDeleted);
+            setSelectedDeleted((current) => current.filter((id) => !result.restoredIds.includes(id)));
+            if (result.failedIds.length > 0) {
+                const detail = result.firstError instanceof Error && result.firstError.message.trim()
+                    ? result.firstError.message.trim()
+                    : "请稍后重试";
+                message.error(
+                    result.restoredIds.length > 0
+                        ? `已恢复 ${result.restoredIds.length} 项，另有 ${result.failedIds.length} 项保存失败并留在回收站：${detail}`
+                        : `恢复项目失败，已保留在回收站：${detail}`,
+                );
+            }
+        } catch (error) {
+            const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "请稍后重试";
+            message.error(`恢复项目失败，已保留在回收站：${detail}`);
+        } finally {
+            setRestoring(false);
         }
-        await flushCanvasStorePersistence();
-        setSelectedDeleted([]);
     };
 
     const permanentlyDeleteProjects = (ids: string[]) => {
@@ -112,10 +127,10 @@ export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: ()
                         {selectedDeleted.length ? <span className="recycle-bin-selected-count">已选择 {selectedDeleted.length} 项</span> : null}
                     </label>
                     <div className="recycle-bin-actions">
-                        <Button danger disabled={!selectedDeleted.length} icon={<Trash2 className="size-4" />} onClick={() => setDeleteConfirmationOpen(true)}>
+                        <Button danger disabled={!selectedDeleted.length || restoring} icon={<Trash2 className="size-4" />} onClick={() => setDeleteConfirmationOpen(true)}>
                             彻底删除
                         </Button>
-                        <Button disabled={!selectedDeleted.length} icon={<RotateCcw className="size-4" />} onClick={() => void restoreSelectedProjects()} aria-label="恢复到项目列表">
+                        <Button disabled={!selectedDeleted.length || restoring} loading={restoring} icon={<RotateCcw className="size-4" />} onClick={() => void restoreSelectedProjects()} aria-label="恢复到项目列表">
                             恢复
                         </Button>
                     </div>

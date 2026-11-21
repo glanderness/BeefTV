@@ -10,9 +10,10 @@ export type AssetFolder = {
     updatedAt: string;
 };
 
-export type CanvasLibrarySummary = Pick<CanvasProject, "id" | "workspaceProjectId" | "projectId" | "folderId" | "title" | "revision" | "createdAt" | "updatedAt"> & {
+export type CanvasLibrarySummary = Pick<CanvasProject, "id" | "workspaceProjectId" | "projectId" | "folderId" | "title" | "canvasTitle" | "revision" | "createdAt" | "updatedAt"> & {
     nodeCount: number;
     previewNodes: CanvasProject["nodes"];
+    localMediaKeys?: string[];
 };
 
 export function listAssetFolders(config?: HttpRequestConfig) {

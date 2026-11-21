@@ -6,21 +6,25 @@ import { parseAssetRecord } from "@/lib/asset-record";
 import { rebaseAssetSnapshot, serializeAssetStorageDocument, type AssetStorageDocument } from "@/lib/asset-storage-revision";
 import { parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
+import { bumpMediaReferenceEpoch, readMediaReferenceEpoch } from "@/lib/media-gc-epoch";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { parseWorkspaceAssetPayloads } from "@/lib/workspace-asset-normalize";
 import { lookupWorkspaceAssetsByIds } from "@/services/api/workspace-assets";
+import { getCanvasHydrationHealth } from "@/services/canvas-hydration-health";
 import { readAllCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { cleanupUnusedMedia, collectMediaStorageKeys } from "@/services/file-storage";
 import { insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
 import { cleanupUnusedImages, collectImageStorageKeys } from "@/services/image-storage";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
-import { CANVAS_DRAFTS_KEY } from "@/stores/canvas/canvas-store-persistence";
+import { CANVAS_DRAFTS_KEY, CANVAS_HISTORY_STORE_KEY } from "@/stores/canvas/canvas-store-persistence";
+import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import {
     CANVAS_STORE_KEY,
     commitPendingCanvasStorePersistenceLocked,
     pendingCanvasStorePersistence,
     useCanvasStore,
     withCanvasStorePersistenceLock,
+    type CanvasProject,
 } from "@/stores/canvas/use-canvas-store";
 import {
     bindAssetDraftStoreHooks,
@@ -306,39 +310,83 @@ export const useAssetStore = create<AssetStore>()(
                 // 避免纯文本/远程资源删除依赖浏览器 IndexedDB 驱动。
                 if (options?.cleanupMedia === false) return;
                 if (!removedAsset || (!collectImageStorageKeys(removedAsset).size && !collectMediaStorageKeys(removedAsset).size)) return;
-                await get().cleanupImages({ assets: remainingAssets });
+                await get().cleanupImages({ assets: remainingAssets }).catch((error) => {
+                    // 素材删除本身已成功，媒体清理 fail-closed 失败时不把删除动作误报为失败。
+                    console.warn("素材删除后的本地媒体清理已跳过", { id, error });
+                });
             },
             replaceAssets: (assets) => set({ assets: assets.map(parseAssetRecord) }),
             cleanupImages: async (extra) => {
                 const scope = getActiveUserScope();
                 const frozenExtraImageKeys = collectImageStorageKeys(extra);
                 const frozenExtraMediaKeys = collectMediaStorageKeys(extra);
-                await new Promise<void>((resolve, reject) => {
+                return new Promise<boolean>((resolve, reject) => {
                     window.setTimeout(() =>
                         withGenerationArtifactCommitLock(scope, async () => {
+                            const hydration = getCanvasHydrationHealth();
+                            if (hydration.loading || Boolean(hydration.error)) return false;
+                            const journalModule = await import("@/services/canvas-operation-journal");
+                            const startEpoch = readMediaReferenceEpoch();
+                            const shouldAbortSweep = () => {
+                                const currentHealth = getCanvasHydrationHealth();
+                                return currentHealth.loading
+                                    || Boolean(currentHealth.error)
+                                    || readMediaReferenceEpoch() !== startEpoch;
+                            };
                             const storage = localForageStorageForScope(scope);
                             const syncDrafts = await readAllCanvasSyncDrafts(scope);
+                            // 在画布持久化锁外读取提交日记与回收站快照，避免拖慢 pagehide/切页落盘；
+                            // 读取或解析失败时 fail-closed 向上抛错，绝不在不完整引用下删媒体。
+                            const journals = typeof journalModule.readAllCanvasOperationJournals === "function"
+                                ? await journalModule.readAllCanvasOperationJournals(scope)
+                                : [];
+                            const journalDocuments = journals.flatMap((journal) => [
+                                ...(journal.confirmedSnapshot ? [journal.confirmedSnapshot] : []),
+                                ...(journal.inFlight?.payload?.document ? [journal.inFlight.payload.document] : []),
+                                ...(journal.pendingProjection?.remote ? [journal.pendingProjection.remote] : []),
+                                ...(journal.pendingProjection?.base ? [journal.pendingProjection.base] : []),
+                            ]);
+                            const liveDeletedEntries = scope === getActiveUserScope()
+                                ? (useCanvasHistoryStore.getState?.()?.deletedProjects ?? [])
+                                : [];
+                            const liveDeletedProjects = liveDeletedEntries
+                                .map((item) => item.project)
+                                .filter((project): project is CanvasProject => Boolean(project && !project.summaryOnly));
+                            const durableDeletedProjects = parseDeletedHistoryProjects(await storage.getItem(CANVAS_HISTORY_STORE_KEY));
                             // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
                             const canvasReferences = await withCanvasStorePersistenceLock(scope, async () => {
                                 await commitPendingCanvasStorePersistenceLocked(scope);
                                 const durableCanvas = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY));
                                 const durableCanvasDrafts = parseCanvasStorageDocument(await storage.getItem(CANVAS_DRAFTS_KEY));
                                 const liveProjects = scope === getActiveUserScope() ? useCanvasStore.getState().projects : [];
-                                return [
-                                    ...liveProjects,
-                                    ...(pendingCanvasStorePersistence(scope)?.projects ?? []),
-                                    ...durableCanvas.state.projects,
-                                    ...durableCanvasDrafts.state.projects,
-                                ];
+                                const pendingProjects = pendingCanvasStorePersistence(scope)?.projects ?? [];
+                                const summaryMediaRefs = [...liveProjects, ...pendingProjects].flatMap((project) =>
+                                    project.summaryOnly && project.summaryMediaKeys?.length
+                                        ? project.summaryMediaKeys.map((storageKey) => ({ storageKey }))
+                                        : [],
+                                );
+                                return {
+                                    projects: [
+                                        ...liveProjects,
+                                        ...pendingProjects,
+                                        ...durableCanvas.state.projects,
+                                        ...durableCanvasDrafts.state.projects,
+                                        ...liveDeletedProjects,
+                                        ...durableDeletedProjects,
+                                        ...journalDocuments,
+                                    ],
+                                    summaryMediaRefs,
+                                };
                             });
-                            await withGenerationAssetStorageLock(scope, async () => {
+                            return withGenerationAssetStorageLock(scope, async () => {
                                 await commitPendingAssetStorePersistenceLocked(scope);
                                 await hydrateAssetStoreDrafts(scope);
                                 const durableAssets = (await readPersistedAssetDocumentForScope(scope)).state.assets;
                                 const liveAssets = scope === getActiveUserScope() ? get().assets : [];
                                 const draftAssets = readAssetStoreDraftsForScope(scope).upserts;
                                 const references = {
-                                    projects: canvasReferences,
+                                    projects: canvasReferences.projects,
+                                    summaryMediaRefs: canvasReferences.summaryMediaRefs,
                                     assets: durableAssets,
                                     liveAssets,
                                     draftAssets,
@@ -346,13 +394,17 @@ export const useAssetStore = create<AssetStore>()(
                                 };
                                 const imageKeys = new Set([...frozenExtraImageKeys, ...collectImageStorageKeys(references)]);
                                 const mediaKeys = new Set([...frozenExtraMediaKeys, ...collectMediaStorageKeys(references)]);
-                                await cleanupUnusedImages(
+                                if (shouldAbortSweep()) return false;
+                                const imagesDone = await cleanupUnusedImages(
                                     [...imageKeys].map((storageKey) => ({ storageKey })),
                                     scope,
+                                    { shouldAbort: shouldAbortSweep },
                                 );
-                                await cleanupUnusedMedia(
+                                if (!imagesDone || shouldAbortSweep()) return false;
+                                return cleanupUnusedMedia(
                                     [...mediaKeys].map((storageKey) => ({ storageKey })),
                                     scope,
+                                    { shouldAbort: shouldAbortSweep },
                                 );
                             });
                         }).then(resolve, reject),
@@ -372,14 +424,66 @@ export const useAssetStore = create<AssetStore>()(
     ),
 );
 
+let suppressingInternalAssetDraftEpoch = false;
+
 bindAssetDraftStoreHooks({
     readAssets: () => useAssetStore.getState().assets,
     applyDrafts: (updater) => {
-        withAssetStorePersistenceSuppressed(() => {
-            useAssetStore.setState((state) => ({ assets: updater(state.assets) }));
-        });
+        suppressingInternalAssetDraftEpoch = true;
+        try {
+            withAssetStorePersistenceSuppressed(() => {
+                useAssetStore.setState((state) => ({ assets: updater(state.assets) }));
+            });
+        } finally {
+            suppressingInternalAssetDraftEpoch = false;
+        }
     },
     trackOperation: trackAssetOperation,
     clearDesktopLegacyScopes: clearDesktopLegacyAssetCacheScopesForTests,
     readLegacyDeletedGenerationIds: readLegacyDeletedGenerationIdsForScope,
 });
+
+if (typeof useCanvasStore.subscribe === "function") {
+    useCanvasStore.subscribe((next, prev) => {
+        if (next.projects !== prev.projects) bumpMediaReferenceEpoch();
+    });
+}
+if (typeof useCanvasHistoryStore.subscribe === "function") {
+    useCanvasHistoryStore.subscribe((next, prev) => {
+        if (next.deletedProjects !== prev.deletedProjects) bumpMediaReferenceEpoch();
+    });
+}
+if (typeof useAssetStore.subscribe === "function") {
+    useAssetStore.subscribe((next, prev) => {
+        if (!suppressingInternalAssetDraftEpoch && next.assets !== prev.assets) {
+            bumpMediaReferenceEpoch();
+        }
+    });
+}
+
+function parseDeletedHistoryProjects(raw: string | null): CanvasProject[] {
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { state?: { deletedProjects?: unknown } };
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("回收站本地记录损坏，已中止媒体清理");
+    }
+    const items = parsed.state?.deletedProjects;
+    if (items === undefined) return [];
+    if (!Array.isArray(items)) {
+        throw new Error("回收站项目列表格式异常，已中止媒体清理");
+    }
+    const projects: CanvasProject[] = [];
+    for (const item of items) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+            throw new Error("回收站记录项格式异常，已中止媒体清理");
+        }
+        const project = (item as { project?: unknown }).project;
+        if (project === undefined || project === null) continue;
+        if (typeof project !== "object" || Array.isArray(project)) {
+            throw new Error("回收站画布快照格式异常，已中止媒体清理");
+        }
+        const typed = project as CanvasProject;
+        if (!typed.summaryOnly) projects.push(typed);
+    }
+    return projects;
+}

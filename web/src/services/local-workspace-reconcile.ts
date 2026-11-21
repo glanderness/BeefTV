@@ -1,7 +1,7 @@
 import { canvasDocumentBase, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { clearCanvasPendingProjection, loadCanvasOperationJournal, peekCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
+import { normalizeCanvasProjectGraph, sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import {
@@ -35,13 +35,13 @@ export function alignLiveAfterConfirmedRemote(input: {
         invokeProjectionListener(input.onApplied, input.remote, undefined);
         return input.remote;
     }
-    if (sameCanvasDocument(live, input.remote) || (input.base && sameCanvasDocument(live, input.base))) {
+    if (live.summaryOnly || sameCanvasDocument(live, input.remote) || (input.base && sameCanvasDocument(live, input.base))) {
         const applied: CanvasProject = {
             ...input.remote,
-            viewport: live.viewport || input.remote.viewport,
-            appearance: live.appearance || input.remote.appearance,
-            backgroundMode: live.backgroundMode || input.remote.backgroundMode,
-            showImageInfo: live.showImageInfo ?? input.remote.showImageInfo,
+            viewport: live.summaryOnly ? input.remote.viewport : (live.viewport || input.remote.viewport),
+            appearance: live.summaryOnly ? input.remote.appearance : (live.appearance || input.remote.appearance),
+            backgroundMode: live.summaryOnly ? input.remote.backgroundMode : (live.backgroundMode || input.remote.backgroundMode),
+            showImageInfo: live.summaryOnly ? input.remote.showImageInfo : (live.showImageInfo ?? input.remote.showImageInfo),
         };
         applyLiveCanvasProject(input.id, applied, true);
         invokeProjectionListener(input.onApplied, applied, live);
@@ -91,7 +91,7 @@ export async function replayPendingCanvasProjection(id: string, scope: string, o
  * 桌面本地：已提交真相是服务端 revision；仅当本地 revision 高于已记录基线（或无基线时高于后端且内容不同）才保留本地草稿。
  */
 export function selectPreferredCanvasProject(local: CanvasProject | null | undefined, backend: CanvasProject, scope = getActiveUserScope()) {
-    if (!local) return backend;
+    if (!local || local.summaryOnly) return backend;
     const recorded = canvasDocumentBase(local.id, scope);
     if (recorded) {
         if ((local.revision ?? 0) <= recorded.revision || sameCanvasDocument(local, recorded.snapshot) || sameCanvasDocument(local, backend)) return backend;
@@ -160,12 +160,17 @@ export async function applyBackendCanvasRead(
     return withCanvasProjection(scope, backend.id, async () => {
         await replayPendingCanvasProjection(backend.id, scope);
         const liveNow = openLocalCanvasProject(backend.id);
-        const currentLocal = liveNow ?? local;
+        let currentLocal = liveNow ?? local;
         const hadLive = Boolean(liveNow) || hadLiveAtStart;
+        const journal = peekCanvasOperationJournal(backend.id, scope);
+        if ((!currentLocal || currentLocal.summaryOnly) && journal?.inFlight?.payload?.document && !journal.inFlight.payload.document.summaryOnly) {
+            const recoveredInFlight = normalizeCanvasProjectGraph(journal.inFlight.payload.document);
+            applyLiveCanvasProject(backend.id, recoveredInFlight, false);
+            currentLocal = recoveredInFlight;
+        }
         const chosen = selectPreferredCanvasProject(currentLocal, backend, scope);
         traceCanvasGraph("repository.read.select", { local: currentLocal, backend, base: canvasDocumentBase(backend.id, scope)?.snapshot, chosen });
-        const journal = peekCanvasOperationJournal(backend.id, scope);
-        if (!currentLocal || (!journal?.inFlight && (chosen === backend || sameCanvasDocument(chosen, backend)))) {
+        if (!currentLocal || currentLocal.summaryOnly || (!journal?.inFlight && (chosen === backend || sameCanvasDocument(chosen, backend)))) {
             const base = journal?.pendingProjection?.base
                 ?? journal?.confirmedSnapshot
                 ?? canvasDocumentBase(backend.id, scope)?.snapshot
@@ -174,10 +179,22 @@ export async function applyBackendCanvasRead(
             try {
                 confirmed = await confirmRemoteDocument(backend, scope);
             } catch {
+                if (!currentLocal || currentLocal.summaryOnly) {
+                    applyLiveCanvasProject(backend.id, backend, false);
+                    return backend;
+                }
                 return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
             }
             if ((backend.revision ?? 0) < confirmed.confirmedRevision) {
-                return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
+                const live = openLocalCanvasProject(backend.id);
+                if (!live || live.summaryOnly) {
+                    const fullFallback = confirmed.confirmedSnapshot && !confirmed.confirmedSnapshot.summaryOnly
+                        ? confirmed.confirmedSnapshot
+                        : backend;
+                    applyLiveCanvasProject(backend.id, fullFallback, true);
+                    return fullFallback;
+                }
+                return live;
             }
             const aligned = alignLiveAfterConfirmedRemote({
                 id: backend.id,

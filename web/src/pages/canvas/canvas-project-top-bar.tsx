@@ -140,7 +140,12 @@ export function CanvasTopBar({
             const ids = resolveWorkspaceExportCanvasIds(store.projects, [canvasId], { singleCanvasOnly });
             await exportCanvasProjectsByIds(
                 ids,
-                async (id) => (await loadCanvasProjectForEditing(id).catch(() => undefined)) || store.openProject(id),
+                async (id) => {
+                    const loaded = await loadCanvasProjectForEditing(id).catch(() => undefined);
+                    if (loaded) return loaded;
+                    const cached = store.openProject(id);
+                    return cached && !cached.summaryOnly ? cached : undefined;
+                },
                 {
                     singleCanvasOnly,
                     folders: store.folders,

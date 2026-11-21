@@ -28,6 +28,7 @@ export function repairMissingCanvasAssets(projectIds?: Set<string>, partialAsset
     let createdAssets = 0;
     let updatedProjects = 0;
     for (const project of canvasStore.projects) {
+        if (project.summaryOnly) continue;
         if (projectIds && !projectIds.has(project.id)) continue;
         if (partialAssets) {
             for (const node of project.nodes) {
@@ -167,6 +168,7 @@ export function rebindInconsistentCanvasAssets(records: Asset[], projectIds?: Se
     let updatedProjects = 0;
     const canvasStore = useCanvasStore.getState();
     for (const project of canvasStore.projects) {
+        if (project.summaryOnly) continue;
         if (projectIds && !projectIds.has(project.id)) continue;
         let projectChanged = false;
         const resolveAssetId = (declaredId: string | undefined, identity: string, buildAsset: () => NewAsset | null): string | undefined => {
@@ -218,6 +220,7 @@ export function rebindInconsistentCanvasAssets(records: Asset[], projectIds?: Se
 export function collectCanvasMediaAssetIds(projects: CanvasProject[]): Set<string> {
     const ids = new Set<string>();
     for (const project of projects) {
+        if (project.summaryOnly) continue;
         for (const node of project.nodes) {
             if (isCanvasMediaNodeType(node) && node.metadata?.assetId && mediaNodeIdentity(node.metadata.storageKey, node.metadata.content)) ids.add(node.metadata.assetId);
         }

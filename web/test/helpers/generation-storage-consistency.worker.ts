@@ -2,6 +2,7 @@ import localforage from "localforage";
 import { spyOn } from "bun:test";
 
 import { getActiveUserScope, setActiveUserScope } from "../../src/lib/user-scope";
+import { getCanvasHydrationHealth, setCanvasHydrationHealth } from "../../src/services/canvas-hydration-health";
 
 type InstanceHook = (storeName: string, key: string, value: unknown) => Promise<void> | void;
 
@@ -13,6 +14,8 @@ function installStorageHarness() {
     const originalGetItem = localforage.getItem.bind(localforage);
     const originalSetItem = localforage.setItem.bind(localforage);
     const originalRemoveItem = localforage.removeItem.bind(localforage);
+    const originalKeys = localforage.keys.bind(localforage);
+    const previousCanvasHealth = getCanvasHydrationHealth();
     const originalWindow = (globalThis as { window?: unknown }).window;
     const originalNavigator = (globalThis as { navigator?: unknown }).navigator;
     const originalDocument = (globalThis as { document?: unknown }).document;
@@ -43,6 +46,8 @@ function installStorageHarness() {
     localforage.removeItem = (async (key: string) => {
         defaultValues.delete(key);
     }) as typeof localforage.removeItem;
+    localforage.keys = (async () => [...defaultValues.keys()]) as typeof localforage.keys;
+    setCanvasHydrationHealth({ error: "", loading: false });
     localforage.createInstance = ((options: { storeName?: string }) => {
         const storeName = options.storeName || "default";
         const values = storeValues(storeName);
@@ -131,6 +136,8 @@ function installStorageHarness() {
             localforage.getItem = originalGetItem;
             localforage.setItem = originalSetItem;
             localforage.removeItem = originalRemoveItem;
+            localforage.keys = originalKeys;
+            setCanvasHydrationHealth(previousCanvasHealth);
             if (originalWindow === undefined) delete (globalThis as { window?: unknown }).window;
             else Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: originalWindow });
             if (originalNavigator === undefined) delete (globalThis as { navigator?: unknown }).navigator;

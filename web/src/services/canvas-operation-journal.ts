@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
+import { bumpMediaReferenceEpoch } from "@/lib/media-gc-epoch";
 import { getActiveUserScope } from "@/lib/user-scope";
 import type { CanvasDocumentPatchPayload } from "@/services/api/operations";
 import { recordCanvasDocumentBase, type CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -209,6 +210,7 @@ async function readJournalUnlocked(canvasId: string, scope: string): Promise<Can
 
 async function writeJournalUnlocked(journal: CanvasOperationJournal) {
     const scope = journal.userScope || getActiveUserScope();
+    bumpMediaReferenceEpoch();
     const validated = parseCanvasOperationJournal(journal, scope, journal.canvasId);
     if (validated.confirmedSnapshot && validated.confirmedSnapshot.revision !== validated.confirmedRevision) {
         validated.confirmedSnapshot = { ...validated.confirmedSnapshot, revision: validated.confirmedRevision };
@@ -345,6 +347,7 @@ export async function abandonCanvasInFlight(canvasId: string, scope = getActiveU
 
 export async function clearCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
     return withJournal(scope, canvasId, async () => {
+        bumpMediaReferenceEpoch();
         await journalStorageDelay?.beforeSet?.();
         await localForageStorageForScope(scope).removeItem(journalName(canvasId));
         memory.delete(cacheKey(scope, canvasId));
@@ -353,6 +356,32 @@ export async function clearCanvasOperationJournal(canvasId: string, scope = getA
 
 export function newCanvasCommitOperationId() {
     return `canvas-commit-${nanoid()}`;
+}
+
+export async function readAllCanvasOperationJournals(scope = getActiveUserScope()): Promise<CanvasOperationJournal[]> {
+    const byId = new Map<string, CanvasOperationJournal>();
+    for (const journal of memory.values()) {
+        if (journal.userScope === scope) byId.set(journal.canvasId, cloneJournal(journal));
+    }
+    if (typeof window !== "undefined") {
+        const storageModule = await import("@/lib/localforage-storage");
+        if (typeof storageModule.localForageInstance === "function" && typeof storageModule.APP_STATE_STORE_NAME === "string") {
+            const prefix = `${JOURNAL_PREFIX}:`;
+            const suffix = `:user:${scope}`;
+            const store = storageModule.localForageInstance(storageModule.APP_STATE_STORE_NAME);
+            // Fail closed: propagate storage/parse errors so callers (such as media GC)
+            // abort instead of deleting blobs under incomplete reference knowledge.
+            const keys = await store.keys();
+            for (const key of keys) {
+                if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+                const canvasId = key.slice(prefix.length, key.length - suffix.length);
+                if (!canvasId || byId.has(canvasId)) continue;
+                const journal = await loadCanvasOperationJournal(canvasId, scope);
+                byId.set(canvasId, journal);
+            }
+        }
+    }
+    return [...byId.values()];
 }
 
 export function resetCanvasOperationJournalMemory() {

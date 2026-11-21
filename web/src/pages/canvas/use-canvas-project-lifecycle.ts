@@ -457,7 +457,7 @@ export function useCanvasProjectLifecycle({
 
         const load = async () => {
             const cachedProject = useCanvasStore.getState().projects.find((p) => p.id === projectId);
-            if (!historyRestore && cachedProject) {
+            if (!historyRestore && cachedProject && !cachedProject.summaryOnly) {
                 traceCanvasGraph("editor.load.cache", { cached: cachedProject });
                 // 本地已有该画布的持久化缓存：先以本地数据秒开渲染，彻底消除白屏与等待
                 applyRestoredProject(cachedProject);
@@ -687,8 +687,19 @@ export function useCanvasProjectLifecycle({
 
     const renameCurrentProject = useCallback((title: string) => {
         if (!currentProject) return;
+        const rootId = canvasWorkspaceProjectId(currentProject);
+        if (rootId !== projectId && useCanvasStore.getState().openProject(rootId)?.summaryOnly) {
+            void loadCanvasProjectForEditing(rootId)
+                .then((loaded) => {
+                    if (loaded) renameProject(rootId, title);
+                })
+                .catch((error) => {
+                    message.error(error instanceof Error ? error.message : "重命名项目失败");
+                });
+            return;
+        }
         renameProject(canvasWorkspaceProjectId(currentProject), title);
-    }, [currentProject, renameProject]);
+    }, [currentProject, message, projectId, renameProject]);
 
     const persistLocalEdits = useCallback(async () => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId) return;

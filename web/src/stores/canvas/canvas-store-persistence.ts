@@ -37,6 +37,15 @@ export type CanvasProject = {
     viewport: ViewportTransform;
     directorScenes: DirectorScene[];
     timeline?: TimelineProject;
+    /**
+     * Runtime-only library projection hydrated from `GET /canvas-projects`
+     * without fetching the full `GET /canvas-projects/:id` document yet.
+     * `nodes` holds preview media nodes only; full editing/saving must load
+     * the authoritative document first.
+     */
+    summaryOnly?: true;
+    summaryNodeCount?: number;
+    summaryMediaKeys?: string[];
 };
 
 export type CanvasFolder = {
@@ -50,6 +59,7 @@ export type CanvasFolder = {
 
 export const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
 export const CANVAS_DRAFTS_KEY = "infinite-canvas:canvas_unsaved_drafts";
+export const CANVAS_HISTORY_STORE_KEY = "infinite-canvas:deleted_history_store";
 
 export type PersistedCanvasState = { projects: CanvasProject[] };
 
@@ -171,6 +181,7 @@ export function recordCanvasStorageDocument(
 
 function selectUnsavedDesktopDrafts(scope: string, projects: CanvasProject[]): CanvasProject[] {
     return projects.filter((project) => {
+        if (project.summaryOnly) return false;
         const base = canvasDocumentBase(project.id, scope);
         if (!base) {
             return (project.revision ?? 0) === 0;

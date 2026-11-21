@@ -175,7 +175,7 @@ function readCanvasUnconfirmedState(id: string): CanvasUnconfirmedState {
     const scope = getActiveUserScope();
     const live = openLocalCanvasProject(id) ?? undefined;
     const state: CanvasUnconfirmedState = { live, pending: false, inFlight: false, pendingProjection: false };
-    if (!live) return state;
+    if (!live || live.summaryOnly) return { ...state, live: undefined };
     state.pending = canvasBackendSubmitPending(id, scope);
     if (state.pending) return state;
     const journal = peekCanvasOperationJournal(id, scope);

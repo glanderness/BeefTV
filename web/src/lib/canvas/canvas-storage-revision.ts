@@ -43,7 +43,7 @@ function normalizeStoredProject(rawProject: CanvasProject): CanvasProject {
 export function parseCanvasStorageDocument(value: string | null, fallback: CanvasProject[] = []): CanvasStorageDocument {
     if (!value) {
         return {
-            state: { projects: fallback.map(normalizeStoredProject) },
+            state: { projects: fallback.filter((project) => !project.summaryOnly).map(normalizeStoredProject) },
             version: 0,
             storageRevision: 0,
             deletedProjectIds: {},
@@ -58,7 +58,7 @@ export function parseCanvasStorageDocument(value: string | null, fallback: Canva
     };
     if (!Array.isArray(parsed.state?.projects)) throw new Error("画布持久状态无效");
     return {
-        state: { projects: (parsed.state.projects as CanvasProject[]).map(normalizeStoredProject) },
+        state: { projects: (parsed.state.projects as CanvasProject[]).filter((project) => !project?.summaryOnly).map(normalizeStoredProject) },
         version: typeof parsed.version === "number" ? parsed.version : 0,
         storageRevision: typeof parsed.storageRevision === "number" && Number.isFinite(parsed.storageRevision) ? parsed.storageRevision : 0,
         deletedProjectIds: parseDeletedProjectIds(parsed.deletedProjectIds ?? parsed.tombstones?.projects),
@@ -115,6 +115,12 @@ export function mergeCanvasStorageProjects(input: {
             continue;
         }
         seen.add(local.id);
+        if (local.summaryOnly) {
+            if (durable && !durable.summaryOnly) {
+                projects.push(durable);
+            }
+            continue;
+        }
         if (base && durable && sameCanvasDocument(local, base)) {
             projects.push(viewPreferencesChanged(local, base)
                 ? {

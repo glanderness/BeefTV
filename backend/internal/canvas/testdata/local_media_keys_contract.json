@@ -1,0 +1,63 @@
+[
+  {
+    "name": "nodes, videoPreview, timeline, chatSessions, and resource exclusion",
+    "payload": {
+      "workspaceProjectId": "ws-contract",
+      "canvasTitle": "共享契约测试",
+      "nodes": [
+        { "id": "n1", "type": "image", "metadata": { "storageKey": "image:u1:img-1" } },
+        { "id": "n2", "type": "image", "metadata": { "storageKey": "generation-image:u1:gen-1" } },
+        { "id": "n3", "type": "image", "metadata": { "storageKey": "resource:srv-managed-1" } },
+        {
+          "id": "n4",
+          "type": "video",
+          "metadata": {
+            "storageKey": "video:u1:vid-1",
+            "videoPreview": { "storageKey": "image:u1:poster-1", "content": "/api/resources/poster/file" }
+          }
+        },
+        { "id": "n5", "type": "video", "metadata": { "storageKey": "external-video:u1:ext-1" } }
+      ],
+      "timeline": {
+        "clips": [{ "id": "c1", "directMedia": { "storageKey": "audio:u1:bgm-1" } }]
+      },
+      "chatSessions": [
+        {
+          "id": "s1",
+          "tags": ["storageKey", "image:u1:array-literal-not-key"],
+          "attachments": [
+            { "storageKey": "image:u1:chat-1" },
+            { "storageKey": "plain-without-colon" },
+            { "storageKey": { "storageKey": "audio:u1:nested-1" } }
+          ]
+        }
+      ]
+    },
+    "expectedLocalMediaKeys": [
+      "audio:u1:bgm-1",
+      "audio:u1:nested-1",
+      "external-video:u1:ext-1",
+      "generation-image:u1:gen-1",
+      "image:u1:chat-1",
+      "image:u1:img-1",
+      "image:u1:poster-1",
+      "video:u1:vid-1"
+    ],
+    "expectedImageKeys": [
+      "generation-image:u1:gen-1",
+      "image:u1:chat-1",
+      "image:u1:img-1",
+      "image:u1:poster-1"
+    ]
+  },
+  {
+    "name": "non-string metadata and empty storageKey list",
+    "payload": {
+      "workspaceProjectId": 12345,
+      "canvasTitle": { "nested": true },
+      "nodes": [{ "id": "t1", "type": "text", "metadata": { "content": "plain text" } }]
+    },
+    "expectedLocalMediaKeys": [],
+    "expectedImageKeys": []
+  }
+]
