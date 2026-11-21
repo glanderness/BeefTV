@@ -62,7 +62,31 @@ func validatePublicHTTPSURLContext(ctx context.Context, raw string, resolve func
 	return parsed, nil
 }
 
-var publicHTTPSTransport = newOutboundTransport(resolvePublicHost)
+var (
+	publicHTTPSTransport      = newOutboundTransport(resolvePublicHost)
+	freshOutboundTransport    = newFreshTransport(outboundTransport)
+	freshPublicHTTPSTransport = newFreshTransport(publicHTTPSTransport)
+)
+
+type freshConnectionContextKey struct{}
+
+// WithFreshConnection asks outboundPolicyTransport to dial a brand-new
+// connection instead of reusing a pooled keep-alive connection.
+func WithFreshConnection(ctx context.Context) context.Context {
+	return context.WithValue(ctx, freshConnectionContextKey{}, true)
+}
+
+func requiresFreshConnection(ctx context.Context) bool {
+	value, _ := ctx.Value(freshConnectionContextKey{}).(bool)
+	return value
+}
+
+func newFreshTransport(base *http.Transport) *http.Transport {
+	cloned := base.Clone()
+	cloned.DisableKeepAlives = true
+	cloned.ForceAttemptHTTP2 = false
+	return cloned
+}
 
 type outboundPolicyTransport struct{}
 
@@ -86,13 +110,24 @@ func RequestNetworkRoute(req *http.Request, transport http.RoundTripper) string 
 }
 
 func (outboundPolicyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	fresh := requiresFreshConnection(req.Context())
+	if fresh && !req.Close {
+		req = req.Clone(req.Context())
+		req.Close = true
+	}
 	if !requiresPublicHTTPS(req.Context()) {
+		if fresh {
+			return freshOutboundTransport.RoundTrip(req)
+		}
 		return outboundTransport.RoundTrip(req)
 	}
 	// Validate on every dispatch, including pooled connections and redirects.
 	// Direct new connections resolve once more and dial only checked IPs.
 	if _, err := ValidatePublicHTTPSURLContext(req.Context(), req.URL.String()); err != nil {
 		return nil, err
+	}
+	if fresh {
+		return freshPublicHTTPSTransport.RoundTrip(req)
 	}
 	return publicHTTPSTransport.RoundTrip(req)
 }

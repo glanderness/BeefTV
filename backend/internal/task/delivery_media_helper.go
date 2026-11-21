@@ -145,6 +145,16 @@ func DecodeGenerationArtifact(deps DeliveryMediaDeps, userID, identity, mediaTyp
 			if errors.Is(downloadErr, outbound.ErrResourceTooLarge) {
 				return "", nil, "", "", 0, 0, 0, kernel.BadAuthRequest(fmt.Sprintf("远程资源必须小于 %s", localasset.FormatStorageLimit(maxBytes)))
 			}
+			if outbound.IsConnectionDrop(downloadErr) {
+				return "", nil, "", "", 0, 0, 0, &kernel.AppError{
+					Status:    kernel.CodeBadGateway,
+					Code:      kernel.CodeBadGateway,
+					Reason:    kernel.ReasonBadGateway,
+					Message:   outbound.ResumableConnectionDropMessage,
+					Retryable: true,
+					Cause:     downloadErr,
+				}
+			}
 			return "", nil, "", "", 0, 0, 0, downloadErr
 		}
 		mimeType, data = result.MimeType, result.Data

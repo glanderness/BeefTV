@@ -185,32 +185,60 @@ func TestTaskTerminalCoordinatorReturnsTerminalStateWriteError(t *testing.T) {
 func TestTaskTerminalCoordinatorReturnsOutputRegistrationErrorAfterSuccess(t *testing.T) {
 	task := &model.Task{ID: "task-1", UserID: "user-1"}
 	outputError := errors.New("project output unavailable")
+	logger := &taskTerminalLoggerStub{}
 	outputs := &taskTerminalOutputStub{err: outputError}
-	coordinator := newTaskTerminalCoordinatorForTest(&taskTerminalRepositoryStub{task: task}, &taskTerminalReplayStub{}, &taskTerminalLoggerStub{}, outputs)
+	coordinator := newTaskTerminalCoordinatorForTest(&taskTerminalRepositoryStub{task: task}, &taskTerminalReplayStub{}, logger, outputs)
 	if err := coordinator.HandleSuccess(task); !errors.Is(err, outputError) {
 		t.Fatalf("handleSuccess() error = %v, want %v", err, outputError)
 	}
-	if outputs.deliverCalls != 2 || outputs.calls != 1 {
-		t.Fatalf("expected delivery, registration, then delivery bind, deliver=%d register=%d", outputs.deliverCalls, outputs.calls)
+	if outputs.deliverCalls != 1 || outputs.calls != 1 {
+		t.Fatalf("expected single delivery then registration, deliver=%d register=%d", outputs.deliverCalls, outputs.calls)
 	}
-	if got := strings.Join(outputs.order, ","); got != "deliver,register,deliver" {
+	if got := strings.Join(outputs.order, ","); got != "deliver,register" {
 		t.Fatalf("output order = %s", got)
+	}
+	for _, msg := range logger.messages {
+		if msg == "任务完成，结果已持久化" {
+			t.Fatalf("logged persisted completion despite registration error: %v", logger.messages)
+		}
 	}
 }
 
 func TestTaskTerminalCoordinatorDeliversBeforeWorkflowRegistration(t *testing.T) {
 	task := &model.Task{ID: "task-1", UserID: "user-1"}
 	deliverError := errors.New("delivery unavailable")
+	logger := &taskTerminalLoggerStub{}
 	outputs := &taskTerminalOutputStub{deliverErr: deliverError}
-	coordinator := newTaskTerminalCoordinatorForTest(&taskTerminalRepositoryStub{task: task}, &taskTerminalReplayStub{}, &taskTerminalLoggerStub{}, outputs)
+	coordinator := newTaskTerminalCoordinatorForTest(&taskTerminalRepositoryStub{task: task}, &taskTerminalReplayStub{}, logger, outputs)
 	if err := coordinator.HandleSuccess(task); !errors.Is(err, deliverError) {
 		t.Fatalf("handleSuccess() error = %v, want %v", err, deliverError)
 	}
-	if outputs.deliverCalls != 2 || outputs.calls != 1 {
-		t.Fatalf("delivery failure still registers workflow output, deliver=%d register=%d", outputs.deliverCalls, outputs.calls)
+	if outputs.deliverCalls != 1 || outputs.calls != 1 {
+		t.Fatalf("delivery failure should not double-deliver, deliver=%d register=%d", outputs.deliverCalls, outputs.calls)
 	}
-	if got := strings.Join(outputs.order, ","); got != "deliver,register,deliver" {
+	if got := strings.Join(outputs.order, ","); got != "deliver,register" {
 		t.Fatalf("output order = %s", got)
+	}
+	for _, msg := range logger.messages {
+		if msg == "任务完成，结果已持久化" {
+			t.Fatalf("logged persisted completion despite delivery error: %v", logger.messages)
+		}
+	}
+}
+
+func TestTaskTerminalCoordinatorLogsPersistedOnlyOnCleanSuccess(t *testing.T) {
+	task := &model.Task{ID: "task-1", UserID: "user-1"}
+	logger := &taskTerminalLoggerStub{}
+	outputs := &taskTerminalOutputStub{}
+	coordinator := newTaskTerminalCoordinatorForTest(&taskTerminalRepositoryStub{task: task}, &taskTerminalReplayStub{}, logger, outputs)
+	if err := coordinator.HandleSuccess(task); err != nil {
+		t.Fatalf("handleSuccess() error = %v", err)
+	}
+	if outputs.deliverCalls != 1 || outputs.calls != 1 {
+		t.Fatalf("expected single delivery and registration, deliver=%d register=%d", outputs.deliverCalls, outputs.calls)
+	}
+	if len(logger.messages) != 1 || logger.messages[0] != "任务完成，结果已持久化" {
+		t.Fatalf("logger messages = %v", logger.messages)
 	}
 }
 
