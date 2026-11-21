@@ -16,7 +16,6 @@ import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, createPluginServiceChannel, c
 import { capabilityForAssignedProtocol, hasUserModelCapability } from "@/lib/model-capabilities";
 import { serviceCredentialGuide } from "@/lib/service-credentials";
 import type { ModelProtocolDefinition } from "@/lib/model-protocols";
-import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { createModelChannel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { ChannelRequestAddressBlocks } from "./channel-request-addresses";
@@ -382,7 +381,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     };
     const visibleModels = catalog.filter((item) => {
         const profile = serviceModelProfile(draft, item, protocols);
-        return `${item.id} ${seedancePortraitLabel(item.id) || item.displayName || ""}`.toLowerCase().includes(query.toLowerCase()) && (filter === "all" || profile.capability === filter);
+        return `${item.id} ${item.displayName || ""}`.toLowerCase().includes(query.toLowerCase()) && (filter === "all" || profile.capability === filter);
     });
     if (isTopazUpscaleChannel(draft)) return <AppModal open centered width={520} title="fal · Topaz 专用超分" footer={null} closable={!saving} keyboard={!saving} mask={{ closable: false }} onCancel={onClose}>
         <Form layout="vertical" requiredMark={false} disabled={saving} className="pt-2" onFinish={() => void save()}>
@@ -522,7 +521,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                     {protocolLoading ? <Spin /> : visibleModels.length ? visibleModels.map((item) => {
                         const profile = serviceModelProfile(draft, item, protocols);
                         const receipt = currentModelConnectionReceipt(receipts, draft, item.id);
-                        const displayName = seedancePortraitLabel(item.id) || item.displayName || item.id;
+                        const displayName = item.displayName || item.id;
                         const isManualItem = !sourceCatalogIds.has(item.id);
                         return <label key={item.id} className="model-service-model"><Checkbox disabled={busy} checked={draft.models.includes(item.id)} onChange={(event) => toggleModel(item.id, event.target.checked)} /><span><strong>{displayName}</strong>{displayName !== item.id && <small>{item.id}</small>}</span><span className="model-service-kind-wrap" onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}><Select aria-label={`${displayName} 模型类型`} className="model-service-kind" size="small" variant="borderless" popupMatchSelectWidth={false} classNames={{ popup: { root: "model-service-type-select-popup" } }} disabled={busy} value={profile.capability} options={Object.entries(CAPABILITY_LABELS).map(([value, label]) => ({ value, label }))} onChange={(nextCapability) => changeModelCapability(item.id, nextCapability)} /></span><small title={receipt?.detail}>{receipt ? receipt.success ? "测试通过" : "测试失败" : "未测试"}</small>{isManualItem && <span className="model-service-row-actions" onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}><button type="button" className="model-service-icon-btn" aria-label={`修改模型 ${item.id}`} title="修改模型 ID" disabled={busy} onClick={() => startEditManual(item.id)}><Pencil size={13} /></button><button type="button" className="model-service-icon-btn is-danger" aria-label={`删除模型 ${item.id}`} title="删除模型" disabled={busy} onClick={() => removeManualModel(item.id)}><Trash2 size={13} /></button></span>}</label>;
                     }) : <div className="model-service-empty"><Search size={23} /><strong>{query ? "没有找到匹配的模型" : "添加你的第一个模型"}</strong><p>{query ? "换个关键词，或在下方手动添加。" : "读取服务商的模型目录，或填写准确的模型 ID。"}</p></div>}

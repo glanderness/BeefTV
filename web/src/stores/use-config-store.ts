@@ -12,7 +12,7 @@ import { normalizeVideoBoolean, normalizeVideoDuration, normalizeVideoResolution
 import { defaultModelCapabilityConfig, upgradeGPTImageCapability, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
 import type { CapabilitySpec } from "@/services/api/logical-models";
-import { seedancePortraitLabel, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
+import type { VideoPriceQuote } from "@/lib/video-pricing";
 import { upgradeBuiltinModelProfile } from "@/lib/builtin-service-presets";
 export { buildApiUrl, isSystemProxyBaseUrl, resolveBackendApiUrl, systemProxyChannelId } from "@/lib/channel-url";
 
@@ -617,10 +617,7 @@ function enrichBeefTVMediaChannel(channel: ModelChannel): ModelChannel {
 function normalizeSelectedModel(value: string, channels: ModelChannel[], options: string[]) {
     const model = normalizeModelOptionValue(value, channels);
     if (model && options.includes(model)) return model;
-    // Keep an explicit paid-tier choice visible when the catalog removes it.
-    // An ordinary/default choice must never select the paid tier implicitly.
-    if (seedancePortraitModel(value)) return value;
-    return options.find((option) => !seedancePortraitModel(option)) || "";
+    return options[0] || "";
 }
 
 export function useEffectiveConfig() {
@@ -693,8 +690,6 @@ export function modelOptionName(value: string) {
 }
 
 export function modelDisplayName(config: AiConfig, value: string) {
-    const portrait = seedancePortraitLabel(value);
-    if (portrait) return portrait;
     const model = modelOptionName(value);
     const channel = resolveModelChannel(config, value);
     const displayName = channelModelProfile(channel, model)?.displayName?.trim();
@@ -744,11 +739,11 @@ export function normalizeModelOptionValue(value: unknown, channels: ModelChannel
     if (decoded) {
         const channel = channelLookup(channels).byId.get(decoded.channelId);
         const resolved = channel?.modelAliases?.[decoded.model] || decoded.model;
-        return channel && seedancePortraitModel(decoded.model) === seedancePortraitModel(resolved) && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
+        return channel && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
     }
     const channel = channels.find((item) => item.models.includes(model) || Boolean(item.modelAliases?.[model])) || channels[0];
     const resolved = channel?.modelAliases?.[model] || model;
-    return channel && seedancePortraitModel(model) === seedancePortraitModel(resolved) && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
+    return channel && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
 }
 
 export function resolveModelChannel(config: AiConfig, value: string) {

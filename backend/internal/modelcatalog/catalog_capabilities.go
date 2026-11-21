@@ -349,10 +349,13 @@ func NormalizeCatalogImageCapability(raw json.RawMessage) (map[string]any, bool)
 	return value, true
 }
 
+const maxVideoPricingDisplayLines = 20
+
 func NormalizeCatalogVideoPricing(raw json.RawMessage) (map[string]any, bool) {
 	var value struct {
 		Currency            string   `json:"currency"`
 		Mode                string   `json:"mode"`
+		DisplayLines        []string `json:"display_lines"`
 		ReferenceImage      *float64 `json:"reference_image"`
 		FreeReferenceImages *int     `json:"free_reference_images"`
 		ReferenceInvoice    *struct {
@@ -389,6 +392,22 @@ func NormalizeCatalogVideoPricing(raw json.RawMessage) (map[string]any, bool) {
 			return nil, false
 		}
 		result["reference_image"], result["free_reference_images"] = *value.ReferenceImage, *value.FreeReferenceImages
+	}
+	if len(value.DisplayLines) > 0 {
+		lines := make([]string, 0, min(len(value.DisplayLines), maxVideoPricingDisplayLines))
+		for _, line := range value.DisplayLines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			lines = append(lines, trimmed)
+			if len(lines) >= maxVideoPricingDisplayLines {
+				break
+			}
+		}
+		if len(lines) > 0 {
+			result["display_lines"] = lines
+		}
 	}
 	return result, true
 }

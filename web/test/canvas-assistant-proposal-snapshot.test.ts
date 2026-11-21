@@ -287,4 +287,12 @@ test("managed beeftv catalog ordering and profile synthesis differences do not f
     persisted.config.videoModels = ["beeftv::minimax-h3-max-turbo"];
 
     expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => persisted, noWait))).toBe("passed");
+
+    // Any videoPricing change on the managed channel is detected generically (model-agnostic).
+    persisted.config.channels[0]!.modelProfiles![0]!.videoPricing = {
+        currency: "CNY",
+        mode: "seconds",
+        rates: { "1080p": { output: 0.55, reference_video: 0 } },
+    };
+    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => persisted, noWait))).toBe("settings_changed");
 });

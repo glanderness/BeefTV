@@ -2,7 +2,6 @@ import { configuredModelMatchesCapability, defaultConfig, normalizeModelOptionVa
 import { resolveAudioSpeechSettings } from "@/lib/audio-generation";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { modelCapabilityConfigFor, videoPrefersReferenceMode } from "@/lib/model-capabilities";
-import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { declaredOrOmniVideoCapability, modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveModelVideoBooleanOptions, type ModelGenerationDefaults, type ModelInputSummary, type ModelRequirements } from "@/lib/model-selection";
 import { mediaGeneratorMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { savedVideoSettings, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
@@ -154,9 +153,6 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 export function resolveCanvasGenerationModel(config: AiConfig, model: string | undefined, mode: CanvasGenerationMode): string {
     if (!model) return "";
     const normalized = normalizeModelOptionValue(model, config.channels);
-    // Keep an explicit paid-tier choice when its catalog entry disappears.
-    // Validation will report unavailable instead of choosing a standard default.
-    if (mode === "video" && seedancePortraitModel(model)) return normalized || model;
     if (!normalized) return "";
     return configuredModelMatchesCapability(config, normalized, mode) ? normalized : "";
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -18,11 +17,9 @@ import (
 	"infinite-canvas/backend/internal/beeftv"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/topaz"
-	"infinite-canvas/backend/internal/workspace"
 )
 
 const (
@@ -566,121 +563,6 @@ func SameCredentialOrigin(targetURL, baseURL string) bool {
 		return false
 	}
 	return strings.EqualFold(target.Scheme, base.Scheme) && strings.EqualFold(target.Host, base.Host)
-}
-
-func PortraitModel(id string) bool {
-	return id == "seedance-2.0-portrait" || id == "seedance-2.5-portrait"
-}
-
-func ValidatePortraitTaskQuote(dataDir string, input map[string]any, lookupCred func() (string, string, string, string, error)) error {
-	config, _ := input["config"].(map[string]any)
-	modelID := strings.TrimSpace(stringAnyValue(config["model"]))
-	modelKey := strings.TrimSpace(stringAnyValue(config["channelModelKey"]))
-	if !PortraitModel(modelID) && !PortraitModel(modelKey) {
-		return nil
-	}
-	unavailable := func() error {
-		return BadAuthRequest("真人素材版当前模型或所选分辨率报价不可用，请刷新模型列表后重新选择")
-	}
-	if !PortraitModel(modelID) || (modelKey != "" && modelKey != modelID) {
-		return unavailable()
-	}
-	var request Config
-	body, err := json.Marshal(config)
-	if err != nil || json.Unmarshal(body, &request) != nil {
-		return unavailable()
-	}
-	store, err := workspace.NewProviderConfig(dataDir)
-	if err != nil {
-		return unavailable()
-	}
-	effective, _, err := store.LoadEffectiveModelConfig()
-	if err != nil {
-		return unavailable()
-	}
-	var snapshot struct {
-		Channels []struct {
-			ID            string                    `json:"id"`
-			Enabled       bool                      `json:"enabled"`
-			BaseURL       string                    `json:"baseUrl"`
-			APIKey        string                    `json:"apiKey"`
-			SecretKey     string                    `json:"secretKey"`
-			Headers       []outbound.OutboundHeader `json:"headers"`
-			Models        []string                  `json:"models"`
-			ModelProfiles []struct {
-				Model        string          `json:"model"`
-				VideoPricing json.RawMessage `json:"videoPricing"`
-			} `json:"modelProfiles"`
-		} `json:"channels"`
-	}
-	body, err = json.Marshal(effective.Config)
-	if err != nil || json.Unmarshal(body, &snapshot) != nil {
-		return unavailable()
-	}
-	managed := strings.TrimSpace(stringAnyValue(config["credentialRef"])) == beeftv.CredentialRef
-	resolution := strings.ToLower(strings.TrimSpace(request.VQuality))
-	if resolution != "" {
-		resolution = modelcatalog.NormalizeVideoResolution(resolution)
-	}
-	if resolution == "2160p" {
-		resolution = "4k"
-	}
-	matches, quoted := 0, false
-	for _, channel := range snapshot.Channels {
-		if !channel.Enabled || (managed && channel.ID != beeftv.ChannelID) {
-			continue
-		}
-		base, key := channel.BaseURL, channel.APIKey
-		if channel.ID == beeftv.ChannelID && lookupCred != nil {
-			resolvedKey, resolvedBase, _, _, lookupErr := lookupCred()
-			if lookupErr != nil {
-				continue
-			}
-			base, key = resolvedBase, resolvedKey
-		}
-		if strings.TrimSpace(key) == "" || strings.TrimRight(strings.TrimSpace(base), "/") != strings.TrimRight(strings.TrimSpace(request.BaseURL), "/") || key != request.APIKey || channel.SecretKey != request.SecretKey || !PortraitHeadersEqual(channel.Headers, request.Headers) {
-			continue
-		}
-		matches++
-		present := false
-		for _, id := range channel.Models {
-			present = present || id == modelID
-		}
-		if !present {
-			continue
-		}
-		for _, profile := range channel.ModelProfiles {
-			if profile.Model != modelID {
-				continue
-			}
-			pricing, valid := beeftv.NormalizeCatalogVideoPricing(profile.VideoPricing)
-			if valid && pricing["mode"] == "tokens" {
-				rates := pricing["rates"].(map[string]any)
-				_, quoted = rates[resolution]
-			}
-			break
-		}
-	}
-	if matches != 1 || !quoted {
-		return unavailable()
-	}
-	return nil
-}
-
-func PortraitHeadersEqual(left, right []outbound.OutboundHeader) bool {
-	a, errA := outbound.NormalizeOutboundHeaders(left)
-	b, errB := outbound.NormalizeOutboundHeaders(right)
-	if errA != nil || errB != nil {
-		return false
-	}
-	values := func(headers []outbound.OutboundHeader) map[string]string {
-		result := make(map[string]string, len(headers))
-		for _, header := range headers {
-			result[header.Name] = header.Value
-		}
-		return result
-	}
-	return maps.Equal(values(a), values(b))
 }
 
 func UpscaleConfig(name string, lookupCred func() (string, string, string, string, error)) (Config, error) {

@@ -30,7 +30,7 @@ for (const model of ["seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini", "
                 const profile = modelCapabilityConfigFor(config, selected).video!;
                 expect(profile.references.maxVideos).toBe(model.startsWith("seedance-2.5") ? 10 : 3);
                 expect(profile.references.maxAudios).toBeGreaterThan(0);
-                expect(modelCompatibilityError(config, selected, { capability: "video", input: { textCount: 1, imageCount: 1, videoCount: 1, audioCount: 1, characterCount: 0 }, videoSeconds: "5", videoOperation: "reference_to_video" })).toBe(model.endsWith("-portrait") ? "真人素材版价格暂不可用，请刷新模型列表" : "");
+                expect(modelCompatibilityError(config, selected, { capability: "video", input: { textCount: 1, imageCount: 1, videoCount: 1, audioCount: 1, characterCount: 0 }, videoSeconds: "5", videoOperation: "reference_to_video" })).toBe("");
             }
         });
     }

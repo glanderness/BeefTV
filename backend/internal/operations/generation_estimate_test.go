@@ -1,10 +1,13 @@
 package operations
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/beeftv"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/pricing"
 )
@@ -16,6 +19,20 @@ type estimateProbe struct {
 
 func (p *estimateProbe) AgentModelCatalog() (*modelcatalog.CatalogResponse, error) {
 	return p.catalog, nil
+}
+
+type serverEstimateProbe struct {
+	estimateProbe
+	calls int
+	got   beeftv.PricingEstimateRequest
+	resp  beeftv.PricingEstimateResponse
+	err   error
+}
+
+func (p *serverEstimateProbe) EstimateServerPricing(_ context.Context, req beeftv.PricingEstimateRequest) (beeftv.PricingEstimateResponse, error) {
+	p.calls++
+	p.got = req
+	return p.resp, p.err
 }
 
 func priceRow(t *testing.T, raw string) *pricing.Table {
@@ -144,5 +161,72 @@ func TestModelCatalogLeavesPriceRowsToTheEstimate(t *testing.T) {
 	got := EstimateGenerationCost(probe, []EstimateTarget{{ModelKey: "beeftv::gpt-image-2", Kind: "image"}})
 	if got.Items[0].Amount == nil || *got.Items[0].Amount != 0.35 {
 		t.Fatalf("estimate lost the price row: %+v", got.Items[0])
+	}
+}
+
+func TestGenerationEstimatePrefersServerPricingForBeefTVAndKeepsBYOKLocal(t *testing.T) {
+	serverAmount := 1.2207
+	probe := &serverEstimateProbe{
+		estimateProbe: estimateProbe{catalog: estimateCatalog(t)},
+		resp: beeftv.PricingEstimateResponse{
+			Items: []pricing.Estimate{{
+				Amount: &serverAmount,
+				Label:  "¥1.22",
+				Basis:  "768p ¥0.2441/秒 × 5 秒",
+				Text:   "¥1.22（768p ¥0.2441/秒 × 5 秒）",
+			}},
+			Summary: pricing.Summary{
+				Amount: serverAmount,
+				Priced: 1,
+				Text:   "预计费用：¥1.22",
+			},
+		},
+	}
+
+	got := EstimateGenerationCost(probe, []EstimateTarget{
+		{ModelKey: "beeftv::minimax-h3", Kind: "video", Parameters: map[string]string{"vquality": "768p", "seconds": "5"}},
+	})
+	if probe.calls != 1 {
+		t.Fatalf("expected 1 server pricing call, got %d", probe.calls)
+	}
+	if len(probe.got.Targets) != 1 || probe.got.Targets[0].Model != "minimax-h3" || probe.got.Targets[0].Resolution != "768p" || probe.got.Targets[0].Seconds != 5 || probe.got.Targets[0].Count != 1 {
+		t.Fatalf("unexpected server request payload: %+v", probe.got)
+	}
+	if got.Items[0].Amount == nil || *got.Items[0].Amount != serverAmount || got.Summary.Text != "预计费用：¥1.22" {
+		t.Fatalf("expected authoritative server estimate, got %+v", got)
+	}
+
+	// Mixed BeefTV + BYOK batch only sends BeefTV targets to server and merges summary.
+	mixed := EstimateGenerationCost(probe, []EstimateTarget{
+		{ModelKey: "beeftv::minimax-h3", Kind: "video", Parameters: map[string]string{"vquality": "768p", "seconds": "5"}},
+		{ModelKey: "custom::my-video", Kind: "video", Parameters: map[string]string{"vquality": "720p", "seconds": "5"}},
+	})
+	if len(probe.got.Targets) != 1 || probe.got.Targets[0].Model != "minimax-h3" {
+		t.Fatalf("BYOK target must not be sent to BeefTV server: %+v", probe.got)
+	}
+	if mixed.Items[0].Amount == nil || *mixed.Items[0].Amount != serverAmount {
+		t.Fatalf("BeefTV item lost server estimate: %+v", mixed.Items[0])
+	}
+	if mixed.Items[1].Amount != nil || mixed.Items[1].Basis != "自带 Key 的渠道暂无价格，按该渠道实际计费" {
+		t.Fatalf("BYOK item should stay local unknown: %+v", mixed.Items[1])
+	}
+	if mixed.Summary.Priced != 1 || mixed.Summary.Unknown != 1 || mixed.Summary.Text != "预计费用：已知部分¥1.22，另有 1 项暂无价格" {
+		t.Fatalf("mixed summary: %+v", mixed.Summary)
+	}
+}
+
+func TestGenerationEstimateFallsBackToLocalCatalogOnServerError(t *testing.T) {
+	probe := &serverEstimateProbe{
+		estimateProbe: estimateProbe{catalog: estimateCatalog(t)},
+		err:           errors.New("404 not found"),
+	}
+	got := EstimateGenerationCost(probe, []EstimateTarget{
+		{ModelKey: "beeftv::minimax-h3", Kind: "video", Parameters: map[string]string{"vquality": "768p", "seconds": "6"}},
+	})
+	if probe.calls != 1 {
+		t.Fatalf("expected 1 server attempt before fallback, got %d", probe.calls)
+	}
+	if got.Items[0].Amount == nil || *got.Items[0].Amount != 3.662 || got.Items[0].Basis != "768p ¥0.6103/秒 × 6 秒" {
+		t.Fatalf("expected seamless local fallback estimate, got %+v", got)
 	}
 }

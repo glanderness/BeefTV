@@ -101,3 +101,30 @@ func TestPortraitRemovedFromCatalogDoesNotRetainQuoteOrAvailability(t *testing.T
 		}
 	}
 }
+
+func TestVideoPricingDisplayLinesSurviveCatalogRefresh(t *testing.T) {
+	store, err := workspace.NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := CatalogModel{
+		ID: "minimax-h3-max-turbo",
+		VideoPricing: json.RawMessage(`{
+			"currency": "CNY",
+			"mode": "seconds",
+			"rates": {"480p": {"output": 0.1526, "reference_video": 0}, "768p": {"output": 0.2441, "reference_video": 0}},
+			"display_lines": ["  480p：¥0.1526 / 秒  ", "", "768p：¥0.2441 / 秒"]
+		}`),
+	}
+	if err := applyCatalog(store, []CatalogModel{item}, "", "42", ""); err != nil {
+		t.Fatal(err)
+	}
+	price, ok := catalogProfile(t, store, item.ID)["videoPricing"].(map[string]any)
+	if !ok {
+		t.Fatalf("videoPricing missing after refresh")
+	}
+	lines, ok := price["display_lines"].([]any)
+	if !ok || len(lines) != 2 || lines[0] != "480p：¥0.1526 / 秒" || lines[1] != "768p：¥0.2441 / 秒" {
+		t.Fatalf("unexpected display_lines: %#v", price["display_lines"])
+	}
+}

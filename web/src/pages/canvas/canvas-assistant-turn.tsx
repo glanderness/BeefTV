@@ -9,8 +9,7 @@ import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkil
 import type { CanvasNodeData } from "@/types/canvas";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
 import { modelOptionName, resolveModelChannel, useEffectiveConfig } from "@/stores/use-config-store";
-import { portraitPriceLines, seedancePortraitModel } from "@/lib/seedance-portrait";
-import { portraitGenerationError } from "@/lib/model-selection";
+import { videoPricingDisplayLines } from "@/lib/video-pricing";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
 import { CanvasAssistantOutputs } from "./canvas-assistant-outputs";
 import { CanvasAssistantMediaFacts } from "./canvas-assistant-media-facts";
@@ -185,11 +184,7 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                 const started = handledProposals.has(proposal.proposalId) || admittedOnCanvas;
                 const skipped = handledProposals.has(dismissedProposalKey(proposal.proposalId));
                 const selectedModel = proposal.modelKey || proposal.model;
-                const videoModels = proposal.production
-                    ? proposal.production.targets.filter((target) => target.kind === "video").map((target) => target.modelKey)
-                    : [selectedModel];
                 const profile = proposal.kind === "video" ? resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel)) : undefined;
-                const priceError = videoModels.filter((model) => seedancePortraitModel(model)).map((model) => portraitGenerationError(config, model)).find(Boolean) || "";
                 const running = Boolean(runningProposalIds?.has(proposal.proposalId));
                 const progress = started && nodes ? assistantProposalProgress(proposal, nodes) : null;
                 const awaitingConfirmation = !started && !skipped && !undone && !turn.proposalsInvalidated;
@@ -229,7 +224,7 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                         ) : (
                             <>
                                 <div className="canvas-assistant-proposal-lines">
-                                    {assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing), awaitingConfirmation).split("\n").map((part, partIndex) => <div key={partIndex} className={part.length > 80 ? "canvas-assistant-pretty-line" : undefined}>{part}</div>)}
+                                    {assistantProposalText(proposal, videoPricingDisplayLines(profile?.videoPricing), awaitingConfirmation).split("\n").map((part, partIndex) => <div key={partIndex} className={part.length > 80 ? "canvas-assistant-pretty-line" : undefined}>{part}</div>)}
                                 </div>
                                 {orderTargetLines.length > 0 ? (
                                     <details className="canvas-assistant-proposal-details">
@@ -245,7 +240,6 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                                 ) : null}
                             </>
                         )}
-                        {priceError && awaitingConfirmation ? <span className="canvas-assistant-meta" role="status">{priceError}</span> : null}
                         {!skipped && !running && ((!undone && !turn.proposalsInvalidated) || started) && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status" style={{ overflowWrap: "anywhere" }}>{proposalFeedback[proposal.proposalId]}</span> : null}
                         {started ? (
                             <>
@@ -263,7 +257,7 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                             <span className="canvas-assistant-meta" role="status">{ASSISTANT_PROPOSAL_INVALIDATED_TEXT}</span>
                         ) : (
                             <div className="canvas-assistant-card-actions">
-                                <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={generationDisabled || Boolean(priceError)} onClick={() => onRunProposal(proposal, turn.turnId)}>
+                                <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={generationDisabled} onClick={() => onRunProposal(proposal, turn.turnId)}>
                                     {proposal.production ? "确认并制作整片" : "生成"}
                                 </Button>
                                 <Button size="small" disabled={running} onClick={() => onDismissProposal(proposal.proposalId)}>

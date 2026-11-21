@@ -1,7 +1,6 @@
 // 助手面板里所有用户可见文案的唯一来源：机器可读原因、操作名和改动摘要都在这里
 // 翻译成用户语。组件只负责排版，不自己拼文案，避免同一种状态在两处写出两句话。
 import type { AgentLifecycleEvent, AgentToolCall, AssistantGenerationProposal, AssistantScriptProposal, AssistantSkillSelection, AssistantTurnChange, AssistantUndoFailure } from "@/services/api/agent-assistant";
-import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import type { CanvasNodeData } from "@/types/canvas";
 import { authoritativeNodeOutcome } from "@/lib/canvas/canvas-node-failure-state";
 
@@ -214,7 +213,7 @@ export function assistantProposalText(
         return [productionParts.header, ...productionParts.targetLines, ...(productionParts.footer ? [productionParts.footer] : [])].join("\n\n");
     }
     const target = proposal.kind === "video" ? "视频" : proposal.kind === "audio" ? "音频" : "图片";
-    const title = `为 ${count} 个节点生成${target} · ${seedancePortraitLabel(proposal.model) || proposal.model}`;
+    const title = `为 ${count} 个节点生成${target} · ${proposal.model}`;
     const prices = proposal.estimate?.text ? [proposal.estimate.text] : priceLines;
     return awaitingConfirmation ? `${title}\n${prices.length ? prices.join("\n") + "\n" : ""}确认后开始，按所选渠道计费。` : title;
 }

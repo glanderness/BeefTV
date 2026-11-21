@@ -7,7 +7,6 @@ import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 import { normalizeCanvasMediaNodeSemanticsList } from "@/lib/canvas/canvas-node-semantics";
 import { resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
-import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { buildNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 
 /** Use the editor's load normalization on both documents. Never discard prompts or unknown metadata. */
@@ -93,13 +92,13 @@ function comparableConfig(config: AiConfig) {
         channels: config.channels.map((channel) => {
             if (channel.id !== "beeftv" || !channel.pinned) return channel;
             const { models: _cm, modelProfiles: _cp, apiKey: _ak, secretKey: _sk, credentialRef: _cr, hasApiKey: _hak, hasSecretKey: _hsk, baseUrl: _bu, ...channelRest } = channel;
-            const portraitQuotes = Object.fromEntries(
+            const videoQuotes = Object.fromEntries(
                 (channel.modelProfiles || [])
-                    .filter((item) => seedancePortraitModel(item.model) && item.videoPricing)
+                    .filter((item) => item.videoPricing)
                     .map((item) => [item.model, item.videoPricing])
                     .sort(([a], [b]) => String(a).localeCompare(String(b))),
             );
-            return { ...channelRest, portraitQuotes };
+            return { ...channelRest, videoQuotes };
         }),
     });
 }

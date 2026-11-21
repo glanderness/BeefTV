@@ -168,10 +168,9 @@ describe("付费生成确认", () => {
         expect(text).not.toContain("报价");
     });
 
-    test("旧真人模型提议显示统一名称与当前渠道报价", () => {
-        const text = assistantProposalText({ proposalId: "portrait", kind: "video", nodeIds: ["a"], model: "seedance-2.0-portrait", modelKey: "byok::seedance-2.0-portrait" }, ["720p：无视频输入 ¥69，含视频输入 ¥42 / 百万视频 Token"]);
+    test("视频模型提议按原样展示模型名与服务端下发的展示单价", () => {
+        const text = assistantProposalText({ proposalId: "video-price", kind: "video", nodeIds: ["a"], model: "Seedance 2.0", modelKey: "byok::seedance-2.0" }, ["720p：无视频输入 ¥69，含视频输入 ¥42 / 百万视频 Token"]);
         expect(text).toContain("Seedance 2.0");
-        expect(text).not.toContain("Seedance 2.0-真人");
         expect(text).toContain("¥69");
         expect(text).toContain("¥42");
         expect(text).not.toContain("byok::");
