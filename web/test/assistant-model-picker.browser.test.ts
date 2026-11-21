@@ -133,10 +133,14 @@ test("picker keyboard selection persists, respects busy and fits both themes at 
     await page.goto(server.url.toString());
     const picker = page.getByRole("combobox", { name: "助手模型" });
     await picker.focus(); await picker.press("ArrowDown");
-    expect(await page.locator('.ant-select-item-option-content').allTextContents()).toEqual(["gpt-6-astra", "claude-opus-5-5", "deepseek-v4.1-flash", "glm-5.3"]);
+    expect(await page.locator('.ant-select-item-option-content').allTextContents()).toEqual(ids);
     await picker.press("ArrowUp"); await picker.press("Enter");
     await page.waitForTimeout(100);
     expect(saved.assistantModel).toBe("beeftv::gpt-6-astra");
+    await picker.click();
+    await page.locator('.ant-select-item-option-content').filter({ hasText: /^qwen3.8-flash$/ }).click();
+    await page.waitForTimeout(100);
+    expect(saved.assistantModel).toBe("beeftv::qwen3.8-flash");
     await page.reload(); await page.getByRole("button", { name: "切换忙碌" }).click();
     expect(await picker.isDisabled()).toBe(true);
     for (let i = 0; i < 2; i++) {

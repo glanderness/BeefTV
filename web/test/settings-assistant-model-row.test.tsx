@@ -54,7 +54,7 @@ describe("模型配置页的助手模型一行", () => {
         const unavailable = renderToStaticMarkup(<ModelDefaultGrid config={configWithTextChannel({ assistantModel: "gone::chat-1" })} onChange={() => {}} />);
         expect(unavailable).toContain("已选模型不可用，请重新选择");
 
-        // 跟随默认文本模型、但默认文本模型本身不支持助手时，明确标出不可用以免误以为就绪。
+        // 跟随默认文本模型、但默认文本模型本身协议不支持助手时，明确标出不可用以免误以为就绪。
         const unsupportedTextConfig = normalizeConfigSnapshot({
             config: {
                 ...defaultConfig,
@@ -62,17 +62,19 @@ describe("模型配置页的助手模型一行", () => {
                     createModelChannel({
                         id: "beeftv",
                         pinned: true,
-                        models: ["gpt-6-astra", "gpt-5.6-sol"],
+                        models: ["gpt-6-astra", "deepseek-v4-pro", "legacy-completion"],
                         modelProfiles: [
                             { model: "gpt-6-astra", capability: "text", protocol: "chat-completion" },
-                            { model: "gpt-5.6-sol", capability: "text", protocol: "chat-completion" },
+                            { model: "deepseek-v4-pro", capability: "text", protocol: "chat-completion" },
+                            { model: "legacy-completion", capability: "text", protocol: "openai-completion" },
                         ],
                     }),
                 ],
-                textModel: "beeftv::gpt-5.6-sol",
+                textModel: "beeftv::legacy-completion",
                 assistantModel: "",
             },
         }).config;
         expect(assistantSelection(unsupportedTextConfig)).toBe("跟随默认文本模型（当前默认模型不支持助手）");
+        expect(assistantSelection({ ...unsupportedTextConfig, textModel: "beeftv::deepseek-v4-pro" })).toBe("跟随默认文本模型");
     });
 });

@@ -1,10 +1,19 @@
 import { expect, test } from "bun:test";
-import { assistantModelOptions, MANAGED_ASSISTANT_MODELS, resolveAssistantModel } from "@/lib/assistant-model";
+import { assistantModelOptions, resolveAssistantModel } from "@/lib/assistant-model";
 import { createModelChannel, defaultConfig } from "@/stores/use-config-store";
 import { mergeManagedBeefTVCatalog } from "@/pages/settings/channel-settings-pane";
 
-const models = [...MANAGED_ASSISTANT_MODELS, "gpt-6.1-sol", "qwen3.8-flash"];
-const channel = createModelChannel({ id: "beeftv", pinned: true, models, modelProfiles: models.map(model => ({ model, capability: "text", protocol: "chat-completion" })) });
+const textModels = ["deepseek-v4.1-flash", "deepseek-v4-pro", "glm-5.3-flash", "gpt-6-astra", "claude-opus-5-5", "gemini-3.8-flash", "qwen3.8-flash"];
+const channel = createModelChannel({
+    id: "beeftv",
+    pinned: true,
+    models: [...textModels, "seedream-5", "unsupported-text"],
+    modelProfiles: [
+        ...textModels.map(model => ({ model, capability: "text" as const, protocol: "chat-completion" as const })),
+        { model: "seedream-5", capability: "image", protocol: "openai-image" },
+        { model: "unsupported-text", capability: "text", protocol: "unsupported" },
+    ],
+});
 const config = { ...defaultConfig, channels: [channel], textModel: "beeftv::qwen3.8-flash" };
 
 test("assistant follows a custom default text model without modelProfiles", () => {
@@ -45,11 +54,14 @@ test("models-only fallback keeps channel and explicit profile restrictions", () 
     })).toBe("");
 });
 
-test("managed assistant list is curated and requires actual catalog membership", () => {
-    expect(assistantModelOptions(config)).toEqual(MANAGED_ASSISTANT_MODELS.map(m => `beeftv::${m}`));
-    expect(assistantModelOptions({ ...config, channels: [{ ...channel, models: models.filter(m => m !== "gpt-6.1-sol") }] })).not.toContain("beeftv::gpt-6.1-sol");
-    expect(resolveAssistantModel(config)).toBe("");
-    expect(resolveAssistantModel({ ...config, assistantModel: "beeftv::qwen3.8-flash", textModel: "beeftv::gpt-6-astra" })).toBe("");
+test("managed assistant list follows all catalog text models with supported protocols", () => {
+    expect(assistantModelOptions(config)).toEqual(textModels.map(m => `beeftv::${m}`));
+    expect(assistantModelOptions({ ...config, channels: [{ ...channel, models: textModels.filter(m => m !== "glm-5.3-flash") }] })).not.toContain("beeftv::glm-5.3-flash");
+    expect(resolveAssistantModel(config)).toBe("beeftv::qwen3.8-flash");
+    expect(resolveAssistantModel({ ...config, assistantModel: "beeftv::deepseek-v4-pro" })).toBe("beeftv::deepseek-v4-pro");
+    expect(resolveAssistantModel({ ...config, assistantModel: "beeftv::seedream-5" })).toBe("");
+    expect(resolveAssistantModel({ ...config, assistantModel: "beeftv::unsupported-text" })).toBe("");
+    expect(resolveAssistantModel({ ...config, assistantModel: "beeftv::missing", textModel: "beeftv::gpt-6-astra" })).toBe("");
 });
 
 test("custom channels remain unrestricted and explicit missing models do not silently fall back", () => {
@@ -63,13 +75,14 @@ test("custom channels remain unrestricted and explicit missing models do not sil
 test("managed aliases must resolve to an available text profile", () => {
     const alias = { ...channel, models: ["opus-catalog"], modelAliases: { "claude-opus-5-5": "opus-catalog" }, modelProfiles: [{ model: "opus-catalog", capability: "text" as const, protocol: "claude-api" as const }] };
     expect(assistantModelOptions({ ...config, channels: [alias] })).toEqual(["beeftv::opus-catalog"]);
+    expect(resolveAssistantModel({ ...config, channels: [alias], assistantModel: "beeftv::claude-opus-5-5" })).toBe("beeftv::opus-catalog");
 });
 
 test("managed Gemini can follow the default text model without replacing an explicit assistant choice", () => {
     const gemini = { ...config, textModel: "beeftv::gemini-3.8-flash", assistantModel: "" };
     expect(resolveAssistantModel(gemini)).toBe("beeftv::gemini-3.8-flash");
     expect(resolveAssistantModel({ ...gemini, assistantModel: "beeftv::claude-opus-5-5" })).toBe("beeftv::claude-opus-5-5");
-    const removed = { ...channel, models: models.filter(model => model !== "gemini-3.8-flash") };
+    const removed = { ...channel, models: textModels.filter(model => model !== "gemini-3.8-flash") };
     expect(resolveAssistantModel({ ...gemini, channels: [removed] })).toBe("");
 });
 

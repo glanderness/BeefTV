@@ -82,30 +82,44 @@ func TestManagedGeminiAssistantUsesCatalogAndPreservesExplicitSelection(t *testi
 	}
 }
 
-func TestManagedAssistantSelectionDoesNotBypassCuratedModels(t *testing.T) {
-	c := AssistantChannel{ID: "beeftv", Pinned: true, Enabled: true, APIKey: "synthetic", BaseURL: "https://example.test", Models: []string{"qwen", "claude-opus-5-5"}, ModelProfiles: []AssistantModelProfile{{Model: "qwen", Capability: "text"}, {Model: "claude-opus-5-5", Capability: "text"}}}
-	s := AssistantConfigSnapshot{TextModel: "beeftv::qwen", Channels: []AssistantChannel{c}}
-	if _, err := ResolveAssistantProvider(s, nil); err == nil {
-		t.Fatal("text fallback bypassed curated models")
+func TestManagedAssistantUsesCatalogTextModelsWithoutWhitelist(t *testing.T) {
+	c := AssistantChannel{
+		ID: "beeftv", Pinned: true, Enabled: true, APIKey: "synthetic", BaseURL: "https://example.test",
+		Models: []string{"deepseek-v4-pro", "glm-5.3-flash", "seedream-5", "bad-proto", "hy-asr-3.0-preview"},
+		ModelProfiles: []AssistantModelProfile{
+			{Model: "deepseek-v4-pro", Capability: "text"},
+			{Model: "glm-5.3-flash", Capability: "text", Protocol: "chat-completion"},
+			{Model: "seedream-5", Capability: "image", Protocol: "openai-image"},
+			{Model: "bad-proto", Capability: "text", Protocol: "unsupported"},
+			{Model: "hy-asr-3.0-preview", Capability: "", Protocol: ""},
+		},
 	}
-	s.TextModel = "beeftv::claude-opus-5-5"
-	s.AssistantModel = "beeftv::missing"
-	if _, err := ResolveAssistantProvider(s, nil); err == nil {
-		t.Fatal("explicit unavailable model silently fell back")
-	}
-	s.AssistantModel = "beeftv::claude-opus-5-5"
+	s := AssistantConfigSnapshot{TextModel: "beeftv::deepseek-v4-pro", Channels: []AssistantChannel{c}}
 	got, err := ResolveAssistantProvider(s, nil)
-	if err != nil || got.Model != "claude-opus-5-5" {
-		t.Fatalf("selection not effective: %v %#v", err, got)
+	if err != nil || got.Model != "deepseek-v4-pro" {
+		t.Fatalf("catalog text fallback unavailable: %v %#v", err, got)
 	}
-	s.Channels[0].Models = append(s.Channels[0].Models, "gpt-6.1-sol")
-	s.Channels[0].ModelProfiles = append(s.Channels[0].ModelProfiles, AssistantModelProfile{Model: "gpt-6.1-sol", Capability: "text"})
-	s.AssistantModel = "beeftv::gpt-6.1-sol"
-	if _, err := ResolveAssistantProvider(s, nil); err == nil {
-		t.Fatal("deferred model became available merely through catalog membership")
+	s.AssistantModel = "beeftv::glm-5.3-flash"
+	got, err = ResolveAssistantProvider(s, nil)
+	if err != nil || got.Model != "glm-5.3-flash" {
+		t.Fatalf("catalog text selection unavailable: %v %#v", err, got)
+	}
+	lookups := 0
+	lookup := func(id, ref, url string) (string, string, bool) {
+		lookups++
+		return "synthetic", url, true
+	}
+	for _, rejected := range []string{"beeftv::missing", "beeftv::seedream-5", "beeftv::bad-proto", "beeftv::hy-asr-3.0-preview"} {
+		s.AssistantModel = rejected
+		if _, err := ResolveAssistantProvider(s, lookup); err == nil {
+			t.Fatalf("model %q should not be accepted", rejected)
+		}
+	}
+	if lookups != 0 {
+		t.Fatalf("rejected models must not trigger credential lookup, got %d", lookups)
 	}
 	s.Channels[0].ID = "custom"
-	s.AssistantModel = "custom::qwen"
+	s.AssistantModel = "custom::glm-5.3-flash"
 	if _, err := ResolveAssistantProvider(s, nil); err != nil {
 		t.Fatal("custom channel was restricted", err)
 	}

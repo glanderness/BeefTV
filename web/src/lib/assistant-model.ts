@@ -1,7 +1,5 @@
 import type { ModelProtocol } from "@/lib/model-protocols";
-import { decodeChannelModel, encodeChannelModel, isBuiltinBeefTVChannel, normalizeModelOptionValue, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
-
-export const MANAGED_ASSISTANT_MODELS = ["gpt-6-astra", "claude-opus-5-5", "deepseek-v4.1-flash", "glm-5.3", "gemini-3.8-flash"] as const;
+import { decodeChannelModel, encodeChannelModel, normalizeModelOptionValue, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 
 /**
  * 画布助手只能走这几种对话协议：它需要多轮工具调用，
@@ -46,10 +44,7 @@ function channelAssistantModels(channel: ModelChannel, defaultTextModel: string)
         !channel.modelProfiles?.some((profile) => profile.model === textSelection.model)) {
         if (protocolSupported(fallbackProtocol, fallbackProtocol)) available.push(textSelection.model);
     }
-    const models = isBuiltinBeefTVChannel(channel)
-        ? MANAGED_ASSISTANT_MODELS.map((model) => channel.modelAliases?.[model] || model).filter((model) => available.includes(model))
-        : available;
-    return models.map((model) => encodeChannelModel(channel.id, model));
+    return available.map((model) => encodeChannelModel(channel.id, model));
 }
 
 /** 助手可选模型包含自定义渠道里没有能力档案的默认文本模型。 */
