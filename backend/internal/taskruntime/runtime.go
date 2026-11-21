@@ -28,6 +28,8 @@ type Runtime struct {
 	cfg         Config
 	closed      atomic.Bool
 	looping     atomic.Bool
+	activeMu    sync.Mutex
+	activeTasks map[string]struct{}
 }
 
 // Deps 是运行时端口。Worker 必须是进程里那一个 platform.Worker，不能再造一套生命周期。
@@ -57,6 +59,7 @@ func New(deps Deps) *Runtime {
 		logf:        deps.Logger,
 		onExecError: deps.OnExecError,
 		cfg:         deps.Config.withDefaults(),
+		activeTasks: map[string]struct{}{},
 	}
 }
 
@@ -156,6 +159,53 @@ func (r *Runtime) Dispatch(ctx context.Context) {
 	r.dispatch(ctx, make(chan struct{}, r.cfg.MaxSlots))
 }
 
+func (r *Runtime) markActive(taskID string) bool {
+	if !r.cfg.SingleProcess {
+		return true
+	}
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	if r.activeTasks == nil {
+		r.activeTasks = map[string]struct{}{}
+	}
+	if _, exists := r.activeTasks[taskID]; exists {
+		return false
+	}
+	r.activeTasks[taskID] = struct{}{}
+	return true
+}
+
+func (r *Runtime) unmarkActive(taskID string) {
+	if !r.cfg.SingleProcess {
+		return
+	}
+	r.activeMu.Lock()
+	delete(r.activeTasks, taskID)
+	r.activeMu.Unlock()
+}
+
+func (r *Runtime) activeTaskIDs() []string {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	if len(r.activeTasks) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(r.activeTasks))
+	for id := range r.activeTasks {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (r *Runtime) claimNext(ctx context.Context, owner string) (*model.Task, error) {
+	if r.cfg.SingleProcess {
+		if exRepo, ok := r.repo.(ExcludingRepository); ok {
+			return exRepo.ClaimNextExcluding(ctx, owner, r.cfg.TaskLeaseTTL, r.activeTaskIDs())
+		}
+	}
+	return r.repo.ClaimNext(ctx, owner, r.cfg.TaskLeaseTTL)
+}
+
 // ProcessOne 领取并执行一条任务，不占用全局槽位。调用方取消会取消这次执行窗口。
 // 生产领取循环把执行挂在 Background 上：BeginDrain 停发新任务并取消循环，
 // 进行中的执行仍跑完，由 platform.Worker.Stop 先排空再有界等待。
@@ -167,10 +217,15 @@ func (r *Runtime) ProcessOne(ctx context.Context) Outcome {
 		return Outcome{Kind: KindFailed, Err: errors.New("任务仓库未初始化")}
 	}
 	owner := r.cfg.NewOwner()
-	task, err := r.repo.ClaimNext(ctx, owner, r.cfg.TaskLeaseTTL)
+	task, err := r.claimNext(ctx, owner)
 	if err != nil || task == nil {
 		return Outcome{Err: err}
 	}
+	if !r.markActive(task.ID) {
+		_ = r.repo.ReleaseLease(task.ID, task.LeaseOwner)
+		return Outcome{}
+	}
+	defer r.unmarkActive(task.ID)
 	return r.runClaimed(ctx, task, nil)
 }
 
@@ -223,7 +278,7 @@ func (r *Runtime) dispatch(ctx context.Context, slots chan struct{}) {
 			return
 		}
 		claimCtx, cancelClaim := context.WithTimeout(ctx, r.cfg.ClaimTimeout)
-		task, err := r.repo.ClaimNext(claimCtx, slot.Token(), r.cfg.TaskLeaseTTL)
+		task, err := r.claimNext(claimCtx, slot.Token())
 		cancelClaim()
 		if err != nil || task == nil {
 			slot.Release()
@@ -232,13 +287,19 @@ func (r *Runtime) dispatch(ctx context.Context, slots chan struct{}) {
 			}
 			return
 		}
+		if !r.markActive(task.ID) {
+			slot.Release()
+			_ = r.repo.ReleaseLease(task.ID, task.LeaseOwner)
+			return
+		}
 		if !r.reserveSlot(ctx, slots) {
+			r.unmarkActive(task.ID)
 			slot.Release()
 			_ = r.repo.ReleaseLease(task.ID, task.LeaseOwner)
 			return
 		}
 		started := r.worker.GoTask(func() {
-			defer func() { <-slots; slot.Release() }()
+			defer func() { r.unmarkActive(task.ID); <-slots; slot.Release() }()
 			// 生产执行不绑定 worker 循环 ctx：BeginDrain 取消循环，但不取消进行中的执行。
 			outcome := r.runClaimed(context.Background(), task, slot)
 			if outcome.Err != nil && r.onExecError != nil {
@@ -246,6 +307,7 @@ func (r *Runtime) dispatch(ctx context.Context, slots chan struct{}) {
 			}
 		})
 		if !started {
+			r.unmarkActive(task.ID)
 			<-slots
 			slot.Release()
 			_ = r.repo.ReleaseLease(task.ID, task.LeaseOwner)
@@ -327,8 +389,10 @@ func (r *Runtime) renewLoop(ctx context.Context, cancel context.CancelFunc, task
 	var retryCh <-chan time.Time
 	renewOnce := func() bool {
 		timeout := 5 * time.Second
-		if remaining := time.Until(leaseDeadline); remaining > 0 && remaining < timeout {
-			timeout = remaining
+		if !r.cfg.SingleProcess {
+			if remaining := time.Until(leaseDeadline); remaining > 0 && remaining < timeout {
+				timeout = remaining
+			}
 		}
 		renewCtx, cancelRenew := context.WithTimeout(ctx, timeout)
 		var err error
@@ -344,7 +408,13 @@ func (r *Runtime) renewLoop(ctx context.Context, cancel context.CancelFunc, task
 			retryCh = nil
 			return true
 		}
-		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, ErrLeaseLost) && time.Now().Before(leaseDeadline) {
+		if r.cfg.SingleProcess {
+			if ctx.Err() == nil && !errors.Is(err, ErrLeaseLost) {
+				retryDelay := min(r.cfg.RenewInterval, max(5*time.Millisecond, r.cfg.TaskLeaseTTL/3))
+				retryCh = time.After(retryDelay)
+				return true
+			}
+		} else if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, ErrLeaseLost) && time.Now().Before(leaseDeadline) {
 			retryDelay := min(r.cfg.RenewInterval, max(5*time.Millisecond, time.Until(leaseDeadline)/3))
 			retryCh = time.After(retryDelay)
 			return true

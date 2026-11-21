@@ -121,7 +121,7 @@ func (r *Repository) FinishFailedImageRecovery(task model.Task, outcome *string,
 	} else if task.BeefBillingState != nil && strings.TrimSpace(*task.BeefBillingState) != "" {
 		updates["beef_reconcile_deadline"] = nil
 	}
-	result := taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
+	result := r.taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
 		Where("id = ? AND user_id = ? AND status = ? AND route_run = ?", task.ID, task.UserID, model.TaskStatusFailed, task.RouteRun).
 		Updates(updates)
 	if result.Error != nil {
@@ -170,8 +170,8 @@ func (r *Repository) UpdateTaskBeefImageSettlement(taskID string, billingState *
 }
 
 // 仅持有失败任务恢复租约的同键重放可以跳过旧 worker 的 12 次限制。
-func imageSubmissionTaskWriter(tx *gorm.DB, row *model.ImageSubmission, owner string, maxSends int) *gorm.DB {
-	query := taskLeaseWriter(tx.Model(&model.Task{}), owner).Where("id = ? AND user_id = ?", row.TaskID, row.UserID)
+func (r *Repository) imageSubmissionTaskWriter(tx *gorm.DB, row *model.ImageSubmission, owner string, maxSends int) *gorm.DB {
+	query := r.taskLeaseWriter(tx.Model(&model.Task{}), owner).Where("id = ? AND user_id = ?", row.TaskID, row.UserID)
 	if maxSends > 0 {
 		return query.Where("status = ?", model.TaskStatusRunning)
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/workspace"
 )
 
@@ -362,4 +365,76 @@ func TestDesktopLocalResourceAndProjectSurviveRestart(t *testing.T) {
 	if len(projectsEnvelope.Data.Projects) != 1 || projectsEnvelope.Data.Projects[0].Project.Name != "本地验收项目" {
 		t.Fatalf("projects after restart = %#v", projectsEnvelope.Data)
 	}
+}
+
+func TestRuntimeProfilePlumbsSingleProcessTaskLease(t *testing.T) {
+	t.Run("desktop enables single process", func(t *testing.T) {
+		rt, err := Open(context.Background(), Config{
+			Profile:         ProfileDesktop,
+			DataDir:         t.TempDir(),
+			ListenAddr:      "127.0.0.1:0",
+			AutoMigrate:     true,
+			ShutdownTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = rt.Close(ctx)
+		})
+		if !rt.repo.SingleProcess() {
+			t.Fatal("ProfileDesktop must enable SingleProcess task lease mode")
+		}
+		if err := rt.db.Create(&model.Task{ID: "desktop-expired", UserID: "local", Status: model.TaskStatusQueued}).Error; err != nil {
+			t.Fatal(err)
+		}
+		claimed, err := rt.repo.ClaimNextTask("desktop-owner", time.Minute)
+		if err != nil || claimed == nil {
+			t.Fatalf("claim desktop task: %+v %v", claimed, err)
+		}
+		if err := rt.db.Model(&model.Task{}).Where("id = ?", claimed.ID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+			t.Fatal(err)
+		}
+		claimed.Status = model.TaskStatusSucceeded
+		if err := rt.repo.SaveTaskCompletion(claimed, model.TaskStatusRunning, nil); err != nil {
+			t.Fatalf("ProfileDesktop SaveTaskCompletion on expired own lease failed: %v", err)
+		}
+	})
+
+	t.Run("server keeps multi-worker default", func(t *testing.T) {
+		rt, err := Open(context.Background(), Config{
+			Profile:         ProfileServer,
+			DataDir:         t.TempDir(),
+			ListenAddr:      "127.0.0.1:0",
+			AutoMigrate:     true,
+			ShutdownTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = rt.Close(ctx)
+		})
+		if rt.repo.SingleProcess() {
+			t.Fatal("ProfileServer must keep SingleProcess disabled")
+		}
+		if err := rt.db.Create(&model.Task{ID: "server-expired", UserID: "local", Status: model.TaskStatusQueued}).Error; err != nil {
+			t.Fatal(err)
+		}
+		claimed, err := rt.repo.ClaimNextTask("server-owner", time.Minute)
+		if err != nil || claimed == nil {
+			t.Fatalf("claim server task: %+v %v", claimed, err)
+		}
+		if err := rt.db.Model(&model.Task{}).Where("id = ?", claimed.ID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+			t.Fatal(err)
+		}
+		claimed.Status = model.TaskStatusSucceeded
+		if err := rt.repo.SaveTaskCompletion(claimed, model.TaskStatusRunning, nil); !errors.Is(err, repository.ErrTaskStateConflict) {
+			t.Fatalf("ProfileServer SaveTaskCompletion on expired lease err=%v, want ErrTaskStateConflict", err)
+		}
+	})
 }

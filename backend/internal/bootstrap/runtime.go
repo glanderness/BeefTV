@@ -46,6 +46,7 @@ type Runtime struct {
 	workspaceLock    *os.File
 	cfg              Config
 	db               *gorm.DB
+	repo             *repository.Repository
 	service          *app.Service
 	localApp         *localapp.App
 	handler          http.Handler
@@ -128,6 +129,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 
 	reportPhase("services", "正在加载本地工作区服务")
 	repo := repository.New(db)
+	repo.SetSingleProcess(cfg.Profile == ProfileDesktop)
 	if cfg.Profile == ProfileDesktop {
 		if err := repo.PauseDepthCapturesAfterRestart(context.Background()); err != nil {
 			cleanupDB()
@@ -354,6 +356,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		workspaceLock:    workspaceLock,
 		cfg:              cfg,
 		db:               db,
+		repo:             repo,
 		service:          svc,
 		localApp:         localRoot,
 		handler:          rootHandler,

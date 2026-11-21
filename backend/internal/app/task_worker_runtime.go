@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"log"
 	"time"
 
@@ -32,36 +31,6 @@ func (h appWorkerHost) Stop(ctx context.Context) error {
 }
 
 func (h appWorkerHost) IsDraining() bool { return h.service.backgroundWorkers().IsDraining() }
-
-type appTaskRepository struct{ service *Service }
-
-func (r appTaskRepository) ClaimNext(ctx context.Context, owner string, ttl time.Duration) (*model.Task, error) {
-	repo := r.service.repo
-	if ctx != nil && ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	if ctx != nil && ctx != context.Background() {
-		repo = repo.WithContext(ctx)
-	}
-	return repo.ClaimNextTask(owner, ttl)
-}
-
-func (r appTaskRepository) RenewLease(ctx context.Context, taskID, owner string, ttl time.Duration) error {
-	return r.service.repo.WithContext(ctx).RenewTaskLease(taskID, owner, ttl)
-}
-
-func (r appTaskRepository) ReleaseLease(taskID, owner string) error {
-	return r.service.repo.ReleaseTaskLease(taskID, owner)
-}
-
-type appSlotCoordinator struct{ service *Service }
-
-func (c appSlotCoordinator) AcquireLease(ctx context.Context, scope string, limit int, ttl time.Duration) (taskruntime.SlotLease, bool, error) {
-	if c.service.coordinator == nil {
-		return nil, false, errors.New("运行时协调器未初始化")
-	}
-	return c.service.coordinator.AcquireLease(ctx, scope, limit, ttl)
-}
 
 type appTaskPolicy struct{ service *Service }
 
@@ -102,10 +71,11 @@ func (c appCancelRegistry) Unregister(taskID string) {
 
 func newAppTaskRuntime(w *taskWorkerCoordinator) *taskruntime.Runtime {
 	s := w.service
+	singleProcess := s.repo.SingleProcess()
 	return taskruntime.New(taskruntime.Deps{
 		Worker:      appWorkerHost{service: s},
-		Repository:  appTaskRepository{service: s},
-		Coordinator: appSlotCoordinator{service: s},
+		Repository:  taskruntime.NewRepositoryAdapter(s.repo, singleProcess),
+		Coordinator: taskruntime.NewSlotCoordinatorAdapter(s.coordinator, singleProcess),
 		Policy:      appTaskPolicy{service: s},
 		Executor:    appTaskExecutor{coordinator: w},
 		Cancels:     appCancelRegistry{service: s},
@@ -119,9 +89,10 @@ func newAppTaskRuntime(w *taskWorkerCoordinator) *taskruntime.Runtime {
 			_ = s.log(task.UserID, task.ID, "error", "后台任务处理失败", generation.DiagnosticSummary(err.Error()))
 		},
 		Config: taskruntime.Config{
-			WorkerID: s.workerID,
-			SlotTTL:  workerSlotLeaseDuration,
-			MaxSlots: maxChannelConcurrencyLimit,
+			WorkerID:      s.workerID,
+			SlotTTL:       workerSlotLeaseDuration,
+			MaxSlots:      maxChannelConcurrencyLimit,
+			SingleProcess: singleProcess,
 		},
 	})
 }

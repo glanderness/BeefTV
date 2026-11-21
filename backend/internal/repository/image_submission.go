@@ -59,7 +59,7 @@ func (r *Repository) MarkImageSubmissionAccepted(row *model.ImageSubmission) err
 func (r *Repository) ClaimImageSubmissionSend(row *model.ImageSubmission, owner string, maxSends int) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var count int64
-		if err := imageSubmissionTaskWriter(tx, row, owner, maxSends).Count(&count).Error; err != nil {
+		if err := r.imageSubmissionTaskWriter(tx, row, owner, maxSends).Count(&count).Error; err != nil {
 			return err
 		}
 		if count != 1 {

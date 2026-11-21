@@ -134,11 +134,15 @@ func (c *Coordinator) AcquireLease(ctx context.Context, scope string, limit int,
 
 const CoordinationTimeout = 2 * time.Second
 
+// ErrSlotLeaseLost 表示当前进程槽位租约已过期或已被释放。
+var ErrSlotLeaseLost = errors.New("并发租约已失效")
+
 type SlotLease struct {
 	coordinator *Coordinator
 	scope       string
 	token       string
 	ttl         time.Duration
+	released    bool
 	once        sync.Once
 }
 
@@ -157,10 +161,32 @@ func (l *SlotLease) Renew(ctx context.Context) error {
 	now := time.Now()
 	c.localMu.Lock()
 	defer c.localMu.Unlock()
-	if !c.localSlots[l.scope][l.token].After(now) {
-		return errors.New("并发租约已失效")
+	if l.released || !c.localSlots[l.scope][l.token].After(now) {
+		return ErrSlotLeaseLost
 	}
 	c.localSlots[l.scope][l.token] = now.Add(l.ttl)
+	return nil
+}
+
+// Reacquire 在单进程桌面模式下续期本进程仍持有的槽位租约：即使因系统休眠导致到期时间已过，
+// 只要租约尚未被 Release，就重新刷新到期时间；已 Release 的租约仍返回 ErrSlotLeaseLost。
+func (l *SlotLease) Reacquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c := l.coordinator
+	now := time.Now()
+	c.localMu.Lock()
+	defer c.localMu.Unlock()
+	if l.released {
+		return ErrSlotLeaseLost
+	}
+	slots := c.localSlots[l.scope]
+	if slots == nil {
+		slots = map[string]time.Time{}
+		c.localSlots[l.scope] = slots
+	}
+	slots[l.token] = now.Add(l.ttl)
 	return nil
 }
 
@@ -169,6 +195,7 @@ func (l *SlotLease) Release() {
 		c := l.coordinator
 		c.localMu.Lock()
 		defer c.localMu.Unlock()
+		l.released = true
 		delete(c.localSlots[l.scope], l.token)
 		if len(c.localSlots[l.scope]) == 0 {
 			delete(c.localSlots, l.scope)

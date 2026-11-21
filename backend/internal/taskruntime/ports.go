@@ -54,6 +54,12 @@ type Repository interface {
 	ReleaseLease(taskID, owner string) error
 }
 
+// ExcludingRepository 允许单进程调度器在领取下一条任务时跳过本进程仍在执行中的任务 ID，
+// 防止系统休眠唤醒后同一进程重复领取尚未续期完成的在途任务。
+type ExcludingRepository interface {
+	ClaimNextExcluding(ctx context.Context, owner string, ttl time.Duration, excludeIDs []string) (*model.Task, error)
+}
+
 // Coordinator 是进程内/跨进程槽位租约端口。
 type Coordinator interface {
 	AcquireLease(ctx context.Context, scope string, limit int, ttl time.Duration) (SlotLease, bool, error)
@@ -112,5 +118,6 @@ type Config struct {
 	RenewInterval    time.Duration
 	DispatchInterval time.Duration
 	MaxSlots         int
+	SingleProcess    bool
 	NewOwner         func() string
 }

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -32,8 +33,8 @@ func TestRuntimeCoordinatorLeaseRenewsAndCannotResurrect(t *testing.T) {
 		t.Fatalf("capacity exceeded: %v %v", ok, err)
 	}
 	c.localSlots["workers"][lease.Token()] = time.Now().Add(-time.Second)
-	if err := lease.Renew(context.Background()); err == nil {
-		t.Fatal("expired lease resurrected")
+	if err := lease.Renew(context.Background()); !errors.Is(err, ErrSlotLeaseLost) {
+		t.Fatalf("expired lease renew err = %v, want ErrSlotLeaseLost", err)
 	}
 	replacement, acquired, err := c.AcquireLease(context.Background(), "workers", 1, time.Minute)
 	if err != nil || !acquired {
@@ -47,6 +48,28 @@ func TestRuntimeCoordinatorLeaseRenewsAndCannotResurrect(t *testing.T) {
 	replacement.Release()
 	if len(c.localSlots) != 0 {
 		t.Fatal("empty local slot scopes retained")
+	}
+}
+
+func TestSlotLeaseReacquireRefreshesExpiredUntilReleased(t *testing.T) {
+	c := NewLocalCoordinator()
+	lease, acquired, err := c.AcquireLease(context.Background(), "workers", 1, time.Minute)
+	if err != nil || !acquired {
+		t.Fatalf("acquire: %v %v", acquired, err)
+	}
+	c.localMu.Lock()
+	c.localSlots["workers"][lease.Token()] = time.Now().Add(-time.Minute)
+	c.localMu.Unlock()
+
+	if err := lease.Reacquire(context.Background()); err != nil {
+		t.Fatalf("reacquire expired unreleased slot: %v", err)
+	}
+	if err := lease.Renew(context.Background()); err != nil {
+		t.Fatalf("renew after reacquire: %v", err)
+	}
+	lease.Release()
+	if err := lease.Reacquire(context.Background()); !errors.Is(err, ErrSlotLeaseLost) {
+		t.Fatalf("reacquire after release err = %v, want ErrSlotLeaseLost", err)
 	}
 }
 
