@@ -31,16 +31,34 @@ export async function restoreDeletedCanvasProjects(
     const historyState = useCanvasHistoryStore.getState();
     const canvasState = useCanvasStore.getState();
     const candidates: CanvasProject[] = [];
+    const skippedSummaryIds: string[] = [];
     for (const id of ids) {
         const item = historyState.deletedProjects.find((entry) => entry.id === id);
-        if (item?.project && !item.project.summaryOnly) {
-            const restored = prepareRestoredDeletedCanvas(item.project);
-            canvasState.restoreProject(restored);
-            candidates.push(restored);
+        if (!item) continue;
+        if (!item.project || item.project.summaryOnly) {
+            skippedSummaryIds.push(item.id);
+            continue;
         }
+        const restored = prepareRestoredDeletedCanvas(item.project);
+        canvasState.restoreProject(restored);
+        candidates.push(restored);
     }
-    if (candidates.length === 0) return { restoredIds: [], failedIds: [] };
-    await flushCanvasStorePersistence();
+    const summaryError = skippedSummaryIds.length > 0
+        ? new Error("部分历史记录仅包含摘要，无法直接恢复")
+        : undefined;
+    if (candidates.length === 0) {
+        return { restoredIds: [], failedIds: skippedSummaryIds, firstError: summaryError };
+    }
+    try {
+        await flushCanvasStorePersistence();
+    } catch (error) {
+        useCanvasStore.getState().deleteProjects(candidates.map((item) => item.id));
+        return {
+            restoredIds: [],
+            failedIds: [...candidates.map((item) => item.id), ...skippedSummaryIds],
+            firstError: error,
+        };
+    }
     const restoredIds: string[] = [];
     const failedIds: string[] = [];
     let firstError: unknown;
@@ -64,6 +82,10 @@ export async function restoreDeletedCanvasProjects(
     }
     const removeDeletedItem = useCanvasHistoryStore.getState().removeDeletedHistoryItem;
     for (const id of restoredIds) removeDeletedItem(id);
+    if (skippedSummaryIds.length > 0) {
+        failedIds.push(...skippedSummaryIds);
+        if (firstError === undefined) firstError = summaryError;
+    }
     return { restoredIds, failedIds, firstError };
 }
 
@@ -122,6 +144,9 @@ export function RecycleBinDialog({ open, onClose }: { open: boolean; onClose: ()
                         : `恢复项目失败，已保留在回收站：${detail}`,
                 );
             }
+        } catch (error) {
+            const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "请稍后重试";
+            message.error(`恢复项目失败，已保留在回收站：${detail}`);
         } finally {
             setRestoring(false);
         }

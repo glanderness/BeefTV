@@ -85,3 +85,37 @@ func TestUserCanvasProjectsPageReturnsSummaryMetadataForLazyHydration(t *testing
 		}
 	}
 }
+
+func TestScanLocalMediaStorageKeysStreamingEdgeCases(t *testing.T) {
+	payload, err := json.Marshal(map[string]any{
+		"chatSessions": []map[string]any{
+			{
+				"id":   "s1",
+				"tags": []string{"storageKey", "image:u1:not-an-object-value"},
+				"attachments": []map[string]any{
+					{"storageKey": "image:u1:chat-1"},
+					{"storageKey": "resource:server-managed"},
+					{"storageKey": "plain-without-colon"},
+					{"storageKey": map[string]any{"storageKey": "audio:u1:nested-1"}},
+				},
+			},
+		},
+		"largeText": string(make([]byte, 64*1024)),
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	got := scanLocalMediaStorageKeys(string(payload))
+	want := []string{"audio:u1:nested-1", "image:u1:chat-1"}
+	if len(got) != len(want) {
+		t.Fatalf("scanLocalMediaStorageKeys = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("scanLocalMediaStorageKeys[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if empty := scanLocalMediaStorageKeys(`{"nodes":[{"id":"n1","type":"text"}]}`); empty != nil {
+		t.Fatalf("expected nil when no storageKey present, got %#v", empty)
+	}
+}

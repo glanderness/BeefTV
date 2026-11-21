@@ -18,7 +18,8 @@ export async function duplicateWorkspaceCanvasProject(
     localProjects: readonly CanvasProject[],
     project: Pick<CanvasProject, "id" | "title">,
 ): Promise<{ workspaceProjectId: string; count: number }> {
-    const createdIds: string[] = [];
+    const persistedIds: string[] = [];
+    const unpersistedIds: string[] = [];
     try {
         const sourceCanvases = listCanvasWorkspaceProjectCanvases(localProjects, project.id);
         if (!sourceCanvases.length) throw new Error("项目不存在");
@@ -43,15 +44,28 @@ export async function duplicateWorkspaceCanvasProject(
                 },
                 copiedWorkspaceProjectId,
             );
-            createdIds.push(id);
+            unpersistedIds.push(id);
             copiedWorkspaceProjectId ||= id;
             await saved;
+            unpersistedIds.pop();
+            persistedIds.push(id);
         }
         if (!copiedWorkspaceProjectId) throw new Error("项目不存在");
         return { workspaceProjectId: copiedWorkspaceProjectId, count: loadedSources.length };
     } catch (error) {
-        if (createdIds.length > 0) {
-            await deleteLocalCanvasProjects(createdIds, { recordHistory: false }).catch(() => undefined);
+        if (unpersistedIds.length > 0) {
+            await deleteLocalCanvasProjects(unpersistedIds, { recordHistory: false }).catch(() => undefined);
+        }
+        if (persistedIds.length > 0) {
+            try {
+                await deleteLocalCanvasProjects(persistedIds, { recordHistory: false });
+            } catch (rollbackError) {
+                const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "复制失败";
+                const rollbackDetail = rollbackError instanceof Error && rollbackError.message.trim()
+                    ? rollbackError.message.trim()
+                    : "后端不可用";
+                throw new Error(`${detail}（已创建的 ${persistedIds.length} 张副本回滚失败：${rollbackDetail}）`);
+            }
         }
         throw error;
     }

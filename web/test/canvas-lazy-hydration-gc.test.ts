@@ -18,7 +18,9 @@ import {
     resetCanvasOperationJournalMemory,
     updateCanvasOperationJournal,
 } from "@/services/canvas-operation-journal";
+import { withCanvasSaveGcBarrier } from "@/services/local-workspace-state";
 import { CANVAS_DRAFTS_KEY } from "@/stores/canvas/canvas-store-persistence";
+import { CANVAS_HISTORY_STORE_KEY, useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { flushCanvasStorePersistence, useCanvasStore, withCanvasStorePersistenceSuppressed, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 
@@ -98,6 +100,7 @@ describe("lazy hydration GC reference completeness", () => {
         withCanvasStorePersistenceSuppressed(() => {
             useCanvasStore.setState({ projects: [] });
         });
+        useCanvasHistoryStore.setState({ deletedProjects: [] });
         useAssetStore.setState({ assets: [] });
         setCanvasHydrationHealth({ error: "", loading: false });
     });
@@ -107,6 +110,7 @@ describe("lazy hydration GC reference completeness", () => {
         withCanvasStorePersistenceSuppressed(() => {
             useCanvasStore.setState({ projects: [] });
         });
+        useCanvasHistoryStore.setState({ deletedProjects: [] });
         setCanvasHydrationHealth({ error: "", loading: true });
         setActiveUserScope(previousScope);
         installLocalForageStoreFactoryForTests(undefined);
@@ -251,5 +255,105 @@ describe("lazy hydration GC reference completeness", () => {
         const persisted = JSON.parse(persistedRaw!) as { state: { projects: CanvasProject[] } };
         expect(persisted.state.projects.map((p) => p.id)).toContain("restored-from-bin");
         expect(persisted.state.projects.find((p) => p.id === "restored-from-bin")?.nodes).toHaveLength(1);
+    });
+
+    it("protects local media referenced by Recycle Bin deleted snapshots during cleanupImages so restore keeps media readable", async () => {
+        const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
+        const mediaStore = localForageInstance(MEDIA_FILES_STORE_NAME);
+        const appState = localForageInstance(APP_STATE_STORE_NAME);
+        const binImg = `image:${scope}:bin-only-img`;
+        const binAudio = `audio:${scope}:bin-only-audio`;
+        const orphanImg = `image:${scope}:bin-orphan`;
+        await imageStore.setItem(binImg, new Blob(["bin-img"]));
+        await mediaStore.setItem(binAudio, new Blob(["bin-audio"]));
+        await imageStore.setItem(orphanImg, new Blob(["orphan"]));
+
+        const deletedCanvas = makeCanvas("deleted-with-media", {
+            nodes: [
+                {
+                    id: "n-img",
+                    type: "image",
+                    title: "回收站图",
+                    position: { x: 0, y: 0 },
+                    width: 100,
+                    height: 100,
+                    metadata: { storageKey: binImg },
+                } as never,
+                {
+                    id: "n-aud",
+                    type: "audio",
+                    title: "回收站音频",
+                    position: { x: 10, y: 0 },
+                    width: 100,
+                    height: 100,
+                    metadata: { storageKey: binAudio },
+                } as never,
+            ],
+        });
+
+        // Simulate deleted canvas moved to Recycle Bin (removed from live projects, persisted in CANVAS_HISTORY_STORE_KEY).
+        useCanvasHistoryStore.getState().recordDeletedProjects([deletedCanvas]);
+        await appState.setItem(
+            scopedStorageKey(CANVAS_HISTORY_STORE_KEY, scope),
+            JSON.stringify({ state: { deletedProjects: useCanvasHistoryStore.getState().deletedProjects }, version: 0 }),
+        );
+
+        const attempt = beginCanvasHydration();
+        finishCanvasHydration(attempt, "");
+        await useAssetStore.getState().cleanupImages();
+
+        // Both live and persisted Recycle Bin media survive GC while genuine orphans are reclaimed.
+        expect(await imageStore.getItem(binImg)).not.toBeNull();
+        expect(await mediaStore.getItem(binAudio)).not.toBeNull();
+        expect(await imageStore.getItem(orphanImg)).toBeNull();
+
+        // Simulate cold reload where in-memory history store is empty but IndexedDB still holds CANVAS_HISTORY_STORE_KEY.
+        const persistedHistorySnapshot = JSON.stringify({
+            state: { deletedProjects: useCanvasHistoryStore.getState().deletedProjects },
+            version: 0,
+        });
+        useCanvasHistoryStore.setState({ deletedProjects: [] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await appState.setItem(scopedStorageKey(CANVAS_HISTORY_STORE_KEY, scope), persistedHistorySnapshot);
+        await useAssetStore.getState().cleanupImages();
+        expect(await imageStore.getItem(binImg)).not.toBeNull();
+        expect(await mediaStore.getItem(binAudio)).not.toBeNull();
+
+        // Once permanently removed from Recycle Bin (both memory & storage), GC reclaims them.
+        await appState.removeItem(scopedStorageKey(CANVAS_HISTORY_STORE_KEY, scope));
+        await useAssetStore.getState().cleanupImages();
+        expect(await imageStore.getItem(binImg)).toBeNull();
+        expect(await mediaStore.getItem(binAudio)).toBeNull();
+    });
+
+    it("holds new canvas saves behind the GC barrier and resumes them after GC finishes while protecting edited media", async () => {
+        const { waitForCanvasSaveGcBarrier } = await import("@/services/local-workspace-state");
+        const order: string[] = [];
+        let releaseBarrierInner!: () => void;
+        const barrierHolding = new Promise<void>((resolve) => {
+            releaseBarrierInner = resolve;
+        });
+
+        const gcRun = withCanvasSaveGcBarrier(scope, async () => {
+            order.push("gc:start");
+            await barrierHolding;
+            order.push("gc:end");
+        });
+
+        // Wait one tick so the barrier is active, then simulate a firing 500ms save timer hitting the barrier.
+        await Promise.resolve();
+        const timerSave = (async () => {
+            order.push("save:queued");
+            await waitForCanvasSaveGcBarrier(scope);
+            order.push("save:started");
+        })();
+
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(order).toEqual(["gc:start", "save:queued"]);
+
+        releaseBarrierInner();
+        await Promise.all([gcRun, timerSave]);
+        expect(order).toEqual(["gc:start", "save:queued", "gc:end", "save:started"]);
     });
 });

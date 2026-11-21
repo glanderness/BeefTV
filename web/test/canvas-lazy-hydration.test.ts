@@ -7,7 +7,9 @@ let deletedHistoryEntries: Array<{ id: string; title: string; deletedAt: string;
 let createdCounter = 0;
 let failPutOnCall = 0;
 let putCallCount = 0;
+let failFlushOnce = false;
 let delete404Ids = new Set<string>();
+let delete500Ids = new Set<string>();
 const bases = new Map<string, { revision: number; snapshot: any }>();
 const journalMemory = new Map<string, any>();
 let remotePages: any[][] = [];
@@ -82,7 +84,12 @@ mock.module("@/stores/canvas/use-canvas-store", () => ({
             if (patch.projects) projects = patch.projects;
         },
     },
-    flushCanvasStorePersistence: async () => {},
+    flushCanvasStorePersistence: async () => {
+        if (failFlushOnce) {
+            failFlushOnce = false;
+            throw new Error("IndexedDB quota exceeded");
+        }
+    },
     canvasDurableSnapshot: () => undefined,
     recordCanvasDocumentBase: (proj: any) => {
         bases.set(proj.id, { revision: proj.revision ?? 0, snapshot: proj });
@@ -234,6 +241,9 @@ mock.module("@/services/api/request", () => ({
         delete: async (path: string) => {
             writeRequests.push({ method: "DELETE", path });
             const id = decodeURIComponent(path.slice("/canvas-projects/".length));
+            if (delete500Ids.has(id)) {
+                throw new MockApiError("后端删除服务不可用", 500);
+            }
             if (delete404Ids.has(id)) {
                 throw new MockApiError("画布不存在", 404);
             }
@@ -371,7 +381,9 @@ describe("canvas lazy hydration", () => {
         createdCounter = 0;
         failPutOnCall = 0;
         putCallCount = 0;
+        failFlushOnce = false;
         delete404Ids = new Set<string>();
+        delete500Ids = new Set<string>();
         bases.clear();
         journalMemory.clear();
         remotePages = [];
@@ -695,8 +707,8 @@ describe("canvas lazy hydration", () => {
         expect(recordedDeletedProjects).toHaveLength(0);
         expect(deletedHistoryEntries).toHaveLength(0);
         expect(writeRequests.filter((req) => req.method === "DELETE").map((req) => req.path)).toEqual([
-            "/canvas-projects/created-1",
             "/canvas-projects/created-2",
+            "/canvas-projects/created-1",
         ]);
     });
 
@@ -726,5 +738,61 @@ describe("canvas lazy hydration", () => {
         expect(succeeded.failedIds).toEqual([]);
         expect(projects.find((item) => item.id === "canvas-restore-1")?.revision).toBe(1);
         expect(deletedHistoryEntries).toHaveLength(0);
+    });
+
+    it("cleans up failed revision-0 copy even under DELETE 500 and surfaces rollback error for already-persisted copies", async () => {
+        remotePages = [[
+            { ...summaryItem(0), id: "canvas-0", workspaceProjectId: "ws-multi" },
+            { ...summaryItem(1), id: "canvas-1", workspaceProjectId: "ws-multi" },
+        ]];
+        remoteDetailsById.set("canvas-0", fullProject("canvas-0", { workspaceProjectId: "ws-multi", title: "主画布" }));
+        remoteDetailsById.set("canvas-1", fullProject("canvas-1", { workspaceProjectId: "ws-multi", title: "第二画布" }));
+        await repository.hydrateLocalCanvasProjectsFromBackend();
+
+        failPutOnCall = 2;
+        delete500Ids.add("created-1");
+        delete500Ids.add("created-2");
+        await expect(
+            workspaceProjects.duplicateWorkspaceCanvasProject(projects, { id: "canvas-0", title: "主画布" }),
+        ).rejects.toThrow("回滚失败");
+
+        // Unpersisted revision-0 copy (created-2) must NEVER remain in active store even when DELETE returns 500.
+        expect(projects.some((item) => item.id === "created-2")).toBe(false);
+        expect(recordedDeletedProjects).toHaveLength(0);
+    });
+
+    it("handles flush failure cleanly without leaving restored drafts in store and reports summaryOnly recycle-bin entries", async () => {
+        const deletedFull = fullProject("canvas-flush-fail", { revision: 3, title: "写盘失败画布" });
+        const legacySummary = { ...fullProject("canvas-legacy-summary", { title: "旧摘要记录" }), summaryOnly: true };
+        deletedHistoryEntries = [
+            {
+                id: deletedFull.id,
+                title: deletedFull.title,
+                deletedAt: "2026-04-03T00:00:00.000Z",
+                updatedAt: deletedFull.updatedAt,
+                project: deletedFull,
+            },
+            {
+                id: legacySummary.id,
+                title: legacySummary.title,
+                deletedAt: "2026-04-03T00:00:00.000Z",
+                updatedAt: legacySummary.updatedAt,
+                project: legacySummary,
+            },
+        ];
+
+        failFlushOnce = true;
+        const flushFailed = await restoreDeletedCanvasProjects(["canvas-flush-fail"]);
+        expect(flushFailed.restoredIds).toEqual([]);
+        expect(flushFailed.failedIds).toEqual(["canvas-flush-fail"]);
+        expect(flushFailed.firstError).toBeInstanceOf(Error);
+        expect(projects).toHaveLength(0);
+        expect(deletedHistoryEntries).toHaveLength(2);
+
+        const summaryOnlyResult = await restoreDeletedCanvasProjects(["canvas-legacy-summary"]);
+        expect(summaryOnlyResult.restoredIds).toEqual([]);
+        expect(summaryOnlyResult.failedIds).toEqual(["canvas-legacy-summary"]);
+        expect((summaryOnlyResult.firstError as Error)?.message).toContain("仅包含摘要");
+        expect(deletedHistoryEntries).toHaveLength(2);
     });
 });

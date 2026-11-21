@@ -27,12 +27,15 @@ import {
     selectPreferredCanvasProject,
 } from "./local-workspace-reconcile";
 import {
+    activeCanvasBackendCommits,
     applyLiveCanvasProject,
     backendSaveTails,
     backendSaveTimers,
     canvasDeleting,
     CanvasProjectionError,
     canvasProjectionLocks,
+    canvasSaveGcBarriers,
+    canvasSaveGcQueue,
     confirmRemoteDocument,
     flushAllPendingCanvasOverlapWrites,
     flushPendingCanvasOverlapWrite,
@@ -49,6 +52,7 @@ import {
     serverConfirmedCanvasSnapshots,
     setCanvasProjectionStoreFlushForTest,
     throwIfCanvasNotWritable,
+    waitForCanvasSaveGcBarrier,
     withCanvasProjection,
     type CanvasSaveSummary,
     type LocalCanvasContent,
@@ -111,8 +115,23 @@ function syncLocalCanvasProject(id: string): Promise<void> {
     }
     const previous = backendSaveTails.get(key) || Promise.resolve();
     const next = previous.catch(() => undefined).then(async () => {
+        await waitForCanvasSaveGcBarrier(scope);
         if (canvasDeleting.has(key)) throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
-        await commitLiveCanvasDocument(id);
+        const commit = commitLiveCanvasDocument(id);
+        let running = activeCanvasBackendCommits.get(scope);
+        if (!running) {
+            running = new Set();
+            activeCanvasBackendCommits.set(scope, running);
+        }
+        running.add(commit);
+        try {
+            await commit;
+        } finally {
+            running.delete(commit);
+            if (running.size === 0 && activeCanvasBackendCommits.get(scope) === running) {
+                activeCanvasBackendCommits.delete(scope);
+            }
+        }
     });
     const tail = next.finally(() => {
         if (backendSaveTails.get(key) === tail) backendSaveTails.delete(key);
@@ -532,6 +551,9 @@ export function resetLocalCanvasBackendSaveState() {
     for (const timer of backendSaveTimers.values()) clearTimeout(timer);
     backendSaveTimers.clear();
     backendSaveTails.clear();
+    activeCanvasBackendCommits.clear();
+    canvasSaveGcBarriers.clear();
+    canvasSaveGcQueue.clear();
     canvasProjectionLocks.clear();
     canvasDeleting.clear();
     pendingForceHistorySnapshotEpochs.clear();
@@ -669,13 +691,16 @@ export async function deleteLocalCanvasProjects(ids: readonly string[], options:
         const failures: unknown[] = [];
         for (const id of selected) {
             const snapshot = snapshots.find((item) => item.id === id);
+            const localOnlyRollback = !recordHistory
+                && (snapshot?.revision ?? 0) === 0
+                && !(peekCanvasOperationJournal(id, scope)?.confirmedRevision);
             try {
                 try {
                     await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
                 } catch (error) {
-                    // 回滚清理（recordHistory: false）或从未成功创建过的 revision=0 草稿，
-                    // 后端返回 404 视为已不存在，继续清理本地状态与提交日记。
-                    if (!(isNotFoundApiError(error) && (!recordHistory || (snapshot?.revision ?? 0) === 0))) {
+                    // 未曾确认落库的 revision=0 回滚草稿，即使后端 DELETE 返回 500/404 也必须清掉本地残留；
+                    // 其它回滚或 revision=0 仅在明确 404 时视为后端已不存在。
+                    if (!localOnlyRollback && !(isNotFoundApiError(error) && (!recordHistory || (snapshot?.revision ?? 0) === 0))) {
                         throw error;
                     }
                 }

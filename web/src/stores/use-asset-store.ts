@@ -14,15 +14,17 @@ import { readAllCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { cleanupUnusedMedia, collectMediaStorageKeys } from "@/services/file-storage";
 import { insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
 import { cleanupUnusedImages, collectImageStorageKeys } from "@/services/image-storage";
-import { waitForActiveCanvasBackendSaves } from "@/services/local-workspace-state";
+import { withCanvasSaveGcBarrier } from "@/services/local-workspace-state";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
 import { CANVAS_DRAFTS_KEY } from "@/stores/canvas/canvas-store-persistence";
+import { CANVAS_HISTORY_STORE_KEY, useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import {
     CANVAS_STORE_KEY,
     commitPendingCanvasStorePersistenceLocked,
     pendingCanvasStorePersistence,
     useCanvasStore,
     withCanvasStorePersistenceLock,
+    type CanvasProject,
 } from "@/stores/canvas/use-canvas-store";
 import {
     bindAssetDraftStoreHooks,
@@ -317,9 +319,7 @@ export const useAssetStore = create<AssetStore>()(
                 const frozenExtraMediaKeys = collectMediaStorageKeys(extra);
                 await new Promise<void>((resolve, reject) => {
                     window.setTimeout(() =>
-                        (async () => {
-                            // 先在锁外等待进行中的画布后端保存链，避免保存冲突路径写草稿时与 GC 互相等待。
-                            await waitForActiveCanvasBackendSaves(scope);
+                        withCanvasSaveGcBarrier(scope, async () => {
                             await withGenerationArtifactCommitLock(scope, async () => {
                                 const hydration = getCanvasHydrationHealth();
                                 if (hydration.loading || Boolean(hydration.error)) return;
@@ -332,6 +332,12 @@ export const useAssetStore = create<AssetStore>()(
                                     const durableCanvasDrafts = parseCanvasStorageDocument(await storage.getItem(CANVAS_DRAFTS_KEY));
                                     const liveProjects = scope === getActiveUserScope() ? useCanvasStore.getState().projects : [];
                                     const pendingProjects = pendingCanvasStorePersistence(scope)?.projects ?? [];
+                                    const liveDeletedProjects = scope === getActiveUserScope()
+                                        ? useCanvasHistoryStore.getState().deletedProjects
+                                            .map((item) => item.project)
+                                            .filter((project): project is CanvasProject => Boolean(project && !project.summaryOnly))
+                                        : [];
+                                    const durableDeletedProjects = parseDeletedHistoryProjects(await storage.getItem(CANVAS_HISTORY_STORE_KEY));
                                     const journalModule = await import("@/services/canvas-operation-journal");
                                     const journals = typeof journalModule.readAllCanvasOperationJournals === "function"
                                         ? await journalModule.readAllCanvasOperationJournals(scope)
@@ -353,6 +359,8 @@ export const useAssetStore = create<AssetStore>()(
                                             ...pendingProjects,
                                             ...durableCanvas.state.projects,
                                             ...durableCanvasDrafts.state.projects,
+                                            ...liveDeletedProjects,
+                                            ...durableDeletedProjects,
                                             ...journalDocuments,
                                         ],
                                         summaryMediaRefs,
@@ -384,7 +392,7 @@ export const useAssetStore = create<AssetStore>()(
                                     );
                                 });
                             });
-                        })().then(resolve, reject),
+                        }).then(resolve, reject),
                     );
                 });
             },
@@ -412,3 +420,17 @@ bindAssetDraftStoreHooks({
     clearDesktopLegacyScopes: clearDesktopLegacyAssetCacheScopesForTests,
     readLegacyDeletedGenerationIds: readLegacyDeletedGenerationIdsForScope,
 });
+
+function parseDeletedHistoryProjects(raw: string | null): CanvasProject[] {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw) as { state?: { deletedProjects?: Array<{ project?: CanvasProject }> } };
+        const items = parsed?.state?.deletedProjects;
+        if (!Array.isArray(items)) return [];
+        return items
+            .map((item) => item?.project)
+            .filter((project): project is CanvasProject => Boolean(project && typeof project === "object" && !project.summaryOnly));
+    } catch {
+        return [];
+    }
+}

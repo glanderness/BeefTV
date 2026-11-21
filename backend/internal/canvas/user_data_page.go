@@ -2,7 +2,6 @@ package canvas
 
 import (
 	"encoding/json"
-	"fmt"
 	"infinite-canvas/backend/internal/kernel"
 	"sort"
 	"strings"
@@ -55,49 +54,28 @@ func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, 
 	}
 	result := CanvasLibraryPage{Projects: make([]CanvasLibrarySummary, 0, len(projects)), Page: page, PageSize: pageSize, Total: total, HasMore: int64(page)*int64(pageSize) < total}
 	for _, project := range projects {
-		var raw map[string]any
-		if err := json.Unmarshal([]byte(project.PayloadJSON), &raw); err != nil {
+		var document struct {
+			WorkspaceProjectID string           `json:"workspaceProjectId"`
+			CanvasTitle        string           `json:"canvasTitle"`
+			Nodes              []map[string]any `json:"nodes"`
+		}
+		if err := json.Unmarshal([]byte(project.PayloadJSON), &document); err != nil {
 			return CanvasLibraryPage{}, err
 		}
-		workspaceProjectID, _ := raw["workspaceProjectId"].(string)
-		canvasTitle, _ := raw["canvasTitle"].(string)
-		var nodes []map[string]any
-		if rawNodes, ok := raw["nodes"]; ok && rawNodes != nil {
-			nodeList, ok := rawNodes.([]any)
-			if !ok {
-				return CanvasLibraryPage{}, fmt.Errorf("invalid canvas nodes payload")
-			}
-			nodes = make([]map[string]any, 0, len(nodeList))
-			for _, item := range nodeList {
-				if item == nil {
-					nodes = append(nodes, nil)
-					continue
-				}
-				nodeMap, ok := item.(map[string]any)
-				if !ok {
-					return CanvasLibraryPage{}, fmt.Errorf("invalid canvas node payload")
-				}
-				nodes = append(nodes, nodeMap)
-			}
-		}
-		preview := canvasLibraryPreviewNodes(nodes)
-		var localMediaKeys []string
-		if strings.Contains(project.PayloadJSON, `"storageKey"`) {
-			localMediaKeys = collectLocalMediaStorageKeys(raw)
-		}
+		preview := canvasLibraryPreviewNodes(document.Nodes)
 		result.Projects = append(result.Projects, CanvasLibrarySummary{
 			ID:                 project.ID,
-			WorkspaceProjectID: strings.TrimSpace(workspaceProjectID),
+			WorkspaceProjectID: strings.TrimSpace(document.WorkspaceProjectID),
 			ProjectID:          project.ProjectID,
 			FolderID:           project.LibraryFolderID,
 			Title:              project.Title,
-			CanvasTitle:        strings.TrimSpace(canvasTitle),
+			CanvasTitle:        strings.TrimSpace(document.CanvasTitle),
 			Revision:           project.Revision,
 			CreatedAt:          project.CreatedAt,
 			UpdatedAt:          project.UpdatedAt,
-			NodeCount:          len(nodes),
+			NodeCount:          len(document.Nodes),
 			PreviewNodes:       preview,
-			LocalMediaKeys:     localMediaKeys,
+			LocalMediaKeys:     scanLocalMediaStorageKeys(project.PayloadJSON),
 		})
 	}
 	return result, nil
@@ -155,9 +133,67 @@ func safeCanvasPreviewURL(value string) bool {
 	return len(value) <= 2048 && (strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "/api/") || strings.HasPrefix(value, "/resources/"))
 }
 
-func collectLocalMediaStorageKeys(raw any) []string {
-	seen := map[string]struct{}{}
-	walkLocalMediaStorageKeys(raw, seen)
+func scanLocalMediaStorageKeys(payloadJSON string) []string {
+	if !strings.Contains(payloadJSON, `"storageKey"`) {
+		return nil
+	}
+	dec := json.NewDecoder(strings.NewReader(payloadJSON))
+	type container struct {
+		isObject  bool
+		expectKey bool
+	}
+	var stack []container
+	var seen map[string]struct{}
+	captureValue := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		if delim, ok := tok.(json.Delim); ok {
+			switch delim {
+			case '{':
+				captureValue = false
+				if n := len(stack); n > 0 && stack[n-1].isObject {
+					stack[n-1].expectKey = true
+				}
+				stack = append(stack, container{isObject: true, expectKey: true})
+			case '[':
+				captureValue = false
+				if n := len(stack); n > 0 && stack[n-1].isObject {
+					stack[n-1].expectKey = true
+				}
+				stack = append(stack, container{isObject: false})
+			case '}', ']':
+				captureValue = false
+				if len(stack) > 0 {
+					stack = stack[:len(stack)-1]
+				}
+			}
+			continue
+		}
+		if n := len(stack); n > 0 && stack[n-1].isObject {
+			if stack[n-1].expectKey {
+				key, _ := tok.(string)
+				captureValue = key == "storageKey"
+				stack[n-1].expectKey = false
+				continue
+			}
+			if captureValue {
+				if rawKey, ok := tok.(string); ok {
+					key := strings.TrimSpace(rawKey)
+					if len(key) > 0 && len(key) <= 512 && strings.Contains(key, ":") && !strings.HasPrefix(key, "resource:") {
+						if seen == nil {
+							seen = map[string]struct{}{}
+						}
+						seen[key] = struct{}{}
+					}
+				}
+				captureValue = false
+			}
+			stack[n-1].expectKey = true
+		}
+	}
 	if len(seen) == 0 {
 		return nil
 	}
@@ -167,23 +203,4 @@ func collectLocalMediaStorageKeys(raw any) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func walkLocalMediaStorageKeys(value any, seen map[string]struct{}) {
-	switch typed := value.(type) {
-	case map[string]any:
-		if rawKey, ok := typed["storageKey"].(string); ok {
-			key := strings.TrimSpace(rawKey)
-			if len(key) > 0 && len(key) <= 512 && strings.Contains(key, ":") && !strings.HasPrefix(key, "resource:") {
-				seen[key] = struct{}{}
-			}
-		}
-		for _, child := range typed {
-			walkLocalMediaStorageKeys(child, seen)
-		}
-	case []any:
-		for _, item := range typed {
-			walkLocalMediaStorageKeys(item, seen)
-		}
-	}
 }
