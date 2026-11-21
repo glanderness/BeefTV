@@ -59,10 +59,6 @@ export function isNotFoundDrawingError(error: unknown) {
     return error instanceof ApiError && (error.status === 404 || error.code === 404);
 }
 
-export function isFailedPrecondition(error: unknown) {
-    return error instanceof ApiError && error.reason === "failed_precondition";
-}
-
 export function isDrawingRevisionConflict(error: unknown) {
     return error instanceof ApiError && (error.status === 409 || error.code === 409) && error.reason !== "failed_precondition";
 }

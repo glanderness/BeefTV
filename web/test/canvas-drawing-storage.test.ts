@@ -10,17 +10,16 @@ mock.module("@/lib/canvas/canvas-drawing-excalidraw-document", () => ({
 import * as runtimeMode from "@/lib/runtime-mode";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import {
-    CanvasDrawingCanonicalMissingError,
+    cloneCanvasDrawing,
     createCanvasDrawingFromImage,
     loadCanvasDrawing,
     loadCanvasDrawingPreview,
     loadCanvasDrawingRender,
-    peekCanvasDrawingCacheForTests,
     removeCanvasDrawing,
     replaceCanvasDrawingStoresForTests,
     resetCanvasDrawingStorageForTests,
     saveCanvasDrawing,
-    setCanvasDrawingStageBarrierForTests,
+    saveCanvasDrawingRenderPublication,
     type CanvasDrawingSnapshot,
 } from "@/lib/canvas/canvas-drawing-storage";
 import { apiClient } from "@/services/api/request";
@@ -41,14 +40,9 @@ function switchScope(userId: string) {
     return () => setActiveUserScope(previous);
 }
 
-function memoryStore<T>(values: Map<string, T>, hooks?: {
-    beforeGet?: (key: string) => Promise<void> | void;
-    beforeSet?: (key: string, value: T) => Promise<void> | void;
-    beforeRemove?: (key: string) => Promise<void> | void;
-}) {
+function memoryStore<T>(values: Map<string, T>, hooks?: { beforeSet?: (key: string, value: T) => Promise<void> | void }) {
     return {
         async getItem(key: string) {
-            await hooks?.beforeGet?.(key);
             return values.get(key) ?? null;
         },
         async setItem(key: string, value: T) {
@@ -57,7 +51,6 @@ function memoryStore<T>(values: Map<string, T>, hooks?: {
             return value;
         },
         async removeItem(key: string) {
-            await hooks?.beforeRemove?.(key);
             values.delete(key);
         },
     };
@@ -81,15 +74,6 @@ function requestBody(config: { data?: unknown }) {
 
 function snapshotOf(text: string) {
     return { elements: [{ id: text, isDeleted: false }] };
-}
-
-function drawingCacheKey(userScope: string, projectId = "p1", drawingId = "d1") {
-    return `${userScope}:${projectId}:${drawingId}`;
-}
-
-function generationOwnedKeys(map: Map<string, unknown>, drawingKey: string) {
-    const prefix = `${drawingKey}\0g`;
-    return [...map.keys()].filter((key) => key.startsWith(prefix)).sort();
 }
 
 function drawingRecord(snapshot: unknown, revision: number, extras: Record<string, unknown> = {}) {
@@ -128,23 +112,21 @@ function desktopBackend() {
     spies.push(spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(true));
 }
 
+function browserLocalMode() {
+    spies.push(spyOn(runtimeMode, "isNativeDesktopRuntime").mockReturnValue(false));
+    spies.push(spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(true));
+}
+
 function installStores(hooks?: {
-    beforeSet?: (key: string, value: unknown) => Promise<void> | void;
-    beforeGet?: (key: string) => Promise<void> | void;
+    docBeforeSet?: (key: string, value: unknown) => Promise<void> | void;
     previewBeforeSet?: (key: string, value: Blob) => Promise<void> | void;
-    previewBeforeGet?: (key: string) => Promise<void> | void;
-    previewBeforeRemove?: (key: string) => Promise<void> | void;
 }) {
     documents.clear();
     previews.clear();
     renders.clear();
     replaceCanvasDrawingStoresForTests({
-        documents: memoryStore(documents, { beforeSet: hooks?.beforeSet, beforeGet: hooks?.beforeGet }),
-        previews: memoryStore(previews, {
-            beforeSet: hooks?.previewBeforeSet,
-            beforeGet: hooks?.previewBeforeGet,
-            beforeRemove: hooks?.previewBeforeRemove,
-        }),
+        documents: memoryStore(documents as Map<string, never>, { beforeSet: hooks?.docBeforeSet }),
+        previews: memoryStore(previews, { beforeSet: hooks?.previewBeforeSet }),
         renders: memoryStore(renders as Map<string, never>),
     });
 }
@@ -158,168 +140,56 @@ afterEach(() => {
 });
 
 describe("canvas drawing storage", () => {
-    test("pending save failure then restart retains actual snapshot and blobs", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const preview = new Blob(["preview-v1"], { type: "image/png" });
-        const renderBlob = new Blob(["render-v1"], { type: "image/png" });
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources") && String(config.method).toLowerCase() === "post") {
-                    return envelope({ resource: { id: "res-preview", status: "ready" } });
-                }
-                return failure(500, "工作区暂时无法保存");
-            }, async () => {
-                await expect(saveCanvasDrawing(
-                    "p1",
-                    "d1",
-                    "excalidraw",
-                    snapshotOf("keep-me"),
-                    null,
-                    preview,
-                    { blob: renderBlob, pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" },
-                )).rejects.toThrow(/工作区暂时无法保存/);
-            });
-
-            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot } };
-            expect(cached?.draft?.document.snapshot).toEqual(snapshotOf("keep-me"));
-            expect(await previews.get("owner-a:p1:d1")?.text()).toBe("preview-v1");
-            expect(await (renders.get("owner-a:p1:d1") as { blob: Blob } | undefined)?.blob.text()).toBe("render-v1");
-
-            const loaded = await withAdapter(async () => failure(500, "读失败"), async () => loadCanvasDrawing("p1", "d1").catch((error) => error));
-            expect(loaded).toBeInstanceOf(Error);
-            expect((loaded as Error).message).toMatch(/读失败/);
-
-            const recovered = await withAdapter(async (config) => {
-                if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/drawings/")) return failure(404, "画板不存在");
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => loadCanvasDrawing("p1", "d1"));
-            expect(recovered?.origin).toBe("draft");
-            expect(recovered?.snapshot).toEqual(snapshotOf("keep-me"));
-            expect(recovered?.canonicalMissing).toBe(true);
-            expect(await loadCanvasDrawingPreview("p1", "d1").then((blob) => blob?.text())).toBe("preview-v1");
-        } finally {
-            restore();
-        }
-    });
-
-    test("later edit during delayed reply is not lost", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const gate = deferred();
-        let drawingPuts = 0;
-        const snapshots: unknown[] = [];
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put" && String(config.url).includes("/drawings/")) {
-                    const body = requestBody(config) as { drawing: { revision: number; snapshot: unknown } };
-                    drawingPuts += 1;
-                    snapshots.push(body.drawing.snapshot);
-                    await gate.promise;
-                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["a"]));
-                const deadline = Date.now() + 2000;
-                while (Date.now() < deadline) {
-                    const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot } };
-                    if (cached?.draft?.document.snapshot) break;
-                    await new Promise((resolve) => setTimeout(resolve, 0));
-                }
-                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["b"]));
-                while (Date.now() < deadline) {
-                    const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot } };
-                    if (JSON.stringify(cached?.draft?.document.snapshot) === JSON.stringify(snapshotOf("second"))) break;
-                    await new Promise((resolve) => setTimeout(resolve, 0));
-                }
-                gate.resolve();
-                await first;
-                const saved = await second;
-                expect(saved.snapshot).toEqual(snapshotOf("second"));
-                const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { committed?: CanvasDrawingSnapshot; draft?: { document: CanvasDrawingSnapshot } };
-                expect(cached.draft?.document.snapshot ?? cached.committed?.snapshot).toEqual(snapshotOf("second"));
-                expect(snapshots.at(-1)).toEqual(snapshotOf("second"));
-                expect(drawingPuts).toBeGreaterThan(0);
-            });
-        } finally {
-            restore();
-        }
-    });
-
-    test("native preview does not keep stale media after canonical change", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        documents.set("owner-a:p1:d1", {
-            version: 3,
-            committed: {
-                version: 2,
-                engine: "excalidraw",
-                snapshot: snapshotOf("old"),
-                revision: 2,
-                updatedAt: "2026-10-01T00:00:00.000Z",
-                shapeCount: 1,
-                pageCount: 1,
-                previewResourceId: "pv-old",
-            },
-        });
-        previews.set("owner-a:p1:d1", new Blob(["old-preview"], { type: "image/png" }));
-        try {
-            const blob = await withAdapter(async (config) => {
-                if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/drawings/d1")) {
-                    return envelope(drawingRecord(snapshotOf("remote"), 4, { previewResourceId: "pv-new" }));
-                }
-                if (String(config.url).includes("/resources/pv-new/file")) {
-                    return { data: new Blob(["new-preview"], { type: "image/png" }), status: 200, statusText: "OK", headers: {}, config: {} as never };
-                }
-                if (String(config.url).includes("/resources/pv-old/file")) {
-                    throw new Error("stale preview must not be read");
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => loadCanvasDrawingPreview("p1", "d1"));
-            expect(await blob?.text()).toBe("new-preview");
-        } finally {
-            restore();
-        }
-    });
-
-    test("native empty cache reads actual remote", async () => {
+    test("SQLite mode reads drawing, preview, and render directly from backend without touching IndexedDB", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
         installStores();
         try {
             const loaded = await withAdapter(async (config) => {
                 if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/drawings/d1")) {
-                    return envelope(drawingRecord(snapshotOf("remote"), 4, { previewResourceId: "pv-1" }));
+                    return envelope(drawingRecord(snapshotOf("remote"), 4, {
+                        previewResourceId: "pv-1",
+                        render: { resourceId: "rd-1", pageId: "p1", width: 100, height: 80, mimeType: "image/png", background: "white" },
+                    }));
                 }
                 if (String(config.url).includes("/resources/pv-1/file")) {
                     return { data: new Blob(["remote-preview"], { type: "image/png" }), status: 200, statusText: "OK", headers: {}, config: {} as never };
                 }
+                if (String(config.url).includes("/resources/rd-1/file")) {
+                    return { data: new Blob(["remote-render"], { type: "image/png" }), status: 200, statusText: "OK", headers: {}, config: {} as never };
+                }
                 throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                const document = await loadCanvasDrawing("p1", "d1");
-                const preview = await loadCanvasDrawingPreview("p1", "d1");
-                return { document, preview };
-            });
+            }, async () => ({
+                document: await loadCanvasDrawing("p1", "d1"),
+                preview: await loadCanvasDrawingPreview("p1", "d1"),
+                render: await loadCanvasDrawingRender("p1", "d1"),
+            }));
+
             expect(loaded.document?.origin).toBe("canonical");
             expect(loaded.document?.revision).toBe(4);
             expect(loaded.document?.snapshot).toEqual(snapshotOf("remote"));
             expect(await loaded.preview?.text()).toBe("remote-preview");
+            expect(await loaded.render?.blob.text()).toBe("remote-render");
+            expect(loaded.render?.storageKey).toBe("resource:rd-1");
+            expect(loaded.render?.url).toContain("/resources/rd-1/file");
+            expect(documents.size).toBe(0);
+            expect(previews.size).toBe(0);
+            expect(renders.size).toBe(0);
         } finally {
             restore();
         }
     });
 
-    test("real read error is not treated as success", async () => {
+    test("SQLite mode returns null on 404 and propagates real read errors", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
         installStores();
-        documents.set("owner-a:p1:d1", { version: 2, engine: "excalidraw", snapshot: snapshotOf("stale"), revision: 9, updatedAt: "2026-10-01T00:00:00.000Z", shapeCount: 1, pageCount: 1 });
         try {
+            await withAdapter(async () => failure(404, "画板不存在"), async () => {
+                expect(await loadCanvasDrawing("p1", "d1")).toBeNull();
+                expect(await loadCanvasDrawingPreview("p1", "d1")).toBeNull();
+                expect(await loadCanvasDrawingRender("p1", "d1")).toBeNull();
+            });
             await withAdapter(async () => failure(503, "服务暂时不可用，请稍后重试"), async () => {
                 await expect(loadCanvasDrawing("p1", "d1")).rejects.toThrow(/服务暂时不可用/);
             });
@@ -328,137 +198,111 @@ describe("canvas drawing storage", () => {
         }
     });
 
-    test("CAS conflict preserves the editor draft", async () => {
+    test("SQLite mode serializes concurrent saves with monotonic revisions and skips IndexedDB", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
         installStores();
+        const enteredFirst = deferred();
+        const releaseFirst = deferred();
+        const sent: Array<{ revision: number; snapshot: unknown }> = [];
         try {
             await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put" && String(config.url).includes("/drawings/")) {
-                    return failure(409, "画板已有更新，已停止覆盖；请保留本地草稿并加载最新版本", "conflict");
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: `res-${sent.length + 1}`, status: "ready" } });
+                if (String(config.method).toLowerCase() === "put" && String(config.url).includes("/drawings/d1")) {
+                    const body = requestBody(config) as { drawing: { revision: number; snapshot: unknown; previewResourceId?: string } };
+                    sent.push({ revision: body.drawing.revision, snapshot: body.drawing.snapshot });
+                    if (sent.length === 1) {
+                        enteredFirst.resolve();
+                        await releaseFirst.promise;
+                    }
+                    return envelope(drawingRecord(body.drawing.snapshot, body.drawing.revision + 1, { previewResourceId: body.drawing.previewResourceId }));
                 }
                 throw new Error(`unexpected ${config.method} ${config.url}`);
             }, async () => {
-                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("mine"), null, new Blob(["p"])))
-                    .rejects.toThrow(/画板已有更新/);
+                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["a"]));
+                await enteredFirst.promise;
+                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["b"]));
+                releaseFirst.resolve();
+                const firstSaved = await first;
+                const secondSaved = await second;
+                expect(firstSaved.revision).toBe(1);
+                expect(secondSaved.revision).toBe(2);
+                expect(secondSaved.snapshot).toEqual(snapshotOf("second"));
+                expect(sent).toEqual([
+                    { revision: 0, snapshot: snapshotOf("first") },
+                    { revision: 1, snapshot: snapshotOf("second") },
+                ]);
+                expect(documents.size).toBe(0);
+                expect(previews.size).toBe(0);
+                expect(renders.size).toBe(0);
             });
-            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot; conflict?: boolean } };
-            expect(cached.draft?.document.snapshot).toEqual(snapshotOf("mine"));
-            expect(cached.draft?.conflict).toBe(true);
         } finally {
             restore();
         }
     });
 
-    test("failed_precondition keeps the actual draft and blocks reimport of the old id", async () => {
+    test("SQLite mode auto-rebases once on 409 revision conflict without re-uploading blobs", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
         installStores();
-        const puts: number[] = [];
+        let resourceUploads = 0;
+        const putRevisions: number[] = [];
+        let preservedPreviewOnRetry = "";
+        try {
+            const saved = await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources") && String(config.method).toLowerCase() === "post") {
+                    resourceUploads += 1;
+                    return envelope({ resource: { id: "res-new", status: "ready" } });
+                }
+                if (String(config.method).toLowerCase() === "put" && String(config.url).includes("/drawings/d1")) {
+                    const body = requestBody(config) as { drawing: { revision: number; snapshot: unknown; previewResourceId?: string } };
+                    putRevisions.push(body.drawing.revision);
+                    if (body.drawing.revision === 0) {
+                        return failure(409, "画板已有更新", "conflict");
+                    }
+                    preservedPreviewOnRetry = body.drawing.previewResourceId || "";
+                    return envelope(drawingRecord(body.drawing.snapshot, body.drawing.revision + 1, { previewResourceId: body.drawing.previewResourceId }));
+                }
+                if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/drawings/d1")) {
+                    return envelope(drawingRecord(snapshotOf("server"), 5, { previewResourceId: "pv-existing" }));
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("mine"), null, new Blob(["new-preview"])));
+
+            expect(resourceUploads).toBe(1);
+            expect(putRevisions).toEqual([0, 5]);
+            expect(preservedPreviewOnRetry).toBe("res-new");
+            expect(saved.revision).toBe(6);
+            expect(saved.snapshot).toEqual(snapshotOf("mine"));
+        } finally {
+            restore();
+        }
+    });
+
+    test("SQLite mode does not retry 409 failed_precondition for deleted drawings", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        let puts = 0;
         try {
             await withAdapter(async (config) => {
                 if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
                 if (String(config.method).toLowerCase() === "put") {
-                    puts.push(1);
+                    puts += 1;
                     return failure(409, "画板已删除，不能重新导入", "failed_precondition");
                 }
                 throw new Error(`unexpected ${config.method} ${config.url}`);
             }, async () => {
                 await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep"), null, new Blob(["p"])))
-                    .rejects.toBeInstanceOf(CanvasDrawingCanonicalMissingError);
-                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep-2"), null, new Blob(["q"])))
-                    .rejects.toBeInstanceOf(CanvasDrawingCanonicalMissingError);
+                    .rejects.toThrow(/画板已删除/);
             });
-            expect(puts).toEqual([1]);
-            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot; blockedReimport?: boolean } };
-            expect(cached.draft?.document.snapshot).toEqual(snapshotOf("keep-2"));
-            expect(cached.draft?.blockedReimport).toBe(true);
+            expect(puts).toBe(1);
         } finally {
             restore();
         }
     });
 
-    test("failed_precondition survives GET 404 and still blocks reimport", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const puts: number[] = [];
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    puts.push(1);
-                    return failure(409, "画板已删除，不能重新导入", "failed_precondition");
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep"), null, new Blob(["p"])))
-                    .rejects.toBeInstanceOf(CanvasDrawingCanonicalMissingError);
-            });
-
-            const loaded = await withAdapter(async (config) => {
-                if (String(config.method).toLowerCase() === "get") return failure(404, "画板不存在");
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => loadCanvasDrawing("p1", "d1"));
-            expect(loaded?.snapshot).toEqual(snapshotOf("keep"));
-            expect(loaded?.canonicalMissing).toBe(true);
-
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-2", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    puts.push(1);
-                    return envelope(drawingRecord(snapshotOf("resurrected"), 1));
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep-3"), loaded, new Blob(["q"])))
-                    .rejects.toBeInstanceOf(CanvasDrawingCanonicalMissingError);
-            });
-            expect(puts).toEqual([1]);
-            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot; blockedReimport?: boolean } };
-            expect(cached.draft?.document.snapshot).toEqual(snapshotOf("keep-3"));
-            expect(cached.draft?.blockedReimport).toBe(true);
-        } finally {
-            restore();
-        }
-    });
-
-    test("404 keeps recoverable draft and does not PUT deleted committed data", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        documents.set("owner-a:p1:d1", {
-            version: 3,
-            committed: { version: 2, engine: "excalidraw", snapshot: snapshotOf("was-saved"), revision: 3, updatedAt: "2026-10-01T00:00:00.000Z", shapeCount: 1, pageCount: 1 },
-        });
-        const puts: number[] = [];
-        try {
-            const loaded = await withAdapter(async (config) => {
-                if (String(config.method).toLowerCase() === "get") return failure(404, "画板不存在");
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => loadCanvasDrawing("p1", "d1"));
-            expect(loaded?.canonicalMissing).toBe(true);
-            expect(loaded?.snapshot).toEqual(snapshotOf("was-saved"));
-            expect(loaded?.revision).toBe(3);
-
-            await withAdapter(async (config) => {
-                if (String(config.method).toLowerCase() === "put") {
-                    puts.push(1);
-                    return envelope(drawingRecord(snapshotOf("resurrected"), 1));
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("edit"), loaded, undefined))
-                    .rejects.toBeInstanceOf(CanvasDrawingCanonicalMissingError);
-            });
-            expect(puts).toEqual([]);
-        } finally {
-            restore();
-        }
-    });
-
-    test("delete prevents a stale GET from restoring the drawing", async () => {
+    test("delete prevents a stale in-flight GET from resurrecting the drawing", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
         installStores();
@@ -479,192 +323,13 @@ describe("canvas drawing storage", () => {
                 await removeCanvasDrawing("p1", "d1");
                 gate.resolve();
                 expect(await loading).toBeNull();
-                expect(await loadCanvasDrawingPreview("p1", "d1")).toBeNull();
             });
         } finally {
             restore();
         }
     });
 
-    test("concurrent first saves complete two reads before either write and keep the newer draft", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const reads: number[] = [];
-        const writes: number[] = [];
-        const bothRead = deferred();
-        setCanvasDrawingStageBarrierForTests(async () => {
-            reads.push(1);
-            if (reads.length === 2) bothRead.resolve();
-            await bothRead.promise;
-        });
-        const previousSet = documents.set.bind(documents);
-        const documentStore = memoryStore(documents, {
-            beforeSet: async () => {
-                writes.push(reads.length);
-            },
-        });
-        replaceCanvasDrawingStoresForTests({
-            documents: documentStore,
-            previews: memoryStore(previews),
-            renders: memoryStore(renders as Map<string, never>),
-        });
-        void previousSet;
-        const snapshots: unknown[] = [];
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    snapshots.push(requestBody(config).drawing?.snapshot);
-                    return envelope(drawingRecord(requestBody(config).drawing?.snapshot, snapshots.length));
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["a"]));
-                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["b"]));
-                const [firstResult, secondResult] = await Promise.all([first, second]);
-                expect(writes.every((count) => count >= 2)).toBe(true);
-                expect(firstResult.snapshot).toEqual(snapshotOf("second"));
-                expect(secondResult.snapshot).toEqual(snapshotOf("second"));
-                const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { generation: number; document: CanvasDrawingSnapshot }; committed?: CanvasDrawingSnapshot; generationHighWater?: number };
-                expect(cached.draft?.document.snapshot ?? cached.committed?.snapshot).toEqual(snapshotOf("second"));
-                expect(cached.generationHighWater).toBeGreaterThanOrEqual(2);
-                expect(snapshots.at(-1)).toEqual(snapshotOf("second"));
-            });
-        } finally {
-            setCanvasDrawingStageBarrierForTests();
-            restore();
-        }
-    });
-
-    test("new edit during pending ack is not lost", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const enteredPut = deferred();
-        const releasePut = deferred();
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    const body = requestBody(config) as { drawing: { snapshot: unknown } };
-                    if (JSON.stringify(body.drawing.snapshot) === JSON.stringify(snapshotOf("first"))) {
-                        enteredPut.resolve();
-                        await releasePut.promise;
-                    }
-                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["a"]));
-                await enteredPut.promise;
-                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["b"]));
-                const deadline = Date.now() + 2000;
-                while (Date.now() < deadline) {
-                    const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { generation: number; document: CanvasDrawingSnapshot } };
-                    if (JSON.stringify(cached?.draft?.document.snapshot) === JSON.stringify(snapshotOf("second"))) break;
-                    await new Promise((resolve) => setTimeout(resolve, 0));
-                }
-                releasePut.resolve();
-                await first;
-                const saved = await second;
-                expect(saved.snapshot).toEqual(snapshotOf("second"));
-                const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot }; committed?: CanvasDrawingSnapshot; generationHighWater?: number };
-                expect(cached.draft?.document.snapshot ?? cached.committed?.snapshot).toEqual(snapshotOf("second"));
-                expect(cached.generationHighWater).toBeGreaterThanOrEqual(2);
-            });
-        } finally {
-            restore();
-        }
-    });
-
-    test("new edit during pending remove is not lost", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const enteredDelete = deferred();
-        const releaseDelete = deferred();
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    return envelope(drawingRecord(requestBody(config).drawing?.snapshot, 2));
-                }
-                if (String(config.method).toLowerCase() === "delete") {
-                    enteredDelete.resolve();
-                    await releaseDelete.promise;
-                    return envelope({ id: "d1" });
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep"), null, new Blob(["keep"]));
-                const removing = removeCanvasDrawing("p1", "d1");
-                await enteredDelete.promise;
-                const saved = await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("after-delete"), null, new Blob(["after"]));
-                releaseDelete.resolve();
-                await removing;
-                expect(saved.snapshot).toEqual(snapshotOf("after-delete"));
-                const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot }; committed?: CanvasDrawingSnapshot };
-                expect(cached.draft?.document.snapshot ?? cached.committed?.snapshot).toEqual(snapshotOf("after-delete"));
-                expect(await previews.get("owner-a:p1:d1")?.text()).toBe("after");
-            });
-        } finally {
-            restore();
-        }
-    });
-
-    test("delayed first blob write cannot replace the newer preview after backend failure", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        const firstPreview = deferred();
-        const releaseFirstPreview = deferred();
-        let previewSets = 0;
-        installStores({
-            previewBeforeSet: async (key, value) => {
-                if (key.includes("\0g")) return;
-                previewSets += 1;
-                if (previewSets === 1) {
-                    expect(await value.text()).toBe("blob-a");
-                    firstPreview.resolve();
-                    await releaseFirstPreview.promise;
-                }
-            },
-        });
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") return failure(500, "工作区暂时无法保存");
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]), { blob: new Blob(["render-a"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-                await firstPreview.promise;
-                const firstResult = first.then((value) => ({ ok: true as const, value }), (error) => ({ ok: false as const, error }));
-                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]), { blob: new Blob(["render-b"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-                const secondResult = second.then((value) => ({ ok: true as const, value }), (error) => ({ ok: false as const, error }));
-                releaseFirstPreview.resolve();
-                const firstSettled = await firstResult;
-                const secondSettled = await secondResult;
-                expect(firstSettled.ok).toBe(false);
-                expect(String(firstSettled.ok ? "" : firstSettled.error)).toMatch(/工作区暂时无法保存/);
-                expect(secondSettled.ok).toBe(false);
-                expect(String(secondSettled.ok ? "" : secondSettled.error)).toMatch(/工作区暂时无法保存/);
-                const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot } };
-                expect(cached.draft?.document.snapshot).toEqual(snapshotOf("second"));
-                expect(await previews.get("owner-a:p1:d1")?.text()).toBe("blob-b");
-
-                const recovered = await withAdapter(async (config) => {
-                    if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/drawings/")) return failure(404, "画板不存在");
-                    throw new Error(`unexpected ${config.method} ${config.url}`);
-                }, async () => loadCanvasDrawing("p1", "d1"));
-                expect(recovered?.snapshot).toEqual(snapshotOf("second"));
-                expect(await loadCanvasDrawingPreview("p1", "d1").then((blob) => blob?.text())).toBe("blob-b");
-            });
-        } finally {
-            restore();
-        }
-    });
-
-    test("stale GET cannot hide a newer committed revision or live draft", async () => {
+    test("stale GET finishing after a newer save returns the newer saved drawing", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
         installStores();
@@ -690,13 +355,60 @@ describe("canvas drawing storage", () => {
             releaseGet.resolve();
             const loaded = await loading;
             expect(loaded?.snapshot).toEqual(snapshotOf("fresh"));
-            expect(loaded?.revision === 4 || loaded?.origin === "draft").toBe(true);
+            expect(loaded?.revision).toBe(4);
         } finally {
             restore();
         }
     });
 
-    test("failing createCanvasDrawingFromImage keeps the draft and does not DELETE", async () => {
+    test("cloneCanvasDrawing reads source once and saves snapshot with preview and render", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        let sourceGets = 0;
+        let clonedPutPayload: Record<string, unknown> | undefined;
+        try {
+            const cloned = await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/drawings/d-src")) {
+                    sourceGets += 1;
+                    return envelope(drawingRecord(snapshotOf("source-art"), 3, {
+                        drawingId: "d-src",
+                        previewResourceId: "pv-src",
+                        render: { resourceId: "rd-src", pageId: "p1", width: 64, height: 64, mimeType: "image/png", background: "white" },
+                    }));
+                }
+                if (String(config.url).includes("/resources/pv-src/file")) {
+                    return { data: new Blob(["src-preview"], { type: "image/png" }), status: 200, statusText: "OK", headers: {}, config: {} as never };
+                }
+                if (String(config.url).includes("/resources/rd-src/file")) {
+                    return { data: new Blob(["src-render"], { type: "image/png" }), status: 200, statusText: "OK", headers: {}, config: {} as never };
+                }
+                if (String(config.method).toLowerCase() === "post" && String(config.url).includes("/resources")) {
+                    return envelope({ resource: { id: "res-cloned", status: "ready" } });
+                }
+                if (String(config.method).toLowerCase() === "put" && String(config.url).includes("/drawings/d-dst")) {
+                    const body = requestBody(config) as { drawing: Record<string, unknown> };
+                    clonedPutPayload = body.drawing;
+                    return envelope(drawingRecord(body.drawing.snapshot, 1, {
+                        drawingId: "d-dst",
+                        previewResourceId: body.drawing.previewResourceId,
+                        render: body.drawing.render,
+                    }));
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => cloneCanvasDrawing("p1", "d-src", "d-dst"));
+
+            expect(sourceGets).toBe(1);
+            expect(cloned?.revision).toBe(1);
+            expect(cloned?.snapshot).toEqual(snapshotOf("source-art"));
+            expect(clonedPutPayload?.previewResourceId).toBe("res-cloned");
+            expect((clonedPutPayload?.render as { resourceId?: string } | undefined)?.resourceId).toBe("res-cloned");
+        } finally {
+            restore();
+        }
+    });
+
+    test("failing createCanvasDrawingFromImage propagates error and does not DELETE", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
         installStores();
@@ -744,9 +456,6 @@ describe("canvas drawing storage", () => {
                     .rejects.toThrow(/工作区暂时无法保存/);
             });
             expect(methods.some((item) => item.startsWith("delete "))).toBe(false);
-            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot } };
-            expect(cached.draft?.document.snapshot).toBeDefined();
-            expect(await previews.get("owner-a:p1:d1")?.text()).toBe("from-image");
         } finally {
             (globalThis as { Image: typeof Image }).Image = originalImage;
             if (originalDocument) globalThis.document = originalDocument;
@@ -757,341 +466,138 @@ describe("canvas drawing storage", () => {
         }
     });
 
-    test("multiple saves then ack leave only the published blobs", async () => {
+    test("SQLite mode handles render upload, omission, and explicit clear, and refuses fake publication", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
         installStores();
-        const key = drawingCacheKey("owner-a");
+        const bodies: Array<Record<string, unknown>> = [];
         try {
             await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
-                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
+                if (String(config.method).toLowerCase() === "post" && String(config.url).includes("/resources")) {
+                    return envelope({ resource: { id: "res-render-1", status: "ready" } });
+                }
+                if (String(config.method).toLowerCase() === "put" && String(config.url).includes("/drawings/d1")) {
+                    const body = requestBody(config) as { drawing: Record<string, unknown> };
+                    bodies.push(body.drawing);
+                    return envelope(drawingRecord(body.drawing.snapshot, Number(body.drawing.revision || 0) + 1, {
+                        render: body.drawing.render && (body.drawing.render as { resourceId?: string }).resourceId ? body.drawing.render : undefined,
+                    }));
                 }
                 throw new Error(`unexpected ${config.method} ${config.url}`);
             }, async () => {
-                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]), { blob: new Blob(["render-a"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]), { blob: new Blob(["render-b"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
+                const first = await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("with-render"), null, undefined, {
+                    blob: new Blob(["rd"]),
+                    pageId: "page",
+                    width: 32,
+                    height: 32,
+                    mimeType: "image/png",
+                    background: "white",
+                });
+                const second = await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep-render"), first, undefined, undefined);
+                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("clear-render"), second, undefined, null);
+                expect(await saveCanvasDrawingRenderPublication("p1", "d1", 3, { storageKey: "resource:x", url: "/api/resources/x/file" })).toBe(false);
             });
-            expect(generationOwnedKeys(previews as Map<string, unknown>, key)).toEqual([]);
-            expect(generationOwnedKeys(renders, key)).toEqual([]);
-            expect(await previews.get(key)?.text()).toBe("blob-b");
-            expect(await (renders.get(key) as { blob: Blob } | undefined)?.blob.text()).toBe("render-b");
-            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { blobGenerations?: number[]; draft?: unknown };
-            expect(cached.draft).toBeUndefined();
-            expect(cached.blobGenerations ?? []).toEqual([]);
+            expect((bodies[0]?.render as { resourceId?: string; storageKey?: string } | undefined)).toMatchObject({
+                resourceId: "res-render-1",
+                storageKey: "resource:res-render-1",
+            });
+            expect("render" in (bodies[1] || {})).toBe(false);
+            expect(bodies[2]?.render).toEqual({ resourceId: "" });
         } finally {
             restore();
         }
     });
 
-    test("failed submit keeps the recoverable generation blobs", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const key = drawingCacheKey("owner-a");
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") return failure(500, "工作区暂时无法保存");
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep"), null, new Blob(["keep-preview"]), { blob: new Blob(["keep-render"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }))
-                    .rejects.toThrow(/工作区暂时无法保存/);
-            });
-            expect(generationOwnedKeys(previews as Map<string, unknown>, key)).toEqual([`${key}\0g1`]);
-            expect(await previews.get(`${key}\0g1`)?.text()).toBe("keep-preview");
-            expect(await (renders.get(`${key}\0g1`) as { blob: Blob } | undefined)?.blob.text()).toBe("keep-render");
-            expect(await loadCanvasDrawingPreview("p1", "d1").then((blob) => blob?.text())).toBe("keep-preview");
-        } finally {
-            restore();
-        }
-    });
-
-    test("unknown submit keeps the recoverable generation blobs", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const key = drawingCacheKey("owner-a");
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") throw new Error("网络中断");
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep"), null, new Blob(["keep-preview"]), { blob: new Blob(["keep-render"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }))
-                    .rejects.toThrow(/网络中断/);
-            });
-            expect(generationOwnedKeys(previews as Map<string, unknown>, key)).toEqual([`${key}\0g1`]);
-            expect(await previews.get(`${key}\0g1`)?.text()).toBe("keep-preview");
-            expect(await loadCanvasDrawingPreview("p1", "d1").then((blob) => blob?.text())).toBe("keep-preview");
-            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { generation: number }; blobGenerations?: number[] };
-            expect(cached.draft?.generation).toBe(1);
-            expect(cached.blobGenerations).toEqual([1]);
-        } finally {
-            restore();
-        }
-    });
-
-    test("old ack during a newer draft keeps the newer generation pair", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const key = drawingCacheKey("owner-a");
-        const enteredFirst = deferred();
-        const releaseFirst = deferred();
-        const enteredSecond = deferred();
-        const releaseSecond = deferred();
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
-                    if (JSON.stringify(body.drawing.snapshot) === JSON.stringify(snapshotOf("first"))) {
-                        enteredFirst.resolve();
-                        await releaseFirst.promise;
-                    } else {
-                        enteredSecond.resolve();
-                        await releaseSecond.promise;
-                    }
-                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]), { blob: new Blob(["render-a"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-                await enteredFirst.promise;
-                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]), { blob: new Blob(["render-b"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-                const deadline = Date.now() + 2000;
-                while (Date.now() < deadline) {
-                    const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { generation: number } };
-                    if (cached?.draft?.generation === 2) break;
-                    await new Promise((resolve) => setTimeout(resolve, 0));
-                }
-                releaseFirst.resolve();
-                await first;
-                expect(generationOwnedKeys(previews as Map<string, unknown>, key)).toEqual([`${key}\0g2`]);
-                expect(await previews.get(`${key}\0g2`)?.text()).toBe("blob-b");
-                expect(await loadCanvasDrawingPreview("p1", "d1").then((blob) => blob?.text())).toBe("blob-b");
-                releaseSecond.resolve();
-                await second;
-            });
-        } finally {
-            restore();
-        }
-    });
-
-    test("draft preview does not fall back to a cleaned published blob", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const key = drawingCacheKey("owner-a");
-        const enteredFirst = deferred();
-        const releaseFirst = deferred();
-        const enteredSecond = deferred();
-        const releaseSecond = deferred();
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
-                    if (JSON.stringify(body.drawing.snapshot) === JSON.stringify(snapshotOf("first"))) {
-                        enteredFirst.resolve();
-                        await releaseFirst.promise;
-                    } else {
-                        enteredSecond.resolve();
-                        await releaseSecond.promise;
-                    }
-                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]));
-                await enteredFirst.promise;
-                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]));
-                const deadline = Date.now() + 2000;
-                while (Date.now() < deadline) {
-                    const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { generation: number } };
-                    if (cached?.draft?.generation === 2) break;
-                    await new Promise((resolve) => setTimeout(resolve, 0));
-                }
-                releaseFirst.resolve();
-                await first;
-                previews.delete(`${key}\0g2`);
-                expect(await previews.get(key)?.text()).toBe("blob-b");
-                expect(await loadCanvasDrawingPreview("p1", "d1")).toBeNull();
-                releaseSecond.resolve();
-                await second;
-            });
-        } finally {
-            restore();
-        }
-    });
-
-    test("delete cleanup does not drop another drawing or scope", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores();
-        const keepKey = drawingCacheKey("owner-a", "p1", "d2");
-        const otherScope = drawingCacheKey("owner-b");
-        const dropped = drawingCacheKey("owner-a");
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
-                    if (JSON.stringify(body.drawing.snapshot) === JSON.stringify(snapshotOf("drop-2"))) {
-                        return failure(500, "工作区暂时无法保存");
-                    }
-                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
-                }
-                if (String(config.method).toLowerCase() === "delete") return envelope({ id: "d1" });
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("drop"), null, new Blob(["drop-a"]), { blob: new Blob(["drop-r"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-                await saveCanvasDrawing("p1", "d2", "excalidraw", snapshotOf("keep"), null, new Blob(["keep-a"]), { blob: new Blob(["keep-r"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-                const restoreB = switchScope("owner-b");
-                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("other"), null, new Blob(["other-a"]), { blob: new Blob(["other-r"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-                restoreB();
-                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("drop-2"), null, new Blob(["drop-b"]), { blob: new Blob(["drop-r2"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }))
-                    .rejects.toThrow(/工作区暂时无法保存/);
-                expect(generationOwnedKeys(previews as Map<string, unknown>, dropped)).toEqual([`${dropped}\0g2`]);
-                await removeCanvasDrawing("p1", "d1");
-            });
-            expect([...previews.keys()].filter((key) => key === dropped || key.startsWith(`${dropped}\0g`))).toEqual([]);
-            expect([...renders.keys()].filter((key) => key === dropped || key.startsWith(`${dropped}\0g`))).toEqual([]);
-            expect(await previews.get(keepKey)?.text()).toBe("keep-a");
-            expect(generationOwnedKeys(previews as Map<string, unknown>, keepKey)).toEqual([]);
-            expect(await previews.get(otherScope)?.text()).toBe("other-a");
-            expect(await (renders.get(otherScope) as { blob: Blob } | undefined)?.blob.text()).toBe("other-r");
-        } finally {
-            restore();
-        }
-    });
-
-    test("thrown generation blob read then later ack reclaims the leaked in-flight generation", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        let throwGenRead = true;
+    test("browser-local mode commits blobs before document, rolls back on write error, and keeps revisions monotonic", async () => {
+        const restore = switchScope("browser-only");
+        browserLocalMode();
+        let failPreview = false;
+        let failDoc = false;
         installStores({
-            previewBeforeGet: async (key) => {
-                if (throwGenRead && key.includes("\0g")) {
-                    throwGenRead = false;
-                    throw new Error("preview store read failed");
-                }
+            previewBeforeSet: async () => {
+                if (failPreview) throw new Error("quota exceeded");
+            },
+            docBeforeSet: async () => {
+                if (failDoc) throw new Error("doc write failed");
             },
         });
-        const key = drawingCacheKey("owner-a");
         try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
-                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]), { blob: new Blob(["render-a"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }))
-                    .rejects.toThrow(/preview store read failed/);
-                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]), { blob: new Blob(["render-b"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-            });
-            expect(generationOwnedKeys(previews as Map<string, unknown>, key)).toEqual([]);
-            expect(await previews.get(key)?.text()).toBe("blob-b");
+            const first = await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("v1"), null, new Blob(["pv-v1"]));
+            expect(first.revision).toBe(1);
+
+            failPreview = true;
+            await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("v2-fail"), first, new Blob(["pv-v2"]))).rejects.toThrow(/quota exceeded/);
+            failPreview = false;
+            expect((await loadCanvasDrawing("p1", "d1"))?.revision).toBe(1);
+            expect(await loadCanvasDrawingPreview("p1", "d1").then((blob) => blob?.text())).toBe("pv-v1");
+
+            failDoc = true;
+            await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("v2-doc-fail"), first, new Blob(["pv-rollback"]))).rejects.toThrow(/doc write failed/);
+            failDoc = false;
+            expect((await loadCanvasDrawing("p1", "d1"))?.revision).toBe(1);
+            expect(await loadCanvasDrawingPreview("p1", "d1").then((blob) => blob?.text())).toBe("pv-v1");
+
+            // Concurrent double-save with the same stale `previous` must advance revisions strictly monotonically.
+            const [a, b] = await Promise.all([
+                saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("v2"), first, new Blob(["pv-2"])),
+                saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("v3"), first, new Blob(["pv-3"])),
+            ]);
+            expect(a.revision).toBe(2);
+            expect(b.revision).toBe(3);
+            expect((await loadCanvasDrawing("p1", "d1"))?.snapshot).toEqual(snapshotOf("v3"));
         } finally {
             restore();
         }
     });
 
-    test("legacy snapshot published blobs remain readable without a server PUT", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
+    test("browser-local mode saves, loads, publishes render, unwraps legacy v3 envelopes, and removes cleanly", async () => {
+        const restore = switchScope("browser-only");
+        browserLocalMode();
         installStores();
-        const key = drawingCacheKey("owner-a");
-        documents.set(key, {
-            version: 2,
-            engine: "excalidraw",
-            snapshot: snapshotOf("legacy"),
-            revision: 3,
-            updatedAt: "2026-10-01T00:00:00.000Z",
-            shapeCount: 1,
-            pageCount: 1,
-        });
-        previews.set(key, new Blob(["legacy-preview"], { type: "image/png" }));
-        renders.set(key, {
-            blob: new Blob(["legacy-render"], { type: "image/png" }),
-            pageId: "page",
-            width: 8,
-            height: 8,
-            mimeType: "image/png",
-            background: "white",
-            version: 1,
-            revision: 3,
-            updatedAt: "2026-10-01T00:00:00.000Z",
-        });
-        const puts: string[] = [];
         try {
-            const loaded = await withAdapter(async (config) => {
-                if (String(config.method).toLowerCase() === "put") {
-                    puts.push(`${config.method} ${config.url}`);
-                    throw new Error("legacy load must not PUT");
-                }
-                if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/drawings/")) {
-                    return failure(404, "画板不存在");
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                const preview = await loadCanvasDrawingPreview("p1", "d1");
-                const render = await loadCanvasDrawingRender("p1", "d1");
-                const document = await loadCanvasDrawing("p1", "d1");
-                return { preview, render, document };
-            });
-            expect(await loaded.preview?.text()).toBe("legacy-preview");
-            expect(await loaded.render?.blob.text()).toBe("legacy-render");
-            expect(loaded.document?.snapshot).toEqual(snapshotOf("legacy"));
-            expect(await previews.get(`${key}\0g1`)?.text()).toBe("legacy-preview");
-            expect(puts).toEqual([]);
-        } finally {
-            restore();
-        }
-    });
+            const saved = await saveCanvasDrawing(
+                "p1",
+                "d1",
+                "excalidraw",
+                snapshotOf("browser-art"),
+                null,
+                new Blob(["pv"]),
+                { blob: new Blob(["rd"]), pageId: "page", width: 16, height: 16, mimeType: "image/png", background: "white" },
+            );
+            expect(saved.origin).toBe("browser");
+            expect(saved.revision).toBe(1);
 
-    test("reclaim failure does not mask an unknown network error", async () => {
-        const restore = switchScope("owner-a");
-        desktopBackend();
-        installStores({
-            previewBeforeRemove: async (key) => {
-                if (key.includes("\0g1")) throw new Error("reclaim failed");
-            },
-        });
-        const enteredFirst = deferred();
-        const releaseFirst = deferred();
-        try {
-            await withAdapter(async (config) => {
-                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
-                if (String(config.method).toLowerCase() === "put") {
-                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
-                    if (JSON.stringify(body.drawing.snapshot) === JSON.stringify(snapshotOf("first"))) {
-                        enteredFirst.resolve();
-                        await releaseFirst.promise;
-                        throw new Error("网络中断");
-                    }
-                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
-                }
-                throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, async () => {
-                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]), { blob: new Blob(["render-a"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-                await enteredFirst.promise;
-                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]), { blob: new Blob(["render-b"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" });
-                const deadline = Date.now() + 2000;
-                while (Date.now() < deadline) {
-                    const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { generation: number } };
-                    if (cached?.draft?.generation === 2) break;
-                    await new Promise((resolve) => setTimeout(resolve, 0));
-                }
-                releaseFirst.resolve();
-                await expect(first).rejects.toThrow(/网络中断/);
-                await second;
+            const published = await saveCanvasDrawingRenderPublication("p1", "d1", 1, {
+                storageKey: "resource:pub-1",
+                url: "/api/resources/pub-1/file",
             });
+            expect(published).toBe(true);
+            const loadedRender = await loadCanvasDrawingRender("p1", "d1");
+            expect(loadedRender?.storageKey).toBe("resource:pub-1");
+            expect(await loadedRender?.blob.text()).toBe("rd");
+            expect(await loadCanvasDrawingPreview("p1", "d1").then((blob) => blob?.text())).toBe("pv");
+
+            // Legacy v3 envelope in browser-local IndexedDB stays readable.
+            documents.set("browser-only:p1:d-legacy", {
+                version: 3,
+                committed: {
+                    version: 2,
+                    engine: "excalidraw",
+                    snapshot: snapshotOf("legacy-v3"),
+                    revision: 3,
+                    updatedAt: "2026-10-01T00:00:00.000Z",
+                    shapeCount: 1,
+                    pageCount: 1,
+                } satisfies CanvasDrawingSnapshot,
+            });
+            const legacy = await loadCanvasDrawing("p1", "d-legacy");
+            expect(legacy?.snapshot).toEqual(snapshotOf("legacy-v3"));
+            expect(legacy?.revision).toBe(3);
+
+            await removeCanvasDrawing("p1", "d1");
+            expect(await loadCanvasDrawing("p1", "d1")).toBeNull();
+            expect(await loadCanvasDrawingPreview("p1", "d1")).toBeNull();
+            expect(await loadCanvasDrawingRender("p1", "d1")).toBeNull();
         } finally {
             restore();
         }

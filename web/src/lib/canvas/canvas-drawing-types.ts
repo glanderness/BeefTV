@@ -10,9 +10,7 @@ export type CanvasDrawingSnapshot = {
     pageCount: number;
     previewResourceId?: string;
     renderResourceId?: string;
-    origin?: "canonical" | "draft" | "browser";
-    canonicalMissing?: boolean;
-    draftGeneration?: number;
+    origin?: "canonical" | "browser";
 };
 
 export type CanvasDrawingRenderDraft = {
@@ -30,30 +28,6 @@ export type CanvasDrawingRender = CanvasDrawingRenderDraft & {
     version: 1;
     revision: number;
     updatedAt: string;
-};
-
-export class CanvasDrawingCanonicalMissingError extends Error {
-    constructor() {
-        super("画板在工作区中不存在或已删除，本地草稿已保留");
-        this.name = "CanvasDrawingCanonicalMissingError";
-    }
-}
-
-export type DrawingDraftState = {
-    document: CanvasDrawingSnapshot;
-    generation: number;
-    canonicalMissing?: boolean;
-    conflict?: boolean;
-    blockedReimport?: boolean;
-};
-
-export type DrawingCacheEnvelope = {
-    version: 3;
-    committed?: CanvasDrawingSnapshot;
-    draft?: DrawingDraftState;
-    removedGeneration?: number;
-    generationHighWater?: number;
-    blobGenerations?: number[];
 };
 
 export type DrawingKeyStore<T> = {

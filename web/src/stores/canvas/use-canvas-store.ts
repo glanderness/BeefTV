@@ -88,11 +88,12 @@ function readCanvasFolders(): CanvasFolder[] {
             const coverResourceId = typeof folder.coverResourceId === "string" ? folder.coverResourceId : undefined;
             const coverDataUrl = typeof folder.coverDataUrl === "string" && !isStaleProcessCoverUrl(folder.coverDataUrl) ? folder.coverDataUrl : undefined;
             return {
-                ...folder,
+                id: folder.id,
+                name: folder.name,
+                createdAt: folder.createdAt,
+                updatedAt: folder.updatedAt,
                 coverResourceId,
                 coverDataUrl,
-                unsaved: folder.unsaved === true ? true : undefined,
-                saveError: typeof folder.saveError === "string" && folder.saveError ? folder.saveError : undefined,
             };
         }) : [];
     } catch {
@@ -110,7 +111,7 @@ function writeCanvasFolders(folders: CanvasFolder[]) {
     try {
         scopedLocalStorage.setItem(CANVAS_FOLDERS_KEY, JSON.stringify(persistable));
     } catch {
-        // Pending folder intents and covers live in IndexedDB (canvas_folder_pending).
+        // SQLite holds canonical folder records; localStorage is only a startup cache.
     }
 }
 

@@ -1,201 +1,37 @@
 import { nanoid } from "nanoid";
 
-import { CANVAS_FOLDER_PENDING_STORE_NAME, localForageInstance } from "@/lib/localforage-storage";
-import { getActiveUserScope, scopedStorageKey } from "@/lib/user-scope";
+import { getActiveUserScope } from "@/lib/user-scope";
 import { ApiError } from "@/services/api/request";
 import { resourceFileUrl, uploadResourceFile } from "@/services/api/resources";
-import { deleteCanvasLibraryFolder as deleteCanvasLibraryFolderRemote, listCanvasLibraryFolders as listCanvasLibraryFoldersRemote, putCanvasLibraryFolder } from "@/services/api/workspace-data";
+import {
+    deleteCanvasLibraryFolder as deleteCanvasLibraryFolderRemote,
+    listCanvasLibraryFolders as listCanvasLibraryFoldersRemote,
+    putCanvasLibraryFolder,
+    type CanvasLibraryFolderRecord,
+} from "@/services/api/workspace-data";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 import { useCanvasStore, type CanvasFolder } from "@/stores/canvas/use-canvas-store";
 
-export const CANVAS_FOLDER_PENDING_KEY = "infinite-canvas:canvas_folder_pending";
-
-export class FolderPendingUnreadableError extends Error {
-    constructor() {
-        super("文件夹未保存的修改无法读取");
-        this.name = "FolderPendingUnreadableError";
-    }
-}
-
-type FolderPendingIntent = {
-    generation: number;
-    kind: "upsert" | "delete";
-    folder?: CanvasFolder;
-    error?: string;
-    blockedReimport?: boolean;
-};
-
-type FolderPendingMap = Record<string, FolderPendingIntent>;
-
-type FolderPendingRecord = {
-    version: 1;
-    intents: FolderPendingMap;
-    highWater: Record<string, number>;
-};
-
-type FolderPendingStore = {
-    getItem(key: string): Promise<FolderPendingRecord | FolderPendingMap | null>;
-    setItem(key: string, value: FolderPendingRecord): Promise<FolderPendingRecord>;
-    removeItem(key: string): Promise<void>;
-};
-
-const defaultFolderPendingStore: FolderPendingStore = localForageInstance(CANVAS_FOLDER_PENDING_STORE_NAME) as FolderPendingStore;
-
-let folderPendingStore: FolderPendingStore = defaultFolderPendingStore;
-const folderCommitChains = new Map<string, Promise<unknown>>();
-const pendingLocks = new Map<string, Promise<unknown>>();
-const folderRemovedAt = new Map<string, number>();
+const folderOpChains = new Map<string, Promise<unknown>>();
+const folderTouchedAt = new Map<string, number>();
+const folderDeletedAt = new Map<string, number>();
 let folderOpClock = 0;
 let folderHydrateGeneration = 0;
-let digestDelayForTests: (() => Promise<void>) | undefined;
 
-function folderCommitKey(userScope: string, id: string) {
+function folderScopeKey(userScope: string, id: string) {
     return `${userScope}\0${id}`;
 }
 
-function enqueueFolderCommit<T>(userScope: string, id: string, job: () => Promise<T>): Promise<T> {
-    const key = folderCommitKey(userScope, id);
-    const previous = folderCommitChains.get(key) ?? Promise.resolve();
+function enqueueFolderOp<T>(userScope: string, id: string, job: () => Promise<T>): Promise<T> {
+    const key = folderScopeKey(userScope, id);
+    const previous = folderOpChains.get(key) ?? Promise.resolve();
     const run = previous.then(undefined, () => undefined).then(job);
-    folderCommitChains.set(key, run.then(() => undefined, () => undefined));
-    return run;
-}
-
-function withPendingLock<T>(userScope: string, job: () => Promise<T>): Promise<T> {
-    const previous = pendingLocks.get(userScope) ?? Promise.resolve();
-    const run = previous.then(undefined, () => undefined).then(job);
-    pendingLocks.set(userScope, run.then(() => undefined, () => undefined));
-    return run;
-}
-
-function parsePendingMap(raw: unknown): FolderPendingMap {
-    if (raw == null) return {};
-    if (typeof raw !== "object" || Array.isArray(raw)) throw new FolderPendingUnreadableError();
-    const result: FolderPendingMap = {};
-    for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
-        if (!id || !value || typeof value !== "object" || Array.isArray(value)) throw new FolderPendingUnreadableError();
-        const intent = value as FolderPendingIntent;
-        if (intent.kind !== "upsert" && intent.kind !== "delete") throw new FolderPendingUnreadableError();
-        result[id] = {
-            generation: Number(intent.generation) || 0,
-            kind: intent.kind,
-            folder: intent.folder,
-            error: typeof intent.error === "string" ? intent.error : undefined,
-            blockedReimport: intent.blockedReimport === true,
-        };
-    }
-    return result;
-}
-
-function parseHighWater(raw: unknown): Record<string, number> {
-    if (raw == null) return {};
-    if (typeof raw !== "object" || Array.isArray(raw)) throw new FolderPendingUnreadableError();
-    const result: Record<string, number> = {};
-    for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
-        const generation = Number(value);
-        if (!id || !Number.isFinite(generation) || generation < 0) throw new FolderPendingUnreadableError();
-        result[id] = generation;
-    }
-    return result;
-}
-
-function emptyPendingRecord(): FolderPendingRecord {
-    return { version: 1, intents: {}, highWater: {} };
-}
-
-function scanHighWater(intents: FolderPendingMap, highWater: Record<string, number> = {}): Record<string, number> {
-    const next = { ...highWater };
-    for (const [id, intent] of Object.entries(intents)) {
-        next[id] = Math.max(next[id] || 0, intent.generation || 0);
-    }
-    return next;
-}
-
-function parsePendingRecord(raw: unknown): FolderPendingRecord {
-    if (raw == null) return emptyPendingRecord();
-    if (typeof raw !== "object" || Array.isArray(raw)) throw new FolderPendingUnreadableError();
-    const value = raw as { version?: unknown; intents?: unknown; highWater?: unknown };
-    if (value.version === 1 && value.intents && typeof value.intents === "object" && !Array.isArray(value.intents)) {
-        const intents = parsePendingMap(value.intents);
-        return { version: 1, intents, highWater: scanHighWater(intents, parseHighWater(value.highWater)) };
-    }
-    const intents = parsePendingMap(raw);
-    return { version: 1, intents, highWater: scanHighWater(intents) };
-}
-
-function migrateLegacyPending(userScope: string): FolderPendingRecord | null {
-    if (typeof window === "undefined") return null;
-    const raw = window.localStorage?.getItem(scopedStorageKey(CANVAS_FOLDER_PENDING_KEY, userScope));
-    if (!raw) return null;
-    try {
-        return parsePendingRecord(JSON.parse(raw));
-    } catch (error) {
-        if (error instanceof FolderPendingUnreadableError) throw error;
-        throw new FolderPendingUnreadableError();
-    }
-}
-
-async function readPendingRecord(userScope: string): Promise<FolderPendingRecord> {
-    let raw: unknown;
-    try {
-        raw = await folderPendingStore.getItem(userScope);
-    } catch {
-        throw new FolderPendingUnreadableError();
-    }
-    if (raw != null) return parsePendingRecord(raw);
-    const migrated = migrateLegacyPending(userScope);
-    if (!migrated) return emptyPendingRecord();
-    try {
-        await folderPendingStore.setItem(userScope, migrated);
-        window.localStorage?.removeItem(scopedStorageKey(CANVAS_FOLDER_PENDING_KEY, userScope));
-    } catch {
-        throw new FolderPendingUnreadableError();
-    }
-    return migrated;
-}
-
-async function readPending(userScope: string): Promise<FolderPendingMap> {
-    return (await readPendingRecord(userScope)).intents;
-}
-
-function persistablePending(record: FolderPendingRecord): FolderPendingRecord {
-    return {
-        version: 1,
-        intents: record.intents,
-        highWater: scanHighWater(record.intents, record.highWater),
-    };
-}
-
-async function mutatePending(
-    userScope: string,
-    mutator: (live: FolderPendingRecord) => FolderPendingRecord,
-): Promise<FolderPendingRecord> {
-    return withPendingLock(userScope, async () => {
-        const live = await readPendingRecord(userScope);
-        const next = persistablePending(mutator({
-            version: 1,
-            intents: { ...live.intents },
-            highWater: { ...live.highWater },
-        }));
-        const empty = !Object.keys(next.intents).length && !Object.keys(next.highWater).length;
-        if (empty) await folderPendingStore.removeItem(userScope);
-        else await folderPendingStore.setItem(userScope, next);
-        return next;
+    const tail = run.then(() => undefined, () => undefined);
+    folderOpChains.set(key, tail);
+    void tail.finally(() => {
+        if (folderOpChains.get(key) === tail) folderOpChains.delete(key);
     });
-}
-
-function nextGeneration(id: string, record: FolderPendingRecord) {
-    return Math.max(record.intents[id]?.generation || 0, record.highWater[id] || 0) + 1;
-}
-
-function rememberGeneration(record: FolderPendingRecord, id: string, generation: number) {
-    record.highWater[id] = Math.max(record.highWater[id] || 0, generation);
-}
-
-function folderReceiptMatches(saved: { folder?: { id?: string; name?: string } } | null | undefined, id: string, name?: string) {
-    if (!saved?.folder || saved.folder.id !== id) return false;
-    if (name !== undefined && saved.folder.name !== name) return false;
-    return true;
+    return run;
 }
 
 function isStaleProcessCoverUrl(value?: string) {
@@ -220,61 +56,45 @@ function liveCover(folder: CanvasFolder): CanvasFolder {
     return folder;
 }
 
-function mapRecord(record: { id: string; name: string; coverResourceId?: string; createdAt: string; updatedAt: string }, previous?: CanvasFolder): CanvasFolder {
+function mapRecord(record: CanvasLibraryFolderRecord): CanvasFolder {
     return liveCover({
         id: record.id,
         name: record.name,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         coverResourceId: record.coverResourceId,
-        coverDataUrl: previous?.coverDataUrl,
-        unsaved: undefined,
-        saveError: undefined,
     });
 }
 
-function projectFolders(canonical: CanvasFolder[], pending: FolderPendingMap): CanvasFolder[] {
-    const byId = new Map(canonical.map((folder) => [folder.id, liveCover({ ...folder, unsaved: undefined, saveError: undefined })]));
-    for (const [id, intent] of Object.entries(pending)) {
-        if (intent.kind === "delete") {
-            byId.delete(id);
-            continue;
-        }
-        if (!intent.folder) continue;
-        const current = byId.get(id);
-        byId.set(id, liveCover({
-            ...intent.folder,
-            coverResourceId: intent.folder.coverResourceId || current?.coverResourceId,
-            unsaved: true,
-            saveError: intent.error,
-        }));
-    }
-    return [...byId.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || a.id.localeCompare(b.id));
+function sortFolders(folders: CanvasFolder[]): CanvasFolder[] {
+    return [...folders].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || a.id.localeCompare(b.id));
 }
 
-function publishFolders(canonical: CanvasFolder[], pending: FolderPendingMap) {
-    useCanvasStore.getState().replaceFolders(projectFolders(canonical, pending));
+function upsertStoreFolder(folder: CanvasFolder) {
+    const current = useCanvasStore.getState().folders;
+    const next = current.some((item) => item.id === folder.id)
+        ? current.map((item) => item.id === folder.id ? folder : item)
+        : [folder, ...current];
+    useCanvasStore.getState().replaceFolders(sortFolders(next));
 }
 
-function canonicalFromProjection(pending: FolderPendingMap): CanvasFolder[] {
-    const folders = useCanvasStore.getState().folders;
-    return folders
-        .filter((folder) => {
-            const intent = pending[folder.id];
-            if (intent?.kind === "delete") return false;
-            if (intent?.kind === "upsert") return false;
-            return true;
-        })
-        .map((folder) => liveCover({ ...folder, unsaved: undefined, saveError: undefined }));
+function removeStoreFolder(id: string) {
+    const current = useCanvasStore.getState().folders;
+    useCanvasStore.getState().replaceFolders(current.filter((item) => item.id !== id));
+}
+
+function folderReceiptMatches(saved: { folder?: { id?: string; name?: string } } | null | undefined, id: string, name?: string) {
+    if (!saved?.folder || saved.folder.id !== id) return false;
+    if (name !== undefined && saved.folder.name !== name) return false;
+    return true;
 }
 
 async function contentDigest(blob: Blob) {
-    if (digestDelayForTests) await digestDelayForTests();
     const hash = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
     return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function folderCoverResourceId(folder: CanvasFolder) {
+async function uploadFolderCover(folder: CanvasFolder) {
     if (folder.coverResourceId) return folder.coverResourceId;
     const dataUrl = folder.coverDataUrl;
     if (!dataUrl?.startsWith("data:image")) return undefined;
@@ -287,276 +107,165 @@ async function folderCoverResourceId(folder: CanvasFolder) {
     return resource.id;
 }
 
-function isFailedPrecondition(error: unknown) {
-    return error instanceof ApiError && error.reason === "failed_precondition";
-}
-
-function persistErrorMessage(error: unknown) {
-    if (isFailedPrecondition(error)) return "文件夹已删除，未保存的修改还在本机";
-    if (error instanceof Error && error.message) return error.message;
-    return "文件夹没有保存成功";
-}
-
-async function commitFolderIntent(id: string, generation: number) {
-    const pending = await readPendingRecord(getActiveUserScope());
-    const intent = pending.intents[id];
-    if (!intent || intent.generation !== generation) return;
-    if (intent.blockedReimport) throw new Error(intent.error || "文件夹已删除，未保存的修改还在本机");
-    if (intent.kind === "delete") {
-        try {
-            await deleteCanvasLibraryFolderRemote(id);
-        } catch (error) {
-            if (!(error instanceof ApiError) || (error.status !== 404 && error.code !== 404)) throw error;
-        }
-        await reconcileCanvasesAfterFolderDelete(id);
-        const live = await readPendingRecord(getActiveUserScope());
-        publishFolders(canonicalFromProjection(live.intents), live.intents);
-        return;
-    }
-    if (!intent.folder) return;
-    const coverResourceId = await folderCoverResourceId(intent.folder);
-    const latest = await readPendingRecord(getActiveUserScope());
-    if (latest.intents[id]?.generation !== generation) return;
-    const saved = await putCanvasLibraryFolder(id, {
-        id,
-        name: latest.intents[id].folder?.name || intent.folder.name,
+async function saveFolderToBackend(userScope: string, folder: CanvasFolder): Promise<CanvasFolder> {
+    const coverResourceId = await uploadFolderCover(folder);
+    const saved = await putCanvasLibraryFolder(folder.id, {
+        id: folder.id,
+        name: folder.name,
         coverResourceId,
-        createdAt: latest.intents[id].folder?.createdAt || intent.folder.createdAt,
-        updatedAt: latest.intents[id].folder?.updatedAt || intent.folder.updatedAt,
+        createdAt: folder.createdAt,
+        updatedAt: folder.updatedAt,
     });
-    const staged = latest.intents[id];
-    if (!folderReceiptMatches(saved, id, staged?.folder?.name || intent.folder.name)) {
+    if (!folderReceiptMatches(saved, folder.id, folder.name)) {
         throw new Error("文件夹没有保存成功");
     }
-    const live = await mutatePending(getActiveUserScope(), (current) => {
-        if (current.intents[id]?.generation !== generation) return current;
-        delete current.intents[id];
-        rememberGeneration(current, id, generation);
-        return current;
-    });
-    const receipt = mapRecord(saved.folder, staged?.folder || intent.folder);
-    const canonical = canonicalFromProjection(live.intents);
-    publishFolders(canonical.some((folder) => folder.id === id) ? canonical.map((folder) => folder.id === id ? receipt : folder) : [receipt, ...canonical], live.intents);
-}
-
-async function stageUpsert(folder: CanvasFolder) {
-    let generation = 0;
-    const pending = await mutatePending(getActiveUserScope(), (live) => {
-        generation = nextGeneration(folder.id, live);
-        live.intents[folder.id] = {
-            generation,
-            kind: "upsert",
-            folder: { ...folder, unsaved: undefined, saveError: undefined },
-            blockedReimport: live.intents[folder.id]?.blockedReimport === true,
-        };
-        rememberGeneration(live, folder.id, generation);
-        return live;
-    });
-    publishFolders(canonicalFromProjection(pending.intents), pending.intents);
-    return generation;
-}
-
-async function markPendingError(id: string, generation: number, error: unknown) {
-    const pending = await mutatePending(getActiveUserScope(), (live) => {
-        if (live.intents[id]?.generation !== generation) return live;
-        live.intents[id] = {
-            ...live.intents[id],
-            error: persistErrorMessage(error),
-            blockedReimport: live.intents[id].blockedReimport === true || isFailedPrecondition(error),
-        };
-        return live;
-    });
-    publishFolders(canonicalFromProjection(pending.intents), pending.intents);
+    const receipt = mapRecord(saved.folder);
+    const key = folderScopeKey(userScope, folder.id);
+    folderTouchedAt.set(key, ++folderOpClock);
+    folderDeletedAt.delete(key);
+    upsertStoreFolder(receipt);
+    return receipt;
 }
 
 async function reconcileCanvasesAfterFolderDelete(folderId: string) {
     const affected = useCanvasStore.getState().projects.filter((project) => project.folderId === folderId);
     if (!affected.length) return;
     const { refreshLocalCanvasProjectIfChanged } = await import("@/services/local-workspace-repository");
+    const staleIds: string[] = [];
     for (const project of affected) {
-        try {
-            await refreshLocalCanvasProjectIfChanged(project.id);
-        } catch (error) {
-        }
+        const refreshed = await refreshLocalCanvasProjectIfChanged(project.id);
+        if (!refreshed) staleIds.push(project.id);
     }
+    if (!staleIds.length) return;
+    const staleSet = new Set(staleIds);
+    useCanvasStore.setState((state) => ({
+        projects: state.projects.map((project) =>
+            staleSet.has(project.id) && project.folderId === folderId
+                ? { ...project, folderId: undefined }
+                : project,
+        ),
+    }));
 }
 
-export async function persistCanvasLibraryFolder(folder: CanvasFolder): Promise<CanvasFolder> {
+export async function createCanvasLibraryFolder(name = "未命名文件夹"): Promise<string> {
+    const trimmed = name.trim() || "未命名文件夹";
     if (usesBrowserLocalResourceStore()) {
-        publishFolders(useCanvasStore.getState().folders.map((item) => item.id === folder.id ? liveCover(folder) : item), {});
-        return liveCover(folder);
+        return useCanvasStore.getState().createFolder(trimmed);
     }
-    const generation = await stageUpsert(folder);
-    try {
-        await enqueueFolderCommit(getActiveUserScope(), folder.id, () => commitFolderIntent(folder.id, generation));
-    } catch (error) {
-        await markPendingError(folder.id, generation, error);
-        if (isFailedPrecondition(error)) throw new Error(persistErrorMessage(error));
-        throw error;
-    }
-    const live = useCanvasStore.getState().folders.find((item) => item.id === folder.id);
-    return live || liveCover(folder);
-}
-
-export async function createCanvasLibraryFolder(name = "未命名文件夹") {
     const now = new Date().toISOString();
-    const folder: CanvasFolder = { id: nanoid(), name: name.trim() || "未命名文件夹", createdAt: now, updatedAt: now };
-    if (usesBrowserLocalResourceStore()) {
-        const id = useCanvasStore.getState().createFolder(folder.name);
-        return id;
-    }
-    const generation = await stageUpsert(folder);
-    try {
-        await enqueueFolderCommit(getActiveUserScope(), folder.id, () => commitFolderIntent(folder.id, generation));
-        return folder.id;
-    } catch (error) {
-        await markPendingError(folder.id, generation, error);
-        if (isFailedPrecondition(error)) throw new Error(persistErrorMessage(error));
-        throw error;
-    }
+    const folder: CanvasFolder = { id: nanoid(), name: trimmed, createdAt: now, updatedAt: now };
+    const userScope = getActiveUserScope();
+    const receipt = await enqueueFolderOp(userScope, folder.id, () => saveFolderToBackend(userScope, folder));
+    return receipt.id;
 }
 
-export async function renameCanvasLibraryFolder(id: string, name: string) {
+export async function renameCanvasLibraryFolder(id: string, name: string): Promise<void> {
     const nextName = name.trim() || "未命名文件夹";
     if (usesBrowserLocalResourceStore()) {
         useCanvasStore.getState().renameFolder(id, nextName);
         return;
     }
-    const current = useCanvasStore.getState().folders.find((folder) => folder.id === id);
-    if (!current) throw new Error("文件夹没有保存成功");
-    const generation = await stageUpsert({ ...current, name: nextName, updatedAt: new Date().toISOString() });
-    try {
-        await enqueueFolderCommit(getActiveUserScope(), id, () => commitFolderIntent(id, generation));
-    } catch (error) {
-        await markPendingError(id, generation, error);
-        if (isFailedPrecondition(error)) throw new Error(persistErrorMessage(error));
-        throw error;
-    }
+    const userScope = getActiveUserScope();
+    await enqueueFolderOp(userScope, id, async () => {
+        const current = useCanvasStore.getState().folders.find((folder) => folder.id === id);
+        if (!current) throw new Error("文件夹没有保存成功");
+        await saveFolderToBackend(userScope, {
+            ...current,
+            name: nextName,
+            updatedAt: new Date().toISOString(),
+        });
+    });
 }
 
-export async function deleteCanvasLibraryFolder(id: string) {
+export async function deleteCanvasLibraryFolder(id: string): Promise<void> {
     if (usesBrowserLocalResourceStore()) {
         useCanvasStore.getState().deleteFolder(id);
         return;
     }
-    let generation = 0;
-    folderRemovedAt.set(`${getActiveUserScope()}:${id}`, ++folderOpClock);
-    const pending = await mutatePending(getActiveUserScope(), (live) => {
-        generation = nextGeneration(id, live);
-        live.intents[id] = { generation, kind: "delete" };
-        rememberGeneration(live, id, generation);
-        return live;
+    const userScope = getActiveUserScope();
+    await enqueueFolderOp(userScope, id, async () => {
+        try {
+            await deleteCanvasLibraryFolderRemote(id);
+        } catch (error) {
+            if (!(error instanceof ApiError) || (error.status !== 404 && error.code !== 404)) throw error;
+        }
+        const key = folderScopeKey(userScope, id);
+        const clock = ++folderOpClock;
+        folderDeletedAt.set(key, clock);
+        folderTouchedAt.set(key, clock);
+        removeStoreFolder(id);
+        await reconcileCanvasesAfterFolderDelete(id);
     });
-    publishFolders(canonicalFromProjection(pending.intents), pending.intents);
-    try {
-        await enqueueFolderCommit(getActiveUserScope(), id, () => commitFolderIntent(id, generation));
-    } catch (error) {
-        await markPendingError(id, generation, error);
-        if (isFailedPrecondition(error)) throw new Error(persistErrorMessage(error));
-        throw error;
-    }
 }
 
-export async function persistCanvasFolderCover(id: string, coverDataUrl: string) {
+export async function persistCanvasFolderCover(id: string, coverDataUrl: string): Promise<void> {
     if (usesBrowserLocalResourceStore()) {
         useCanvasStore.getState().setFolderCover(id, coverDataUrl);
         return;
     }
-    const current = useCanvasStore.getState().folders.find((folder) => folder.id === id);
-    if (!current) throw new Error("封面没有保存成功");
-    const generation = await stageUpsert({
-        ...current,
-        coverResourceId: undefined,
-        coverDataUrl,
-        updatedAt: new Date().toISOString(),
+    const userScope = getActiveUserScope();
+    await enqueueFolderOp(userScope, id, async () => {
+        const current = useCanvasStore.getState().folders.find((folder) => folder.id === id);
+        if (!current) throw new Error("封面没有保存成功");
+        await saveFolderToBackend(userScope, {
+            ...current,
+            coverResourceId: undefined,
+            coverDataUrl,
+            updatedAt: new Date().toISOString(),
+        });
     });
-    try {
-        await enqueueFolderCommit(getActiveUserScope(), id, () => commitFolderIntent(id, generation));
-    } catch (error) {
-        await markPendingError(id, generation, error);
-        if (isFailedPrecondition(error)) throw new Error(persistErrorMessage(error));
-        throw error;
-    }
 }
 
-export async function hydrateCanvasLibraryFolders() {
-    const userScope = getActiveUserScope();
+export async function hydrateCanvasLibraryFolders(): Promise<void> {
     if (usesBrowserLocalResourceStore()) return;
+    const userScope = getActiveUserScope();
     const hydrateId = ++folderHydrateGeneration;
     const startedAt = folderOpClock;
-    const local = useCanvasStore.getState().folders;
-    const existingPending = await readPendingRecord(userScope);
-    let remoteFolders: CanvasFolder[] = [];
-    let listedIds = new Set<string>();
-    try {
-        const data = await listCanvasLibraryFoldersRemote();
-        if (hydrateId !== folderHydrateGeneration) return;
-        const latestLocal = useCanvasStore.getState().folders;
-        listedIds = new Set((data.folders || []).map((folder) => folder.id));
-        remoteFolders = (data.folders || []).map((folder) => mapRecord(folder, latestLocal.find((item) => item.id === folder.id)))
-            .filter((folder) => (folderRemovedAt.get(`${userScope}:${folder.id}`) || 0) <= startedAt);
-    } catch (error) {
-        const covers = useCanvasStore.getState().folders.map(liveCover);
-        const livePending = await readPendingRecord(userScope);
-        publishFolders(covers.filter((folder) => livePending.intents[folder.id]?.kind !== "delete"), livePending.intents);
-        throw error;
+    const data = await listCanvasLibraryFoldersRemote();
+    if (hydrateId !== folderHydrateGeneration) return;
+
+    const currentFolders = useCanvasStore.getState().folders;
+    const currentById = new Map(currentFolders.map((folder) => [folder.id, folder]));
+    const listedIds = new Set((data.folders || []).map((folder) => folder.id));
+    const byId = new Map<string, CanvasFolder>();
+
+    for (const record of data.folders || []) {
+        const key = folderScopeKey(userScope, record.id);
+        if ((folderDeletedAt.get(key) || 0) > startedAt) continue;
+        if ((folderTouchedAt.get(key) || 0) > startedAt && currentById.has(record.id)) {
+            byId.set(record.id, liveCover(currentById.get(record.id)!));
+        } else {
+            byId.set(record.id, mapRecord(record));
+        }
     }
 
-    const remoteIds = new Set(remoteFolders.map((folder) => folder.id));
-    const nextPending = await mutatePending(userScope, (live) => {
-        for (const [id, intent] of Object.entries(live.intents)) {
-            if (intent.kind !== "delete") continue;
-            const removedAt = folderRemovedAt.get(`${userScope}:${id}`) || 0;
-            if (!listedIds.has(id) && removedAt <= startedAt) {
-                rememberGeneration(live, id, intent.generation);
-                delete live.intents[id];
-                folderRemovedAt.delete(`${userScope}:${id}`);
-            }
+    for (const folder of currentFolders) {
+        const key = folderScopeKey(userScope, folder.id);
+        if (byId.has(folder.id)) continue;
+        if ((folderDeletedAt.get(key) || 0) > startedAt) continue;
+        if ((folderTouchedAt.get(key) || 0) > startedAt) {
+            byId.set(folder.id, liveCover(folder));
         }
-        for (const [key, removedAt] of [...folderRemovedAt.entries()]) {
-            if (!key.startsWith(`${userScope}:`)) continue;
-            const id = key.slice(userScope.length + 1);
-            if (!listedIds.has(id) && removedAt <= startedAt && live.intents[id]?.kind !== "delete") folderRemovedAt.delete(key);
-        }
-        for (const folder of [...local, ...useCanvasStore.getState().folders]) {
-            if (remoteIds.has(folder.id) || live.intents[folder.id]) continue;
-            if ((folderRemovedAt.get(`${userScope}:${folder.id}`) || 0) > startedAt) continue;
-            if (existingPending.intents[folder.id]?.kind === "delete") continue;
-            const generation = nextGeneration(folder.id, live);
-            live.intents[folder.id] = {
-                generation,
-                kind: "upsert",
-                folder: { ...folder, unsaved: undefined, saveError: undefined },
-            };
-            rememberGeneration(live, folder.id, generation);
-        }
-        return live;
-    });
-    publishFolders(remoteFolders, nextPending.intents);
-}
+    }
 
-export async function peekCanvasFolderPendingForTests(userScope: string) {
-    return (await readPendingRecord(userScope)).intents;
-}
+    const scopePrefix = `${userScope}\0`;
+    for (const [key, clock] of [...folderDeletedAt.entries()]) {
+        if (!key.startsWith(scopePrefix)) continue;
+        const id = key.slice(scopePrefix.length);
+        if (!listedIds.has(id) && clock <= startedAt) folderDeletedAt.delete(key);
+    }
+    for (const [key, clock] of [...folderTouchedAt.entries()]) {
+        if (!key.startsWith(scopePrefix)) continue;
+        if (clock <= startedAt) folderTouchedAt.delete(key);
+    }
 
-export async function peekCanvasFolderPendingHighWaterForTests(userScope: string) {
-    return (await readPendingRecord(userScope)).highWater;
-}
-
-export function setCanvasFolderDigestDelayForTests(delay?: () => Promise<void>) {
-    digestDelayForTests = delay;
-}
-
-export function replaceCanvasFolderPendingStoreForTests(store?: FolderPendingStore) {
-    folderPendingStore = store ?? defaultFolderPendingStore;
+    useCanvasStore.getState().replaceFolders(sortFolders([...byId.values()]));
 }
 
 export function resetCanvasFolderStorageForTests() {
-    folderCommitChains.clear();
-    pendingLocks.clear();
-    folderRemovedAt.clear();
+    folderOpChains.clear();
+    folderTouchedAt.clear();
+    folderDeletedAt.clear();
     folderOpClock = 0;
     folderHydrateGeneration = 0;
-    digestDelayForTests = undefined;
-    folderPendingStore = defaultFolderPendingStore;
 }

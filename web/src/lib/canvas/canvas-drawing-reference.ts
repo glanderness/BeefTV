@@ -1,5 +1,6 @@
 import { loadCanvasDrawingRender, saveCanvasDrawingRenderPublication } from "@/lib/canvas/canvas-drawing-storage";
 import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
+import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 import type { ReferenceImage } from "@/types/image";
 
 export async function resolveCanvasDrawingReference(projectId: string, image: ReferenceImage): Promise<ReferenceImage> {
@@ -20,6 +21,10 @@ export async function resolveCanvasDrawingReference(projectId: string, image: Re
             storageKey: render.storageKey,
             type: render.mimeType,
         };
+    }
+
+    if (!usesBrowserLocalResourceStore()) {
+        throw new Error(`绘图“${image.name}”缺少当前版本的生成图，请打开绘图并保存后重试`);
     }
 
     try {

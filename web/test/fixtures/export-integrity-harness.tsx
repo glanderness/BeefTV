@@ -9,7 +9,7 @@ import { exportCanvasProjects } from "../../src/lib/canvas/canvas-export";
 import { setMediaBlob, getMediaBlob } from "../../src/services/file-storage";
 import { reportOwnedMediaSave } from "../../src/services/desktop-media-save";
 import { configureApiRuntime } from "../../src/services/api/request";
-import { CANVAS_FOLDER_PENDING_STORE_NAME, localForageInstance, localForageStorageForScope } from "../../src/lib/localforage-storage";
+import { IMAGE_FILES_STORE_NAME, localForageInstance, localForageStorageForScope } from "../../src/lib/localforage-storage";
 
 let archive = "";
 if (window.location.search.includes("new=1")) configureApiRuntime(`${window.location.origin}/api`, "");
@@ -61,17 +61,17 @@ Object.assign(window, { exportFixture: {
     },
     async probeSharedStores() {
         const app = localForageStorageForScope("guest");
-        const folder = localForageInstance(CANVAS_FOLDER_PENDING_STORE_NAME);
+        const images = localForageInstance(IMAGE_FILES_STORE_NAME);
         try {
             await Promise.all([
                 app.getItem("canvas-document-journal:startup-probe"),
-                folder.getItem("guest"),
+                images.getItem("guest"),
             ]);
             await app.setItem("canvas-document-journal:startup-probe", "{\"ok\":true}");
-            await folder.setItem("guest", { version: 1, intents: {}, highWater: {} });
+            await images.setItem("guest", { ok: true });
             return {
                 journal: await app.getItem("canvas-document-journal:startup-probe"),
-                pending: await folder.getItem("guest"),
+                images: await images.getItem("guest"),
             };
         } catch (error) {
             return { error: error instanceof Error ? `${error.name}:${error.message}` : String(error) };
