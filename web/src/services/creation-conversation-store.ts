@@ -342,15 +342,25 @@ function isNotFoundError(error: unknown) {
     return error instanceof ApiError && (error.status === 404 || error.reason === "not_found");
 }
 
+export function hasPendingCreationConversationWrites(scope = getActiveUserScope()) {
+    const prefix = `${scope}\0`;
+    for (const key of pendingWrites.keys()) {
+        if (key.startsWith(prefix)) return true;
+    }
+    return false;
+}
+
 export async function loadCreationConversations<T extends StoredCreationConversation>(scope = getActiveUserScope()) {
     const startedAt = opClock;
     const listed = await creationConversationsApi.list();
     const deleted = new Set(listed.deletedIds || []);
+    const seenIds = new Set<string>();
     const loaded: T[] = [];
     for (const record of listed.conversations || []) {
         if (record.deleted || deleted.has(record.id)) continue;
         const key = scopeKey(scope, record.id);
         if ((deletedAt.get(key) || 0) > startedAt) continue;
+        seenIds.add(record.id);
         const document = documentFromRecord(record);
         const existing = committed.get(key);
         if (existing && existing.revision > record.revision) {
@@ -376,6 +386,18 @@ export async function loadCreationConversations<T extends StoredCreationConversa
             });
             loaded.push(cloneConversation(live) as T);
         }
+    }
+    const scopePrefix = `${scope}\0`;
+    for (const [key, pending] of pendingWrites) {
+        if (!key.startsWith(scopePrefix)) continue;
+        const id = key.slice(scopePrefix.length);
+        if (seenIds.has(id)) continue;
+        if (deleted.has(id)) {
+            pendingWrites.delete(key);
+            continue;
+        }
+        if ((deletedAt.get(key) || 0) > startedAt) continue;
+        loaded.unshift(cloneConversation(pending.document) as T);
     }
     return loaded.length ? loaded : null;
 }
@@ -442,11 +464,27 @@ async function flushConversation(scope: string, id: string) {
                 throw error;
             }
             const remoteDoc = documentFromRecord(remote);
+            const committedAfterGet = committed.get(key);
+            const pendingAfterGet = pendingWrites.get(key);
+            if (committedAfterGet && committedAfterGet.revision > remote.revision) {
+                if (!pendingAfterGet) return;
+                if (rebaseAttempts >= MAX_CONFLICT_REBASE_ATTEMPTS) throw error;
+                rebaseAttempts += 1;
+                if (pendingAfterGet.adoptedRevision !== committedAfterGet.revision) {
+                    const merged = projectLocalOnCanonical(state?.document, pendingAfterGet.document, committedAfterGet.document);
+                    pendingWrites.set(key, {
+                        generation: nextGeneration(key),
+                        document: merged,
+                        adoptedRevision: committedAfterGet.revision,
+                    });
+                }
+                continue;
+            }
             if (fingerprintOf(remoteDoc) === payloadFingerprint) {
                 saved = remote;
             } else if (rebaseAttempts < MAX_CONFLICT_REBASE_ATTEMPTS) {
                 rebaseAttempts += 1;
-                const liveLocal = pendingWrites.get(key)?.document ?? snapshot.document;
+                const liveLocal = pendingAfterGet?.document ?? snapshot.document;
                 const merged = projectLocalOnCanonical(state?.document, liveLocal, remoteDoc);
                 commitIfCurrent(scope, id, remote.revision, remoteDoc);
                 pendingWrites.set(key, {

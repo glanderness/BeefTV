@@ -7,6 +7,7 @@ import { continueCreationConversationOnCanvas } from "@/services/creation-canvas
 import type { GenerationTask } from "@/services/api/task-center";
 import {
     deleteCreationConversation,
+    hasPendingCreationConversationWrites,
     loadCreationConversations,
     pendingCreationTaskIds,
     removeCreationConversationSnapshot,
@@ -127,7 +128,7 @@ export function useCreateConversations(params: UseCreateConversationsParams) {
         }
         void loadCreationConversations<CreationConversation>().then((stored) => {
             if (cancelled) return;
-            skipPersistRef.current = true;
+            skipPersistRef.current = !hasPendingCreationConversationWrites();
             const next = stored?.length ? stored : [newConversation()];
             conversationsRef.current = next;
             setConversations(next);

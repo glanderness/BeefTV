@@ -26,6 +26,9 @@ const server = {
     listHold: null as Promise<void> | null,
     releaseList: null as (() => void) | null,
     listEntered: 0,
+    getHold: null as Promise<void> | null,
+    releaseGet: null as (() => void) | null,
+    getEntered: 0,
 };
 
 function failIfNeeded() {
@@ -45,6 +48,13 @@ function holdPuts() {
 function holdList() {
     server.listHold = new Promise((resolve) => {
         server.releaseList = resolve;
+    });
+}
+
+function holdGet() {
+    server.getEntered = 0;
+    server.getHold = new Promise((resolve) => {
+        server.releaseGet = resolve;
     });
 }
 
@@ -71,10 +81,13 @@ mock.module("@/services/api/creation-conversations", () => ({
             return snapshot;
         },
         get: async (id: string) => {
+            server.getEntered += 1;
+            const snapshot = server.conversations.get(id);
+            const cloned = snapshot ? structuredClone(snapshot) : undefined;
+            if (server.getHold) await server.getHold;
             failIfNeeded();
-            const existing = server.conversations.get(id);
-            if (!existing || existing.deleted) throw new ApiError("创作对话不存在", { status: 404, reason: "not_found" });
-            return existing;
+            if (!cloned || cloned.deleted) throw new ApiError("创作对话不存在", { status: 404, reason: "not_found" });
+            return cloned;
         },
         put: async (id: string, input: { expectedRevision: number; document: { id: string; title?: string; messages: Array<Record<string, unknown>> } }) => {
             server.putEntered += 1;
@@ -122,6 +135,7 @@ const {
     loadCreationConversations,
     saveCreationConversations,
     deleteCreationConversation,
+    hasPendingCreationConversationWrites,
     resetCreationConversationStoreForTests,
     adoptServerConfirmedConversationDocument,
 } = await import("@/services/creation-conversation-store");
@@ -137,6 +151,9 @@ beforeEach(() => {
     server.listHold = null;
     server.releaseList = null;
     server.listEntered = 0;
+    server.getHold = null;
+    server.releaseGet = null;
+    server.getEntered = 0;
     activeScope = "guest";
     resetCreationConversationStoreForTests();
 });
@@ -556,4 +573,99 @@ test("invalid attachment in one conversation does not block saving valid sibling
     expect(server.conversations.get("valid-before")?.document?.title).toBe("前一条");
     expect(server.conversations.get("valid-after")?.document?.title).toBe("后一条");
     expect(server.conversations.has("invalid-mid")).toBe(false);
+});
+
+test("409 GET rebase ignores stale GET response when adopt advanced committed revision in flight", async () => {
+    server.conversations.set("race-get", {
+        id: "race-get",
+        revision: 1,
+        updatedAt: "2026-10-02T00:00:00.000Z",
+        document: {
+            id: "race-get",
+            title: "原标题",
+            messages: [
+                { id: "u1", role: "user", content: "画一只猫" },
+                { id: "a1", role: "assistant", status: "pending", content: "", taskIds: ["t1"] },
+            ],
+        },
+    });
+    await loadCreationConversations();
+
+    // Advance server to revision 2 so the user's PUT gets 409 and enters GET rebase.
+    server.conversations.set("race-get", {
+        id: "race-get",
+        revision: 2,
+        updatedAt: "2026-10-02T00:01:00.000Z",
+        document: {
+            id: "race-get",
+            title: "原标题",
+            messages: [
+                { id: "u1", role: "user", content: "画一只猫" },
+                { id: "a1", role: "assistant", status: "pending", content: "中间态", taskIds: ["t1"] },
+            ],
+        },
+    });
+
+    holdGet();
+    const saving = saveCreationConversations([{
+        id: "race-get",
+        title: "用户改名",
+        messages: [
+            { id: "u1", role: "user", content: "画一只猫" },
+            { id: "a1", role: "assistant", status: "pending", content: "", taskIds: ["t1"] },
+        ],
+    }]);
+    while (server.getEntered === 0) await Promise.resolve();
+
+    // While GET (which snapshotted rev 2) is held, backend attach advances server to rev 4 and calls adopt.
+    const rev4Doc = {
+        id: "race-get",
+        title: "原标题",
+        messages: [
+            { id: "u1", role: "user" as const, content: "画一只猫" },
+            { id: "a1", role: "assistant" as const, status: "done", content: "最终成图", taskIds: ["t1"], resultUrls: ["/api/resources/r4/file"] },
+        ],
+    };
+    server.conversations.set("race-get", {
+        id: "race-get",
+        revision: 4,
+        updatedAt: "2026-10-02T00:02:00.000Z",
+        document: rev4Doc,
+    });
+    await adoptServerConfirmedConversationDocument("race-get", rev4Doc, 4);
+
+    // Release stale rev-2 GET: flush must NOT overwrite rev 4's "最终成图" with rev 2's "中间态".
+    server.releaseGet?.();
+    await saving;
+    const final = server.conversations.get("race-get");
+    expect(final?.revision).toBe(5);
+    expect(final?.document?.title).toBe("用户改名");
+    expect(final?.document?.messages.find((item) => item.id === "a1")?.content).toBe("最终成图");
+    expect(final?.document?.messages.find((item) => item.id === "a1")?.resultUrls).toEqual(["/api/resources/r4/file"]);
+});
+
+test("load surfaces unsaved new conversation after initial PUT failure and drops tombstoned pending ids", async () => {
+    server.conversations.set("existing", {
+        id: "existing",
+        revision: 1,
+        updatedAt: "2026-10-02T00:00:00.000Z",
+        document: { id: "existing", title: "已有对话", messages: [] },
+    });
+
+    const unsavedNew = { id: "new-unsaved", title: "首次失败的新对话", messages: [{ id: "m1", role: "user" as const, content: "草稿" }] };
+    server.failNext = { status: 500, message: "临时故障" };
+    await expect(saveCreationConversations([unsavedNew])).rejects.toThrow("临时故障");
+    expect(hasPendingCreationConversationWrites()).toBe(true);
+
+    // Remounting /create loads server records plus the unsaved pending conversation.
+    const reloaded = await loadCreationConversations();
+    expect(reloaded?.map((item) => item.id)).toEqual(["new-unsaved", "existing"]);
+    expect(reloaded?.[0]?.title).toBe("首次失败的新对话");
+    expect(hasPendingCreationConversationWrites()).toBe(true);
+
+    // If the pending id is later confirmed tombstoned in SQLite, load drops it instead of surfacing it.
+    server.deleted.add("new-unsaved");
+    const afterTombstone = await loadCreationConversations();
+    expect(afterTombstone?.map((item) => item.id)).toEqual(["existing"]);
+    expect(hasPendingCreationConversationWrites()).toBe(false);
 });
