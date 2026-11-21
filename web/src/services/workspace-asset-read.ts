@@ -9,6 +9,7 @@ import {
 import { getActiveUserScope } from "@/lib/user-scope";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 import {
+    clearLegacyDesktopAssetCache,
     hydrateAssetStoreDrafts,
     readAssetStoreDrafts,
     runAssetStoreProjection,
@@ -185,6 +186,7 @@ export async function preserveLegacyCacheOnlyAssetDrafts() {
         });
         preservedIds.push(asset.id);
     }
+    await clearLegacyDesktopAssetCache(userScope);
     preservedDraftScopes.add(userScope);
     return { preservedIds, tombstoneSeam: WORKSPACE_ASSET_TOMBSTONE_SEAM };
 }

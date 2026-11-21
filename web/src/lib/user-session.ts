@@ -3,7 +3,7 @@ import { normalizeLocalAsset, normalizeLocalCanvasProject } from "@/lib/local-wo
 import { scopedLocalStorage, setWorkspaceStorageScope } from "@/lib/user-scope";
 import { CANVAS_HISTORY_STORE_KEY, useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { CANVAS_STORE_KEY, flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { ASSET_STORE_KEY, flushAssetStorePersistence, useAssetStore } from "@/stores/use-asset-store";
+import { ASSET_STORE_KEY, flushAssetStorePersistence, hydrateAssetStoreDrafts, useAssetStore, withAssetStorePersistenceSuppressed } from "@/stores/use-asset-store";
 import { preserveLegacyCacheOnlyAssetDrafts, usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
 import { CONFIG_STORE_KEY, defaultConfig, isSystemProxyBaseUrl, normalizeConfigSnapshot, useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import { CREATION_PREFERENCES_STORE_KEY, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
@@ -44,6 +44,9 @@ async function hydrateLocalWorkspace(payload: WorkspaceBootstrapPayload) {
         const persistedCreationPreferences = scopedLocalStorage.getItem(CREATION_PREFERENCES_STORE_KEY);
 
         usePluginStore.setState({ hydrated: false, runtimeStatuses: {}, pluginStates: {} });
+        if (!persistedAssets) {
+            withAssetStorePersistenceSuppressed(() => useAssetStore.setState({ assets: [] }));
+        }
         useUserStore.getState().setUser(payload.user);
         useUserStore.getState().setStorageMode("local");
         useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
@@ -57,6 +60,7 @@ async function hydrateLocalWorkspace(payload: WorkspaceBootstrapPayload) {
             usePluginStore.persist.rehydrate(),
             useCreationPreferencesStore.persist.rehydrate(),
         ]);
+        await hydrateAssetStoreDrafts();
 
         useConfigStore.getState().replaceConfig(localWorkspaceConfig(useConfigStore.getState().config));
         useCanvasStore.setState((state) => ({ projects: state.projects.map(normalizeLocalCanvasProject) }));
@@ -66,7 +70,6 @@ async function hydrateLocalWorkspace(payload: WorkspaceBootstrapPayload) {
         // absent, so every empty local namespace must be reset explicitly.
         if (!persistedCanvas) useCanvasStore.setState({ projects: [] });
         if (!persistedCanvasHistory) useCanvasHistoryStore.setState({ deletedProjects: [] });
-        if (!persistedAssets) useAssetStore.setState({ assets: [] });
         if (usesWorkspaceAssetLibraryApi()) {
             try {
                 await preserveLegacyCacheOnlyAssetDrafts();
