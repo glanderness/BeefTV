@@ -9,6 +9,7 @@ import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
 import { hasBuiltinChannelProfileUpgrade } from "@/lib/builtin-service-presets";
 import { applyUserSession, localWorkspaceConfig } from "@/lib/user-session";
 import { getWorkspaceBootstrap, type WorkspaceBootstrapPayload } from "@/services/api/workspace";
+import { getCanvasHydrationHealth } from "@/services/canvas-hydration-health";
 import { hydrateLocalCanvasProjectsFromBackend } from "@/services/local-workspace-repository";
 import { commitModelConfig, flushModelConfig, hydrateModelConfig } from "@/services/model-config-repository";
 import {
@@ -55,7 +56,9 @@ export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }
                 loadWorkspace,
                 applySession: async (payload) => {
                     await applyUserSession(payload);
-                    if (isEmbeddedRuntime()) await hydrateLocalCanvasProjectsFromBackend();
+                    if (shouldHydrateCanvasProjects({ embedded: isEmbeddedRuntime(), isRetry })) {
+                        await hydrateLocalCanvasProjectsFromBackend();
+                    }
                 },
                 restoreModelConfig: hydrateLocalModelConfig,
             });
@@ -154,6 +157,12 @@ export async function initializeWorkspaceState<T>({
             await restoreModelConfig();
         }
     }
+}
+
+export function shouldHydrateCanvasProjects({ embedded, isRetry }: { embedded: boolean; isRetry: boolean }) {
+    if (!isRetry) return embedded;
+    const health = getCanvasHydrationHealth();
+    return health.loading || Boolean(health.error);
 }
 
 export function shouldSaveLocalModelConfig({ subscriptionReady, modelConfigReady, channelCount }: { subscriptionReady: boolean; modelConfigReady: boolean; channelCount: number }) {

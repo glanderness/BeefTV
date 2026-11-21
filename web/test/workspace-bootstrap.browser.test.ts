@@ -10,7 +10,7 @@ beforeAll(async () => {
         "@/stores/use-config-store": 'import { create } from "zustand"; export const useConfigStore = create(set => ({ config: { channels: [] }, replaceConfig: config => set({config}) })); export const normalizeConfigSnapshot = value => value;',
         "@/lib/user-session": 'import { useUserStore } from "@/stores/use-user-store"; export const localWorkspaceConfig = value => value; export async function applyUserSession(payload) { window.activeScope = payload.workspace.id; window.canvasProjects = []; useUserStore.getState().setHydrated(true); window.sessionReady = true; }',
         "@/services/api/workspace": 'export async function getWorkspaceBootstrap() { if (new URL(location.href).searchParams.has("fail-bootstrap")) throw new Error("unavailable"); return {workspace:{id:"canonical-workspace"}}; }',
-        "@/services/local-workspace-repository": 'export async function hydrateLocalCanvasProjectsFromBackend() { window.projectionScope = window.activeScope; await new Promise(resolve => { window.finishProjection = () => { window.canvasProjects = ["server-canvas"]; resolve(); }; }); }',
+        "@/services/local-workspace-repository": 'import { beginCanvasHydration, finishCanvasHydration } from "@/services/canvas-hydration-health"; export async function hydrateLocalCanvasProjectsFromBackend() { window.projectionCalls = (window.projectionCalls || 0) + 1; window.projectionScope = window.activeScope; const id = beginCanvasHydration(); await new Promise(resolve => { window.finishProjection = () => { window.canvasProjects = ["server-canvas"]; finishCanvasHydration(id, ""); resolve(); }; }); }',
         "@/services/model-config-repository": 'export const commitModelConfig = async () => { window.writes = (window.writes || 0) + 1; }; export const flushModelConfig = async () => {}; export const hydrateModelConfig = () => new Promise((resolve, reject) => { window.finishRestore = () => resolve({config:{channels:[{id:"fixture",apiKey:"restored"}]},health:"ready"}); window.failRestore = () => reject(new Error("read failed")); });',
         "@/lib/app-routing": 'export const appPathname = () => "/";',
         "@/lib/workspace-route-modules": 'export const preloadWorkspaceRoute = () => {};',
@@ -84,5 +84,54 @@ test("embedded bootstrap failure cannot fall back to the shared local namespace"
     expect(await page.evaluate(() => (window as any).sessionReady)).toBeUndefined();
     expect(await page.evaluate(() => (window as any).projectionScope)).toBeUndefined();
     expect(await page.getByRole("button", { name: "开始创作" }).count()).toBe(0);
+    await page.close();
+});
+
+test("retry recovers failed canvas hydration before exposing the workspace", async () => {
+    const page = await browser.newPage();
+    await page.goto(server.url.toString());
+    await page.waitForFunction(() => Boolean((window as any).failRestore));
+    await page.evaluate(() => {
+        (window as any).setCanvasHydrationHealth({ error: "项目暂时无法读取", loading: false });
+        (window as any).failRestore();
+    });
+    await page.getByRole("alert").waitFor();
+    await page.evaluate(() => {
+        (window as any).finishRestore = undefined;
+        (window as any).finishProjection = undefined;
+    });
+    await page.getByRole("button", { name: "重新加载" }).click();
+    await page.waitForFunction(() => Boolean((window as any).finishProjection));
+    expect(await page.evaluate(() => (window as any).projectionCalls)).toBe(1);
+    expect(await page.getByRole("button", { name: "开始创作" }).count()).toBe(0);
+    await page.evaluate(() => (window as any).finishProjection());
+    await page.waitForFunction(() => Boolean((window as any).finishRestore));
+    await page.evaluate(() => (window as any).finishRestore());
+    await page.getByRole("button", { name: "开始创作" }).waitFor();
+    expect(await page.evaluate(() => (window as any).canvasProjects)).toEqual(["server-canvas"]);
+    expect(await page.evaluate(() => (window as any).getCanvasHydrationHealth())).toEqual({ error: "", loading: false });
+    await page.close();
+});
+
+test("retry skips duplicate canvas hydration when canvases are already hydrated", async () => {
+    const page = await browser.newPage();
+    await page.goto(server.url.toString());
+    await page.waitForFunction(() => Boolean((window as any).failRestore));
+    await page.evaluate(() => {
+        (window as any).setCanvasHydrationHealth({ error: "", loading: false });
+        (window as any).failRestore();
+    });
+    await page.getByRole("alert").waitFor();
+    await page.evaluate(() => {
+        (window as any).finishRestore = undefined;
+        (window as any).finishProjection = undefined;
+    });
+    await page.getByRole("button", { name: "重新加载" }).click();
+    await page.waitForFunction(() => Boolean((window as any).finishRestore));
+    expect(await page.evaluate(() => (window as any).projectionCalls || 0)).toBe(0);
+    expect(await page.evaluate(() => (window as any).finishProjection)).toBeUndefined();
+    await page.evaluate(() => (window as any).finishRestore());
+    await page.getByRole("button", { name: "开始创作" }).waitFor();
+    expect(await page.evaluate(() => (window as any).projectionCalls || 0)).toBe(0);
     await page.close();
 });
