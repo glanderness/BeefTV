@@ -20,7 +20,11 @@ export type UserStyleProfile = {
 type StyleStorage = Pick<Storage, "getItem" | "setItem">;
 
 function defaultStorage(): StyleStorage | null {
-    return typeof localStorage !== "undefined" ? localStorage : null;
+    try {
+        return typeof localStorage !== "undefined" ? localStorage : null;
+    } catch {
+        return null;
+    }
 }
 
 export function readLocalStyleProfiles(storage: StyleStorage | null = defaultStorage()): UserStyleProfile[] {

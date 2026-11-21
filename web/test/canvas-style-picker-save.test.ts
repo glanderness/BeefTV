@@ -77,4 +77,31 @@ describe("local style profile store save and apply", () => {
         expect(reloaded[0]?.lastUsedAt).toBe("2026-11-21T06:10:01.000Z");
         expect(parseStyleProfile(reloaded[0]?.profileJson)?.description).toBe("新描述");
     });
+
+    test("tolerates a throwing localStorage getter without breaking store creation or save/apply", () => {
+        const descriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+        Object.defineProperty(globalThis, "localStorage", {
+            configurable: true,
+            get() {
+                throw new DOMException("blocked storage", "SecurityError");
+            },
+        });
+        try {
+            const store = createLocalStyleProfileStore();
+            expect(store.getAll()).toEqual([]);
+            const saved = store.save({
+                id: "style-private-1",
+                profile: { ...baseSnapshot, title: "隐私模式画风", description: "仅内存态" },
+                now: "2026-11-21T06:20:00.000Z",
+                apply: true,
+            });
+            const used = store.markUsed(saved.entity.id, "2026-11-21T06:20:01.000Z");
+            expect(used).toHaveLength(1);
+            expect(used[0]?.name).toBe("隐私模式画风");
+            expect(used[0]?.lastUsedAt).toBe("2026-11-21T06:20:01.000Z");
+        } finally {
+            if (descriptor) Object.defineProperty(globalThis, "localStorage", descriptor);
+            else delete (globalThis as { localStorage?: unknown }).localStorage;
+        }
+    });
 });
