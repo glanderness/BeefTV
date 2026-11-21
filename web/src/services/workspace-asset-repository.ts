@@ -156,7 +156,7 @@ async function reconcileUnverifiedGenerationAsset(
     const remote = await lookupWorkspaceAssetsByIds([asset.id], { signal });
     throwIfAborted(signal);
     const latestDraft = peekAssetStoreDraft(getActiveUserScope(), asset.id);
-    if (submittedVersion !== undefined && latestDraft && latestDraft.version !== submittedVersion) {
+    if (latestDraft && (submittedVersion === undefined || latestDraft.version !== submittedVersion)) {
         return { kind: "superseded" };
     }
     const existing = parseWorkspaceAssetPayloads(remote.assets).find((item) => item.id === asset.id) ?? null;

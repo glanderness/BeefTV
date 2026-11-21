@@ -29,7 +29,9 @@ import {
     isDeletedGenerationAsset,
     markAssetStoreDraft,
     markAssetStoreDraftForScope,
+    peekAssetStoreDraft,
     readAssetStoreDraftsForScope,
+    retryFailedAssetStoreDraftPersist,
 } from "./asset-store-drafts";
 import {
     ASSET_STORE_KEY,
@@ -132,7 +134,7 @@ export const useAssetStore = create<AssetStore>()(
                                 }
                             }
                             let createdAsset: Asset | undefined;
-                            return insertOrReturnGenerationAsset<Asset>({
+                            const resolvedId = await insertOrReturnGenerationAsset<Asset>({
                                 storageScope: scope,
                                 effectKey,
                                 assetId: id,
@@ -185,6 +187,16 @@ export const useAssetStore = create<AssetStore>()(
                                     }
                                 },
                             });
+                            if (!createdAsset && peekAssetStoreDraft(scope, resolvedId)) {
+                                try {
+                                    retryFailedAssetStoreDraftPersist(scope);
+                                    await flushAssetStoreDraftWrites(scope);
+                                } catch (error) {
+                                    recordGenerationAssetFailure(scope, effectKey, error);
+                                    throw error;
+                                }
+                            }
+                            return resolvedId;
                         })(),
                     );
                 }

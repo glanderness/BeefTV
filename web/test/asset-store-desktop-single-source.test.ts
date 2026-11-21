@@ -2,7 +2,8 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import localforage from "localforage";
 
 import { serializeAssetStorageDocument } from "@/lib/asset-storage-revision";
-import { IMAGE_FILES_STORE_NAME, localForageInstance } from "@/lib/localforage-storage";
+import { serializeCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
+import { IMAGE_FILES_STORE_NAME, localForageInstance, localForageStorageForScope } from "@/lib/localforage-storage";
 import * as runtimeMode from "@/lib/runtime-mode";
 import { getActiveUserScope, scopedStorageKey, setActiveUserScope } from "@/lib/user-scope";
 import { applyUserSession } from "@/lib/user-session";
@@ -13,8 +14,9 @@ import {
     preserveLegacyCacheOnlyAssetDrafts,
     resetWorkspaceAssetReadStateForTests,
 } from "@/services/workspace-asset-read";
-import { deleteWorkspaceAsset, persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
+import { deleteWorkspaceAsset, persistWorkspaceAssetChanges, persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
+import { CANVAS_DRAFTS_KEY } from "@/stores/canvas/canvas-store-persistence";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import {
     ASSET_STORE_DRAFTS_KEY,
@@ -782,6 +784,163 @@ describe("asset store single-source persistence", () => {
             expect(peekAssetStoreDraft(scope, raceId)?.asset?.title).toBe("用户并发改名");
             expect(catalogWrites).toEqual([]);
         } finally {
+            restore();
+        }
+    });
+
+    test("addGenerationAsset retry flushes failed draft write before resolving and clearing failures", async () => {
+        const scope = "desktop-gen-draft-retry";
+        const restore = switchScope(scope);
+        enterDesktopSingleSourceMode();
+        const memory = new Map<string, string>();
+        let remainingDraftWriteFailures = 2;
+
+        spies.push(spyOn(localforage, "getItem").mockImplementation(async (key) => memory.get(String(key)) ?? null));
+        spies.push(spyOn(localforage, "setItem").mockImplementation(async (key, value) => {
+            if (isDraftsKey(key) && remainingDraftWriteFailures > 0) {
+                remainingDraftWriteFailures -= 1;
+                throw new Error("idb transient write failure");
+            }
+            memory.set(String(key), String(value));
+            return value;
+        }));
+        spies.push(spyOn(localforage, "removeItem").mockImplementation(async (key) => {
+            memory.delete(String(key));
+        }));
+
+        const payload = {
+            kind: "text" as const,
+            title: "重试持久化生成素材",
+            coverUrl: "",
+            tags: ["生成"],
+            status: "confirmed" as const,
+            source: "生成任务",
+            data: { content: "retry-durable" },
+        };
+        try {
+            const effectKey = "task-draft-retry:output:0";
+            // Attempt 1: creates in-memory asset + pending draft, but IndexedDB draft write fails.
+            await withAdapter(async () => envelope({ assets: [] }), async () => {
+                await expect(useAssetStore.getState().addGenerationAsset(effectKey, payload)).rejects.toThrow("idb transient write failure");
+            });
+            await expect(flushAssetStorePersistence()).rejects.toThrow("idb transient write failure");
+            expect(memory.get(scopedStorageKey(ASSET_STORE_DRAFTS_KEY, scope))).toBeUndefined();
+
+            // Attempt 2: asset is already in memory, IndexedDB still fails -> MUST reject and keep failure recorded.
+            await withAdapter(async () => envelope({ assets: [] }), async () => {
+                await expect(useAssetStore.getState().addGenerationAsset(effectKey, payload)).rejects.toThrow("idb transient write failure");
+            });
+            await expect(flushAssetStorePersistence()).rejects.toThrow("idb transient write failure");
+
+            // Attempt 3: IndexedDB recovers -> retry flushes ASSET_STORE_DRAFTS_KEY, resolves, and clears failure.
+            const recoveredId = await withAdapter(async () => envelope({ assets: [] }), async () => (
+                useAssetStore.getState().addGenerationAsset(effectKey, payload)
+            ));
+            await flushAssetStorePersistence();
+            const persistedRaw = memory.get(scopedStorageKey(ASSET_STORE_DRAFTS_KEY, scope));
+            expect(persistedRaw).toBeDefined();
+            expect(JSON.parse(persistedRaw!).drafts?.[recoveredId]?.asset?.title).toBe("重试持久化生成素材");
+        } finally {
+            restore();
+        }
+    });
+
+    test("persistWorkspaceAssetLink supersedes reconcile when a user edit creates a draft while lookup is in flight without a prior draft", async () => {
+        const scope = "desktop-link-reconcile-race";
+        const restore = switchScope(scope);
+        enterDesktopSingleSourceMode();
+
+        try {
+            const unverified: Asset = {
+                ...textAsset("generation_unverified_link_race", "未核验初始标题"),
+                metadata: { generationEffectKey: "task-link-race:output:0", generationLookupUnverified: true },
+            };
+            useAssetStore.setState({ assets: [unverified] });
+            expect(peekAssetStoreDraft(scope, unverified.id)).toBeUndefined();
+
+            let releaseLookup!: () => void;
+            let putOrLinkCalls = 0;
+            let linkPromise!: Promise<void>;
+            const lookupStarted = new Promise<void>((resolve) => {
+                linkPromise = withAdapter(async (config) => {
+                    const url = String(config.url || "");
+                    if (url.includes("/assets/batch")) {
+                        resolve();
+                        await new Promise<void>((done) => { releaseLookup = done; });
+                        return envelope({
+                            assets: [{ ...textAsset(unverified.id, "服务端旧标题"), metadata: { generationEffectKey: "task-link-race:output:0" } }],
+                        });
+                    }
+                    putOrLinkCalls += 1;
+                    return envelope({ asset: unverified });
+                }, async () => persistWorkspaceAssetLink({ asset: unverified, domainProjectId: "proj-race" }));
+            });
+
+            await lookupStarted;
+            // User edits while lookup is in flight; no draft existed before lookup (submittedVersion === undefined).
+            useAssetStore.getState().updateAsset(unverified.id, { title: "用户并发修改无前置草稿" });
+            releaseLookup();
+            await linkPromise;
+
+            expect(putOrLinkCalls).toBe(0);
+            expect(useAssetStore.getState().assets.find((item) => item.id === unverified.id)?.title).toBe("用户并发修改无前置草稿");
+            expect(peekAssetStoreDraft(scope, unverified.id)?.asset?.title).toBe("用户并发修改无前置草稿");
+        } finally {
+            restore();
+        }
+    });
+
+    test("cleanupImages protects fallback blobs referenced only by CANVAS_DRAFTS_KEY and reclaims them once removed", async () => {
+        const scope = "desktop-canvas-drafts-gc";
+        const restore = switchScope(scope);
+        enterDesktopSingleSourceMode();
+        const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
+        const scopedStorage = localForageStorageForScope(scope);
+        const canvasDraftImageKey = `image:${scope}:canvas-draft-only-1`;
+        await imageStore.setItem(canvasDraftImageKey, new Blob(["canvas-draft-img"], { type: "image/png" }));
+
+        try {
+            useCanvasStore.setState({ projects: [] });
+            useAssetStore.setState({ assets: [] });
+            await scopedStorage.setItem(CANVAS_DRAFTS_KEY, serializeCanvasStorageDocument({
+                state: {
+                    projects: [{
+                        id: "proj-draft-only",
+                        title: "仅存在于草稿键的画布",
+                        createdAt: "2026-10-02T00:00:00.000Z",
+                        updatedAt: "2026-10-02T00:00:00.000Z",
+                        nodes: [{
+                            id: "node-draft-1",
+                            type: "image" as never,
+                            position: { x: 0, y: 0 },
+                            width: 200,
+                            height: 200,
+                            metadata: { storageKey: canvasDraftImageKey },
+                        }],
+                        connections: [],
+                        chatSessions: [],
+                        activeChatId: null,
+                        backgroundMode: "dots",
+                        showImageInfo: false,
+                        viewport: { x: 0, y: 0, scale: 1 },
+                        directorScenes: [],
+                    }],
+                },
+                version: 0,
+                storageRevision: 1,
+                deletedProjectIds: {},
+            }));
+
+            await useAssetStore.getState().cleanupImages();
+            expect(await imageStore.getItem(canvasDraftImageKey)).not.toBeNull();
+
+            await scopedStorage.removeItem(CANVAS_DRAFTS_KEY);
+            await useAssetStore.getState().cleanupImages();
+            expect(await imageStore.getItem(canvasDraftImageKey)).toBeNull();
+        } finally {
+            useCanvasStore.setState({ projects: [] });
+            await scopedStorage.removeItem(CANVAS_DRAFTS_KEY);
+            await imageStore.removeItem(canvasDraftImageKey);
             restore();
         }
     });
