@@ -10,6 +10,7 @@ import { addWorkspaceNotice } from "@/lib/workspace-notices";
 import { hydrateLocalModelConfig } from "@/components/workspace/workspace-bootstrap-hydrator";
 import { cn } from "@/lib/utils";
 import { appPathname } from "@/lib/app-routing";
+import { subscribeWorkspaceResume } from "@/lib/workspace-resume";
 import { isEmbeddedRuntime, publishEmbeddedContext } from "@/lib/embedded-runtime";
 import { createEmbeddedCanvasNoticeGate, createEmbeddedWorkspaceSyncHandler } from "@/lib/embedded-workspace-sync";
 import { useEmbeddedAskResult } from "@/hooks/use-embedded-ask-result";
@@ -75,14 +76,12 @@ export default function UserLayout({ children }: { children: ReactNode }) {
             if (document.hidden || Date.now() - lastSyncedAt < 60_000) return;
             runFullSync();
         };
-        window.addEventListener("focus", onVisibleOrFocus);
-        document.addEventListener("visibilitychange", onVisibleOrFocus);
+        const unsubscribeResume = subscribeWorkspaceResume(onVisibleOrFocus);
         return () => {
             window.clearTimeout(initialUpdateTimer);
             window.clearInterval(partnerPeriodicTimer);
             window.clearInterval(periodicTimer);
-            window.removeEventListener("focus", onVisibleOrFocus);
-            document.removeEventListener("visibilitychange", onVisibleOrFocus);
+            unsubscribeResume();
         };
     }, []);
 
@@ -98,15 +97,12 @@ export default function UserLayout({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         const refreshProjects = () => {
-            if (document.hidden) return;
+            // The mounted canvas owns its revision stream and refresh. Reading
+            // every project here competes with the first drag after activation.
+            if (document.hidden || /^\/canvas\/[^/]+(?:\/|$)/.test(appPathname())) return;
             void hydrateLocalCanvasProjectsFromBackend();
         };
-        window.addEventListener("focus", refreshProjects);
-        document.addEventListener("visibilitychange", refreshProjects);
-        return () => {
-            window.removeEventListener("focus", refreshProjects);
-            document.removeEventListener("visibilitychange", refreshProjects);
-        };
+        return subscribeWorkspaceResume(refreshProjects);
     }, []);
 
     useEffect(() => {
