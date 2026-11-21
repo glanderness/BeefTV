@@ -69,7 +69,7 @@ export async function uploadImage(input: string | Blob, onProgress?: (uploadedBy
         if (usesBrowserLocalResourceStore()) {
             const progress = startOperation(input instanceof File ? input.name : "保存图片", { totalBytes: blob.size, detail: "正在保存图片到本机" });
             bumpMediaReferenceEpoch();
-            try { await withMediaKeyLock(storageKey, () => store.setItem(storageKey, blob)); progress.done("图片已保存到本机"); }
+            try { await withMediaKeyLock(storageKey, async () => { await store.setItem(storageKey, blob); }); progress.done("图片已保存到本机"); }
             catch (error) { progress.fail("图片保存未完成，请检查本机存储空间"); throw error; }
             objectUrls.set(storageKey, previewUrl);
             return { url: previewUrl, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
@@ -100,7 +100,7 @@ export async function uploadImage(input: string | Blob, onProgress?: (uploadedBy
         }
         // 本地服务暂时不可用时退回浏览器本地缓存，确保当前创作不中断。
         bumpMediaReferenceEpoch();
-        await withMediaKeyLock(storageKey, () => store.setItem(storageKey, blob));
+        await withMediaKeyLock(storageKey, async () => { await store.setItem(storageKey, blob); });
         const url = previewUrl;
         objectUrls.set(storageKey, url);
         return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType, pendingRemoteUpload: true, remoteUploadError };
@@ -163,7 +163,7 @@ export async function getImageBlob(storageKey: string) {
 export async function setImageBlob(storageKey: string, blob: Blob) {
     if (resourceIdFromStorageKey(storageKey)) return primeResourceBlobCache(storageKey, blob);
     bumpMediaReferenceEpoch();
-    await withMediaKeyLock(storageKey, () => store.setItem(storageKey, blob));
+    await withMediaKeyLock(storageKey, async () => { await store.setItem(storageKey, blob); });
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
