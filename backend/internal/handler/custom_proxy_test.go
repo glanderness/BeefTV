@@ -296,10 +296,6 @@ func (relayCategoryStub) ResolveCustomRelayAPIKey(_ string, incoming string) (st
 	return incoming, nil
 }
 
-func (relayCategoryStub) InterceptResponseText(raw string) string {
-	return raw
-}
-
 func useCustomRelayTestClient(t *testing.T, client *http.Client) {
 	t.Helper()
 	previous := customRelayClient

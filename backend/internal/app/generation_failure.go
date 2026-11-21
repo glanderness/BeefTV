@@ -1,6 +1,11 @@
 package app
 
-import "infinite-canvas/backend/internal/generation"
+import (
+	"errors"
+	"strings"
+
+	"infinite-canvas/backend/internal/generation"
+)
 
 func classifyTaskFailure(err error) generation.Failure {
 	return generation.ClassifyTaskFailure(err)
@@ -22,10 +27,15 @@ func persistedFailureBlocksRetry(message, stage, errorCode string) bool {
 	return generation.PersistedFailureBlocksRetry(message, stage, errorCode)
 }
 
-func (s *Service) UserFacingProviderHTTPError(status int, statusText string, body string) string {
-	message := generation.ClassifyHTTP(status, statusText, body).UserMessage()
-	if s == nil {
-		return message
+// UserFacingErrorMessage projects a user-visible error message without altering stored upstream diagnostics.
+func (s *Service) UserFacingErrorMessage(err error) string {
+	var upstream providerHTTPError
+	if errors.As(err, &upstream) {
+		return strings.TrimSpace(providerUserFacingErrorMessage(err))
 	}
-	return s.InterceptResponseText(message)
+	return strings.TrimSpace(taskFailureMessage(err))
+}
+
+func (s *Service) UserFacingProviderHTTPError(status int, statusText string, body string) string {
+	return strings.TrimSpace(generation.ClassifyHTTP(status, statusText, body).UserMessage())
 }

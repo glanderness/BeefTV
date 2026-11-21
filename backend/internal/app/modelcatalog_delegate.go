@@ -62,27 +62,6 @@ func NormalizeCapabilitySpec(spec CapabilitySpec) (CapabilitySpec, error) {
 func MatchCapability(spec CapabilitySpec, intent ModelRequestIntent) CapabilityMatch {
 	return modelcatalog.MatchCapability(spec, intent)
 }
-func normalizeChannelModelContract(channel *model.ModelChannel, req ChannelModelRequest) (string, string, string, model.ChannelInterfaceType, error) {
-	return normalizeChannelModelContractWithRegistry(protocol.Builtins(), channel, req)
-}
-func (s *Service) normalizeChannelModelContract(channel *model.ModelChannel, req ChannelModelRequest) (string, string, string, model.ChannelInterfaceType, error) {
-	return normalizeChannelModelContractWithRegistry(s.protocolRegistry(), channel, req)
-}
-func normalizeChannelModelContractWithRegistry(registry *protocol.Registry, channel *model.ModelChannel, req ChannelModelRequest) (string, string, string, model.ChannelInterfaceType, error) {
-	return modelcatalog.NormalizeChannelModelContract(modelcatalog.LookupFromRegistry(registry), channel, req)
-}
-func videoTestDefaults(profile *VideoCapabilityConfig) (string, string) {
-	return modelcatalog.VideoTestDefaults(profile)
-}
-func imageTestDefaults(profile *ImageCapabilityConfig) (string, string) {
-	return modelcatalog.ImageTestDefaults(profile)
-}
-func normalizeAdminChannelModelDeleteIDs(values []string) ([]string, error) {
-	return modelcatalog.NormalizeAdminChannelModelDeleteIDs(values)
-}
-func retiredChannelModelKeys(raw string) map[string]bool {
-	return modelcatalog.RetiredChannelModelKeys(raw)
-}
 func protocolCapabilityFromMetadata(metadata protocol.Metadata) string {
 	primary := ""
 	if len(metadata.Categories) > 0 {
@@ -91,15 +70,6 @@ func protocolCapabilityFromMetadata(metadata protocol.Metadata) string {
 	return modelcatalog.ProtocolCapabilityFromMetadata(modelcatalog.ProtocolMeta{ID: metadata.ID, Enabled: metadata.Enabled, UnavailableReason: metadata.UnavailableReason, PrimaryCapability: primary})
 }
 func isRouteDispatchUncertain(err error) bool { return modelcatalog.IsDispatchUncertain(err) }
-func mergeChannelRequest(req ChannelRequest, c model.ModelChannel) ChannelRequest {
-	return modelcatalog.MergeChannelRequest(req, c)
-}
 func publicChannel(c model.ModelChannel, admin bool, models []model.ChannelModel) PublicModelChannel {
 	return modelcatalog.PublicChannel(c, admin, models)
-}
-func channelFromRequest(req ChannelRequest, c model.ModelChannel) (model.ModelChannel, error) {
-	return modelcatalog.ApplyChannelRequest(req, c)
-}
-func (s *Service) channelFromRequest(req ChannelRequest, c model.ModelChannel) (model.ModelChannel, error) {
-	return modelcatalog.ApplyChannelRequest(req, c)
 }

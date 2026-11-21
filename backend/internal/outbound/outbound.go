@@ -191,15 +191,6 @@ func ApplyOutboundHeaders(req *http.Request, headers []OutboundHeader) {
 	}
 }
 
-func EncodeOutboundHeadersJSON(headers []OutboundHeader) (string, error) {
-	normalized, err := NormalizeOutboundHeaders(headers)
-	if err != nil {
-		return "", err
-	}
-	data, err := json.Marshal(normalized)
-	return string(data), err
-}
-
 func ParseOutboundHeadersJSON(raw string) ([]OutboundHeader, error) {
 	if strings.TrimSpace(raw) == "" {
 		return []OutboundHeader{}, nil

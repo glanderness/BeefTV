@@ -300,44 +300,6 @@ func TestGrokImageMissingPluginPreservesSubmissionEvidence(t *testing.T) {
 	}
 }
 
-func TestGrokImageAdminChannelModelTestUsesInstalledPlugin(t *testing.T) {
-	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
-	var posts atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		posts.Add(1)
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/images/generations" || r.Header.Get("Authorization") != "Bearer channel-fixture" || body["model"] != "unlisted-provider-model" || body["n"] != float64(1) || body["response_format"] != "url" {
-			t.Errorf("channel test request=%s %s body=%#v", r.Method, r.URL.Path, body)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"b64_json":"iVBORw0KGgo="}]}`))
-	}))
-	t.Cleanup(server.Close)
-	s, db, _, _ := creationTestService(t)
-	s.coordinator = platform.NewLocalCoordinator()
-	s.pluginRuntime = pluginRuntimeFromRecords(nil)
-	if err := s.pluginRuntime.registrySnapshot().Register(officialSourceProviderAdapter(t, "xai-grok-images", "grok-image")); err != nil {
-		t.Fatal(err)
-	}
-	channel := model.ModelChannel{ID: "grok-channel", Scope: model.ChannelScopeSystem, Name: "Grok fixture", Enabled: true, BaseURL: server.URL, APIKey: "channel-fixture", APIFormat: "openai"}
-	if err := s.encryptSystemChannelSecrets(&channel); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&channel).Error; err != nil {
-		t.Fatal(err)
-	}
-	result, err := s.TestAdminChannelModel(context.Background(), &model.User{ID: "admin", Role: model.UserRoleAdmin}, channel.ID, ChannelModelRequest{
-		ModelKey: "friendly-name", ProviderModelKey: "unlisted-provider-model", Capability: "image", Protocol: "grok-image",
-		CapabilityConfig: DefaultModelCapabilityConfigForModel("grok-image", "unlisted-provider-model"),
-	})
-	if err != nil || result == nil || posts.Load() != 1 {
-		t.Fatalf("channel test result=%+v err=%v posts=%d", result, err, posts.Load())
-	}
-}
-
 func TestGrokImageDisabledPackageFailsBeforeSubmission(t *testing.T) {
 	center, err := newPluginRuntime(t.TempDir())
 	if err != nil {

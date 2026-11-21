@@ -8,7 +8,6 @@ import (
 func TestPaginationJSONUsesPageSizeCamelCase(t *testing.T) {
 	payloads := []any{
 		SkillList{TotalCount: 3, HasMore: true, NextOffset: 20, Page: 1, PageSize: 20},
-		AdminChannelPage{Total: 1, Page: 1, Limit: 20},
 	}
 	for _, payload := range payloads {
 		body, err := json.Marshal(payload)

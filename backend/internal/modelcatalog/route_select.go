@@ -4,7 +4,6 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/binary"
 	"math"
-	"sort"
 	"strings"
 
 	"infinite-canvas/backend/internal/kernel"
@@ -88,37 +87,6 @@ func WeightedRoute(routes []CachedLogicalRoute) CachedLogicalRoute {
 		pick -= int64(route.Route.Weight)
 	}
 	return routes[len(routes)-1]
-}
-
-func (r *Router) SortedRouteDiagnostics(routes []CachedLogicalRoute, intent ModelRequestIntent) []RouteSimulationCandidate {
-	result := make([]RouteSimulationCandidate, 0, len(routes))
-	poolPriority := math.MinInt
-	for _, route := range routes {
-		match := MatchCapability(route.CapabilitySpec, intent)
-		blocked := r.LogicalRouteBlocked(route)
-		if route.Route.Enabled && route.Route.Weight > 0 && match.Matched && !blocked && route.Route.Priority > poolPriority {
-			poolPriority = route.Route.Priority
-		}
-		result = append(result, RouteSimulationCandidate{RouteID: route.Route.ID, ChannelModelID: route.ChannelModel.ID, ChannelModelKey: route.ChannelModel.ModelKey, ChannelModelName: route.ChannelModel.DisplayName, Priority: route.Route.Priority, Weight: route.Route.Weight, Enabled: route.Route.Enabled, Matched: match.Matched, Blocked: blocked, Reasons: match.Reasons})
-	}
-	for index := range result {
-		result[index].InPool = result[index].Enabled && result[index].Weight > 0 && result[index].Matched && !result[index].Blocked && result[index].Priority == poolPriority
-	}
-	sort.SliceStable(result, func(i, j int) bool { return result[i].Priority > result[j].Priority })
-	return result
-}
-
-func (r *Router) SimulateLogicalModelRoute(id string, intent ModelRequestIntent) (*RouteSimulationResult, error) {
-	snapshot, err := r.Snapshot()
-	if err != nil {
-		return nil, err
-	}
-	cached, ok := snapshot.Models[id]
-	if !ok {
-		return nil, kernel.BadAuthRequest("前台模型未启用或尚未发布")
-	}
-	intent.Options = mergeIntentDefaults(intent.Options, cached.Defaults)
-	return &RouteSimulationResult{ProductMatch: MatchCapability(cached.ProductSpec, intent), Candidates: r.SortedRouteDiagnostics(cached.Routes, intent)}, nil
 }
 
 func (r *Router) PublicLogicalModels(intent *ModelRequestIntent) ([]PublicLogicalModel, error) {

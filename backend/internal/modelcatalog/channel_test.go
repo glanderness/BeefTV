@@ -3,65 +3,7 @@ package modelcatalog
 import (
 	"strings"
 	"testing"
-
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/protocol"
 )
-
-func TestNormalizeChannelModelContractAcceptsProtocolAlias(t *testing.T) {
-	lookup := func(id string) (ProtocolMeta, bool) {
-		if id == "google-gemini-generate-content" || id == "gemini-generate-content" {
-			return ProtocolMeta{ID: "gemini-generate-content", Enabled: true, PrimaryCapability: "text"}, true
-		}
-		return ProtocolMeta{}, false
-	}
-	modelKey, providerKey, capability, proto, err := NormalizeChannelModelContract(lookup, &model.ModelChannel{}, ChannelModelRequest{
-		ModelKey: "gemini-flash", Capability: "text", Protocol: "google-gemini-generate-content",
-	})
-	if err != nil {
-		t.Fatalf("alias should resolve: %v", err)
-	}
-	if modelKey != "gemini-flash" || providerKey != "gemini-flash" || capability != "text" || proto != "gemini-generate-content" {
-		t.Fatalf("unexpected contract %s %s %s %s", modelKey, providerKey, capability, proto)
-	}
-}
-
-func TestLookupFromRegistryUsesResolveAlias(t *testing.T) {
-	lookup := LookupFromRegistry(protocol.Builtins())
-	_, _, _, proto, err := NormalizeChannelModelContract(lookup, &model.ModelChannel{APIKey: "k"}, ChannelModelRequest{
-		ModelKey: "gpt-test", Capability: "text", Protocol: string(model.ChannelInterfaceChatCompletion),
-	})
-	if err != nil {
-		t.Fatalf("builtin chat-completion should resolve: %v", err)
-	}
-	if proto != model.ChannelInterfaceChatCompletion {
-		t.Fatalf("protocol = %s", proto)
-	}
-}
-
-func TestNormalizeChannelModelContractRejectsUnknownProtocol(t *testing.T) {
-	lookup := func(string) (ProtocolMeta, bool) { return ProtocolMeta{}, false }
-	_, _, _, _, err := NormalizeChannelModelContract(lookup, &model.ModelChannel{}, ChannelModelRequest{
-		ModelKey: "x", Capability: "image", Protocol: "not-a-protocol",
-	})
-	if err == nil || !strings.Contains(err.Error(), "请选择有效的模型请求协议") {
-		t.Fatalf("unknown protocol should fail closed, got %v", err)
-	}
-}
-
-func TestCascadeUpstreamRenameFollowsImplicitTiersOnly(t *testing.T) {
-	tiers := []model.ChannelModelVariant{
-		{ProviderModelKey: "old-sku"},
-		{ProviderModelKey: "explicit-other"},
-	}
-	result := CascadeUpstreamRename(tiers, "old-sku", "new-sku")
-	if result[0].ProviderModelKey != "new-sku" {
-		t.Fatalf("implicit tier should follow rename, got %q", result[0].ProviderModelKey)
-	}
-	if result[1].ProviderModelKey != "explicit-other" {
-		t.Fatalf("explicit other SKU must stay, got %q", result[1].ProviderModelKey)
-	}
-}
 
 func TestFixedVideoResolutionAppliedToSingleSKU(t *testing.T) {
 	profile := &VideoCapabilityConfig{Resolutions: []string{"720p"}}

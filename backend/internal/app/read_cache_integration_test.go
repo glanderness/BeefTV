@@ -153,7 +153,7 @@ func TestRouteCatalogFailureStormAndInvalidatedStaleSnapshot(t *testing.T) {
 	if _, err := svc.routeCatalogSnapshot(); !errors.Is(err, wantErr) {
 		t.Fatal("explicitly invalidated version was served stale")
 	}
-	svc.invalidateRouteCatalog()
+	router.Invalidate(context.Background())
 	if _, err := svc.routeCatalogSnapshot(); !errors.Is(err, wantErr) {
 		t.Fatal(err)
 	}

@@ -3,9 +3,7 @@ package repository
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
@@ -13,13 +11,11 @@ import (
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 var (
-	ErrActiveTaskLimit   = errors.New("active task limit reached")
-	ErrTaskNotRetryable  = errors.New("task is not retryable")
-	ErrChannelModelInUse = errors.New("channel model is in use")
+	ErrActiveTaskLimit  = errors.New("active task limit reached")
+	ErrTaskNotRetryable = errors.New("task is not retryable")
 )
 
 func (r *Repository) ChannelModels(channelID string, includeDisabled bool) ([]model.ChannelModel, error) {
@@ -32,23 +28,6 @@ func (r *Repository) ChannelModels(channelID string, includeDisabled bool) ([]mo
 		return nil, err
 	}
 	return items, r.attachChannelModelVariants(items)
-}
-
-func (r *Repository) CreateDuplicatedSystemChannel(channel *model.ModelChannel, channelModels []model.ChannelModel, tiers []model.ChannelModelVariant) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(channel).Error; err != nil {
-			return err
-		}
-		if len(channelModels) > 0 {
-			if err := tx.Create(&channelModels).Error; err != nil {
-				return err
-			}
-		}
-		if len(tiers) > 0 {
-			return tx.Create(&tiers).Error
-		}
-		return nil
-	})
 }
 
 func (r *Repository) ChannelModelByID(channelID, id string) (*model.ChannelModel, error) {
@@ -64,20 +43,8 @@ func (r *Repository) ChannelModelByID(channelID, id string) (*model.ChannelModel
 }
 
 func (r *Repository) ChannelModelByKey(channelID, modelKey string) (*model.ChannelModel, error) {
-	return r.channelModelByKey(channelID, modelKey, true)
-}
-
-func (r *Repository) ChannelModelByKeyIncludingDisabled(channelID, modelKey string) (*model.ChannelModel, error) {
-	return r.channelModelByKey(channelID, modelKey, false)
-}
-
-func (r *Repository) channelModelByKey(channelID, modelKey string, enabledOnly bool) (*model.ChannelModel, error) {
 	var item model.ChannelModel
-	query := r.db.Where("channel_id = ? AND model_key = ?", channelID, modelKey)
-	if enabledOnly {
-		query = query.Where("enabled = ?", true)
-	}
-	if err := query.First(&item).Error; err != nil {
+	if err := r.db.Where("channel_id = ? AND model_key = ? AND enabled = ?", channelID, modelKey, true).First(&item).Error; err != nil {
 		return nil, err
 	}
 	items := []model.ChannelModel{item}
@@ -85,55 +52,6 @@ func (r *Repository) channelModelByKey(channelID, modelKey string, enabledOnly b
 		return nil, err
 	}
 	return &items[0], nil
-}
-
-func (r *Repository) SaveChannelModel(item *model.ChannelModel) error { return r.db.Save(item).Error }
-
-func (r *Repository) SaveChannelModelWithVariants(item *model.ChannelModel, tiers []model.ChannelModelVariant) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		var existing []model.ChannelModelVariant
-		if err := tx.Where("channel_model_id = ?", item.ID).Find(&existing).Error; err != nil {
-			return err
-		}
-		byKey := make(map[string]model.ChannelModelVariant, len(existing))
-		for _, tier := range existing {
-			byKey[channelModelVariantKey(tier)] = tier
-		}
-		selected := make(map[string]bool, len(tiers))
-		for index := range tiers {
-			tier := &tiers[index]
-			tier.ChannelModelID = item.ID
-			key := channelModelVariantKey(*tier)
-			if current, ok := byKey[key]; ok {
-				tier.ID = current.ID
-				if err := tx.Save(tier).Error; err != nil {
-					return err
-				}
-			} else if err := tx.Create(tier).Error; err != nil {
-				return err
-			}
-			selected[tier.ID] = true
-		}
-		for _, tier := range existing {
-			if !selected[tier.ID] {
-				if err := tx.Delete(&tier).Error; err != nil {
-					return err
-				}
-			}
-		}
-		return tx.Save(item).Error
-	})
-}
-
-func channelModelVariantKey(tier model.ChannelModelVariant) string {
-	if value := strings.TrimSpace(tier.SelectorKey); value != "" {
-		return value
-	}
-	_, key, err := model.CanonicalSKUSelector(map[string]string{"vquality": strings.TrimSpace(tier.Resolution), "videoSeconds": strconv.Itoa(tier.VideoSeconds)})
-	if err != nil {
-		return "{}"
-	}
-	return key
 }
 
 func (r *Repository) attachChannelModelVariants(items []model.ChannelModel) error {
@@ -174,101 +92,6 @@ func (r *Repository) PopulateChannelModelVariant(item *model.ChannelModel) error
 	}
 	*item = items[0]
 	return nil
-}
-
-func (r *Repository) DeleteChannelModel(channelID, id string, now time.Time) error {
-	count, err := r.DeleteChannelModels(channelID, []string{id}, now)
-	if err != nil {
-		return err
-	}
-	if count != 1 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
-}
-
-func (r *Repository) DeleteChannelModels(channelID string, ids []string, now time.Time) (int64, error) {
-	ids = uniqueStrings(ids)
-	if len(ids) == 0 {
-		return 0, gorm.ErrRecordNotFound
-	}
-	var deleted int64
-	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if err := r.lockSystemChannelForModelMutation(tx, channelID); err != nil {
-			return err
-		}
-		var count int64
-		if err := tx.Model(&model.ChannelModel{}).Where("channel_id = ? AND id IN ?", channelID, ids).Count(&count).Error; err != nil {
-			return err
-		}
-		if count != int64(len(ids)) {
-			return gorm.ErrRecordNotFound
-		}
-		if err := tx.Table("logical_model_routes AS route").Joins("JOIN logical_models AS logical_model ON logical_model.active_revision_id = route.logical_model_revision_id").Where("route.channel_model_id IN ?", ids).Count(&count).Error; err != nil {
-			return err
-		}
-		if count > 0 {
-			return ErrChannelModelInUse
-		}
-		if err := tx.Model(&model.Task{}).Where("channel_model_id IN ? AND status IN ?", ids, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error; err != nil {
-			return err
-		}
-		if count > 0 {
-			return ErrChannelModelInUse
-		}
-		updated := tx.Model(&model.ChannelModel{}).Where("id IN ? AND channel_id = ?", ids, channelID).Updates(map[string]any{"enabled": false, "updated_at": now})
-		if updated.Error != nil {
-			return updated.Error
-		}
-		if updated.RowsAffected != int64(len(ids)) {
-			return gorm.ErrRecordNotFound
-		}
-		result := tx.Where("id IN ? AND channel_id = ?", ids, channelID).Delete(&model.ChannelModel{})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != int64(len(ids)) {
-			return gorm.ErrRecordNotFound
-		}
-		if err := refreshChannelModelNames(tx, channelID, now); err != nil {
-			return err
-		}
-		deleted = result.RowsAffected
-		return nil
-	})
-	return deleted, err
-}
-
-func (r *Repository) SyncChannelModelNames(channelID string, now time.Time) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := r.lockSystemChannelForModelMutation(tx, channelID); err != nil {
-			return err
-		}
-		return refreshChannelModelNames(tx, channelID, now)
-	})
-}
-func (r *Repository) lockSystemChannelForModelMutation(tx *gorm.DB, channelID string) error {
-	query := tx.Select("id").Where("id = ? AND scope = ?", channelID, model.ChannelScopeSystem)
-	var channel model.ModelChannel
-	return query.First(&channel).Error
-}
-func refreshChannelModelNames(tx *gorm.DB, channelID string, now time.Time) error {
-	var names []string
-	if err := tx.Model(&model.ChannelModel{}).Where("channel_id = ? AND enabled = ?", channelID, true).Order("sort_order asc, created_at asc, id asc").Pluck("model_key", &names).Error; err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(names)
-	if err != nil {
-		return err
-	}
-	return tx.Model(&model.ModelChannel{}).Where("id = ? AND scope = ?", channelID, model.ChannelScopeSystem).Updates(map[string]any{"models_json": string(encoded), "updated_at": now}).Error
-}
-func (r *Repository) CreateMissingChannelModels(items []model.ChannelModel) (int64, error) {
-	if len(items) == 0 {
-		return 0, nil
-	}
-	result := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&items)
-	return result.RowsAffected, result.Error
 }
 
 // ClientOperationReplay 表示这个确认已经有任务。调用方应回读 Task，不能再插入一条。
