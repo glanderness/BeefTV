@@ -10,7 +10,7 @@ import { clearVideoPreviewCache } from "@/services/api/resources";
 import { useCanvasMemoryMode, type CanvasMemoryMode } from "@/lib/canvas/canvas-memory-policy";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { beginRendererBusyLease, getDesktopAppBinding, getDesktopBootSnapshot, subscribeDesktopBootSnapshot } from "@/services/desktop-runtime";
+import { getDesktopAppBinding, getDesktopBootSnapshot, subscribeDesktopBootSnapshot } from "@/services/desktop-runtime";
 import { updateDesktopBootSnapshot } from "@/services/workspace-startup-state";
 import { EnvironmentChecks } from "./environment-checks";
 
@@ -99,7 +99,6 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
     const handleExport = async () => {
         setExporting(true);
         setExportResult(null);
-        const releaseBusy = beginRendererBusyLease();
         try {
             const input = await buildInput(range, description, taskId, projectId);
             if (typeof desktopBinding?.ExportRuntimeDiagnosticsToDownloads === "function") {
@@ -131,7 +130,6 @@ export default function DiagnosticsPanel(props: DiagnosticsPanelProps) {
         } catch (error) {
             message.error(error instanceof Error ? error.message : "导出诊断包失败");
         } finally {
-            releaseBusy();
             setExporting(false);
         }
     };

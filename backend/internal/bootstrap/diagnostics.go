@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"errors"
-	"time"
 
 	"infinite-canvas/backend/internal/diagnostics"
 )
@@ -21,38 +20,6 @@ func (r *Runtime) ExportDiagnosticsBundle(req diagnostics.ExportRequest) (*diagn
 		return nil, err
 	}
 	return r.service.DiagnosticsDomain().Export(owner.ID, req)
-}
-
-func (r *Runtime) RecordClientHeartbeat(hidden, busy bool) {
-	if r == nil {
-		return
-	}
-	nowMs := time.Now().UTC().UnixMilli()
-	r.clientHidden.Store(hidden)
-	if busy {
-		if !r.clientBusy.Swap(true) || r.clientBusySince.Load() == 0 {
-			r.clientBusySince.Store(nowMs)
-		}
-	} else {
-		r.clientBusy.Store(false)
-		r.clientBusySince.Store(0)
-	}
-	r.lastClientHeartbeat.Store(nowMs)
-}
-
-func (r *Runtime) LastClientHeartbeat() (time.Time, bool, bool, time.Time) {
-	if r == nil {
-		return time.Time{}, false, false, time.Time{}
-	}
-	ms := r.lastClientHeartbeat.Load()
-	if ms <= 0 {
-		return time.Time{}, false, false, time.Time{}
-	}
-	var busySince time.Time
-	if busyMs := r.clientBusySince.Load(); busyMs > 0 {
-		busySince = time.UnixMilli(busyMs).UTC()
-	}
-	return time.UnixMilli(ms).UTC(), r.clientHidden.Load(), r.clientBusy.Load(), busySince
 }
 
 func (r *Runtime) RequestSafeMode(enabled bool) uint64 {

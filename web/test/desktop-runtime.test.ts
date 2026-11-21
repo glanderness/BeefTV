@@ -594,3 +594,63 @@ test("desktop:request-reload checks in-flight guard before acking and resets aft
         registerBeforeReloadFlusher(null);
     }
 });
+
+test("safeModeAckId retries once after transient failure without periodic heartbeat polling", async () => {
+    const safeModeAckIds: number[] = [];
+    let ackAttempts = 0;
+
+    Object.assign(globalThis, {
+        window: {
+            location: {
+                protocol: "http:",
+                hostname: "wails.localhost",
+                host: "wails.localhost",
+                reload: () => undefined,
+            },
+            go: {
+                main: {
+                    DesktopApp: {
+                        StartupState: async () => ({
+                            state: "ready" as const,
+                            phase: "ready",
+                            baseURL: "http://127.0.0.1:43127/api",
+                            launchToken: "safe-mode-token",
+                            uiBootstrapToken: "safe-mode-ui-token",
+                            safeModeRequested: true,
+                            safeModeRequestId: 77,
+                        }),
+                    },
+                },
+            },
+        },
+    });
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith("/health/live")) {
+            return new Response(JSON.stringify({ code: 0, data: { status: "ok" }, msg: "ok" }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }
+        if (url.endsWith("/client-runtime/heartbeat")) {
+            ackAttempts += 1;
+            const rawBody = input instanceof Request ? await input.clone().text() : String(init?.body || "{}");
+            const body = JSON.parse(rawBody || "{}") as { safeModeAckId?: number };
+            if (body.safeModeAckId) safeModeAckIds.push(body.safeModeAckId);
+            if (ackAttempts === 1) {
+                return new Response("transient error", { status: 503 });
+            }
+            return new Response(JSON.stringify({ code: 0, data: { ok: true }, msg: "" }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }
+        return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    expect(await bootstrapDesktopRuntime({ loopbackProbeTimeoutMs: 50, loopbackRetryDelaysMs: [] })).toBe(true);
+    await new Promise((r) => setTimeout(r, 650));
+    expect(ackAttempts).toBe(2);
+    expect(safeModeAckIds).toEqual([77, 77]);
+});
