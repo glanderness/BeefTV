@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ChangeEvent, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { BookOpenCheck, Clapperboard, FileText, GripVertical, Image as ImageIcon, Lock, Move3d, Music2, Pencil, Settings2, Video } from "lucide-react";
 
+import { CANVAS_VIEWPORT_PREVIEW_EVENT } from "@/lib/canvas/canvas-live-viewport";
 import type { canvasThemes } from "@/lib/canvas-theme";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId } from "@/types/canvas";
 
@@ -41,21 +42,43 @@ export function NodeExternalHeader({ node, scale, dimensionLabel, active, editab
         const header = headerRef.current;
         if (!editing || !isImage || !header) {
             header?.style.removeProperty("--canvas-title-editor-max-width");
+            header?.style.removeProperty("--canvas-title-editor-shift-x");
             return;
         }
-        const updateMaxWidth = () => {
+        const viewportEl = header.closest("[data-canvas-viewport]");
+        let appliedShiftX = 0;
+        const updateBounds = () => {
             const rect = header.getBoundingClientRect();
-            const viewportRight = header.closest("[data-canvas-viewport]")?.getBoundingClientRect().right ?? window.innerWidth;
-            const available = Math.max(160, Math.floor(viewportRight - rect.left - 16));
-            header.style.setProperty("--canvas-title-editor-max-width", `${available}px`);
+            const naturalLeft = rect.left - appliedShiftX;
+            const viewportRect = viewportEl?.getBoundingClientRect();
+            const viewportLeft = viewportRect?.left ?? 0;
+            const viewportRight = viewportRect?.right ?? window.innerWidth;
+            const maxAllowed = Math.max(80, Math.floor(viewportRight - viewportLeft - 24));
+            const rawAvailable = Math.floor(viewportRight - naturalLeft - 16);
+            const minUsable = Math.min(160, maxAllowed);
+            if (rawAvailable >= minUsable) {
+                appliedShiftX = 0;
+                header.style.setProperty("--canvas-title-editor-shift-x", "0px");
+                header.style.setProperty("--canvas-title-editor-max-width", `${Math.min(rawAvailable, maxAllowed)}px`);
+            } else {
+                const maxLeftShift = Math.max(0, Math.floor(naturalLeft - (viewportLeft + 12)));
+                const neededShift = Math.min(minUsable - rawAvailable, maxLeftShift);
+                appliedShiftX = -neededShift;
+                const budget = Math.max(0, Math.min(rawAvailable + neededShift, maxAllowed));
+                header.style.setProperty("--canvas-title-editor-shift-x", `${appliedShiftX}px`);
+                header.style.setProperty("--canvas-title-editor-max-width", `${budget}px`);
+            }
         };
-        updateMaxWidth();
-        window.addEventListener("resize", updateMaxWidth);
+        updateBounds();
+        window.addEventListener("resize", updateBounds);
+        viewportEl?.addEventListener(CANVAS_VIEWPORT_PREVIEW_EVENT, updateBounds);
         return () => {
-            window.removeEventListener("resize", updateMaxWidth);
+            window.removeEventListener("resize", updateBounds);
+            viewportEl?.removeEventListener(CANVAS_VIEWPORT_PREVIEW_EVENT, updateBounds);
             header.style.removeProperty("--canvas-title-editor-max-width");
+            header.style.removeProperty("--canvas-title-editor-shift-x");
         };
-    }, [editing, isImage]);
+    }, [editing, isImage, scale]);
     const inverseScale = 1 / Math.max(scale, 0.05);
     const isDirectorNode = node.type === CanvasNodeType.Director || Boolean(node.metadata?.directorSceneId);
     const Icon = isDirectorNode ? Move3d : nodeTypeIcon(node.type);
@@ -91,6 +114,7 @@ export function NodeExternalHeader({ node, scale, dimensionLabel, active, editab
             className="canvas-node-external-header absolute bottom-full left-0 z-[var(--node-z-overlay)] flex min-h-6 items-center gap-1"
             data-canvas-live-scale
             data-compact-title={isImage ? "true" : undefined}
+            data-active={active || editing ? "true" : undefined}
             data-expanded={!isImage && (active || editing) ? "true" : undefined}
             data-editing={editing ? "true" : undefined}
             style={{
@@ -98,7 +122,9 @@ export function NodeExternalHeader({ node, scale, dimensionLabel, active, editab
                 "--canvas-node-header-width": `min(240px, max(112px, calc(var(--canvas-node-width) * var(--canvas-live-scale, ${scale}))))`,
                 borderRadius: "var(--r-sm)",
                 color: active ? theme.node.text : theme.node.label,
-                transform: `scale(var(--canvas-live-inverse-scale, ${inverseScale}))`,
+                transform: editing && isImage
+                    ? `scale(var(--canvas-live-inverse-scale, ${inverseScale})) translateX(var(--canvas-title-editor-shift-x, 0px))`
+                    : `scale(var(--canvas-live-inverse-scale, ${inverseScale}))`,
                 transformOrigin: "left bottom",
             } as CSSProperties}
             onMouseDown={(event) => {

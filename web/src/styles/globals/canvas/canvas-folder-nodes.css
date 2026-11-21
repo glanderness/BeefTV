@@ -520,7 +520,7 @@
         overflow-wrap: anywhere;
     }
 
-    .canvas-node-external-header:is([data-expanded="true"], :hover, :focus-within) .canvas-node-title-edit-icon {
+    .canvas-node-external-header:is([data-active="true"], [data-expanded="true"], :hover, :focus-within) .canvas-node-title-edit-icon {
         display: block;
     }
 
@@ -536,7 +536,7 @@
     .canvas-image-title-editor {
         display: inline-grid;
         grid-template-columns: minmax(0, 1fr);
-        min-width: 80px;
+        min-width: min(80px, 100%);
         max-width: 100%;
     }
 

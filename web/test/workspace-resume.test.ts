@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { subscribeWorkspaceResume } from "@/lib/workspace-resume";
+import { shouldHydrateCanvasLibraryOnResume } from "@/lib/workspace-routes";
 
 function harness() {
     const foreground = new EventTarget();
@@ -165,4 +166,49 @@ test("multiple subscribers share one listener set and detach wheel/keydown when 
     stopB();
     expect(activeListeners.get("focus")).toBe(0);
     expect(activeListeners.get("pointerdown")).toBe(0);
+});
+
+test("project-library resume hydration is skipped on open canvas editor routes and runs on other pages", () => {
+    const foreground = new EventTarget();
+    const visibility = Object.assign(new EventTarget(), { hidden: false });
+    let now = 0;
+    let serial = 0;
+    const timers = new Map<number, { at: number; run: () => void }>();
+    const clock = Object.assign(foreground, {
+        setTimeout(run: () => void, delay = 0) {
+            const id = ++serial;
+            timers.set(id, { at: now + delay, run });
+            return id;
+        },
+        clearTimeout(id: number) { timers.delete(id); },
+    });
+    let currentPath = "/canvas/proj-123";
+    let hydrations = 0;
+    const stop = subscribeWorkspaceResume(() => {
+        if (shouldHydrateCanvasLibraryOnResume(currentPath, visibility.hidden)) hydrations++;
+    }, { window: clock as unknown as Window, document: visibility });
+    const flush = () => {
+        foreground.dispatchEvent(new Event("focus"));
+        now += 500;
+        for (const [id, timer] of timers) {
+            if (timer.at > now) continue;
+            timers.delete(id);
+            timer.run();
+        }
+    };
+
+    for (const skipped of ["/canvas/proj-123", "/canvas/proj-123/details"]) {
+        currentPath = skipped;
+        flush();
+    }
+    expect(hydrations).toBe(0);
+
+    for (const hydrated of ["/", "/canvas", "/assets"]) {
+        currentPath = hydrated;
+        flush();
+    }
+    expect(hydrations).toBe(3);
+
+    expect(shouldHydrateCanvasLibraryOnResume("/", true)).toBe(false);
+    stop();
 });

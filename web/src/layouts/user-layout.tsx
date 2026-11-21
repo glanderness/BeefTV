@@ -14,7 +14,7 @@ import { subscribeWorkspaceResume } from "@/lib/workspace-resume";
 import { isEmbeddedRuntime, publishEmbeddedContext } from "@/lib/embedded-runtime";
 import { createEmbeddedCanvasNoticeGate, createEmbeddedWorkspaceSyncHandler } from "@/lib/embedded-workspace-sync";
 import { useEmbeddedAskResult } from "@/hooks/use-embedded-ask-result";
-import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
+import { isCanvasEditorPath, isSpatialWorkbenchPath, shouldHydrateCanvasLibraryOnResume } from "@/lib/workspace-routes";
 import { getWorkspaceAntThemeConfig } from "@/lib/app-theme";
 import { useWorkspaceButtonFeedback } from "@/hooks/use-workspace-button-feedback";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -30,7 +30,6 @@ import { syncPartnerCatalogFromBackend, syncPluginsFromBackend } from "@/service
 import "@/styles/workspace-product.css";
 
 const workspaceTheme = getWorkspaceAntThemeConfig();
-const isCanvasProjectPath = (path: string) => /^\/canvas\/[^/]+(?:\/|$)/.test(path);
 
 export default function UserLayout({ children }: { children: ReactNode }) {
     const { pathname } = useLocation();
@@ -48,7 +47,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
         return () => clearTimeout(timer);
     }, [dismissWorkspaceNotice, workspaceNotices]);
     const spatialWorkbench = isSpatialWorkbenchPath(pathname);
-    const productWorkspace = !isCanvasProjectPath(pathname);
+    const productWorkspace = !isCanvasEditorPath(pathname);
     useWorkspaceButtonFeedback(productWorkspace);
 
     useLayoutEffect(() => {
@@ -100,7 +99,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
         const refreshProjects = () => {
             // The mounted canvas owns its revision stream and refresh. Reading
             // every project here competes with the first drag after activation.
-            if (document.hidden || isCanvasProjectPath(appPathname())) return;
+            if (!shouldHydrateCanvasLibraryOnResume(appPathname(), document.hidden)) return;
             void hydrateLocalCanvasProjectsFromBackend();
         };
         return subscribeWorkspaceResume(refreshProjects);

@@ -441,7 +441,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         return;
                     }
                     if (data.type === CanvasNodeType.Image) {
-                        if ((event.target as Element).closest("button, a, input, textarea, [data-canvas-no-zoom]")) return;
+                        if ((event.target as Element).closest("button, a, input, textarea, select, [contenteditable='true']")) return;
                         if (canEditTitle) {
                             event.stopPropagation();
                             setIsEditingTitle(true);

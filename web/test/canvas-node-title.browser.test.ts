@@ -26,7 +26,7 @@ beforeAll(async () => {
     page.on("pageerror", (error) => console.error(error.message));
     await page.route("https://beeftv-title.test/**", (route) => route.fulfill(new URL(route.request().url()).pathname === "/app.js"
         ? { contentType: "text/javascript", body: script }
-        : { contentType: "text/html", body: '<style>.canvas-node-shell{height:100%}</style><div id="root"></div><script type="module">import { mountNodeTitleHarness } from "/app.js"; const options = new URLSearchParams(location.search); mountNodeTitleHarness(document.getElementById("root"), {image: options.has("image"), maskEditActive: options.has("mask"), x: options.has("x") ? Number(options.get("x")) : undefined});</script>' }));
+        : { contentType: "text/html", body: '<style>.canvas-node-shell{height:100%}</style><div id="root"></div><script type="module">import { mountNodeTitleHarness } from "/app.js"; const options = new URLSearchParams(location.search); mountNodeTitleHarness(document.getElementById("root"), {image: options.has("image"), maskEditActive: options.has("mask"), x: options.has("x") ? Number(options.get("x")) : undefined, scale: options.has("scale") ? Number(options.get("scale")) : undefined, selected: options.has("selected"), readOnly: options.has("readOnly"), locked: options.has("locked"), error: options.has("error")});</script>' }));
 }, 30_000);
 
 afterAll(async () => { await browser?.close(); });
@@ -95,16 +95,57 @@ test("image titles expand in place on double click and stay editable on one line
     expect(await editor.count()).toBe(0);
 }, 15000);
 
-test("image title editor clamps within the viewport right edge", async () => {
+test("image title editor clamps within the viewport right edge even with tight space and non-1 scale", async () => {
     await page.setViewportSize({ width: 1280, height: 720 });
-    await page.goto("https://beeftv-title.test/?image&x=960");
+    for (const query of ["?image&x=960", "?image&x=1200", "?image&x=2400&scale=0.5"]) {
+        await page.goto(`https://beeftv-title.test/${query}`);
+        await page.addStyleTag({ content: await compileAppGlobalsStyles() });
+        await page.getByRole("button", { name: "编辑节点名称：原名称", exact: true }).getByText("原名称").dblclick();
+        const editor = page.getByRole("textbox", { name: "节点名称", exact: true });
+        await editor.fill("Very Long Title Near Right Edge - ".repeat(6));
+        const editorBox = (await editor.boundingBox())!;
+        expect(editorBox.x).toBeGreaterThanOrEqual(0);
+        expect(editorBox.x + editorBox.width).toBeLessThanOrEqual(1280);
+        expect(editorBox.width).toBeGreaterThanOrEqual(120);
+    }
+}, 20000);
+
+test("selected image exposes its pencil affordance without hovering the header", async () => {
+    await page.goto("https://beeftv-title.test/?image&selected");
     await page.addStyleTag({ content: await compileAppGlobalsStyles() });
-    await page.getByRole("button", { name: "编辑节点名称：原名称", exact: true }).dblclick();
-    const editor = page.getByRole("textbox", { name: "节点名称", exact: true });
-    await editor.fill("Very Long Title Near Right Edge - ".repeat(6));
-    const editorBox = (await editor.boundingBox())!;
-    expect(editorBox.x + editorBox.width).toBeLessThanOrEqual(1280);
-    expect(editorBox.width).toBeGreaterThanOrEqual(160);
+    const pencil = page.locator(".canvas-node-title-edit-icon");
+    await pencil.waitFor({ state: "visible" });
+    await pencil.click();
+    expect(await page.getByRole("textbox", { name: "节点名称", exact: true }).inputValue()).toBe("原名称");
+}, 15000);
+
+test("error-state image bodies still rename when editable and preview when readOnly or locked", async () => {
+    await page.goto("https://beeftv-title.test/?image&error");
+    await page.addStyleTag({ content: await compileAppGlobalsStyles() });
+    await page.locator(".canvas-node-shell").dblclick();
+    expect(await page.getByRole("textbox", { name: "节点名称", exact: true }).inputValue()).toBe("原名称");
+
+    for (const flag of ["readOnly", "locked"]) {
+        await page.goto(`https://beeftv-title.test/?image&error&${flag}`);
+        await page.addStyleTag({ content: await compileAppGlobalsStyles() });
+        await page.locator(".canvas-node-shell").dblclick();
+        expect(await page.getByRole("textbox", { name: "节点名称", exact: true }).count()).toBe(0);
+        expect(await page.getByTestId("previews").innerText()).toBe("1");
+    }
+}, 20000);
+
+test("header drag handle stays disabled for locked and readOnly nodes and starts drags when editable", async () => {
+    await page.goto("https://beeftv-title.test/?image&locked");
+    expect(await page.getByRole("button", { name: "节点已锁定", exact: true }).isDisabled()).toBe(true);
+
+    await page.goto("https://beeftv-title.test/?image&readOnly");
+    expect(await page.getByRole("button", { name: "拖动节点：原名称", exact: true }).isDisabled()).toBe(true);
+
+    await page.goto("https://beeftv-title.test/?image");
+    const dragButton = page.getByRole("button", { name: "拖动节点：原名称", exact: true });
+    expect(await dragButton.isDisabled()).toBe(false);
+    await dragButton.dispatchEvent("pointerdown", { button: 0, pointerId: 1 });
+    expect(await page.getByTestId("drags").innerText()).toBe("1");
 }, 15000);
 
 test("local repaint keeps the image title and rename editor clear of its controls", async () => {
