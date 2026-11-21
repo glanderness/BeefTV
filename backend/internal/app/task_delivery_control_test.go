@@ -16,6 +16,7 @@ import (
 
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/diagnostics"
+	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/supporttrace"
 )
@@ -357,6 +358,29 @@ func TestGenerationDownloadCompletionBetweenPauseReadAndWriteWins(t *testing.T) 
 	}
 	if !completed.Load() || deliveryPaused(got.Stage) || got.Outputs[0].MaterializedAssetID == "" {
 		t.Fatalf("completion lost to stale pause: %+v", got)
+	}
+}
+
+func TestResumeGenerationDownloadWhileStoppingReturnsConflict(t *testing.T) {
+	svc, db := newGenerationDeliveryMediaService(t, filepath.Join(t.TempDir(), "delivery.db"), t.TempDir())
+	defer closeDB(t, db)
+	task := seedSucceededTaskAt(t, db, "stopping-recover", `{"images":[{"url":"https://example.com/image.png"}]}`, time.Now())
+	_, finish, err := svc.beginGenerationDownload(task.UserID, task.ID+":0", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer finish(context.Canceled)
+
+	_, err = svc.resumeGenerationDownload(task)
+	var appErr *kernel.AppError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected *kernel.AppError, got %T (%v)", err, err)
+	}
+	if appErr.Status != http.StatusConflict || appErr.Code != kernel.CodeConflict || appErr.Reason != kernel.ReasonConflict || !appErr.Retryable {
+		t.Fatalf("unexpected conflict error: %+v", appErr)
+	}
+	if appErr.Message != "正在停止取回，请稍后再试" {
+		t.Fatalf("unexpected message: %q", appErr.Message)
 	}
 }
 

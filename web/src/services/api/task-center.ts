@@ -392,8 +392,15 @@ export function retryGenerationTask(id: string, options?: { signal?: AbortSignal
     });
 }
 
+// 与后端 GenerationDownloadTimeout (15 分钟) 匹配并留出 1 分钟收尾余量：
+// 解除 apiClient 默认的 4 秒短超时，同时避免请求在无 AbortSignal 时无限挂起。
+export const TASK_RECOVER_TIMEOUT_MS = 16 * 60 * 1000;
+
 export function recoverTask(id: string, options?: { signal?: AbortSignal }) {
-    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover`, undefined, options).then((task) => {
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover`, undefined, {
+        ...options,
+        timeout: TASK_RECOVER_TIMEOUT_MS,
+    }).then((task) => {
         publishGenerationTaskTelemetry(task);
         return task;
     });

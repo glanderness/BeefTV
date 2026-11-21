@@ -112,6 +112,7 @@ func DownloadResumable(ctx context.Context, rawURL string, opts ResumableOptions
 	defer unlock()
 
 	var lastErr error
+	freshConn := false
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptNumber := attempt + 1
 		if attempt > 0 {
@@ -120,7 +121,7 @@ func DownloadResumable(ctx context.Context, rawURL string, opts ResumableOptions
 				return ResumableResult{}, err
 			}
 		}
-		result, retryable, err := downloadResumableAttempt(ctx, parsed, opts, headerTimeout, idleTimeout, attemptNumber)
+		result, retryable, err := downloadResumableAttempt(ctx, parsed, opts, headerTimeout, idleTimeout, attemptNumber, freshConn)
 		if err == nil {
 			return result, nil
 		}
@@ -129,6 +130,9 @@ func DownloadResumable(ctx context.Context, rawURL string, opts ResumableOptions
 		}
 		if !retryable {
 			return ResumableResult{}, err
+		}
+		if IsConnectionDrop(err) {
+			freshConn = true
 		}
 		lastErr = err
 	}
@@ -159,7 +163,7 @@ func reportResumableRetrying(opts ResumableOptions, attemptNumber int) {
 	})
 }
 
-func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts ResumableOptions, headerTimeout, idleTimeout time.Duration, attemptNumber int) (ResumableResult, bool, error) {
+func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts ResumableOptions, headerTimeout, idleTimeout time.Duration, attemptNumber int, freshConn bool) (ResumableResult, bool, error) {
 	sidecar := loadResumableSidecar(opts.PartialPath)
 	offset := int64(0)
 	// Combining byte ranges requires a strong validator. Last-Modified alone
@@ -184,6 +188,9 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 
 	attemptCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
+	if freshConn {
+		attemptCtx = WithFreshConnection(attemptCtx)
+	}
 	headerTimer := time.AfterFunc(headerTimeout, func() {
 		cancel(fmt.Errorf("等待下载响应超时：%w", context.DeadlineExceeded))
 	})
@@ -200,6 +207,9 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 	if offset > 0 && sidecar != nil {
 		request.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 		request.Header.Set("If-Range", sidecar.ETag)
+	}
+	if freshConn || requiresFreshConnection(attemptCtx) {
+		request.Close = true
 	}
 	client := OutboundHTTPClient(0)
 	checkRedirect := client.CheckRedirect
@@ -344,7 +354,7 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		return ResumableResult{}, true, resumableTransferError(attemptCtx, readErr)
 	}
 	if total >= 0 && written != total {
-		return ResumableResult{}, true, io.ErrUnexpectedEOF
+		return ResumableResult{}, true, resumableConnectionDropError(io.ErrUnexpectedEOF)
 	}
 
 	data, err := os.ReadFile(opts.PartialPath)
@@ -363,6 +373,8 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 	}, false, nil
 }
 
+const ResumableConnectionDropMessage = "生成结果下载失败：连接意外中断，请检查网络或代理设置后重试取回"
+
 func resumableTransferError(ctx context.Context, err error) error {
 	if cause := context.Cause(ctx); cause != nil {
 		return cause
@@ -373,7 +385,20 @@ func resumableTransferError(ctx context.Context, err error) error {
 	for errors.As(err, &requestErr) {
 		err = requestErr.Err
 	}
+	if IsConnectionDrop(err) {
+		return resumableConnectionDropError(err)
+	}
 	return err
+}
+
+// IsConnectionDrop reports whether err represents an unexpected connection drop
+// or premature EOF during transfer (such as a stale proxy/keep-alive socket).
+func IsConnectionDrop(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || IsConnectionInterrupted(err)
+}
+
+func resumableConnectionDropError(err error) error {
+	return fmt.Errorf("%s：%w", ResumableConnectionDropMessage, err)
 }
 
 func strongResumableETag(value string) bool {

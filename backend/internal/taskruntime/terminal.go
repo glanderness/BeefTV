@@ -189,12 +189,10 @@ func (c *Terminal) HandleSuccess(task *model.Task) error {
 			_ = c.logger.Log(task.UserID, task.ID, "error", "任务成功但项目产物登记失败", registerErr.Error())
 			completionErr = errors.Join(completionErr, fmt.Errorf("任务成功后的项目产物登记失败：%w", registerErr))
 		}
-		if deliverErr := c.outputs.DeliverSucceededTask(*completedTask); deliverErr != nil {
-			_ = c.logger.Log(task.UserID, task.ID, "error", "任务成功但结果交付失败", deliverErr.Error())
-			completionErr = errors.Join(completionErr, fmt.Errorf("任务成功后的结果交付失败：%w", deliverErr))
-		}
 	}
-	_ = c.logger.Log(task.UserID, task.ID, "info", "任务完成，结果已持久化", "")
+	if completionErr == nil {
+		_ = c.logger.Log(task.UserID, task.ID, "info", "任务完成，结果已持久化", "")
+	}
 	return completionErr
 }
 

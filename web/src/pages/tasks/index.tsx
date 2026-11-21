@@ -96,7 +96,11 @@ export default function TasksPage() {
     const [retryingGroup, setRetryingGroup] = useState("");
     const [detailTask, setDetailTask] = useState<GenerationTask | null>(null);
     const detailRequestRef = useRef(0);
-    useEffect(() => () => { detailRequestRef.current += 1; }, []);
+    const recoverAbortRef = useRef<AbortController | null>(null);
+    useEffect(() => () => {
+        detailRequestRef.current += 1;
+        recoverAbortRef.current?.abort();
+    }, []);
     const [detailLoading, setDetailLoading] = useState(false);
     const [taskLogs, setTaskLogs] = useState<TaskLog[]>([]);
     const [logsLoading, setLogsLoading] = useState(false);
@@ -258,6 +262,7 @@ export default function TasksPage() {
     const openTaskDetail = useCallback(
         async (task: GenerationTask) => {
             const request = ++detailRequestRef.current;
+            recoverAbortRef.current?.abort();
             setDetailTask(task);
             setTaskLogs([]);
             setDetailIncomplete(false);
@@ -412,9 +417,12 @@ export default function TasksPage() {
 
     const queryProviderTask = async (task: GenerationTask) => {
         const request = detailRequestRef.current;
+        recoverAbortRef.current?.abort();
+        const controller = new AbortController();
+        recoverAbortRef.current = controller;
         setActingId(task.id);
         try {
-            const recoveredTask = await recoverTask(task.id);
+            const recoveredTask = await recoverTask(task.id, { signal: controller.signal });
             const outcome = readTaskOutcome(recoveredTask);
             if (outcome?.phase !== "ready" && recoveredTask.status !== "succeeded") {
                 if (request === detailRequestRef.current) setDetailTask(recoveredTask);
@@ -435,9 +443,14 @@ export default function TasksPage() {
             void loadTasks(false);
             if (request === detailRequestRef.current) message.success("生成结果已取回，未重新生成");
         } catch (error) {
-            if (request === detailRequestRef.current) message.error(error instanceof Error ? error.message : "查询上游任务失败");
+            if (!controller.signal.aborted && request === detailRequestRef.current) {
+                message.error(error instanceof Error ? error.message : "查询上游任务失败");
+            }
         } finally {
-            setActingId("");
+            if (recoverAbortRef.current === controller) {
+                recoverAbortRef.current = null;
+                setActingId("");
+            }
         }
     };
 
@@ -586,7 +599,7 @@ export default function TasksPage() {
                     </Form.Item>
                 </Form>
             </Modal>
-            <Drawer className="library-drawer" title="任务详情" open={Boolean(detailTask)} onClose={() => { detailRequestRef.current += 1; setDetailTask(null); }} size="large" destroyOnHidden>
+            <Drawer className="library-drawer" title="任务详情" open={Boolean(detailTask)} onClose={() => { detailRequestRef.current += 1; recoverAbortRef.current?.abort(); setDetailTask(null); }} size="large" destroyOnHidden>
                 {detailTask ? (
                     <div className="space-y-5">
                         {detailIncomplete ? <Alert type="warning" showIcon title="部分详情或日志读取失败" description="保留已读取的记录，当前状态可能未更新。请关闭详情后重新打开重试。" /> : null}

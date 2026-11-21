@@ -205,13 +205,21 @@ func RunVideoDownload(ctx context.Context, taskID string, policy VideoPollPolicy
 	reporter := newVideoDownloadReporter(runtime.Delivery)
 	defer reporter.clear()
 	failures := 0
+	freshConn := false
 	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, "", err
 		}
-		data, mimeType, err := download(reporter.beginAttempt(ctx, attempt))
+		attemptCtx := reporter.beginAttempt(ctx, attempt)
+		if freshConn {
+			attemptCtx = outbound.WithFreshConnection(attemptCtx)
+		}
+		data, mimeType, err := download(attemptCtx)
 		if err == nil {
 			return data, mimeType, nil
+		}
+		if outbound.IsConnectionDrop(err) {
+			freshConn = true
 		}
 		pending := videoResultPending(err)
 		// A file still being saved is not a failed transfer. Keep polling the
