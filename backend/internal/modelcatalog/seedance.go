@@ -287,9 +287,10 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput
 		return nil
 	}
 	profile = tightenedVideoCapability(input.Config, profile)
-	refs := videoReferencesForOperation(profile, metadataString(input.Metadata, "videoEditOperation"))
+	operation := videoTaskOperation(profile, input)
+	refs := videoReferencesForOperation(profile, operation)
 	applySeedanceDocumentedVideoPixelFloor(input.Config, &refs)
-	if !hasServerVideoCapability(input.Config) && isNativeDreaminaSeedance(input.Config.InterfaceType, input.Config.Model) && isSeedance25Model(input.Config.Model) && metadataString(input.Metadata, "videoEditOperation") == "inpaint" && refs.MinVideoDuration < 4 {
+	if !hasServerVideoCapability(input.Config) && isNativeDreaminaSeedance(input.Config.InterfaceType, input.Config.Model) && isSeedance25Model(input.Config.Model) && operation == "inpaint" && refs.MinVideoDuration < 4 {
 		refs.MinVideoDuration = 4
 	}
 

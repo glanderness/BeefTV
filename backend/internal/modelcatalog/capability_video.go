@@ -490,9 +490,9 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 		return kernel.BadAuthRequest("当前视频模型不支持该生成模式")
 	}
 	if len(profile.OperationReferences) > 0 {
-		return validateVideoReferenceCounts(videoReferencesForOperation(profile, metadataString(input.Metadata, "videoEditOperation")), input)
+		return validateVideoReferenceCounts(videoReferencesForOperation(profile, operation), input)
 	}
-	return nil
+	return validateVideoReferenceCounts(profile.References, input)
 }
 
 func videoDurationAllowed(value VideoDurationConfig, seconds int) bool {

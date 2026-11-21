@@ -574,12 +574,13 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 		if count := parameters["count"]; count != "" && count != "1" {
 			return nil, InvalidArg("production_image_count", "整片制作请为每张图片建立独立节点")
 		}
-		refs := graph.references(id, kind)
+		rawRefs := graph.references(id, kind)
+		orderedRefs := uniqueOrderedIDs(rawRefs)
+		refs := append([]string(nil), orderedRefs...)
 		sort.Strings(refs)
-		refs = uniqueTargetIDs(refs)
 		if kind == "video" {
 			var reconcileErr error
-			metadata, reconcileErr = reconcileCanvasVideoTarget(domain, choice.ModelKey, refs, graph, meta, parameters, metadata)
+			metadata, reconcileErr = reconcileCanvasVideoTarget(domain, choice.ModelKey, orderedRefs, graph, meta, parameters, metadata)
 			if reconcileErr != nil {
 				return nil, reconcileErr
 			}
@@ -726,6 +727,7 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 		return metadata, nil
 	}
 	var imageCount, characterCount, videoCount, audioCount int
+	directImageRefIDs := make([]string, 0, len(refs))
 	for _, refID := range refs {
 		refMeta := dependencyMetadata(graph.nodes[refID])
 		if dependencyString(refMeta, "workflowKind") == "character" {
@@ -737,6 +739,7 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 			characterCount++
 		case "图片", "绘图":
 			imageCount++
+			directImageRefIDs = append(directImageRefIDs, refID)
 		case "视频":
 			videoCount++
 		case "音频":
@@ -746,51 +749,51 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 	visualCount := imageCount + characterCount
 	supportsRefVideo := videoProfile != nil && slices.Contains(videoProfile.Operations, "reference_to_video")
 	supportsImageVideo := videoProfile == nil || slices.Contains(videoProfile.Operations, "image_to_video")
-	frameMaxImages, frameMaxAudios := 2, 0
-	if videoProfile != nil && videoProfile.OperationReferences != nil {
-		frameRefs := modelcatalog.VideoReferencesForOperation(videoProfile, "image_to_video")
-		frameMaxImages = min(2, frameRefs.MaxImages)
-		frameMaxAudios = frameRefs.MaxAudios
-	} else {
-		if hasContract && !declared {
-			if maxImg, ok := contract.MaxReferences["image"]; ok {
-				frameMaxImages = min(2, maxImg)
-			}
-		}
-		if videoProfile != nil {
-			frameMaxImages = min(2, videoProfile.References.MaxImages)
-			if !supportsRefVideo && declared {
-				frameMaxAudios = videoProfile.References.MaxAudios
-			}
+	supportsAudioVideo := videoProfile != nil && slices.Contains(videoProfile.Operations, "audio_to_video")
+	contractFrameMaxImages := 0
+	if videoProfile == nil && hasContract && !declared {
+		if maxImg, ok := contract.MaxReferences["image"]; ok {
+			contractFrameMaxImages = min(2, maxImg)
 		}
 	}
-	if declared && !supportsRefVideo && visualCount > 0 {
-		if !supportsImageVideo {
-			return nil, InvalidArg("video_reference_image_limit", "当前视频模型不支持参考图")
-		}
-		if visualCount > frameMaxImages {
-			return nil, InvalidArg("video_reference_image_limit", fmt.Sprintf("当前视频模型最多支持 %d 张首尾帧参考图", frameMaxImages))
+	frameMaxImages, frameMaxAudios := modelcatalog.VideoFrameLimits(videoProfile, declared)
+	if videoProfile == nil && contractFrameMaxImages > 0 {
+		frameMaxImages = contractFrameMaxImages
+	}
+	audioMaxAudios := modelcatalog.VideoAudioMaxAudios(videoProfile)
+	if declared && !supportsRefVideo {
+		if err := validateDeclaredFrameOnlyReferences(visualCount, videoCount, audioCount, supportsImageVideo, supportsAudioVideo, frameMaxImages, frameMaxAudios, audioMaxAudios); err != nil {
+			return nil, err
 		}
 	}
 	if frameMaxImages < 2 && (declared || hasContract) {
 		delete(parameters, "videoEndFrameNodeId")
 	}
 	hasMiddleFrame := middleFrameSupport == "supported" && parameters["videoMiddleFrameNodeId"] != ""
-	preferReferenceMode := videoProfile != nil && videoProfile.PreferReferenceMode != nil && *videoProfile.PreferReferenceMode
 	hasExplicitFrame := parameters["videoStartFrameNodeId"] != "" || parameters["videoEndFrameNodeId"] != "" || parameters["videoMiddleFrameNodeId"] != ""
-	nextOp := storedOp
-	if supportsRefVideo && (visualCount+videoCount+audioCount > 0) && (hasMiddleFrame || videoCount > 0 || characterCount > 0 || visualCount > frameMaxImages || (visualCount > 0 && audioCount > frameMaxAudios) || (storedOp == "" && preferReferenceMode && visualCount > 0 && !hasExplicitFrame)) {
-		nextOp = "reference_to_video"
-	} else if storedOp == "reference_to_video" && declared && !supportsRefVideo && supportsImageVideo && videoCount == 0 && characterCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
-		nextOp = "image_to_video"
-	} else if storedOp == "text_to_video" && supportsImageVideo && videoCount == 0 && characterCount == 0 && imageCount > 0 && imageCount <= frameMaxImages && audioCount <= frameMaxAudios {
-		nextOp = "image_to_video"
-	}
+	nextOp := modelcatalog.ResolveVideoOperation(videoProfile, modelcatalog.VideoOperationInput{
+		StoredOperation:  storedOp,
+		ImageCount:       imageCount,
+		CharacterCount:   characterCount,
+		VideoCount:       videoCount,
+		AudioCount:       audioCount,
+		HasExplicitFrame: hasExplicitFrame,
+		HasMiddleFrame:   hasMiddleFrame,
+		Declared:         declared,
+		ReconcileStored:  true,
+		FrameMaxImages:   contractFrameMaxImages,
+	})
 	if nextOp != "" && nextOp != storedOp {
 		if metadata == nil {
 			metadata = map[string]any{}
 		}
 		metadata["videoEditOperation"] = nextOp
+	}
+	if nextOp == "image_to_video" && !hasExplicitFrame && videoCount == 0 && characterCount == 0 && len(directImageRefIDs) > 0 && len(directImageRefIDs) <= frameMaxImages && audioCount <= frameMaxAudios {
+		parameters["videoStartFrameNodeId"] = directImageRefIDs[0]
+		if frameMaxImages >= 2 && len(directImageRefIDs) == 2 {
+			parameters["videoEndFrameNodeId"] = directImageRefIDs[1]
+		}
 	}
 	if nextOp == "reference_to_video" && (middleFrameSupport == "unsupported" || nextOp != storedOp) && middleFrameSupport != "supported" {
 		delete(parameters, "videoStartFrameNodeId")
@@ -799,6 +802,48 @@ func reconcileCanvasVideoTarget(domain Domain, modelKey string, refs []string, g
 		delete(metadata, "videoMiddleFrameTime")
 	}
 	return metadata, nil
+}
+
+func validateDeclaredFrameOnlyReferences(visualCount, videoCount, audioCount int, supportsImageVideo, supportsAudioVideo bool, frameMaxImages, frameMaxAudios, audioMaxAudios int) error {
+	if videoCount > 0 {
+		return InvalidArg("video_reference_video_unsupported", "当前视频模型不支持参考视频")
+	}
+	if visualCount > 0 {
+		if !supportsImageVideo {
+			return InvalidArg("video_reference_image_limit", "当前视频模型不支持参考图")
+		}
+		if visualCount > frameMaxImages {
+			return InvalidArg("video_reference_image_limit", fmt.Sprintf("当前视频模型最多支持 %d 张首尾帧参考图", frameMaxImages))
+		}
+		if audioCount > frameMaxAudios {
+			if frameMaxAudios == 0 {
+				return InvalidArg("video_reference_audio_limit", "当前视频模型图生视频不支持参考音频")
+			}
+			return InvalidArg("video_reference_audio_limit", fmt.Sprintf("当前视频模型最多支持 %d 段参考音频", frameMaxAudios))
+		}
+		return nil
+	}
+	if audioCount > 0 {
+		if !supportsAudioVideo || audioMaxAudios == 0 {
+			return InvalidArg("video_reference_audio_limit", "当前视频模型不支持仅用音频生成视频")
+		}
+		if audioCount > audioMaxAudios {
+			return InvalidArg("video_reference_audio_limit", fmt.Sprintf("当前视频模型最多支持 %d 段参考音频", audioMaxAudios))
+		}
+	}
+	return nil
+}
+
+func uniqueOrderedIDs(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func uniqueTargetIDs(ids []string) []string {
