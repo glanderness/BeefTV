@@ -228,15 +228,15 @@ function mergeHydratedAssetStoreDrafts(
     return { merged, clocks, bumped };
 }
 
-function applyAssetStoreDraftsToEffectiveAssets(drafts: Map<string, AssetStoreDraft>) {
-    if (!drafts.size) return;
+function applyAssetStoreDraftsToEffectiveAssets(drafts: Map<string, AssetStoreDraft>, tombstones?: ReadonlySet<string>) {
+    if (!drafts.size && !tombstones?.size) return;
     runAssetStoreProjection(() => {
         hooks.applyDrafts((assets) => {
             const upserts = new Map<string, Asset>();
-            const deleted = new Set<string>();
+            const deleted = new Set<string>(tombstones);
             for (const [id, draft] of drafts) {
                 if (draft.kind === "delete") deleted.add(id);
-                else if (draft.asset) upserts.set(id, cloneAssetSnapshot(draft.asset));
+                else if (draft.asset && !deleted.has(id)) upserts.set(id, cloneAssetSnapshot(draft.asset));
             }
             const next: Asset[] = [];
             const seen = new Set<string>();
@@ -258,7 +258,10 @@ export async function hydrateAssetStoreDrafts(userScope = getActiveUserScope(), 
     if (hydratedAssetDraftScopes.has(userScope)) {
         if (options?.reproject && userScope === getActiveUserScope()) {
             const existing = assetStoreDrafts.get(userScope);
-            if (existing?.size) applyAssetStoreDraftsToEffectiveAssets(existing);
+            const tombstones = deletedGenerationAssetIds.get(userScope);
+            if (existing?.size || tombstones?.size) {
+                applyAssetStoreDraftsToEffectiveAssets(existing ?? new Map(), tombstones);
+            }
         }
         return;
     }
@@ -278,7 +281,7 @@ export async function hydrateAssetStoreDrafts(userScope = getActiveUserScope(), 
         if (mergedDeleted.size) deletedGenerationAssetIds.set(userScope, mergedDeleted);
         else deletedGenerationAssetIds.delete(userScope);
         hydratedAssetDraftScopes.add(userScope);
-        if (userScope === getActiveUserScope()) applyAssetStoreDraftsToEffectiveAssets(merged);
+        if (userScope === getActiveUserScope()) applyAssetStoreDraftsToEffectiveAssets(merged, mergedDeleted);
         if (memoryDrafts.size > 0 || bumped) scheduleAssetStoreDraftPersist(userScope);
     })();
 

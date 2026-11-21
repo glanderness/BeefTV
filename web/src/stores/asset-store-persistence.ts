@@ -9,7 +9,13 @@ import { resolveMediaUrl } from "@/services/file-storage";
 import { flushGenerationAssetStorageLocks, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
-import { flushAssetStoreDraftWrites, hasActiveAssetStoreDraftWrites, peekAssetStoreDraft, retryFailedAssetStoreDraftPersist } from "./asset-store-drafts";
+import {
+    flushAssetStoreDraftWrites,
+    hasActiveAssetStoreDraftWrites,
+    isDeletedGenerationAsset,
+    peekAssetStoreDraft,
+    retryFailedAssetStoreDraftPersist,
+} from "./asset-store-drafts";
 import type { Asset, AssetStore } from "./asset-types";
 
 export const ASSET_STORE_KEY = "infinite-canvas:asset_store";
@@ -206,7 +212,7 @@ export async function clearLegacyDesktopAssetCache(scope = getActiveUserScope(),
         return false;
     }
     const uncovered = legacy.assetIds.filter((id) => {
-        if (committedIds?.has(id)) return false;
+        if (committedIds?.has(id) || isDeletedGenerationAsset(scope, id)) return false;
         const draft = peekAssetStoreDraft(scope, id);
         if (!draft) return true;
         if (draft.kind === "delete") return false;

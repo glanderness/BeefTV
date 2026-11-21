@@ -7,6 +7,7 @@ import * as runtimeMode from "@/lib/runtime-mode";
 import { getActiveUserScope, scopedStorageKey, setActiveUserScope } from "@/lib/user-scope";
 import { applyUserSession } from "@/lib/user-session";
 import { apiClient } from "@/services/api/request";
+import { deleteStoredMedia, getMediaBlob, setMediaBlob } from "@/services/file-storage";
 import {
     loadWorkspaceAssetLibraryPage,
     preserveLegacyCacheOnlyAssetDrafts,
@@ -216,20 +217,112 @@ describe("asset store single-source persistence", () => {
         }
     });
 
-    test("cleanupImages in desktop single-source mode skips destructive IndexedDB blob sweep", async () => {
+    test("single-source cleanupImages skips full-store sweeps while removeAsset reclaims only the deleted asset's fallback blobs", async () => {
         const scope = "desktop-cleanup-safe";
         const restore = switchScope(scope);
         enterDesktopSingleSourceMode();
         const imageStore = localForageInstance(IMAGE_FILES_STORE_NAME);
-        const draftBlobKey = `image:${scope}:draft-fallback-1`;
-        await imageStore.setItem(draftBlobKey, new Blob(["img"], { type: "image/png" }));
+        const removedImageKey = `image:${scope}:removed-fallback-1`;
+        const retainedImageKey = `image:${scope}:other-draft-fallback-2`;
+        const removedVideoKey = `video:${scope}:removed-fallback-vid`;
+        const retainedVideoKey = `video:${scope}:other-draft-vid`;
+        await imageStore.setItem(removedImageKey, new Blob(["img-a"], { type: "image/png" }));
+        await imageStore.setItem(retainedImageKey, new Blob(["img-b"], { type: "image/png" }));
+        await setMediaBlob(removedVideoKey, new Blob(["vid-a"], { type: "video/mp4" }));
+        await setMediaBlob(retainedVideoKey, new Blob(["vid-b"], { type: "video/mp4" }));
 
         try {
+            const removedImgId = useAssetStore.getState().addAsset({
+                kind: "image",
+                title: "待删图片草稿",
+                coverUrl: "blob:http://localhost/removed",
+                tags: [],
+                category: "other",
+                status: "confirmed",
+                source: "手动添加",
+                pendingRemoteUpload: true,
+                data: { dataUrl: "blob:http://localhost/removed", storageKey: removedImageKey, width: 100, height: 100, bytes: 5, mimeType: "image/png" },
+            });
+            const removedVidId = useAssetStore.getState().addAsset({
+                kind: "video",
+                title: "待删视频草稿",
+                coverUrl: "",
+                tags: [],
+                category: "other",
+                status: "confirmed",
+                source: "手动添加",
+                pendingRemoteUpload: true,
+                data: { url: "blob:http://localhost/vid", storageKey: removedVideoKey, width: 1280, height: 720, bytes: 5, mimeType: "video/mp4" },
+            });
+
+            await useAssetStore.getState().removeAsset(removedImgId);
+            await useAssetStore.getState().removeAsset(removedVidId);
+            expect(await imageStore.getItem(removedImageKey)).toBeNull();
+            expect(await getMediaBlob(removedVideoKey)).toBeNull();
+            // Other unloaded/surviving draft blobs must NOT be touched.
+            expect(await imageStore.getItem(retainedImageKey)).not.toBeNull();
+            expect(await getMediaBlob(retainedVideoKey)).not.toBeNull();
+
+            // Direct cleanupImages call still skips full-store IndexedDB sweep.
             useAssetStore.setState({ assets: [] });
             await useAssetStore.getState().cleanupImages();
-            expect(await imageStore.getItem(draftBlobKey)).not.toBeNull();
+            expect(await imageStore.getItem(retainedImageKey)).not.toBeNull();
+            expect(await getMediaBlob(retainedVideoKey)).not.toBeNull();
         } finally {
-            await imageStore.removeItem(draftBlobKey);
+            await imageStore.removeItem(removedImageKey);
+            await imageStore.removeItem(retainedImageKey);
+            await deleteStoredMedia([removedVideoKey, retainedVideoKey]);
+            restore();
+        }
+    });
+
+    test("legacy ASSET_STORE_KEY entries covered by deletedGenerationIds tombstone stay filtered and allow legacy cache cleanup", async () => {
+        const scope = "desktop-legacy-tombstone";
+        const restore = switchScope(scope);
+        enterDesktopSingleSourceMode();
+        const memory = new Map<string, string>();
+        const legacyKey = scopedStorageKey(ASSET_STORE_KEY, scope);
+        const draftsKey = scopedStorageKey(ASSET_STORE_DRAFTS_KEY, scope);
+
+        memory.set(legacyKey, serializeAssetStorageDocument({
+            state: {
+                assets: [
+                    textAsset("generation_deleted_1", "已删旧生成素材"),
+                    textAsset("in-sqlite", "已在库里"),
+                ],
+            },
+            version: 0,
+            storageRevision: 4,
+            tombstones: { assets: {} },
+        }));
+        memory.set(draftsKey, JSON.stringify({
+            drafts: {},
+            clocks: { generation_deleted_1: 2 },
+            deletedGenerationIds: ["generation_deleted_1"],
+        }));
+
+        spies.push(spyOn(localforage, "getItem").mockImplementation(async (key) => memory.get(String(key)) ?? null));
+        spies.push(spyOn(localforage, "setItem").mockImplementation(async (key, value) => {
+            memory.set(String(key), String(value));
+            return value;
+        }));
+        spies.push(spyOn(localforage, "removeItem").mockImplementation(async (key) => {
+            memory.delete(String(key));
+        }));
+
+        try {
+            await useAssetStore.persist.rehydrate();
+            await hydrateAssetStoreDrafts(scope, { reproject: true });
+            expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual(["in-sqlite"]);
+
+            const result = await withAdapter(async () => envelope({
+                assets: [{ id: "in-sqlite", title: "已在库里", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }],
+            }), async () => preserveLegacyCacheOnlyAssetDrafts());
+
+            expect(result.preservedIds).toEqual([]);
+            expect(peekAssetStoreDraft(scope, "generation_deleted_1")).toBeUndefined();
+            expect(memory.has(legacyKey)).toBe(false);
+        } finally {
             restore();
         }
     });
@@ -402,6 +495,70 @@ describe("asset store single-source persistence", () => {
                     data: { content: "zombie" },
                 })).rejects.toThrow("生成素材已被用户删除");
             });
+            expect(catalogWrites).toEqual([]);
+
+            // Case 3: SQLite media row with stale blob: URLs + sibling corrupt row -> full resource URL normalization & row isolation.
+            const effectKeyMedia = "task-media:output:0";
+            const mediaDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKeyMedia));
+            const mediaId = `generation_${Array.from(new Uint8Array(mediaDigest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+            const returnedMediaId = await withAdapter(async () => envelope({
+                assets: [
+                    { id: "corrupt-sibling", kind: "image" },
+                    {
+                        id: mediaId,
+                        kind: "image",
+                        title: "远端图片素材",
+                        coverUrl: "blob:http://stale/cover",
+                        tags: ["生成"],
+                        category: "other",
+                        status: "confirmed",
+                        source: "生成任务",
+                        data: {
+                            storageKey: "resource:res-img-1",
+                            dataUrl: "blob:http://stale/img",
+                            width: 1024,
+                            height: 1024,
+                            bytes: 4096,
+                            mimeType: "image/png",
+                        },
+                        createdAt: "2026-10-02T00:00:00.000Z",
+                        updatedAt: "2026-10-02T00:00:00.000Z",
+                        metadata: { generationEffectKey: effectKeyMedia },
+                    },
+                ],
+            }), async () => useAssetStore.getState().addGenerationAsset(effectKeyMedia, {
+                kind: "image",
+                title: "默认图片标题",
+                coverUrl: "",
+                tags: ["生成"],
+                status: "confirmed",
+                source: "生成任务",
+                data: { dataUrl: "https://example.com/fallback.png", width: 1024, height: 1024, bytes: 4096, mimeType: "image/png" },
+            }));
+            expect(returnedMediaId).toBe(mediaId);
+            const normalizedMedia = useAssetStore.getState().assets.find((item) => item.id === mediaId);
+            expect(normalizedMedia?.kind).toBe("image");
+            expect(normalizedMedia?.coverUrl).toBe("/api/resources/res-img-1/file");
+            if (normalizedMedia?.kind === "image") {
+                expect(normalizedMedia.data.dataUrl).toBe("/api/resources/res-img-1/file");
+            }
+
+            // Case 4: transient SQLite lookup failure degrades gracefully to local pending draft instead of losing output.
+            const effectKeyOffline = "task-offline:output:0";
+            const offlineId = await withAdapter(async () => {
+                throw new Error("sqlite busy");
+            }, async () => useAssetStore.getState().addGenerationAsset(effectKeyOffline, {
+                kind: "text",
+                title: "离线降级草稿",
+                coverUrl: "",
+                tags: ["生成"],
+                status: "confirmed",
+                source: "生成任务",
+                data: { content: "offline-output" },
+            }));
+            await flushAssetStorePersistence();
+            expect(useAssetStore.getState().assets.find((item) => item.id === offlineId)?.title).toBe("离线降级草稿");
+            expect(peekAssetStoreDraft(scope, offlineId)?.kind).toBe("upsert");
             expect(catalogWrites).toEqual([]);
         } finally {
             restore();

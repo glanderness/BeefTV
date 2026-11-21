@@ -7,12 +7,12 @@ import { rebaseAssetSnapshot, serializeAssetStorageDocument, type AssetStorageDo
 import { parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
+import { parseWorkspaceAssetPayloads } from "@/lib/workspace-asset-normalize";
 import { lookupWorkspaceAssetsByIds } from "@/services/api/workspace-assets";
 import { readAllCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
-import { cleanupUnusedMedia, collectMediaStorageKeys } from "@/services/file-storage";
+import { cleanupUnusedMedia, collectMediaStorageKeys, deleteStoredMedia } from "@/services/file-storage";
 import { insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
-import { cleanupUnusedImages, collectImageStorageKeys } from "@/services/image-storage";
+import { cleanupUnusedImages, collectImageStorageKeys, deleteStoredImages } from "@/services/image-storage";
 import { usesSingleSourceLocalPersistence } from "@/services/workspace-resource-storage";
 import { CANVAS_STORE_KEY, commitPendingCanvasStorePersistenceLocked, pendingCanvasStorePersistence, withCanvasStorePersistenceLock } from "@/stores/canvas/use-canvas-store";
 import {
@@ -70,6 +70,7 @@ export {
     ASSET_STORE_DRAFTS_KEY,
     ackAssetStoreDraft,
     hydrateAssetStoreDrafts,
+    isDeletedGenerationAsset,
     peekAssetStoreDraft,
     promoteAssetStoreDraftsBatch,
     readAssetStoreDrafts,
@@ -89,24 +90,6 @@ export {
 async function generationAssetId(effectKey: string) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKey));
     return `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-
-function normalizeServerAssetRecord(raw: unknown): Asset {
-    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-        const record = raw as Record<string, unknown>;
-        const data = record.data && typeof record.data === "object" && !Array.isArray(record.data) ? (record.data as Record<string, unknown>) : null;
-        if (data && typeof data.storageKey === "string") {
-            const resourceId = resourceIdFromStorageKey(data.storageKey);
-            const media = record.kind === "image" || record.kind === "video" || record.kind === "audio" || record.kind === "model";
-            if (resourceId && media) {
-                const field = record.kind === "image" ? "dataUrl" : "url";
-                if (data[field] === undefined) {
-                    return parseAssetRecord({ ...record, data: { ...data, [field]: resourceFileUrl(resourceId) } });
-                }
-            }
-        }
-    }
-    return parseAssetRecord(raw);
 }
 
 export const useAssetStore = create<AssetStore>()(
@@ -129,6 +112,26 @@ export const useAssetStore = create<AssetStore>()(
                         effectKey,
                         (async () => {
                             const id = await generationAssetId(effectKey);
+                            await hydrateAssetStoreDrafts(scope);
+                            // Check SQLite outside the asset storage lock so a slow or transient
+                            // backend error neither blocks sibling writes nor breaks draft creation.
+                            let remoteMatches: Asset[] = [];
+                            const hasLocalMatch = get().assets.some((item) => item.id === id || item.metadata?.generationEffectKey === effectKey);
+                            if (!isDeletedGenerationAsset(scope, id) && !hasLocalMatch) {
+                                try {
+                                    const remote = await lookupWorkspaceAssetsByIds([id], { signal });
+                                    remoteMatches = parseWorkspaceAssetPayloads(remote.assets);
+                                } catch (error) {
+                                    if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+                                        throw error;
+                                    }
+                                    console.warn("生成素材回查本地库失败，将先保存为本地草稿等待后续同步", {
+                                        scope,
+                                        assetId: id,
+                                        error: error instanceof Error ? error.message : String(error),
+                                    });
+                                }
+                            }
                             let createdAsset: Asset | undefined;
                             return insertOrReturnGenerationAsset<Asset>({
                                 storageScope: scope,
@@ -155,16 +158,9 @@ export const useAssetStore = create<AssetStore>()(
                                     try {
                                         await hydrateAssetStoreDrafts(scope);
                                         const current = get().assets;
-                                        if (current.some((item) => item.id === id || item.metadata?.generationEffectKey === effectKey)) {
-                                            return current;
-                                        }
-                                        // Check SQLite authoritatively so an unloaded committed generation
-                                        // asset is never recreated or overwritten with a new draft.
-                                        const remote = await lookupWorkspaceAssetsByIds([id], { signal });
-                                        const found = (remote.assets || []).map(normalizeServerAssetRecord);
-                                        if (!found.length) return current;
+                                        if (!remoteMatches.length) return current;
                                         const byId = new Map(current.map((item) => [item.id, item]));
-                                        for (const item of found) {
+                                        for (const item of remoteMatches) {
                                             if (!byId.has(item.id)) byId.set(item.id, item);
                                         }
                                         return [...byId.values()];
@@ -286,7 +282,22 @@ export const useAssetStore = create<AssetStore>()(
                 // 没有本地媒体定位时没有需要由该删除动作回收的 Blob；跳过全库扫描，
                 // 避免纯文本/远程资源删除依赖浏览器 IndexedDB 驱动。
                 if (options?.cleanupMedia === false) return;
-                if (!removedAsset || (!collectImageStorageKeys(removedAsset).size && !collectMediaStorageKeys(removedAsset).size)) return;
+                if (!removedAsset) return;
+                const removedImageKeys = collectImageStorageKeys(removedAsset);
+                const removedMediaKeys = collectMediaStorageKeys(removedAsset);
+                if (!removedImageKeys.size && !removedMediaKeys.size) return;
+                if (usesSingleSourceLocalPersistence()) {
+                    // Single-source mode skips whole-store IndexedDB GC, so explicitly delete
+                    // unreferenced fallback blobs owned by the removed asset itself.
+                    const retained = { assets: remainingAssets, drafts: readAssetStoreDrafts().upserts };
+                    const retainedImageKeys = collectImageStorageKeys(retained);
+                    const retainedMediaKeys = collectMediaStorageKeys(retained);
+                    const orphanImageKeys = [...removedImageKeys].filter((key) => !retainedImageKeys.has(key));
+                    const orphanMediaKeys = [...removedMediaKeys].filter((key) => !retainedMediaKeys.has(key));
+                    if (orphanImageKeys.length) await deleteStoredImages(orphanImageKeys);
+                    if (orphanMediaKeys.length) await deleteStoredMedia(orphanMediaKeys);
+                    return;
+                }
                 await get().cleanupImages({ assets: remainingAssets });
             },
             replaceAssets: (assets) => set({ assets: assets.map(parseAssetRecord) }),
