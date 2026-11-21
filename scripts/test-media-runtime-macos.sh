@@ -58,6 +58,6 @@ for executable in "$bundle/MacOS/BeefTV" "$bundle/MacOS/cli/beeftv"; do
     "$executable" -test.run '^TestBundledMediaMetadataWithoutSystemFFprobe$' -test.v
 done
 env -u CANVAS_FFPROBE_PATH -u CANVAS_FFMPEG_PATH PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-  "$bundle/MacOS/MediaProbe" -test.run '^TestProbeLocalDoesNotFetchPlaylistURLs$' -test.v
+  "$bundle/MacOS/MediaProbe" -test.run '^(TestProbeLocalDoesNotFetchPlaylistURLs|TestScaleImagePreviewEXIFOrientationAndPNG|TestExtractVideoPosterFrameZeroAndBlackFallback)$' -test.v
 env -u CANVAS_FFPROBE_PATH -u CANVAS_FFMPEG_PATH PATH=/usr/bin:/bin:/usr/sbin:/sbin \
   "$bundle/MacOS/MediaEditing" -test.run '^TestPortraitSubtitleStaysInsideFrame$' -test.v

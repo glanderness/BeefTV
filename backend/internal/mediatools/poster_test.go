@@ -9,6 +9,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -123,4 +124,102 @@ func TestScaleImagePreviewEXIFOrientationAndPNG(t *testing.T) {
 	if aLeft >= 0xF000 {
 		t.Fatalf("expected preserved semi-transparent alpha on scaled PNG, got alpha=%d", aLeft>>8)
 	}
+}
+
+func makePosterTestClip(t *testing.T, ffmpegBin, outPath, filterComplex string) {
+	t.Helper()
+	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y"}
+	args = append(args, "-f", "lavfi", "-i", filterComplex)
+	args = append(args, PreferredH264VideoArgs(ffmpegBin, "ultrafast", "28", "800k", "1200k")...)
+	args = append(args, "-an", outPath)
+	cmd := exec.Command(ffmpegBin, args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generate test clip %s: %v\n%s", filepath.Base(outPath), err, string(out))
+	}
+}
+
+func TestExtractVideoPosterFrameZeroAndBlackFallback(t *testing.T) {
+	ffmpegBin, err := ResolveFFmpeg()
+	if err != nil {
+		t.Skipf("ffmpeg unavailable in test environment: %v", err)
+	}
+	if !SupportsH264Encode(ffmpegBin) {
+		t.Skipf("ffmpeg %s has no h264 encoder for fixture generation", ffmpegBin)
+	}
+	dir := t.TempDir()
+
+	// 1. Non-black opening frame (red 0.0-0.15s, then blue 0.15-0.6s):
+	//    ExtractVideoPoster must preserve frame 0 (red) instead of skipping to 0.2s.
+	redThenBlue := filepath.Join(dir, "red-then-blue.mp4")
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-f", "lavfi", "-i", "color=c=red:s=160x90:r=20:d=0.15",
+		"-f", "lavfi", "-i", "color=c=blue:s=160x90:r=20:d=0.45",
+		"-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+		"-map", "[v]",
+	}
+	args = append(args, PreferredH264VideoArgs(ffmpegBin, "ultrafast", "28", "800k", "1200k")...)
+	args = append(args, "-an", redThenBlue)
+	if out, err := exec.Command(ffmpegBin, args...).CombinedOutput(); err != nil {
+		t.Fatalf("generate red-then-blue clip: %v\n%s", err, string(out))
+	}
+	poster1 := filepath.Join(dir, "poster1.jpg")
+	if err := ExtractVideoPoster(context.Background(), redThenBlue, poster1, 1024); err != nil {
+		t.Fatalf("ExtractVideoPoster (non-black frame 0): %v", err)
+	}
+	img1, fmt1, err := decodePosterFile(poster1)
+	if err != nil || fmt1 != "jpeg" {
+		t.Fatalf("decode poster1: format=%q err=%v", fmt1, err)
+	}
+	r1, _, b1, _ := img1.At(80, 45).RGBA()
+	if r1>>8 <= (b1>>8)+60 {
+		t.Fatalf("expected frame 0 (red) to be preserved, got R=%d B=%d", r1>>8, b1>>8)
+	}
+
+	// 2. Pure-black lead-in (black 0.0-0.15s, then blue 0.15-0.6s):
+	//    ExtractVideoPoster detects black frame 0 and falls forward to 0.2s (blue).
+	blackThenBlue := filepath.Join(dir, "black-then-blue.mp4")
+	args2 := []string{
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-f", "lavfi", "-i", "color=c=black:s=160x90:r=20:d=0.15",
+		"-f", "lavfi", "-i", "color=c=blue:s=160x90:r=20:d=0.45",
+		"-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+		"-map", "[v]",
+	}
+	args2 = append(args2, PreferredH264VideoArgs(ffmpegBin, "ultrafast", "28", "800k", "1200k")...)
+	args2 = append(args2, "-an", blackThenBlue)
+	if out, err := exec.Command(ffmpegBin, args2...).CombinedOutput(); err != nil {
+		t.Fatalf("generate black-then-blue clip: %v\n%s", err, string(out))
+	}
+	poster2 := filepath.Join(dir, "poster2.jpg")
+	if err := ExtractVideoPoster(context.Background(), blackThenBlue, poster2, 1024); err != nil {
+		t.Fatalf("ExtractVideoPoster (black lead-in): %v", err)
+	}
+	img2, fmt2, err := decodePosterFile(poster2)
+	if err != nil || fmt2 != "jpeg" {
+		t.Fatalf("decode poster2: format=%q err=%v", fmt2, err)
+	}
+	r2, _, b2, _ := img2.At(80, 45).RGBA()
+	if b2>>8 <= (r2>>8)+60 {
+		t.Fatalf("expected black lead-in to advance to 0.2s (blue), got R=%d B=%d", r2>>8, b2>>8)
+	}
+
+	// 3. Ultra-short all-black clip (< 0.2s): 0.2s fallback fails past EOF, frame 0 is retained.
+	shortBlack := filepath.Join(dir, "short-black.mp4")
+	makePosterTestClip(t, ffmpegBin, shortBlack, "color=c=black:s=160x90:r=20:d=0.1")
+	poster3 := filepath.Join(dir, "poster3.jpg")
+	if err := ExtractVideoPoster(context.Background(), shortBlack, poster3, 1024); err != nil {
+		t.Fatalf("ExtractVideoPoster (ultra-short black clip): %v", err)
+	}
+	if _, fmt3, err := decodePosterFile(poster3); err != nil || fmt3 != "jpeg" {
+		t.Fatalf("decode poster3: format=%q err=%v", fmt3, err)
+	}
+}
+
+func decodePosterFile(path string) (image.Image, string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	return image.Decode(bytes.NewReader(raw))
 }

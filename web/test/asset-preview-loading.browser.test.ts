@@ -64,6 +64,7 @@ beforeAll(async () => {
             libraryCard: url.searchParams.has("libraryCard"),
             posterTimeoutMs: Number(url.searchParams.get("posterTimeoutMs") || 0),
             prestartCanvasPreview: url.searchParams.has("prestartCanvasPreview"),
+            canvasVideoPoster: url.searchParams.has("canvasVideoPoster"),
         });
         return new Response(`<!doctype html><html><head><link rel="stylesheet" href="/harness.css"><style>.preview{display:block;width:100%;height:100%;object-fit:cover}</style></head><body><div id="root"></div><script>window.__fixture=${fixture}</script><script type="module" src="/harness.js"></script></body></html>`, { headers: { "Content-Type": "text/html" } });
     } });
@@ -284,5 +285,30 @@ test("mounted card that times out joining a slow in-flight canvas preview recove
     expect(mediaRequests).toBe(1);
     expect(await page.locator("video").count()).toBe(0);
 }, 15_000);
+
+test("canvas InactiveVideoPreview loads server poster and falls back to client capture when server poster fails", async () => {
+    await page.goto(`${server.url}?canvasVideoPoster&directPoster`);
+    await page.waitForFunction(() => {
+        const canvasImg = document.querySelector('[data-testid="canvas-video-preview"] img') as HTMLImageElement | null;
+        return Boolean(canvasImg && canvasImg.naturalWidth > 0);
+    }, null, { timeout: 10_000 });
+    expect(await page.locator('[data-testid="canvas-video-preview"] img').getAttribute("src")).toContain("/api/resources/video-0-0/asset/poster.jpg?variant=poster");
+    expect(mediaRequests).toBe(0);
+    expect(await page.locator("video").count()).toBe(0);
+
+    // Simulate HTTP 500 from /asset/poster.jpg: InactiveVideoPreview must fall back to browser frame capture instead of showing unavailable.
+    failServerPoster = true;
+    mediaRequests = 0;
+    posterRequests = 0;
+    await page.goto(`${server.url}?canvasVideoPoster&directPoster`);
+    await page.waitForFunction(() => {
+        const canvasImg = document.querySelector('[data-testid="canvas-video-preview"] img') as HTMLImageElement | null;
+        return Boolean(canvasImg && canvasImg.src.startsWith("blob:") && canvasImg.naturalWidth > 0);
+    }, null, { timeout: 15_000 });
+    expect(await page.locator('[data-testid="canvas-video-preview"]').textContent()).not.toContain("首帧暂不可用");
+    expect(posterRequests).toBe(1);
+    expect(mediaRequests).toBe(1);
+    expect(await page.locator("video").count()).toBe(0);
+}, 25_000);
 
 afterAll(async () => { releaseStall?.(); await page?.close(); await browser?.close(); server?.stop(true); }, 15_000);
