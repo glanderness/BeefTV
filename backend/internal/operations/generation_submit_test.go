@@ -1,10 +1,13 @@
 package operations
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 )
 
@@ -1133,5 +1136,68 @@ func TestGenerationTargetsUntaggedReferencesDefaultOperationAndFrameSlots(t *tes
 	}
 	if _, err := GenerationTargets(probe, doc, []string{"shot-video-ref"}); err == nil || !strings.Contains(err.Error(), "参考视频") {
 		t.Fatalf("shot-video-ref expected unsupported reference video rejection, got %v", err)
+	}
+}
+
+func TestGenerationTargetsSerializesEmptyReferenceNodeIDsAsJSONArray(t *testing.T) {
+	doc := map[string]any{
+		"nodes": []any{
+			map[string]any{
+				"id":    "img-solo",
+				"type":  "image",
+				"title": "定妆图",
+				"metadata": map[string]any{
+					"model":  "beeftv::dola-seedream-5-0-flash-260915",
+					"prompt": "赛博雨夜橘猫侦探",
+					"size":   "2K",
+					"count":  "1",
+				},
+			},
+		},
+		"connections": []any{},
+	}
+	probe := &mixedGenerationProbe{}
+	probe.resolve = func(_, selected string) (AssistantGenerationModel, error) {
+		return AssistantGenerationModel{ModelKey: selected, Display: selected}, nil
+	}
+	targets, err := GenerationTargets(probe, doc, []string{"img-solo"})
+	if err != nil {
+		t.Fatalf("GenerationTargets error: %v", err)
+	}
+	if len(targets) != 1 || targets[0].ReferenceNodeIDs == nil || len(targets[0].ReferenceNodeIDs) != 0 {
+		t.Fatalf("expected non-nil empty ReferenceNodeIDs, got %#v", targets)
+	}
+	encoded, err := json.Marshal(targets)
+	if err != nil {
+		t.Fatalf("json.Marshal error: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"referenceNodeIds":[]`) {
+		t.Fatalf("expected empty JSON array for referenceNodeIds, got %s", string(encoded))
+	}
+
+	// Legacy v2.4.0/v2.4.1 persisted orders stored `"referenceNodeIds": null` for zero-reference targets.
+	legacyJSON := strings.Replace(string(encoded), `"referenceNodeIds":[]`, `"referenceNodeIds":null`, 1)
+	var legacyTargets []GenerationTarget
+	if err := json.Unmarshal([]byte(legacyJSON), &legacyTargets); err != nil {
+		t.Fatalf("unmarshal legacy targets: %v", err)
+	}
+	if legacyTargets[0].ReferenceNodeIDs != nil {
+		t.Fatalf("expected nil ReferenceNodeIDs in legacy fixture, got %#v", legacyTargets[0].ReferenceNodeIDs)
+	}
+	if !GenerationTargetsEqual(targets, legacyTargets) {
+		t.Fatalf("expected canonical equality between [] and nil ReferenceNodeIDs")
+	}
+	if !generationTargetsContainBatch(legacyTargets, targets) {
+		t.Fatalf("expected generationTargetsContainBatch to accept legacy nil-ref order against fresh targets")
+	}
+	legacyTargetBytes, _ := json.Marshal(legacyTargets[0])
+	legacyTask := &model.Task{
+		ProjectID: "canvas-1",
+		Type:      "canvas_image",
+		Prompt:    targets[0].Prompt,
+		InputJSON: fmt.Sprintf(`{"metadata":{"assistantProductionTargetHash":"%x"}}`, sha256.Sum256(legacyTargetBytes)),
+	}
+	if err := ValidateProductionTask(legacyTask, "canvas-1", targets[0]); err != nil {
+		t.Fatalf("ValidateProductionTask must accept pre-upgrade null-ref hash against fresh target: %v", err)
 	}
 }

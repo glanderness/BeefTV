@@ -41,6 +41,10 @@ func ResourceNotFound() error {
 	return kernel.NotFound("资源不存在")
 }
 
+func AssetNotFound() error {
+	return kernel.NotFound("素材不存在")
+}
+
 func ResourceFileMissing() error {
 	return kernel.NotFound("本地媒体文件不存在或已丢失")
 }

@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -59,4 +60,24 @@ func TestBusinessProjectAndAssetCRUD(t *testing.T) {
 		t.Fatal("asset rename lost")
 	}
 	call("DELETE", "/api/assets/business-text", nil)
+	if _, ok := catalog.Match(http.MethodDelete, "/api/assets/business-text"); !ok {
+		t.Fatalf("not discoverable: DELETE /api/assets/business-text")
+	}
+	missingReq := WithExternalBusinessPrincipal(httptest.NewRequest(http.MethodDelete, "/api/assets/business-text", nil), false)
+	missingRec := httptest.NewRecorder()
+	env.router.ServeHTTP(missingRec, missingReq)
+	if missingRec.Code != http.StatusNotFound {
+		t.Fatalf("DELETE missing asset status = %d, want 404 (%s)", missingRec.Code, missingRec.Body.String())
+	}
+	var missingBody struct {
+		Code   int    `json:"code"`
+		Reason string `json:"reason"`
+		Msg    string `json:"msg"`
+	}
+	if err := json.Unmarshal(missingRec.Body.Bytes(), &missingBody); err != nil {
+		t.Fatalf("unmarshal 404 body: %v (%s)", err, missingRec.Body.String())
+	}
+	if missingBody.Code != http.StatusNotFound || missingBody.Reason != "not_found" || missingBody.Msg != "素材不存在" {
+		t.Fatalf("DELETE missing asset body = %+v, want 404/not_found/素材不存在", missingBody)
+	}
 }

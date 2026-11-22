@@ -173,10 +173,10 @@
         }
 
     .canvas-topbar-canvas-switch {
-        width: 59px !important;
-        min-width: 59px !important;
+        min-width: 59px;
+        max-width: 120px;
+        overflow: hidden;
         justify-content: center;
-        padding-inline: 4px !important;
     }
 
     .canvas-topbar-canvas-menu-heading {

@@ -206,9 +206,33 @@ export async function confirmAssistantScriptProposal(
     );
 }
 
+export function normalizeAssistantProposal(proposal: AssistantGenerationProposal): AssistantGenerationProposal {
+    const normalizeTarget = <T extends { parameters?: Record<string, string> | null; referenceNodeIds?: string[] | null }>(target: T): T => ({
+        ...target,
+        parameters: target.parameters && typeof target.parameters === "object" ? target.parameters : {},
+        referenceNodeIds: Array.isArray(target.referenceNodeIds) ? target.referenceNodeIds : [],
+    });
+    return {
+        ...proposal,
+        nodeIds: Array.isArray(proposal.nodeIds) ? proposal.nodeIds : [],
+        ...(proposal.targets !== undefined
+            ? { targets: Array.isArray(proposal.targets) ? proposal.targets.map(normalizeTarget) : [] }
+            : {}),
+        ...(proposal.production
+            ? {
+                production: {
+                    ...proposal.production,
+                    targets: Array.isArray(proposal.production.targets) ? proposal.production.targets.map(normalizeTarget) : [],
+                },
+            }
+            : {}),
+    };
+}
+
 export async function confirmAssistantProduction(canvasId: string, turnId: string, proposal: AssistantGenerationProposal, continuePlan = false) {
-    return http.post<{ taskIds: string[]; continuationId: string; orderId?: string; order?: GenerationOrder }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(proposal.proposalId)}/production`, {
-        canvasId, kind: proposal.kind, nodeIds: proposal.nodeIds, targets: proposal.production?.targets, continuePlan,
+    const normalized = normalizeAssistantProposal(proposal);
+    return http.post<{ taskIds: string[]; continuationId: string; orderId?: string; order?: GenerationOrder }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(normalized.proposalId)}/production`, {
+        canvasId, kind: normalized.kind, nodeIds: normalized.nodeIds, targets: normalized.production?.targets, continuePlan,
     }, await uiSessionConfig());
 }
 
@@ -463,6 +487,7 @@ export async function getAssistantHistory(canvasId: string, sessionId?: string):
     if (!data || !Array.isArray(data.turns)) throw new Error("没能读取对话，请重试");
     return { sessionId: data.sessionId || sessionId || "", active: data.active, plan: data.plan ?? null, pausedTurnReason: data.pausedTurnReason ?? null, turns: data.turns.map((turn) => ({
         ...turn,
+        proposals: Array.isArray(turn.proposals) ? turn.proposals.map(normalizeAssistantProposal) : [],
         error: turn.error ? agentAssistantFailureText(turn.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
     })) };
 }
@@ -788,7 +813,10 @@ async function readAgentTurnStream(
         }
         if (payload.type === "turn_end") {
             settled = true;
-            turnEnd = payload as unknown as AgentTurnEnd;
+            const rawTurnEnd = payload as unknown as AgentTurnEnd;
+            turnEnd = Array.isArray(rawTurnEnd.proposals)
+                ? { ...rawTurnEnd, proposals: rawTurnEnd.proposals.map(normalizeAssistantProposal) }
+                : rawTurnEnd;
             handlers.onTurnEnd?.(turnEnd);
         }
     };

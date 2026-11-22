@@ -356,8 +356,28 @@ func RecordAssistantGenerationProposalInTx(tx *gorm.DB, userID, turnID, canvasID
 }
 
 func ProductionTargetHash(target GenerationTarget) string {
-	encoded, _ := json.Marshal(target)
+	encoded, _ := json.Marshal(NormalizeGenerationTarget(target))
 	return fmt.Sprintf("%x", sha256.Sum256(encoded))
+}
+
+func productionTargetHashMatches(recorded any, target GenerationTarget) bool {
+	got, ok := recorded.(string)
+	if !ok || got == "" {
+		return false
+	}
+	canonical := NormalizeGenerationTarget(target)
+	if got == ProductionTargetHash(canonical) {
+		return true
+	}
+	if len(canonical.ReferenceNodeIDs) == 0 {
+		legacy := canonical
+		legacy.ReferenceNodeIDs = nil
+		encoded, _ := json.Marshal(legacy)
+		if got == fmt.Sprintf("%x", sha256.Sum256(encoded)) {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateProductionTask(task *model.Task, canvasID string, target GenerationTarget) error {
@@ -367,7 +387,7 @@ func ValidateProductionTask(task *model.Task, canvasID string, target Generation
 	if err := json.Unmarshal([]byte(task.InputJSON), &original); err != nil {
 		return err
 	}
-	if task.ProjectID != canvasID || task.Type != "canvas_"+target.Kind || task.Prompt != target.Prompt || original.Metadata["assistantProductionTargetHash"] != ProductionTargetHash(target) {
+	if task.ProjectID != canvasID || task.Type != "canvas_"+target.Kind || task.Prompt != target.Prompt || !productionTargetHashMatches(original.Metadata["assistantProductionTargetHash"], target) {
 		return Conflict("production_task_changed", "原制作任务与确认记录不一致，请先检查原任务", nil)
 	}
 	return nil

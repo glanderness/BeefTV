@@ -360,8 +360,15 @@ export function CanvasTopBar({
                             </div>
                         )}
                     >
-                        <button type="button" className="canvas-topbar-canvas-switch canvas-topbar-action inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-xs opacity-75 hover:opacity-100" style={{ color: theme.node.text }} aria-label="切换画布">
-                            <span>{currentCanvasLabel}</span>{canvasMenuOpen ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                        <button
+                            type="button"
+                            className="canvas-topbar-canvas-switch canvas-topbar-action inline-flex h-7 max-w-[120px] shrink-0 items-center gap-1 overflow-hidden whitespace-nowrap rounded-md px-1 text-xs opacity-75 hover:opacity-100"
+                            style={{ color: theme.node.text }}
+                            aria-label="切换画布"
+                            title={currentCanvasLabel}
+                        >
+                            <span className="min-w-0 truncate">{currentCanvasLabel}</span>
+                            {canvasMenuOpen ? <ChevronUp className="size-3 shrink-0" /> : <ChevronDown className="size-3 shrink-0" />}
                         </button>
                     </Dropdown>
                     <span className="canvas-topbar-sync-status">{syncStatus}</span>

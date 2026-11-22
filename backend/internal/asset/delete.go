@@ -103,6 +103,9 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string, ex
 	}
 	asset, err := s.repo.AssetForUser(userID, assetID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return AssetNotFound()
+		}
 		return err
 	}
 	if expected != "" && string(asset.Status) != expected {
