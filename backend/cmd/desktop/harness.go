@@ -64,7 +64,7 @@ func handleHarnessCommand(args []string) (bool, error) {
 		return true, errors.New("harness runtime does not accept positional arguments")
 	}
 	if !harnessControlSupported {
-		return true, errors.New("harness runtime requires macOS or Linux")
+		return true, errors.New("harness runtime is not supported on this platform")
 	}
 	dataDir, err := defaultDataDir()
 	if *explicitDataDir != "" {

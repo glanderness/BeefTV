@@ -1,4 +1,4 @@
-//go:build !darwin && !linux
+//go:build !darwin && !linux && !windows
 
 package main
 
@@ -10,9 +10,9 @@ import (
 const harnessControlSupported = false
 
 func listenHarnessControl(string, harnessRuntimeConfig) (net.Listener, error) {
-	return nil, errors.New("harness control requires macOS or Linux")
+	return nil, errors.New("harness control is not supported on this platform")
 }
 
 func attachDesktopHarness(string) (harnessRuntimeConfig, error) {
-	return harnessRuntimeConfig{}, errors.New("harness control requires macOS or Linux")
+	return harnessRuntimeConfig{}, errors.New("harness control is not supported on this platform")
 }

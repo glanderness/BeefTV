@@ -136,9 +136,18 @@ export function registerWorkspaceRoutes(ctx, { connection, runner, stepLimit }) 
           await connection.dismissLocalPrompt()
           return json(res, 200, connection.status())
         }
+        if (req.method === 'POST' && url.pathname === '/beeftv/runtime/check-update') {
+          return json(res, 200, await connection.checkStandaloneUpdate())
+        }
+        if (req.method === 'POST' && url.pathname === '/beeftv/runtime/update') {
+          return json(res, 200, await connection.updateStandaloneRuntime())
+        }
+        if (req.method === 'POST' && url.pathname === '/beeftv/runtime/cancel') {
+          return json(res, 200, connection.cancelRuntimeProvision())
+        }
         json(res, 404, { error: '未找到接口' })
       } catch (failure) {
-        if (!res.headersSent) json(res, 503, { error: failure.message })
+        if (!res.headersSent) json(res, 503, { error: failure.message, ...(failure?.code ? { code: failure.code } : {}) })
         else res.destroy()
       }
     },

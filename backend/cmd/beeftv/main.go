@@ -21,6 +21,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"infinite-canvas/backend/internal/buildinfo"
 	"infinite-canvas/backend/internal/localipc"
 	"infinite-canvas/backend/internal/runtimeinfo"
 )
@@ -375,6 +376,10 @@ func run(args []string) error {
 	// 顶层 --help/-h 与各子命令一致：打印用法后正常退出。
 	if args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		usage()
+		return nil
+	}
+	if args[0] == "--version" || args[0] == "version" {
+		fmt.Println(buildinfo.Current().Version)
 		return nil
 	}
 	if args[0] == "skills" {

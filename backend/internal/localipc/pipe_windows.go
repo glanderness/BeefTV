@@ -41,11 +41,17 @@ func validPlatformEndpoint(endpoint string) bool {
 }
 
 type windowsPipeFileConn struct {
-	file *os.File
+	mu     sync.RWMutex
+	file   *os.File
+	handle windows.Handle
+	closed bool
 }
 
 func newWindowsPipeConn(h windows.Handle, name string) net.Conn {
-	return &windowsPipeFileConn{file: os.NewFile(uintptr(h), name)}
+	return &windowsPipeFileConn{
+		file:   os.NewFile(uintptr(h), name),
+		handle: h,
+	}
 }
 
 func (c *windowsPipeFileConn) Read(b []byte) (int, error) {
@@ -59,7 +65,11 @@ func (c *windowsPipeFileConn) Write(b []byte) (int, error) {
 }
 
 func (c *windowsPipeFileConn) Close() error {
-	return wrapPipeConnError("close", c.LocalAddr(), c.RemoteAddr(), c.file.Close())
+	c.mu.Lock()
+	c.closed = true
+	err := c.file.Close()
+	c.mu.Unlock()
+	return wrapPipeConnError("close", c.LocalAddr(), c.RemoteAddr(), err)
 }
 
 func (c *windowsPipeFileConn) SetDeadline(t time.Time) error {
@@ -78,6 +88,42 @@ func (c *windowsPipeFileConn) LocalAddr() net.Addr {
 }
 func (c *windowsPipeFileConn) RemoteAddr() net.Addr {
 	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+}
+
+// VerifyCurrentUserPipeOwner confirms that the connected Windows Named Pipe
+// kernel object is owned by the exact current user SID (Windows equivalent of
+// Unix SO_PEERCRED / socket UID validation). It uses the stored raw handle
+// instead of os.File.Fd() so Go's runtime IOCP poller and deadlines stay intact.
+func VerifyCurrentUserPipeOwner(conn net.Conn) error {
+	pipeConn, ok := conn.(*windowsPipeFileConn)
+	if !ok || pipeConn == nil {
+		return errors.New("not a Windows local IPC pipe connection")
+	}
+	wantSID, err := currentUserSIDString()
+	if err != nil {
+		return err
+	}
+	pipeConn.mu.RLock()
+	defer pipeConn.mu.RUnlock()
+	if pipeConn.closed || pipeConn.handle == 0 || pipeConn.handle == windows.InvalidHandle {
+		return net.ErrClosed
+	}
+	sd, err := windows.GetSecurityInfo(
+		pipeConn.handle,
+		windows.SE_KERNEL_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		return err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		return errors.New("unable to verify Windows pipe owner SID")
+	}
+	if !strings.EqualFold(owner.String(), wantSID) {
+		return errors.New("harness control pipe is not owned by the current user")
+	}
+	return nil
 }
 
 type windowsPipeListener struct {

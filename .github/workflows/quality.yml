@@ -401,7 +401,12 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\assert-windows-dwarf5-cgo.ps1
       - name: Verify open desktop migration and rollback
         working-directory: backend
-        run: go test ./cmd/desktop -run 'TestWindowsOpenDesktopMigratesWithBusyScratch|TestNativeMigration|TestSeparateWorkspaceRunsItsOwnStartup|TestSecondLaunchReachesWailsWhilePrimaryOwnsWorkspace|TestWindowsWebViewUserDataPathPreservesDefaultAndIsolatesExtraWorkspaces|TestElevatedWebViewResidualAbortsStartupBeforeWailsRun|TestIsSameWorkspaceInstanceActive' -count=1 -v
+        run: go test ./cmd/desktop -run 'TestWindowsOpenDesktopMigratesWithBusyScratch|TestNativeMigration|TestSeparateWorkspaceRunsItsOwnStartup|TestSecondLaunchReachesWailsWhilePrimaryOwnsWorkspace|TestWindowsWebViewUserDataPathPreservesDefaultAndIsolatesExtraWorkspaces|TestElevatedWebViewResidualAbortsStartupBeforeWailsRun|TestIsSameWorkspaceInstanceActive|TestHarnessAttachOnlyDoesNotCreateWorkspaceWindows|TestHarnessPrivateControlAttachesWithoutOpeningWorkspaceWindows|TestHarnessAttachTimesOutWhenPipeNeverWrites' -count=1 -v
+      - name: Verify DeepSeek Harness runtime store and platform detection on Windows
+        working-directory: plugins/deepseek-harness
+        run: |
+          node --test runtime-store.test.js await-machine.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify diagnostic persistence and offline analysis on Windows
         working-directory: backend
         run: |

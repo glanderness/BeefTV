@@ -6,9 +6,10 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import * as mcpClient from '@deepseek-ai/dsh-mcp-client'
 import {
-  attachLocalRuntime, awayGenerationNotice, callOperation, defaultPluginSettings, generationToolSet, hasOperation, inspectWorkspace, localAppStatus,
+  attachLocalRuntime, awayGenerationNotice, bundledRuntimeDir, callOperation, defaultPluginSettings, generationToolSet, hasOperation, inspectWorkspace, localAppStatus,
   normalizeSettings, startLocalRuntime, startRuntime, validatedSettingsPatch, workspaceJSON,
 } from './runtime.js'
+import { createRuntimeStore } from './runtime-store.js'
 
 const mcpToolName = id => `mcp__beeftv__${id.replace(/[^A-Za-z0-9_-]/g, '_')}`
 
@@ -45,7 +46,7 @@ function recordToolActivity(runtime, exec, result) {
   runtime.activity = { seq: (runtime.activity?.seq || 0) + 1, kind, canvasId }
 }
 
-export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingReady = Promise.resolve() }) {
+export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingReady = Promise.resolve(), hasActiveToolCalls = () => false, runtimeStore = createRuntimeStore({ pluginHome, bundledDir: bundledRuntimeDir }) }) {
   const settingsPath = join(pluginHome, 'connection.json')
   const pluginSettingsPath = join(pluginHome, 'settings.json')
   let current = null
@@ -54,13 +55,17 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
   let error = null
   let desiredMode = null
   let switching = false
+  let updatingRuntime = false
   let localPromptDismissed = false
   let localAppCheckedAt = 0
+  let updateCheckedAt = 0
+  let standaloneRuntimeCache = null
   let statusCheck = null
   const contexts = new Map()
   // How often a standalone workspace re-checks the installed App. A later install or upgrade
   // should still surface the one-time switch prompt.
   const localAppRecheckMs = 30_000
+  const updateCheckIntervalMs = 60 * 60_000
   let pluginSettings = { ...defaultPluginSettings }
   let settingsWrite = Promise.resolve()
   let pluginSettingsWrite = Promise.resolve()
@@ -105,18 +110,38 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
   }).catch(failure => {
     if (failure.code !== 'ENOENT') error = failure.message
     return null
+  }).finally(() => {
+    void runtimeStore.prune({ includeTemps: true }).catch(() => {})
   })
+
+  async function refreshStandaloneRuntime() {
+    standaloneRuntimeCache = await runtimeStore.status()
+    return standaloneRuntimeCache
+  }
+
+  function scheduleBackgroundUpdateCheck(runtime) {
+    if (!runtime || runtime.runtimeSource !== 'managed') return
+    if (Date.now() - updateCheckedAt < updateCheckIntervalMs) return
+    updateCheckedAt = Date.now()
+    void runtimeStore.checkUpdate({ currentVersion: runtime.version }).then(() => refreshStandaloneRuntime()).catch(() => {})
+  }
+
+  function hasActiveWork() {
+    return Boolean(runner.hasActiveWaits?.() || hasActiveToolCalls?.())
+  }
 
   function status() {
     const mcpTools = ctx.tools.schemas().filter(tool => tool.name.startsWith('mcp__beeftv__')).map(tool => tool.name)
     return {
       connected: Boolean(current), mode: current?.mode || null,
       connectionId: current?.connectionId || null,
-      version: current?.version || null, switching, error,
+      version: current?.version || null, switching, updatingRuntime, error,
       workspace: current?.workspace || null,
       build: current?.build || null,
       activity: current?.activity || null,
       localApp: current?.localApp || null,
+      standaloneRuntime: standaloneRuntimeCache,
+      provision: runtimeStore.provision(),
       localPromptDismissed,
       autoContinue: pluginSettings.autoContinue,
       stepLimit: pluginSettings.stepLimit,
@@ -155,18 +180,19 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
     try { await runtime.close() } catch { /* The process may already be gone. */ }
   }
 
-  async function connect(mode, reconnect = false) {
+  async function connect(mode, reconnect = false, { forceRestart = false, preparedOverride = null } = {}) {
     // 设置和上次留下的提示先读完，第一次工具调用就按用户的真实选择执行。
     await Promise.all([pluginSettingsReady, settingsReady, awaitingReady])
     if (!['standalone', 'local'].includes(mode)) throw new Error('请选择独立工作区或本地 BeefTV')
     if (switching) throw new Error('正在连接工作区，请稍后重试')
     // 健康检查失败时 current 会先被清空，这里先记下旧连接，切换窗口仍能认出原来的工作区。
     const source = current
-    if (current?.mode === mode) {
+    if (!forceRestart && current?.mode === mode) {
       try {
         await workspaceJSON(current, '/api/health')
         // 健康检查触发的重连也要把离开时的提示重新解析出来。
         await runner.dispatch({ type: 'workspaceConnected', workspaceId: current.workspace?.id ?? null }).settled
+        await refreshStandaloneRuntime()
         return status()
       } catch {
         const stale = current
@@ -187,10 +213,23 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
     contexts.clear()
     await release(previous)
     let runtime
+    let prepared = null
+    let activated = false
     try {
-      runtime = mode === 'local'
-        ? await (reconnect ? attachLocalRuntime() : startLocalRuntime())
-        : await startRuntime(join(pluginHome, 'workspace'))
+      let runtimeSource = null
+      if (mode === 'local') {
+        runtime = await (reconnect ? attachLocalRuntime() : startLocalRuntime())
+      } else {
+        prepared = preparedOverride || await runtimeStore.ensureInstalled({ activate: false })
+        runtimeSource = prepared.source
+        await refreshStandaloneRuntime()
+        runtime = await startRuntime(join(pluginHome, 'workspace'), { runtimePaths: prepared })
+        // 核对真实启动的运行时版本与预期版本一致，避免慢退出的旧进程接管新连接。
+        if (prepared.version && String(runtime.version).replace(/^v/, '') !== String(prepared.version).replace(/^v/, '')) {
+          throw new Error(`BeefTV 运行环境版本不匹配（预期 ${prepared.version}，实际 ${runtime.version}），请重试`)
+        }
+      }
+      runtime.runtimeSource = runtimeSource
       Object.assign(runtime, await inspectWorkspace(runtime))
       const registered = await workspaceJSON(runtime, '/api/agent-clients', {
         method: 'POST', body: JSON.stringify({ label: 'DeepSeek Harness', kind: 'other', mode: 'read-write', approvalMode: 'caller' }),
@@ -225,6 +264,11 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
         env: { BEEFTV_BASE_URL: runtime.baseURL, BEEFTV_CLIENT_ID: registered.client.id, BEEFTV_CLIENT_TOKEN: registered.token },
       })
       await runtime.mcp
+      // 启动、版本核对、健康检查与 MCP 握手全部通过后，再原子提升托管运行环境指针。
+      if (prepared?.staged) {
+        await runtimeStore.activate(prepared)
+        activated = true
+      }
       current = runtime
       desiredMode = mode
       if (runtime.owned) runtime.child.once('exit', () => {
@@ -238,6 +282,8 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
       await writeSettings()
       // 换到别的工作区时丢掉旧工作区还没送进模型的完成通知，并只按当前工作区核对离开时的任务。
       await runner.dispatch({ type: 'workspaceConnected', workspaceId: runtime.workspace?.id ?? null }).settled
+      await refreshStandaloneRuntime()
+      if (mode === 'standalone') scheduleBackgroundUpdateCheck(runtime)
       return status()
     } catch (failure) {
       // 连接已经建立但收尾（如写设置）失败：不能留下 current 说已连接、状态机却已断开。
@@ -246,7 +292,12 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
         contexts.clear()
       }
       if (runtime && runtime !== current) await release(runtime)
-      error = failure.message
+      // 未通过健康检查的新托管目录立即清理，保持 current.json 仍指向原可用版本。
+      if (prepared?.staged && !activated) {
+        await runtimeStore.discard(prepared).catch(() => {})
+      }
+      await refreshStandaloneRuntime().catch(() => {})
+      error = failure?.code === 'BEEFTV_PROVISION_CANCELLED' ? null : failure.message
       runner.dispatch({ type: 'connectionFailed' })
       throw failure
     } finally {
@@ -254,9 +305,67 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
     }
   }
 
+  async function checkStandaloneUpdate() {
+    await Promise.all([pluginSettingsReady, settingsReady, awaitingReady])
+    await runtimeStore.checkUpdate({ currentVersion: current?.mode === 'standalone' ? current.version : null })
+    updateCheckedAt = Date.now()
+    await refreshStandaloneRuntime()
+    return status()
+  }
+
+  async function updateStandaloneRuntime() {
+    await Promise.all([pluginSettingsReady, settingsReady, awaitingReady])
+    if (updatingRuntime || switching) throw new Error('正在准备或切换工作区，请稍后重试')
+    if (current?.mode === 'local') {
+      throw new Error('当前连接的是本机 BeefTV，请在本机应用内更新，或切换到独立工作区后再更新运行环境')
+    }
+    if (hasActiveWork()) {
+      throw new Error('当前有生成或工具任务正在进行，请等任务完成后再更新运行环境')
+    }
+    const hadStandalone = current?.mode === 'standalone'
+    const previousInstalled = await runtimeStore.discover()
+    updatingRuntime = true
+    error = null
+    let staged = null
+    try {
+      // 下载并校验解压到版本目录，但不提前切换 current.json，确保运行中的旧工作区不受影响。
+      staged = await runtimeStore.ensureInstalled({ forceUpdate: true, activate: false })
+      await refreshStandaloneRuntime()
+    } catch (failure) {
+      if (failure?.code !== 'BEEFTV_PROVISION_CANCELLED') error = failure.message
+      await refreshStandaloneRuntime().catch(() => {})
+      throw failure
+    } finally {
+      updatingRuntime = false
+    }
+    // 下载期间若发起了新的付费生成或工具调用，不强行中断当前后端。
+    if (hasActiveWork()) {
+      if (staged?.staged) await runtimeStore.discard(staged).catch(() => {})
+      throw new Error('当前有生成或工具任务正在进行，请等任务完成后再重新更新运行环境')
+    }
+    try {
+      // 先启动并健康校验新版本，通过后再原子提升 current.json 并回收旧版本；画布和素材不变。
+      const next = await connect('standalone', false, { forceRestart: true, preparedOverride: staged })
+      void runtimeStore.prune({ keepDirNames: [staged.dirName], includeTemps: true }).catch(() => {})
+      return next
+    } catch (failure) {
+      // 新版本启动或握手失败：current.json 仍指向旧版本，自动恢复原有独立工作区。
+      if (hadStandalone && previousInstalled && previousInstalled.dirName !== staged?.dirName) {
+        await connect('standalone', false, { forceRestart: true }).catch(() => {})
+        error = failure.message
+      }
+      throw failure
+    }
+  }
+
+  function cancelRuntimeProvision() {
+    runtimeStore.cancel()
+    return status()
+  }
+
   async function refreshConnection() {
     await awaitingReady
-    if (switching) return status()
+    if (switching || updatingRuntime) return status()
     if (!statusCheck) statusCheck = (async () => {
       const previous = current
       if (previous) {
@@ -276,6 +385,7 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
         try { await connect('local', true) } catch { /* Retry discovery on the next status request. */ }
       }
       if (current) await refreshLocalApp(current)
+      await refreshStandaloneRuntime()
       // The workspace chooser needs to know whether the installed App can be connected at all.
       return current ? status() : { ...status(), localApp: await localAppStatus() }
     })().finally(() => { statusCheck = null })
@@ -323,6 +433,9 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
     pluginSettingsReady,
     connect,
     refreshConnection,
+    checkStandaloneUpdate,
+    updateStandaloneRuntime,
+    cancelRuntimeProvision,
     status,
     release,
     updatePluginSettings,

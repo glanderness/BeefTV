@@ -43,7 +43,18 @@ export function apply(ctx) {
     const history = normalizeAwaiting(value)
     return runner.dispatch({ type: 'historyLoaded', sessions: history.sessions, away: history.away }).settled
   }).catch(() => null)
-  connection = createConnection({ ctx, pluginHome, runner, stepLimit, awaitingReady })
+  // 跟踪在途的 mcp__beeftv__* 调用，防止运行环境更新重启中断尚未返回的提交/付费工具请求。
+  const activeToolCalls = new Map()
+  const activeToolCallTTLMs = 125_000
+  function hasActiveToolCalls() {
+    const now = Date.now()
+    for (const [token, startedAt] of activeToolCalls) {
+      if (now - startedAt > activeToolCallTTLMs) activeToolCalls.delete(token)
+    }
+    return activeToolCalls.size > 0
+  }
+
+  connection = createConnection({ ctx, pluginHome, runner, stepLimit, awaitingReady, hasActiveToolCalls })
 
   registerWorkspaceRoutes(ctx, { connection, runner, stepLimit })
   registerPrompts(ctx, { connection })
@@ -76,7 +87,19 @@ export function apply(ctx) {
   ctx.on('tools/execute', (exec, next) => {
     const origin = connection.dispatchOrigin()
     if (origin) rememberOrigin(exec, origin)
-    return next()
+    const callToken = typeof exec?.name === 'string' && exec.name.startsWith('mcp__beeftv__') ? Symbol(exec.name) : null
+    if (callToken) activeToolCalls.set(callToken, Date.now())
+    try {
+      const result = next()
+      if (callToken && result && typeof result.finally === 'function') {
+        return result.finally(() => activeToolCalls.delete(callToken))
+      }
+      if (callToken) activeToolCalls.delete(callToken)
+      return result
+    } catch (failure) {
+      if (callToken) activeToolCalls.delete(callToken)
+      throw failure
+    }
   })
 
   ctx.on('tools/result', (exec, result) => {
@@ -206,6 +229,7 @@ export function apply(ctx) {
   })
 
   ctx.effect(() => () => {
+    connection.cancelRuntimeProvision()
     const runtime = connection.current()
     // 插件退出等同于 DSH 关闭：先把等待/待补投结果落盘，再释放运行包。
     return runner.stopPlugin().then(() => connection.release(runtime))

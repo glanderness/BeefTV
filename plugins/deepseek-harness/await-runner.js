@@ -253,6 +253,7 @@ export function createAwaitRunner({ awaitingPath, runtimeOf, awaitMaximumMs = de
     snapshot,
     persist: queuePersist,
     awayCount: () => state.away.count,
+    hasActiveWaits: () => waitRunners.size > 0,
     autoContinue: () => state.autoContinue,
     setAgent: (sessionId, agent) => { if (sessionId && agent) agents.set(sessionId, agent) },
     forgetAgent: sessionId => agents.delete(sessionId),

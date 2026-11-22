@@ -1,3 +1,4 @@
+// DSH 前端加载器仅支持单入口模块（window.__ModuleLoader__ 只注入 react，不支持相对 require）。
 window.__ModuleLoader__.load({
   id: 'dsh-beeftv',
   factory(require) {
@@ -74,6 +75,12 @@ window.__ModuleLoader__.load({
 .beeftv-harness-option:hover { border-color:var(--dsw-alias-link); }
 .beeftv-harness-option strong,.beeftv-harness-option span { display:block; }
 .beeftv-harness-option span { margin-top:4px; font-size:12px; color:var(--dsw-alias-label-tertiary); }
+.beeftv-harness-progress { margin-top:16px; padding:12px 14px; border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-md,12px); background:var(--dsw-alias-bg-layer-2); font-size:12px; color:var(--dsw-alias-label-secondary); font-variant-numeric:tabular-nums; }
+.beeftv-harness-progress-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.beeftv-harness-progress-row button { flex:none; border:1px solid var(--dsw-alias-border-l2); border-radius:6px; padding:3px 10px; background:transparent; font:inherit; color:inherit; cursor:pointer; }
+.beeftv-harness-progress-row button:hover { background:var(--dsw-alias-interactive-bg-hover); }
+.beeftv-harness-progress-bar { margin-top:8px; height:4px; border-radius:999px; background:var(--dsw-alias-border-l2); overflow:hidden; }
+.beeftv-harness-progress-fill { height:100%; border-radius:999px; background:var(--dsw-alias-link); transition:width .2s ease; }
 .beeftv-harness-error { margin:12px 16px; color:var(--dsw-alias-label-secondary); font-size:12px; overflow-wrap:anywhere; }
 .beeftv-harness-workspace-note { flex:none; padding:6px 16px; border-bottom:1px solid var(--dsw-alias-border-l2); color:var(--dsw-alias-label-tertiary); font-size:12px; line-height:18px; }
 .beeftv-harness-notice { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:10px 16px; border-bottom:1px solid var(--dsw-alias-border-l2); color:var(--dsw-alias-label-secondary); font-size:12px; line-height:18px; }
@@ -95,7 +102,7 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
         signal,
       })
       const result = await response.json()
-      if (!response.ok) throw Object.assign(new Error(result.error || 'BeefTV 请求失败 (' + response.status + ')'), { status: response.status })
+      if (!response.ok) throw Object.assign(new Error(result.error || 'BeefTV 请求失败 (' + response.status + ')'), { status: response.status, code: result.code })
       return result
     }
 
@@ -156,19 +163,14 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
       return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
     }
 
-    function compositeOver(fg, bg) {
-      const a = fg.a ?? 1
-      return { r: fg.r * a + bg.r * (1 - a), g: fg.g * a + bg.g * (1 - a), b: fg.b * a + bg.b * (1 - a), a: 1 }
-    }
-
-    function mixRgb(base, tint, weight) {
-      return {
-        r: base.r * (1 - weight) + tint.r * weight,
-        g: base.g * (1 - weight) + tint.g * weight,
-        b: base.b * (1 - weight) + tint.b * weight,
-        a: 1,
-      }
-    }
+    const mixRgb = (base, tint, weight) => ({
+      r: base.r * (1 - weight) + tint.r * weight,
+      g: base.g * (1 - weight) + tint.g * weight,
+      b: base.b * (1 - weight) + tint.b * weight,
+      a: 1,
+    })
+    const compositeOver = (fg, bg) => mixRgb(bg, fg, fg.a ?? 1)
+    const mixColor = (base, tint, percent) => (percent <= 0 ? base : `color-mix(in srgb, ${tint} ${percent}%, ${base})`)
 
     function contrastRatio(fg, bg) {
       const l1 = relativeLuminance(compositeOver(fg, bg))
@@ -213,10 +215,6 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
       const sampled = sampleColor(color, 0.05)
       if (sampled) return `rgba(${sampled.r}, ${sampled.g}, ${sampled.b}, ${alpha})`
       return `color-mix(in srgb, ${color} ${Math.round(alpha * 100)}%, transparent)`
-    }
-
-    function mixColor(base, tint, percent) {
-      return percent <= 0 ? base : `color-mix(in srgb, ${tint} ${percent}%, ${base})`
     }
 
     // 右侧 Agent 面板与弹出的菜单、选择器、代码块、对话卡片直接复用嵌入页底色与前景色，亮色暗色都与左侧一致且满足 >= 4.5:1 对比度。
@@ -274,152 +272,103 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
         ? (contrastRatio(primaryFgSample, mixRgb(primarySample, whiteSample, 0.12)) >= 4.5 ? '#ffffff' : '#000000')
         : (contrastRatio(primaryFgSample, mixRgb(primarySample, { r: 0, g: 0, b: 0, a: 1 }, 0.12)) >= 4.5 ? '#000000' : '#ffffff')
       const primaryHover = mixColor(primaryFill, primaryHoverTint, 12)
-      const layer1 = mixColor(background, foreground, surfaceDark ? 5 : 2)
-      const layer2 = mixColor(background, foreground, surfaceDark ? 8 : 4)
-      const layer3 = mixColor(background, foreground, surfaceDark ? 12 : 6)
-      const layer4 = mixColor(background, foreground, surfaceDark ? 16 : 9)
-      const menuBase = mixColor(background, foreground, surfaceDark ? 11 : 2)
-      const codeBlock = mixColor(background, foreground, surfaceDark ? 5 : 3)
-      const border1 = colorWithAlpha(foreground, 0.08)
-      const border2 = colorWithAlpha(foreground, 0.14)
-      const border3 = colorWithAlpha(foreground, surfaceDark ? 0.2 : 0.18)
-      const border4 = colorWithAlpha(foreground, surfaceDark ? 0.26 : 0.24)
-      const scrollbarThumb = colorWithAlpha(foreground, 0.18)
-      const scrollbarHover = colorWithAlpha(foreground, 0.3)
-      const errorPrimary = pickReadableToken('#ffa8a8', '#991b1b', surfaceDark, [...textSurfaces, mixRgb(codeSample, { r: 220, g: 38, b: 38, a: 1 }, surfaceDark ? 0.12 : 0.08)], 0.1)
-      const successPrimary = pickReadableToken('#69db7c', '#166534', surfaceDark, [...textSurfaces, surfaceDark ? { r: 30, g: 53, b: 38, a: 1 } : { r: 230, g: 250, b: 237, a: 1 }, mixRgb(codeSample, { r: 34, g: 197, b: 94, a: 1 }, surfaceDark ? 0.12 : 0.08)], 0.1)
-      const warnPrimary = pickReadableToken('#fcc419', '#92400e', surfaceDark, [...textSurfaces, surfaceDark ? { r: 39, g: 36, b: 31, a: 1 } : { r: 254, g: 245, b: 231, a: 1 }], 0.12)
+      const pick = (darkHex, lightHex, surfaces, tint = 0) => pickReadableToken(darkHex, lightHex, surfaceDark, surfaces, tint)
+      const mixBg = (darkPct, lightPct) => mixColor(background, foreground, surfaceDark ? darkPct : lightPct)
+      const fgAlpha = (darkAlpha, lightAlpha = darkAlpha) => colorWithAlpha(foreground, surfaceDark ? darkAlpha : lightAlpha)
+      const layer1 = mixBg(5, 2)
+      const layer2 = mixBg(8, 4)
+      const layer3 = mixBg(12, 6)
+      const layer4 = mixBg(16, 9)
+      const menuBase = mixBg(11, 2)
+      const codeBlock = mixBg(5, 3)
+      const border1 = fgAlpha(0.08)
+      const border2 = fgAlpha(0.14)
+      const border3 = fgAlpha(0.2, 0.18)
+      const border4 = fgAlpha(0.26, 0.24)
+      const scrollbarThumb = fgAlpha(0.18)
+      const scrollbarHover = fgAlpha(0.3)
+      const errorPrimary = pick('#ffa8a8', '#991b1b', [...textSurfaces, mixRgb(codeSample, { r: 220, g: 38, b: 38, a: 1 }, surfaceDark ? 0.12 : 0.08)], 0.1)
+      const successPrimary = pick('#69db7c', '#166534', [...textSurfaces, surfaceDark ? { r: 30, g: 53, b: 38, a: 1 } : { r: 230, g: 250, b: 237, a: 1 }, mixRgb(codeSample, { r: 34, g: 197, b: 94, a: 1 }, surfaceDark ? 0.12 : 0.08)], 0.1)
+      const warnPrimary = pick('#fcc419', '#92400e', [...textSurfaces, surfaceDark ? { r: 39, g: 36, b: 31, a: 1 } : { r: 254, g: 245, b: 231, a: 1 }], 0.12)
       const stepFgOn = hex => { const f = sampleColor(hex, 0.9) || bgSample; return contrastRatio(whiteSample, f) >= contrastRatio(inkSample, f) ? '#ffffff' : '#0a0a0a' }
+      const syntaxTokens = Object.fromEntries([
+        ['--beeftv-json-property', '#5db0d7', '#881391', cardSurfaces],
+        ['--beeftv-json-string', '#f28b82', '#b31412', cardSurfaces],
+        ['--beeftv-json-number', '#99c8ff', '#1c00cf', cardSurfaces],
+        ['--beeftv-json-keyword', '#99c8ff', '#1c00cf', cardSurfaces],
+        ['--beeftv-json-punctuation', '#e8eaed', '#202124', cardSurfaces],
+        ['--beeftv-json-icon', '#9aa0a6', '#54585d', cardSurfaces],
+        ['--shiki-token-constant', '#4dabf7', '#1864ab', codeSurfaces],
+        ['--shiki-token-string', '#69db7c', '#237032', codeSurfaces],
+        ['--shiki-token-comment', '#adb5bd', '#5c646d', codeSurfaces],
+        ['--shiki-token-keyword', '#faa2c1', '#c2255c', codeSurfaces],
+        ['--shiki-token-parameter', '#ffa94d', '#c94408', codeSurfaces],
+        ['--shiki-token-function', '#b197fc', '#5f3dc4', codeSurfaces],
+        ['--shiki-token-string-expression', '#8ce99a', '#237032', codeSurfaces],
+        ['--shiki-token-punctuation', '#ced4da', '#495057', codeSurfaces],
+        ['--shiki-token-link', '#74c0fc', '#1864ab', codeSurfaces],
+      ].map(([token, darkHex, lightHex, surfaces]) => [token, pick(darkHex, lightHex, surfaces)]))
+      const dl = (darkVal, lightVal) => (surfaceDark ? darkVal : lightVal)
+      const tipBg = dl('#353638', '#2c2c2e')
       return {
-        colorScheme: surfaceDark ? 'dark' : 'light',
-        '--beeftv-step-done-fg': stepFgOn(successPrimary),
-        '--beeftv-step-error-fg': stepFgOn(errorPrimary),
-        '--beeftv-card-fill': layer1,
-        '--beeftv-card-hover': layer2,
-        '--beeftv-card-icon-bg': surfaceDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.55)',
-        '--beeftv-json-property': pickReadableToken('#5db0d7', '#881391', surfaceDark, cardSurfaces),
-        '--beeftv-json-string': pickReadableToken('#f28b82', '#b31412', surfaceDark, cardSurfaces),
-        '--beeftv-json-number': pickReadableToken('#99c8ff', '#1c00cf', surfaceDark, cardSurfaces),
-        '--beeftv-json-keyword': pickReadableToken('#99c8ff', '#1c00cf', surfaceDark, cardSurfaces),
-        '--beeftv-json-punctuation': pickReadableToken('#e8eaed', '#202124', surfaceDark, cardSurfaces),
-        '--beeftv-json-icon': pickReadableToken('#9aa0a6', '#54585d', surfaceDark, cardSurfaces),
-        '--beeftv-json-hover': colorWithAlpha(foreground, surfaceDark ? 0.05 : 0.04),
-        '--dsw-alias-bg-base': background,
-        '--dsw-alias-bg-document-preview': surfaceDark ? background : layer2,
-        '--dsw-alias-bg-layer-1': layer1,
-        '--dsw-alias-bg-layer-2': layer2,
-        '--dsw-alias-bg-layer-3': layer3,
-        '--dsw-alias-bg-layer-4': layer4,
-        '--dsw-alias-bg-overlay': mixColor(background, foreground, surfaceDark ? 14 : 6),
-        '--dsw-alias-bg-module-platform': mixColor(background, foreground, surfaceDark ? 10 : 4),
-        '--dsw-alias-bg-multi-select': mixColor(background, foreground, surfaceDark ? 8 : 4),
-        '--dsw-alias-bg-skeleton': colorWithAlpha(foreground, surfaceDark ? 0.08 : 0.05),
-        '--dsw-alias-bg-mask-1': surfaceDark ? 'rgba(0, 0, 0, 0.5)' : 'rgba(0, 0, 0, 0.24)',
-        '--dsw-alias-bg-mask-2': surfaceDark ? 'rgba(0, 0, 0, 0.2)' : 'rgba(0, 0, 0, 0.12)',
-        '--dsw-alias-bg-mask-drop': colorWithAlpha(layer2, 0.72),
-        '--dsw-alias-settings-card-fill': layer2,
-        '--dsw-alias-settings-card-stroke': border4,
+        colorScheme: dl('dark', 'light'), ...syntaxTokens,
+        '--beeftv-step-done-fg': stepFgOn(successPrimary), '--beeftv-step-error-fg': stepFgOn(errorPrimary),
+        '--beeftv-card-fill': layer1, '--beeftv-card-hover': layer2, '--beeftv-json-hover': fgAlpha(0.05, 0.04),
+        '--beeftv-card-icon-bg': dl('rgba(255, 255, 255, 0.05)', 'rgba(255, 255, 255, 0.55)'),
+        '--dsw-alias-bg-base': background, '--dsw-alias-bg-document-preview': dl(background, layer2),
+        '--dsw-alias-bg-layer-1': layer1, '--dsw-alias-bg-layer-2': layer2, '--dsw-alias-bg-layer-3': layer3, '--dsw-alias-bg-layer-4': layer4,
+        '--dsw-alias-bg-overlay': mixBg(14, 6), '--dsw-alias-bg-module-platform': mixBg(10, 4), '--dsw-alias-bg-multi-select': mixBg(8, 4),
+        '--dsw-alias-bg-skeleton': fgAlpha(0.08, 0.05), '--dsw-alias-bg-mask-drop': colorWithAlpha(layer2, 0.72),
+        '--dsw-alias-bg-mask-1': dl('rgba(0, 0, 0, 0.5)', 'rgba(0, 0, 0, 0.24)'), '--dsw-alias-bg-mask-2': dl('rgba(0, 0, 0, 0.2)', 'rgba(0, 0, 0, 0.12)'),
+        '--dsw-alias-settings-card-fill': layer2, '--dsw-alias-settings-card-stroke': border4,
         '--dsw-menu-surface-fill': `color-mix(in srgb, ${menuBase} 94%, transparent)`,
         '--dsw-specific-menu': `color-mix(in srgb, ${menuBase} 96%, transparent)`,
         '--dsw-alias-menu-group-header-fill': `color-mix(in srgb, ${menuBase} 96%, transparent)`,
-        '--dsw-alias-menu-icon': readableAlpha(surfaceDark ? 0.82 : 0.78),
-        '--dsw-specific-selector': mixColor(background, foreground, surfaceDark ? 13 : 6),
-        '--dsw-specific-tip': mixColor(background, foreground, surfaceDark ? 11 : 4),
-        '--dsw-specific-input-major': mixColor(background, foreground, surfaceDark ? 7 : 0),
-        '--dsw-specific-login-input': layer1,
-        '--dsw-specific-bubble': mixColor(background, foreground, surfaceDark ? 9 : 5),
-        '--dsw-specific-bubble-highlight': mixColor(background, foreground, surfaceDark ? 15 : 10),
-        '--dsw-alias-interactive-bg-hover': colorWithAlpha(foreground, surfaceDark ? 0.08 : 0.06),
-        '--dsw-alias-interactive-bg-active': colorWithAlpha(foreground, surfaceDark ? 0.14 : 0.1),
-        '--dsw-alias-interactive-bg-hover-accent': colorWithAlpha(foreground, surfaceDark ? 0.2 : 0.14),
-        '--dsw-alias-interactive-bg-hover-solid': mixColor(background, foreground, surfaceDark ? 18 : 10),
-        '--dsw-alias-interactive-bg-hover-danger': surfaceDark ? 'rgba(242, 90, 90, 0.15)' : 'rgba(200, 30, 30, 0.08)',
-        '--dsw-alias-label-primary': foreground,
-        '--dsw-alias-label-primary-dimmed': readableAlpha(0.88),
-        '--dsw-alias-label-primary-bluish': foreground,
-        '--dsw-alias-label-primary-foreground': primaryForeground,
-        '--dsw-alias-label-primary-inverted': surfaceDark ? layer3 : background,
-        '--dsw-alias-label-secondary': readableAlpha(0.72),
-        '--dsw-alias-label-document-preview': readableAlpha(0.72),
-        '--dsw-alias-label-tertiary': readableAlpha(surfaceDark ? 0.58 : 0.6),
-        '--dsw-alias-label-caption': readableAlpha(surfaceDark ? 0.52 : 0.56, [bgSample, inputMajorSample]),
-        '--dsw-alias-label-dimmed': colorWithAlpha(foreground, surfaceDark ? 0.34 : 0.32),
-        '--dsw-alias-label-shimmer': colorWithAlpha(foreground, surfaceDark ? 0.45 : 0.3),
-        '--dsw-alias-border-l1': border1,
-        '--dsw-alias-border-l2': border2,
-        '--dsw-alias-border-l2-darkmode-thin': surfaceDark ? border1 : border2,
-        '--dsw-alias-border-l3': border3,
-        '--dsw-alias-border-l4': border4,
-        '--dsw-alias-border-inverted': surfaceDark ? border1 : 'transparent',
-        '--dsw-alias-border-inverted2': surfaceDark ? border2 : 'transparent',
-        '--dsw-elevation-stroke-color': surfaceDark ? border3 : border4,
-        '--dsw-alias-scrollbar-bg-l1': scrollbarThumb,
-        '--dsw-alias-scrollbar-bg-l2': colorWithAlpha(foreground, 0.22),
-        '--dsw-alias-scrollbar-hover-l1': scrollbarHover,
-        '--dsw-alias-scrollbar-hover-l2': colorWithAlpha(foreground, 0.36),
-        '--dsh-scrollbar-thumb': scrollbarThumb,
-        '--dsh-scrollbar-thumb-hover': scrollbarHover,
-        '--dsw-alias-link': link,
-        '--dsw-alias-state-business-primary': link,
-        '--dsw-alias-state-business-tertiary': colorWithAlpha(link, 0.16),
-        '--dsw-alias-brand-primary': primaryFill,
-        '--dsw-alias-brand-primary-invert': primaryFill,
-        '--dsw-alias-brand-text': foreground,
-        '--dsw-alias-button-primary-fill': primaryFill,
-        '--dsw-alias-button-primary-hover': primaryHover,
-        '--dsw-alias-button-primary-dimmed': layer2,
-        '--dsw-alias-button-info-fill': infoFill,
-        '--dsw-alias-button-info-hover': infoHover,
-        '--dsw-alias-button-contrast-fill': surfaceDark ? foreground : colorWithAlpha(foreground, 0.72),
-        '--dsw-alias-button-elevated-fill': surfaceDark ? layer3 : background,
-        '--dsw-alias-button-floating-fill': surfaceDark ? layer2 : background,
-        '--dsw-alias-button-floating-hover': surfaceDark ? layer3 : layer2,
-        '--dsw-alias-button-ghost-active-border': border4,
-        '--dsw-alias-button-ghost-active-fill': layer2,
-        '--dsw-alias-button-ghost-active-hover': layer3,
-        '--dsw-alias-switch-thumb': surfaceDark ? mixColor(background, foreground, 72) : '#ffffff',
-        '--dsw-alias-tooltip-bg': surfaceDark ? '#353638' : '#2c2c2e',
-        '--dsw-alias-toast-bg': surfaceDark ? '#353638' : '#2c2c2e',
-        '--dsw-alias-toast-label': '#f9fafb',
-        '--dsw-alias-state-done-primary': pickReadableToken('#b197fc', '#6d28d9', surfaceDark, textSurfaces),
-        '--dsw-alias-state-error-primary': errorPrimary,
-        '--dsw-alias-state-idle-primary': colorWithAlpha(foreground, 0.3),
-        '--dsw-alias-state-success-primary': successPrimary,
-        '--dsw-alias-state-success-tertiary': surfaceDark ? '#1e3526' : '#e6faed',
-        '--dsw-alias-state-warn-primary': warnPrimary,
-        '--dsw-alias-state-warn-label': warnPrimary,
-        '--dsw-alias-state-warn-tertiary': surfaceDark ? '#27241f' : '#fef5e7',
-        '--dsw-alias-markdown-code-block': codeBlock,
-        '--dsw-alias-markdown-code-block-banner': mixColor(background, foreground, surfaceDark ? 8 : 5),
-        '--dsw-alias-markdown-code-segment-selected': surfaceDark ? layer3 : background,
-        '--dsw-alias-markdown-code-segment-unselected': surfaceDark ? codeBlock : layer2,
-        '--dsw-alias-markdown-inline-code': mixColor(background, foreground, surfaceDark ? 9 : 5),
-        '--dsw-alias-markdown-citation': mixColor(background, foreground, surfaceDark ? 11 : 6),
-        '--dsw-alias-markdown-tag': mixColor(background, foreground, surfaceDark ? 9 : 5),
+        '--dsw-alias-menu-icon': readableAlpha(dl(0.82, 0.78)),
+        '--dsw-specific-selector': mixBg(13, 6), '--dsw-specific-tip': mixBg(11, 4),
+        '--dsw-specific-input-major': mixBg(7, 0), '--dsw-specific-login-input': layer1,
+        '--dsw-specific-bubble': mixBg(9, 5), '--dsw-specific-bubble-highlight': mixBg(15, 10),
+        '--dsw-alias-interactive-bg-hover': fgAlpha(0.08, 0.06), '--dsw-alias-interactive-bg-active': fgAlpha(0.14, 0.1),
+        '--dsw-alias-interactive-bg-hover-accent': fgAlpha(0.2, 0.14), '--dsw-alias-interactive-bg-hover-solid': mixBg(18, 10),
+        '--dsw-alias-interactive-bg-hover-danger': dl('rgba(242, 90, 90, 0.15)', 'rgba(200, 30, 30, 0.08)'),
+        '--dsw-alias-label-primary': foreground, '--dsw-alias-label-primary-dimmed': readableAlpha(0.88),
+        '--dsw-alias-label-primary-bluish': foreground, '--dsw-alias-label-primary-foreground': primaryForeground,
+        '--dsw-alias-label-primary-inverted': dl(layer3, background),
+        '--dsw-alias-label-secondary': readableAlpha(0.72), '--dsw-alias-label-document-preview': readableAlpha(0.72),
+        '--dsw-alias-label-tertiary': readableAlpha(dl(0.58, 0.6)),
+        '--dsw-alias-label-caption': readableAlpha(dl(0.52, 0.56), [bgSample, inputMajorSample]),
+        '--dsw-alias-label-dimmed': fgAlpha(0.34, 0.32), '--dsw-alias-label-shimmer': fgAlpha(0.45, 0.3),
+        '--dsw-alias-border-l1': border1, '--dsw-alias-border-l2': border2, '--dsw-alias-border-l2-darkmode-thin': dl(border1, border2),
+        '--dsw-alias-border-l3': border3, '--dsw-alias-border-l4': border4, '--dsw-elevation-stroke-color': dl(border3, border4),
+        '--dsw-alias-border-inverted': dl(border1, 'transparent'), '--dsw-alias-border-inverted2': dl(border2, 'transparent'),
+        '--dsw-alias-scrollbar-bg-l1': scrollbarThumb, '--dsw-alias-scrollbar-bg-l2': fgAlpha(0.22),
+        '--dsw-alias-scrollbar-hover-l1': scrollbarHover, '--dsw-alias-scrollbar-hover-l2': fgAlpha(0.36),
+        '--dsh-scrollbar-thumb': scrollbarThumb, '--dsh-scrollbar-thumb-hover': scrollbarHover,
+        '--dsw-alias-link': link, '--dsw-alias-state-business-primary': link, '--dsw-alias-state-business-tertiary': colorWithAlpha(link, 0.16),
+        '--dsw-alias-brand-primary': primaryFill, '--dsw-alias-brand-primary-invert': primaryFill, '--dsw-alias-brand-text': foreground,
+        '--dsw-alias-button-primary-fill': primaryFill, '--dsw-alias-button-primary-hover': primaryHover, '--dsw-alias-button-primary-dimmed': layer2,
+        '--dsw-alias-button-info-fill': infoFill, '--dsw-alias-button-info-hover': infoHover,
+        '--dsw-alias-button-contrast-fill': dl(foreground, fgAlpha(0.72)), '--dsw-alias-button-elevated-fill': dl(layer3, background),
+        '--dsw-alias-button-floating-fill': dl(layer2, background), '--dsw-alias-button-floating-hover': dl(layer3, layer2),
+        '--dsw-alias-button-ghost-active-border': border4, '--dsw-alias-button-ghost-active-fill': layer2, '--dsw-alias-button-ghost-active-hover': layer3,
+        '--dsw-alias-switch-thumb': dl(mixColor(background, foreground, 72), '#ffffff'),
+        '--dsw-alias-tooltip-bg': tipBg, '--dsw-alias-toast-bg': tipBg, '--dsw-alias-toast-label': '#f9fafb',
+        '--dsw-alias-state-done-primary': pick('#b197fc', '#6d28d9', textSurfaces), '--dsw-alias-state-error-primary': errorPrimary,
+        '--dsw-alias-state-idle-primary': fgAlpha(0.3), '--dsw-alias-state-success-primary': successPrimary,
+        '--dsw-alias-state-success-tertiary': dl('#1e3526', '#e6faed'),
+        '--dsw-alias-state-warn-primary': warnPrimary, '--dsw-alias-state-warn-label': warnPrimary,
+        '--dsw-alias-state-warn-tertiary': dl('#27241f', '#fef5e7'),
+        '--dsw-alias-markdown-code-block': codeBlock, '--dsw-alias-markdown-code-block-banner': mixBg(8, 5),
+        '--dsw-alias-markdown-code-segment-selected': dl(layer3, background), '--dsw-alias-markdown-code-segment-unselected': dl(codeBlock, layer2),
+        '--dsw-alias-markdown-inline-code': mixBg(9, 5), '--dsw-alias-markdown-citation': mixBg(11, 6), '--dsw-alias-markdown-tag': mixBg(9, 5),
         '--dsw-alias-markdown-placeholder': layer2,
-        '--dsw-alias-turn-trigger-bg': surfaceDark ? colorWithAlpha(foreground, 0.08) : codeBlock,
-        '--dsw-alias-turn-trigger-bg-hover': colorWithAlpha(foreground, surfaceDark ? 0.14 : 0.08),
+        '--dsw-alias-turn-trigger-bg': dl(fgAlpha(0.08), codeBlock), '--dsw-alias-turn-trigger-bg-hover': fgAlpha(0.14, 0.08),
         '--dsw-linear-gradient-think': `linear-gradient(180deg, ${background} 20.19%, transparent 100%)`,
         '--dsw-linear-think-select': `linear-gradient(180deg, ${layer1} 20.19%, transparent 100%)`,
-        '--dsw-alias-code-diff-added': surfaceDark ? '#22c55e1f' : '#22c55e14',
-        '--dsw-alias-code-diff-deleted': surfaceDark ? '#f25a5a1f' : '#b91c1c14',
-        '--dsw-alias-file-diff-added-bg': surfaceDark ? '#1f3124' : '#e6f4e7',
-        '--dsw-alias-file-diff-added-gutter': surfaceDark ? '#132016' : '#edf7ed',
-        '--dsw-alias-file-diff-added-marker': surfaceDark ? '#41c977' : '#01a241',
-        '--dsw-alias-file-diff-deleted-bg': surfaceDark ? '#3c1f1b' : '#fce6e2',
-        '--dsw-alias-file-diff-deleted-gutter': surfaceDark ? '#28130e' : '#fdece9',
-        '--dsw-alias-file-diff-deleted-marker': surfaceDark ? '#fa423e' : '#ba2723',
-        '--shiki-foreground': foreground,
-        '--shiki-background': codeBlock,
-        '--shiki-token-constant': pickReadableToken('#4dabf7', '#1864ab', surfaceDark, codeSurfaces),
-        '--shiki-token-string': pickReadableToken('#69db7c', '#237032', surfaceDark, codeSurfaces),
-        '--shiki-token-comment': pickReadableToken('#adb5bd', '#5c646d', surfaceDark, codeSurfaces),
-        '--shiki-token-keyword': pickReadableToken('#faa2c1', '#c2255c', surfaceDark, codeSurfaces),
-        '--shiki-token-parameter': pickReadableToken('#ffa94d', '#c94408', surfaceDark, codeSurfaces),
-        '--shiki-token-function': pickReadableToken('#b197fc', '#5f3dc4', surfaceDark, codeSurfaces),
-        '--shiki-token-string-expression': pickReadableToken('#8ce99a', '#237032', surfaceDark, codeSurfaces),
-        '--shiki-token-punctuation': pickReadableToken('#ced4da', '#495057', surfaceDark, codeSurfaces),
-        '--shiki-token-link': pickReadableToken('#74c0fc', '#1864ab', surfaceDark, codeSurfaces),
+        '--dsw-alias-code-diff-added': dl('#22c55e1f', '#22c55e14'), '--dsw-alias-code-diff-deleted': dl('#f25a5a1f', '#b91c1c14'),
+        '--dsw-alias-file-diff-added-bg': dl('#1f3124', '#e6f4e7'), '--dsw-alias-file-diff-added-gutter': dl('#132016', '#edf7ed'), '--dsw-alias-file-diff-added-marker': dl('#41c977', '#01a241'),
+        '--dsw-alias-file-diff-deleted-bg': dl('#3c1f1b', '#fce6e2'), '--dsw-alias-file-diff-deleted-gutter': dl('#28130e', '#fdece9'), '--dsw-alias-file-diff-deleted-marker': dl('#fa423e', '#ba2723'),
+        '--shiki-foreground': foreground, '--shiki-background': codeBlock,
       }
     }
 
@@ -496,23 +445,73 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
       }, { slots: { views: FixedChatView } })
     }
 
-    function Onboarding({ busy, connect, loading, localApp }) {
+    const activeProvisionPhases = new Set(['checking', 'downloading', 'verifying', 'extracting'])
+
+    function formatMB(bytes) {
+      return `${(Math.max(0, Number(bytes) || 0) / 1_048_576).toFixed(1)} MB`
+    }
+
+    function provisionSummary(provision) {
+      if (!provision || !activeProvisionPhases.has(provision.phase)) return ''
+      const versionTag = provision.version ? ` ${provision.version}` : ''
+      if (provision.phase === 'checking') return '正在检查 BeefTV 运行环境…'
+      if (provision.phase === 'downloading') {
+        const progress = provision.totalBytes > 0
+          ? `（${provision.percent ?? 0}% · ${formatMB(provision.downloadedBytes)} / ${formatMB(provision.totalBytes)}）`
+          : (provision.downloadedBytes > 0 ? `（已下载 ${formatMB(provision.downloadedBytes)}）` : '')
+        const sourceTag = provision.sourceLabel ? ` · ${provision.sourceLabel}` : ''
+        return `正在下载 BeefTV${versionTag}${progress}${sourceTag}…`
+      }
+      if (provision.phase === 'verifying') return `正在校验 BeefTV${versionTag} 安装包…`
+      return `正在解压 BeefTV${versionTag} 运行环境…`
+    }
+
+    function ProvisionProgress({ provision, onCancel }) {
+      const text = provisionSummary(provision)
+      if (!text) return null
+      const width = provision.phase === 'downloading' && typeof provision.percent === 'number'
+        ? `${Math.max(2, Math.min(100, provision.percent))}%`
+        : '100%'
+      return h('div', { className: 'beeftv-harness-progress', role: 'status', 'aria-live': 'polite' },
+        h('div', { className: 'beeftv-harness-progress-row' },
+          h('span', null, text),
+          onCancel && h('button', { type: 'button', onClick: onCancel }, '取消')),
+        h('div', { className: 'beeftv-harness-progress-bar' },
+          h('div', { className: 'beeftv-harness-progress-fill', style: { width } })))
+    }
+
+    function Onboarding({ busy, connect, loading, localApp, standaloneRuntime, provision, onCancelProvision }) {
+      const provisioning = activeProvisionPhases.has(provision?.phase)
+      const standaloneUnsupported = standaloneRuntime?.supported === false
+      const standaloneHint = standaloneUnsupported
+        ? standaloneRuntime.unsupportedReason
+        : standaloneRuntime?.ready === false
+          ? '首次使用会在插件内自动下载官方运行环境，无需单独安装 BeefTV 客户端。'
+          : '在 DSH 内直接运行 BeefTV 独立工作区，无需额外安装客户端。'
+      const localOption = h('button', { key: 'local', type: 'button', className: 'beeftv-harness-option', disabled: busy || loading, onClick: () => connect('local') },
+        h('strong', null, busy === 'local' ? '正在连接…' : '连接本机 BeefTV'),
+        h('span', null, localApp?.message || '与本机已安装的 BeefTV 互通，共享同一套画布、素材、配置与版本更新。'))
+      const standaloneOption = h('button', { key: 'standalone', type: 'button', className: 'beeftv-harness-option', disabled: busy || loading || standaloneUnsupported, onClick: () => connect('standalone') },
+        h('strong', null, busy === 'standalone' ? (provisioning ? '正在准备运行环境…' : '正在创建连接…') : '使用独立工作区'),
+        h('span', null, standaloneHint))
+      const preferStandaloneFirst = localApp?.compatible === false && !localApp?.version && !standaloneUnsupported
+      const options = preferStandaloneFirst ? [standaloneOption, localOption] : [localOption, standaloneOption]
       return h('div', { className: 'beeftv-harness-onboarding' },
         h('div', { className: 'beeftv-harness-onboarding-content' },
           h('h1', null, '在 DSH 中打开 BeefTV'),
           h('p', null, loading ? '正在读取本机连接状态…' : '选择工作区，BeefTV Agent 会持续协助当前创作。'),
-          h('div', { className: 'beeftv-harness-options' },
-            h('button', { type: 'button', className: 'beeftv-harness-option', disabled: busy || loading, onClick: () => connect('local') },
-              h('strong', null, busy === 'local' ? '正在连接…' : '连接本机 BeefTV'),
-              h('span', null, localApp?.message || '与本机 /Applications/BeefTV.app 彻底互通，共享同一套画布、素材、配置与版本更新。')),
-            h('button', { type: 'button', className: 'beeftv-harness-option', disabled: busy || loading, onClick: () => connect('standalone') },
-              h('strong', null, busy === 'standalone' ? '正在创建连接…' : '使用独立工作区'),
-              h('span', null, '为 DSH 使用独立的 BeefTV 本地工作区。')))))
+          h('div', { className: 'beeftv-harness-options' }, options),
+          h(ProvisionProgress, { provision, onCancel: onCancelProvision })))
     }
 
     function Workbench({ renderSlot, returnToConversation, createCreativeSession, askAssistant }) {
       const [status, setStatus] = React.useState()
       const [busy, setBusy] = React.useState(false)
+      const [liveProvision, setLiveProvision] = React.useState(null)
+      const [updatingRuntime, setUpdatingRuntime] = React.useState(false)
+      const [checkingUpdate, setCheckingUpdate] = React.useState(false)
+      const [updateBanner, setUpdateBanner] = React.useState('')
+      const [updateDismissedVersion, setUpdateDismissedVersion] = React.useState('')
       const [error, setError] = React.useState('')
       const [statusError, setStatusError] = React.useState('')
       const [choosingWorkspace, setChoosingWorkspace] = React.useState(false)
@@ -549,10 +548,7 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
       const workspaceContext = reportedContext?.connectionId === connectionId ? reportedContext?.context : undefined
       const autoContinue = status?.autoContinue !== false
 
-      function clampAgentWidth(width) {
-        const maximum = Math.max(320, (body.current?.clientWidth || 718) - 286)
-        return Math.max(320, Math.min(width, maximum))
-      }
+      const clampAgentWidth = width => Math.max(320, Math.min(width, Math.max(320, (body.current?.clientWidth || 718) - 286)))
 
       React.useEffect(() => {
         const observer = new ResizeObserver(() => {
@@ -577,19 +573,12 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
         event.currentTarget.setPointerCapture(event.pointerId)
         setResizing(true)
       }
-
-      function moveResize(event) {
+      const moveResize = event => {
         const start = drag.current
-        if (start?.pointerId !== event.pointerId) return
-        setAgentWidth(clampAgentWidth(start.width + start.x - event.clientX))
+        if (start?.pointerId === event.pointerId) setAgentWidth(clampAgentWidth(start.width + start.x - event.clientX))
       }
-
-      function endResize() {
-        drag.current = null
-        setResizing(false)
-      }
-
-      function resizeWithKeyboard(event) {
+      const endResize = () => { drag.current = null; setResizing(false) }
+      const resizeWithKeyboard = event => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
         event.preventDefault()
         setAgentWidth(width => clampAgentWidth(width + (event.key === 'ArrowLeft' ? 16 : -16)))
@@ -609,7 +598,15 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
           try {
             const next = await api('status', undefined, AbortSignal.any([controller.signal, timeout.signal]))
             if (!mounted || controller.signal.aborted || connecting.current || generation !== statusGeneration.current) return
-            setStatus(current => ['connected', 'mode', 'appURL', 'version', 'error', 'connectionId', 'localPromptDismissed', 'autoContinue', 'stepLimit', 'awayNotice', 'stepNotice'].every(key => current?.[key] === next[key]) && current?.workspace?.id === next.workspace?.id && current?.build?.commit === next.build?.commit && current?.activity?.seq === next.activity?.seq && current?.localApp?.message === next.localApp?.message && current?.localApp?.compatible === next.localApp?.compatible ? current : next)
+            setStatus(current => ['connected', 'mode', 'appURL', 'version', 'error', 'connectionId', 'localPromptDismissed', 'autoContinue', 'stepLimit', 'awayNotice', 'stepNotice', 'updatingRuntime'].every(key => current?.[key] === next[key])
+              && current?.workspace?.id === next.workspace?.id && current?.build?.commit === next.build?.commit
+              && current?.activity?.seq === next.activity?.seq
+              && current?.localApp?.message === next.localApp?.message && current?.localApp?.compatible === next.localApp?.compatible
+              && current?.standaloneRuntime?.ready === next.standaloneRuntime?.ready && current?.standaloneRuntime?.source === next.standaloneRuntime?.source
+              && current?.standaloneRuntime?.version === next.standaloneRuntime?.version
+              && current?.standaloneRuntime?.updateAvailable?.version === next.standaloneRuntime?.updateAvailable?.version
+              && current?.provision?.phase === next.provision?.phase && current?.provision?.percent === next.provision?.percent
+              ? current : next)
             setStatusError('')
           } catch (failure) {
             if (!mounted || controller.signal.aborted) return
@@ -636,56 +633,35 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
         }
       }, [])
 
+      const latestRoute = React.useRef('/')
+      latestRoute.current = workspaceContext?.route || '/'
+      React.useEffect(() => { setFrameTheme(undefined) }, [source])
       React.useEffect(() => {
         setReportedContext(undefined)
         if (!source) return
         const origin = new URL(source).origin
-        const receiveContext = event => {
-          if (event.source !== frame.current?.contentWindow || event.origin !== origin || event.data?.type !== 'beeftv:context') return
-          const context = readWorkspaceContext(event.data.context)
-          if (context && connectionId) setReportedContext({ connectionId, context })
+        const onFrameMessage = async event => {
+          if (event.source !== frame.current?.contentWindow || event.origin !== origin) return
+          const type = event.data?.type
+          if (type === 'beeftv:context') {
+            const context = readWorkspaceContext(event.data.context)
+            if (context && connectionId) setReportedContext({ connectionId, context })
+          } else if (type === 'beeftv:theme') {
+            const theme = readFrameTheme(event.data)
+            if (!theme) return
+            setFrameTheme(current => current && ['dark', 'background', 'foreground', 'accent', 'accentForeground'].every(key => current[key] === theme[key]) ? current : theme)
+          } else if (type === 'beeftv:ask') {
+            const ask = readAsk(event.data.ask)
+            if (!ask || !connectionId) return
+            // 模型后续看到的是这次选中的节点，不依赖提示词里的标题。
+            setReportedContext({ connectionId, context: { route: latestRoute.current, canvasId: ask.canvasId, canvasTitle: ask.canvasTitle, selectedNodeIds: ask.nodes.map(node => node.id) } })
+            const askStatus = await askAssistant(ask)
+            frame.current?.contentWindow?.postMessage({ type: 'beeftv:ask-result', status: askStatus }, origin)
+          }
         }
-        window.addEventListener('message', receiveContext)
-        return () => window.removeEventListener('message', receiveContext)
-      }, [source, connectionId])
-
-      React.useEffect(() => {
-        setFrameTheme(undefined)
-        if (!source) return
-        const origin = new URL(source).origin
-        const receiveTheme = event => {
-          if (event.source !== frame.current?.contentWindow || event.origin !== origin || event.data?.type !== 'beeftv:theme') return
-          const theme = readFrameTheme(event.data)
-          if (!theme) return
-          setFrameTheme(current => current && current.dark === theme.dark && current.background === theme.background && current.foreground === theme.foreground && current.accent === theme.accent && current.accentForeground === theme.accentForeground ? current : theme)
-        }
-        window.addEventListener('message', receiveTheme)
-        return () => window.removeEventListener('message', receiveTheme)
-      }, [source])
-
-      React.useEffect(() => {
-        if (!source) return
-        const origin = new URL(source).origin
-        const receiveAsk = async event => {
-          if (event.source !== frame.current?.contentWindow || event.origin !== origin || event.data?.type !== 'beeftv:ask') return
-          const ask = readAsk(event.data.ask)
-          if (!ask || !connectionId) return
-          // 模型后续看到的是这次选中的节点，不依赖提示词里的标题。
-          setReportedContext({
-            connectionId,
-            context: {
-              route: workspaceContext?.route || '/',
-              canvasId: ask.canvasId,
-              canvasTitle: ask.canvasTitle,
-              selectedNodeIds: ask.nodes.map(node => node.id),
-            },
-          })
-          const status = await askAssistant(ask)
-          frame.current?.contentWindow?.postMessage({ type: 'beeftv:ask-result', status }, origin)
-        }
-        window.addEventListener('message', receiveAsk)
-        return () => window.removeEventListener('message', receiveAsk)
-      }, [source, connectionId, workspaceContext, askAssistant])
+        window.addEventListener('message', onFrameMessage)
+        return () => window.removeEventListener('message', onFrameMessage)
+      }, [source, connectionId, askAssistant])
 
       React.useEffect(() => {
         if (!connectionId) {
@@ -705,91 +681,108 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
 
       React.useEffect(() => {
         if (autoConnectAttempted.current || choosingWorkspace || busy || connecting.current) return
-        // Only an installed App that passed the Host version check is connected without asking.
-        if (status?.connected === false && status.mode === null && status.localApp?.compatible === true && !status.switching && !status.error && !statusError) {
+        if (status?.connected !== false || status.mode !== null || status.switching || status.error || statusError) return
+        // 本机已装兼容版 BeefTV 时自动互通；本机未装但插件已有独立运行环境时直接进入独立工作区。
+        if (status.localApp?.compatible === true) {
           autoConnectAttempted.current = true
           void connect('local')
+        } else if (status.localApp?.compatible === false && !status.localApp?.version && status.standaloneRuntime?.ready === true) {
+          autoConnectAttempted.current = true
+          void connect('standalone')
         }
       }, [status, choosingWorkspace, busy, statusError])
 
-      async function connect(mode) {
-        connecting.current = true
+      function startProvisionPolling() {
+        let stopped = false
+        const poll = async () => {
+          if (stopped) return
+          try {
+            const snap = await api('status')
+            if (!stopped && snap?.provision) setLiveProvision(snap.provision)
+          } catch { /* 下一次继续读取进度 */ }
+        }
+        const timer = window.setInterval(poll, 500)
+        return () => {
+          stopped = true
+          window.clearInterval(timer)
+          setLiveProvision(null)
+        }
+      }
+
+      // 写入/连接/更新前作废在途的状态轮询，避免旧连接状态把刚生效的结果翻回去。
+      async function withStatusMutation(action, { blockPolling = false } = {}) {
+        statusGeneration.current += 1
         statusRequest.current?.abort()
+        statusRequest.current = null
+        if (blockPolling) connecting.current = true
+        try { return await action() } finally {
+          if (blockPolling) connecting.current = false
+          statusGeneration.current += 1
+        }
+      }
+
+      async function connect(mode) {
         setBusy(mode)
         setError('')
+        const stopPolling = mode === 'standalone' && status?.standaloneRuntime?.ready === false ? startProvisionPolling() : null
         try {
-          const result = await api('connect', { mode })
-          setStatus(result)
-          setChoosingWorkspace(false)
-          setStatusError('')
+          await withStatusMutation(async () => {
+            setStatus(await api('connect', { mode }))
+            setChoosingWorkspace(false)
+            setStatusError('')
+          }, { blockPolling: true })
         } catch (failure) {
-          setError(failure.message)
+          if (failure?.code !== 'BEEFTV_PROVISION_CANCELLED') setError(failure.message)
         } finally {
-          connecting.current = false
+          stopPolling?.()
           setBusy(false)
         }
       }
 
-      async function startCreativeSession() {
+      async function cancelProvision() {
+        try { setLiveProvision((await api('runtime/cancel', {}))?.provision || null) } catch { /* 忽略取消时的临时失败 */ }
+      }
+
+      async function runMenuAction(setFlag, action, { ignoreCancel = false } = {}) {
         setActionsOpen(false)
-        setCreatingSession(true)
+        setFlag(true)
         setError('')
-        try {
-          await createCreativeSession()
-        } catch (failure) {
-          setError(failure.message)
-        } finally {
-          setCreatingSession(false)
-        }
+        try { await action() } catch (failure) {
+          if (!ignoreCancel || failure?.code !== 'BEEFTV_PROVISION_CANCELLED') setError(failure.message)
+        } finally { setFlag(false) }
       }
 
-      async function saveSettings(patch) {
-        setError('')
-        // 写入前丢掉在途的状态读取；写入期间的轮询也一并作废，避免旧值把刚保存的值翻回去。
-        statusGeneration.current += 1
-        statusRequest.current?.abort()
-        statusRequest.current = null
-        try {
-          setStatus(await api('settings', patch))
-        } catch (failure) {
-          setError(failure.message)
-        } finally {
-          statusGeneration.current += 1
-        }
-      }
+      const checkRuntimeUpdate = () => runMenuAction(setCheckingUpdate, () => withStatusMutation(async () => {
+        setUpdateBanner('')
+        const next = await api('runtime/check-update', {})
+        setStatus(next)
+        if (next?.standaloneRuntime?.updateAvailable?.version) setUpdateDismissedVersion('')
+        else setUpdateBanner('当前 BeefTV 运行环境已是最新版本。')
+      }))
 
-      async function dismissNotice(path) {
-        setError('')
-        statusGeneration.current += 1
-        statusRequest.current?.abort()
-        statusRequest.current = null
+      const updateRuntime = () => runMenuAction(setUpdatingRuntime, () => withStatusMutation(async () => {
+        setUpdateBanner('')
+        const stopPolling = startProvisionPolling()
         try {
-          setStatus(await api(path, { seen: true }))
-        } catch (failure) {
-          setError(failure.message)
-        } finally {
-          statusGeneration.current += 1
-        }
-      }
+          setStatus(await api('runtime/update', {}))
+          setUpdateDismissedVersion('')
+          setStatusError('')
+        } finally { stopPolling() }
+      }, { blockPolling: true }), { ignoreCancel: true })
 
-      async function dismissLocalPrompt() {
-        setError('')
-        // An older status read must not put the prompt back after the dismissal was saved.
-        statusGeneration.current += 1
-        statusRequest.current?.abort()
-        statusRequest.current = null
-        try {
-          setStatus(await api('local-prompt', { dismissed: true }))
-        } catch (failure) {
-          setError(failure.message)
-        } finally {
-          statusGeneration.current += 1
-        }
-      }
+      const startCreativeSession = () => runMenuAction(setCreatingSession, createCreativeSession)
+      const mutateStatus = (path, body) => (setError(''), withStatusMutation(() => api(path, body).then(setStatus, failure => setError(failure.message))))
+
+      const saveSettings = patch => mutateStatus('settings', patch)
+      const dismissNotice = path => mutateStatus(path, { seen: true })
+      const dismissLocalPrompt = () => mutateStatus('local-prompt', { dismissed: true })
 
       const visibleError = error || status?.error || statusError
       const standalone = status?.connected === true && status?.mode === 'standalone' && !choosingWorkspace
       const localReady = standalone && status?.localApp?.compatible === true && !status?.localPromptDismissed
+      const activeProvision = liveProvision || status?.provision || null
+      const updateAvailable = standalone && status?.standaloneRuntime?.source === 'managed' ? status?.standaloneRuntime?.updateAvailable : null
+      const showUpdateNotice = Boolean(updateAvailable?.version && updateDismissedVersion !== updateAvailable.version && !updatingRuntime)
       const themeStyle = React.useMemo(() => frameThemeStyle(frameTheme), [frameTheme])
       const portalStyleRef = React.useRef(null)
       const portalOriginRef = React.useRef(false)
@@ -850,24 +843,27 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
         }
       }, [themeStyle])
 
+      const noticeBar = (text, ...buttons) => h('div', { className: 'beeftv-harness-notice', role: 'status' }, h('span', null, text), ...buttons)
+      const btn = (label, onClick, extra = {}) => h('button', { type: 'button', onClick, ...extra }, label)
+
       return h('section', { ref: root, className: 'beeftv-harness', 'aria-label': 'BeefTV 工作台', 'data-resizing': resizing, 'data-beeftv-themed': themeStyle ? '' : undefined, style: themeStyle },
         h('span', { ref: clearanceProbe, className: 'beeftv-harness-clearance', 'aria-hidden': true }),
         visibleError && h('div', { className: 'beeftv-harness-error', role: 'alert' }, visibleError),
         standalone && h('div', { className: 'beeftv-harness-workspace-note' }, '独立工作区，和本机 BeefTV 不是同一份数据'),
-        status?.awayNotice && h('div', { className: 'beeftv-harness-notice', role: 'status' },
-          h('span', null, status.awayNotice),
-          h('button', { type: 'button', 'aria-label': '关闭离开提示', onClick: () => dismissNotice('away-notice') }, '知道了')),
-        status?.stepNotice && h('div', { className: 'beeftv-harness-notice', role: 'status' },
-          h('span', null, status.stepNotice),
-          h('button', { type: 'button', 'aria-label': '关闭步数提示', onClick: () => dismissNotice('step-notice') }, '知道了')),
-        localReady && h('div', { className: 'beeftv-harness-notice', role: 'status' },
-          h('span', null, '本机 BeefTV 可以连接了，连接后用同一份画布和素材。'),
-          h('button', { type: 'button', disabled: !!busy, onClick: () => connect('local') }, '连接本机'),
-          h('button', { type: 'button', disabled: !!busy, onClick: dismissLocalPrompt }, '暂不')),
+        status?.awayNotice && noticeBar(status.awayNotice, btn('知道了', () => dismissNotice('away-notice'), { 'aria-label': '关闭离开提示' })),
+        status?.stepNotice && noticeBar(status.stepNotice, btn('知道了', () => dismissNotice('step-notice'), { 'aria-label': '关闭步数提示' })),
+        localReady && noticeBar('本机 BeefTV 可以连接了，连接后用同一份画布和素材。',
+          btn('连接本机', () => connect('local'), { disabled: !!busy || updatingRuntime }),
+          btn('暂不', dismissLocalPrompt, { disabled: !!busy || updatingRuntime })),
+        showUpdateNotice && noticeBar(`BeefTV 运行环境有新版本（${updateAvailable.version}），更新完成后工作区会自动重启，画布和素材会完整保留。`,
+          btn('立即更新', updateRuntime, { disabled: !!busy || updatingRuntime }),
+          btn('暂不', () => setUpdateDismissedVersion(updateAvailable.version), { disabled: !!busy || updatingRuntime })),
+        updatingRuntime && activeProvisionPhases.has(activeProvision?.phase) && noticeBar(provisionSummary(activeProvision), btn('取消', cancelProvision)),
+        updateBanner && noticeBar(updateBanner, btn('知道了', () => setUpdateBanner(''))),
         h('div', { ref: body, className: 'beeftv-harness-body', style: { '--beeftv-agent-width': `${agentWidth}px` } },
           h('div', { className: 'beeftv-harness-workspace' }, source
             ? h('iframe', { key: source, ref: frame, src: source, onLoad: publishFrameClearance, title: 'BeefTV 创作工作区', className: 'beeftv-harness-frame', referrerPolicy: 'no-referrer', allow: 'clipboard-read; clipboard-write' })
-            : h(Onboarding, { busy, connect, loading: status === undefined, localApp: status?.localApp })),
+            : h(Onboarding, { busy, connect, loading: status === undefined, localApp: status?.localApp, standaloneRuntime: status?.standaloneRuntime, provision: activeProvision, onCancelProvision: cancelProvision })),
           h('div', { className: 'beeftv-harness-divider', role: 'separator', tabIndex: 0, 'aria-label': '调整 BeefTV Agent 宽度', 'aria-orientation': 'vertical', 'aria-valuemin': 320, 'aria-valuemax': Math.max(320, availableWidth - 286), 'aria-valuenow': agentWidth, 'aria-controls': 'beeftv-agent-panel', onPointerDown: startResize, onPointerMove: moveResize, onPointerUp: endResize, onPointerCancel: endResize, onLostPointerCapture: endResize, onKeyDown: resizeWithKeyboard }),
           h('aside', { id: 'beeftv-agent-panel', className: 'beeftv-harness-agent', 'aria-label': 'BeefTV Agent', style: themeStyle },
             h('div', { className: 'beeftv-harness-agent-header' },
@@ -877,7 +873,10 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
                   h('button', { ref: actionsButton, type: 'button', 'aria-label': '工作台操作', 'aria-expanded': actionsOpen, onClick: () => { skipStepSave.current = false; setActionsOpen(open => !open) } }, '⋯'),
                   actionsOpen && h('div', { className: 'beeftv-harness-action-menu' },
                     h('button', { type: 'button', disabled: creatingSession, onClick: startCreativeSession }, creatingSession ? '正在创建…' : '新建会话'),
-                    status?.connected && !choosingWorkspace && h('button', { type: 'button', disabled: !!busy, onClick: () => { setActionsOpen(false); setChoosingWorkspace(true) } }, '切换工作区'),
+                    status?.connected && !choosingWorkspace && h('button', { type: 'button', disabled: !!busy || updatingRuntime, onClick: () => { setActionsOpen(false); setChoosingWorkspace(true) } }, '切换工作区'),
+                    standalone && status?.standaloneRuntime?.source === 'managed' && (updateAvailable?.version
+                      ? h('button', { type: 'button', disabled: !!busy || updatingRuntime, onClick: updateRuntime }, updatingRuntime ? '正在更新运行环境…' : `更新运行环境（${updateAvailable.version}）`)
+                      : h('button', { type: 'button', disabled: checkingUpdate || updatingRuntime, onClick: checkRuntimeUpdate }, checkingUpdate ? '正在检查更新…' : '检查运行环境更新')),
                     h('button', { type: 'button', onClick: returnToConversation }, '返回 DSH'),
                     h('button', { type: 'button', 'aria-pressed': autoContinue, onClick: () => saveSettings({ autoContinue: !autoContinue }) }, '生成完自动继续'),
                     h('label', { className: 'beeftv-harness-setting' }, '每轮工具调用上限',
@@ -912,39 +911,28 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
       return async ask => {
         const prompt = askPrompt(ask)
         const input = ctx.get?.('conversation')?.input
-        if (typeof input?.requestDraftInitialization !== 'function') {
-          // 旧版 DSH 没有输入框预填接口：退回新建会话，由 startSession 自己放草稿。
-          try {
+        try {
+          if (typeof input?.requestDraftInitialization !== 'function') {
+            // 旧版 DSH 没有输入框预填接口：退回新建会话，由 startSession 自己放草稿。
             if (typeof ctx.uiWorkspace?.startSession !== 'function') return 'unavailable'
             ctx.uiWorkspace.startSession(undefined, { prompt, whenDraftExists: 'append' })
             ctx.layout.selectPanel(panelId)
             return 'applied'
-          } catch {
-            return 'unavailable'
           }
-        }
-        let binding
-        try {
-          binding = conversationSessionId === undefined ? undefined : ctx.sessions?.binding?.(conversationSessionId)
-        } catch {
-          binding = undefined
-        }
-        if (binding) {
+          let binding
           try {
-            const result = prefill(input, binding, prompt)
-            ctx.layout.selectPanel(panelId)
-            return result
+            binding = conversationSessionId === undefined ? undefined : ctx.sessions?.binding?.(conversationSessionId)
           } catch {
-            return 'unavailable'
+            binding = undefined
           }
-        }
-        // 没有当前会话：新建并立即 retain，确认输入框真的接住了草稿，而不是假定成功。
-        try {
-          const sessionId = await ctx.sessions.create()
-          ctx.uiWorkspace.openSession(sessionId)
-          const created = ctx.sessions.binding(sessionId)
-          if (!created) return 'unavailable'
-          const result = prefill(input, created, prompt)
+          if (!binding) {
+            // 没有当前会话：新建并立即 retain，确认输入框真的接住了草稿，而不是假定成功。
+            const sessionId = await ctx.sessions.create()
+            ctx.uiWorkspace.openSession(sessionId)
+            binding = ctx.sessions.binding(sessionId)
+            if (!binding) return 'unavailable'
+          }
+          const result = prefill(input, binding, prompt)
           ctx.layout.selectPanel(panelId)
           return result
         } catch {
