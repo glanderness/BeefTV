@@ -210,7 +210,7 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                                         <summary>查看 {productionParts.targetLines.length} 项镜头与提示词明细</summary>
                                         <div className="canvas-assistant-proposal-targets">
                                             {productionParts.targetLines.map((line, index) => (
-                                                <div key={proposal.production?.targets[index]?.nodeId || index} className="canvas-assistant-proposal-target">
+                                                <div key={proposal.production?.targets?.[index]?.nodeId || index} className="canvas-assistant-proposal-target">
                                                     {line.split("\n").map((part, partIndex) => <div key={partIndex} className={part.length > 80 ? "canvas-assistant-pretty-line" : undefined}>{part}</div>)}
                                                 </div>
                                             ))}

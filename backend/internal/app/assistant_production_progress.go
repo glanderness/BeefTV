@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"reflect"
 	"strings"
 
 	"gorm.io/gorm"
@@ -55,7 +54,7 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 	if err != nil {
 		return false, err
 	}
-	if !reflect.DeepEqual(current, plan.Targets) {
+	if !operations.GenerationTargetsEqual(current, plan.Targets) {
 		return false, &assistantturns.Error{Reason: "continuation_intent_changed", Message: "制作方案已修改，自动制作已停止，请确认新的方案"}
 	}
 	saved, planned := map[string]bool{}, map[string]bool{}

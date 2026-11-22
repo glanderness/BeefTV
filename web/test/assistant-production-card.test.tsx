@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CanvasAssistantTurnView } from "@/pages/canvas/canvas-assistant-turn";
 import { assistantProposalProgress, assistantProposalText } from "@/pages/canvas/canvas-assistant-copy";
-import type { AssistantGenerationProposal, AssistantScriptProposal, AssistantTurn } from "@/services/api/agent-assistant";
+import { normalizeAssistantProposal, type AssistantGenerationProposal, type AssistantScriptProposal, type AssistantTurn } from "@/services/api/agent-assistant";
 
 const proposal: AssistantGenerationProposal = {
     proposalId:"gp-film",kind:"image",nodeIds:["frame"],model:"image",modelKey:"custom::image",
@@ -407,4 +407,67 @@ test("skill script proposal card renders confirmation actions and collapsible ou
     expect(completedHtml).toContain("查看脚本输出");
     expect(completedHtml).toContain("检测到 00:01.20-00:01.80 停顿");
     expect(completedHtml).not.toContain("本对话始终允许");
+});
+
+test("production proposal tolerates legacy null referenceNodeIds and parameters without crashing", () => {
+    const legacyProposal = {
+        proposalId: "gp-null-refs",
+        kind: "image",
+        nodeIds: ["img-solo"],
+        model: "dola-seedream-5-0-flash-260915",
+        modelKey: "beeftv::dola-seedream-5-0-flash-260915",
+        production: {
+            targets: [
+                {
+                    nodeId: "img-solo",
+                    title: "橘猫侦探定妆图",
+                    kind: "image",
+                    modelKey: "beeftv::dola-seedream-5-0-flash-260915",
+                    prompt: "赛博雨夜橘猫侦探",
+                    parameters: null,
+                    referenceNodeIds: null,
+                    estimate: { amount: 0.0122, text: "预计 ¥0.0122（2K ¥0.0122/张 × 1 张）" },
+                },
+            ],
+            estimate: { amount: 0.0122, priced: 1, unknown: 0, text: "预计费用：¥0.0122" },
+        },
+        source: { canvasId: "canvas", canvasRevision: 1, modelConfigRevision: 1 },
+    } as unknown as AssistantGenerationProposal;
+
+    const normalized = normalizeAssistantProposal(legacyProposal);
+    expect(normalized.production?.targets[0]?.referenceNodeIds).toEqual([]);
+    expect(normalized.production?.targets[0]?.parameters).toEqual({});
+
+    const text = assistantProposalText(legacyProposal);
+    expect(text).toContain("整片制作方案：1 张图片、0 段视频、0 段配音");
+    expect(text).toContain("橘猫侦探定妆图 · dola-seedream-5-0-flash-260915 · 1 个");
+    expect(text).toContain("赛博雨夜橘猫侦探");
+
+    const progress = assistantProposalProgress(legacyProposal, []);
+    expect(progress.text).toContain("0/1");
+
+    const html = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={{
+                turnId: "turn-null-refs",
+                userText: "画一张橘猫侦探定妆图",
+                selectedNodeIds: [],
+                reply: "",
+                toolCalls: [],
+                change: null,
+                error: null,
+                cancelled: false,
+                createdAt: "2026-11-22",
+                proposals: [legacyProposal],
+            }}
+            handledProposals={new Set()}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(html).toContain("橘猫侦探定妆图");
+    expect(html).toContain("确认并制作整片");
 });

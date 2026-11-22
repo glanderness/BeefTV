@@ -681,3 +681,12 @@ func TestDeleteAssetAndResourcesConcurrentRestoreKeepsActiveAsset(t *testing.T) 
 		t.Fatalf("row gone but delete err = %v", deleteErr)
 	}
 }
+
+func TestDeleteUserAssetWithResourcesReturnsNotFoundForMissingAsset(t *testing.T) {
+	svc, _, _ := newDeletionDomain(t)
+	err := svc.DeleteUserAssetWithResources("user-1", "asset-does-not-exist")
+	var appErr *kernel.AppError
+	if !errors.As(err, &appErr) || appErr.Status != http.StatusNotFound {
+		t.Fatalf("DeleteUserAssetWithResources(missing) = %v, want 404 AppError", err)
+	}
+}

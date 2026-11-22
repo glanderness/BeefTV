@@ -28,10 +28,46 @@ type GenerationTarget struct {
 	ReferenceNodeIDs []string          `json:"referenceNodeIds"`
 }
 
+// NormalizeGenerationTarget canonicalizes nil vs empty collections so legacy
+// persisted plans (`"referenceNodeIds": null` / `"parameters": null`) compare
+// equal to freshly built targets.
+func NormalizeGenerationTarget(target GenerationTarget) GenerationTarget {
+	if target.Parameters == nil {
+		target.Parameters = map[string]string{}
+	}
+	if len(target.Metadata) == 0 {
+		target.Metadata = nil
+	}
+	if target.ReferenceNodeIDs == nil {
+		target.ReferenceNodeIDs = []string{}
+	}
+	return target
+}
+
+func GenerationTargetEqual(left, right GenerationTarget) bool {
+	return reflect.DeepEqual(NormalizeGenerationTarget(left), NormalizeGenerationTarget(right))
+}
+
+func GenerationTargetsEqual(left, right []GenerationTarget) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if !GenerationTargetEqual(left[i], right[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 type GenerationAuthorization struct {
 	SourceTurnID string             `json:"sourceTurnId"`
 	ProposalID   string             `json:"proposalId"`
 	Targets      []GenerationTarget `json:"targets"`
+}
+
+func (a GenerationAuthorization) SamePlan(other GenerationAuthorization) bool {
+	return a.SourceTurnID == other.SourceTurnID && a.ProposalID == other.ProposalID && GenerationTargetsEqual(a.Targets, other.Targets)
 }
 
 type GenerationOrderStatus string
@@ -379,7 +415,7 @@ func generationTargetsContainBatch(planned, batch []GenerationTarget) bool {
 	}
 	for _, item := range batch {
 		expected, ok := byID[item.NodeID]
-		if !ok || !reflect.DeepEqual(expected, item) {
+		if !ok || !GenerationTargetEqual(expected, item) {
 			return false
 		}
 	}
@@ -576,7 +612,8 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 		}
 		rawRefs := graph.references(id, kind)
 		orderedRefs := uniqueOrderedIDs(rawRefs)
-		refs := append([]string(nil), orderedRefs...)
+		refs := make([]string, len(orderedRefs))
+		copy(refs, orderedRefs)
 		sort.Strings(refs)
 		if kind == "video" {
 			var reconcileErr error

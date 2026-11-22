@@ -149,28 +149,49 @@ const PROPOSAL_PARAMETER_LABELS: Record<string, string> = {
     seedreamWatermark: "图片水印",
 };
 
+type ProposalTargetLike = {
+    nodeId: string;
+    title?: string;
+    kind: "image" | "video" | "audio";
+    model?: string;
+    modelKey?: string;
+    prompt: string;
+    parameters?: Record<string, string> | null;
+    referenceNodeIds?: string[] | null;
+    estimate?: { text?: string };
+};
+
+function formatProposalTargetLine(
+    target: ProposalTargetLike,
+    allTargets: readonly ProposalTargetLike[],
+    fallbackModel: string,
+    awaitingConfirmation: boolean,
+): string {
+    const parameters = target.parameters || {};
+    const params = Object.entries(parameters).filter(([key]) => PROPOSAL_PARAMETER_LABELS[key]).map(([key, value]) => {
+        const display = key === "seedreamOptimize" ? (value === "standard" ? "标准" : value === "fast" ? "快速" : value)
+            : key === "seedreamWatermark" ? (value === "true" ? "开启" : "关闭")
+            : key === "seedreamOutputFormat" ? value.toUpperCase() : value;
+        return `${PROPOSAL_PARAMETER_LABELS[key]}：${display}`;
+    }).join(" · ");
+    const refs = (Array.isArray(target.referenceNodeIds) ? target.referenceNodeIds : [])
+        .map((id) => allTargets.find((item) => item.nodeId === id)?.title || "已有参考素材");
+    const modelLabel = target.model || target.modelKey?.split("::").pop() || fallbackModel;
+    return [
+        `${target.title || target.nodeId} · ${modelLabel} · ${parameters.count || "1"} 个`,
+        ...(params ? [params] : []),
+        ...(refs.length ? [`参考：${refs.join("、")}`] : []),
+        ...(awaitingConfirmation && target.estimate?.text ? [`费用：${target.estimate.text}`] : []),
+        `${target.kind === "audio" ? "台词" : "提示词"}：${target.prompt}`,
+    ].join("\n");
+}
+
 /** 拆出普通生成单的逐项明细（提示词、模型、参数、参考与报价状态），供卡片折叠展开。 */
 export function assistantOrderTargetLines(proposal: AssistantGenerationProposal, awaitingConfirmation = true): string[] {
     if (proposal.production) return [];
     const targets = proposal.targets?.length ? proposal.targets : proposal.order?.targetViews || [];
     if (!targets.length) return [];
-    return targets.map((t) => {
-        const params = Object.entries(t.parameters || {}).filter(([key]) => PROPOSAL_PARAMETER_LABELS[key]).map(([key, value]) => {
-            const display = key === "seedreamOptimize" ? (value === "standard" ? "标准" : value === "fast" ? "快速" : value)
-                : key === "seedreamWatermark" ? (value === "true" ? "开启" : "关闭")
-                : key === "seedreamOutputFormat" ? value.toUpperCase() : value;
-            return `${PROPOSAL_PARAMETER_LABELS[key]}：${display}`;
-        }).join(" · ");
-        const refs = (t.referenceNodeIds || []).map((id) => targets.find((item) => item.nodeId === id)?.title || "已有参考素材");
-        const modelLabel = t.model || t.modelKey?.split("::").pop() || proposal.model;
-        return [
-            `${t.title || t.nodeId} · ${modelLabel} · ${t.parameters?.count || "1"} 个`,
-            ...(params ? [params] : []),
-            ...(refs.length ? [`参考：${refs.join("、")}`] : []),
-            ...(awaitingConfirmation && t.estimate?.text ? [`费用：${t.estimate.text}`] : []),
-            `${t.kind === "audio" ? "台词" : "提示词"}：${t.prompt}`,
-        ].join("\n");
-    });
+    return targets.map((t) => formatProposalTargetLine(t, targets, proposal.model, awaitingConfirmation));
 }
 
 /** 拆出整片方案的概览、逐项明细与确认提示，供卡片默认收起明细、按需展开。 */
@@ -179,24 +200,13 @@ export function assistantProductionProposalParts(
     awaitingConfirmation = true,
 ): AssistantProductionProposalParts | null {
     if (!proposal.production) return null;
-    const targets = proposal.production.targets;
+    const targets = Array.isArray(proposal.production.targets) ? proposal.production.targets : [];
     const images = targets.filter(t => t.kind === "image").length;
     const videos = targets.filter(t => t.kind === "video");
     const audio = targets.filter(t => t.kind === "audio");
-    const labels = PROPOSAL_PARAMETER_LABELS;
     const priceSummary = awaitingConfirmation ? proposal.production.estimate?.text : "";
     const header = `整片制作方案：${images} 张图片、${videos.length} 段视频、${audio.length} 段配音${priceSummary ? `\n${priceSummary}` : ""}`;
-    const targetLines = targets.map((t) => {
-        const params = Object.entries(t.parameters).filter(([key]) => labels[key]).map(([key,value]) => {
-            const display = key === "seedreamOptimize" ? (value === "standard" ? "标准" : value === "fast" ? "快速" : value)
-                : key === "seedreamWatermark" ? (value === "true" ? "开启" : "关闭")
-                : key === "seedreamOutputFormat" ? value.toUpperCase() : value;
-            return `${labels[key]}：${display}`;
-        }).join(" · ");
-        const refs = t.referenceNodeIds.map(id => targets.find(item => item.nodeId === id)?.title || "已有参考素材");
-        const estimate = awaitingConfirmation ? t.estimate?.text : "";
-        return `${t.title} · ${t.modelKey.split("::").pop()} · ${t.parameters.count || "1"} 个\n${params}${refs.length ? `\n参考：${refs.join("、")}` : ""}${estimate ? `\n费用：${estimate}` : ""}\n${t.kind === "audio" ? "台词" : "提示词"}：${t.prompt}`;
-    });
+    const targetLines = targets.map((t) => formatProposalTargetLine(t, targets, proposal.model, awaitingConfirmation));
     const footer = awaitingConfirmation ? "确认后按此方案生成素材，并自动完成声音、字幕和剪辑（可点击下方按钮或直接发送「确认」开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。" : "";
     return { header, targetLines, footer };
 }
@@ -225,7 +235,8 @@ export function assistantProposalProgress(proposal: AssistantGenerationProposal,
     const byId = new Map(nodes.map(node => [node.id, node]));
     const outputs = new Map<string, CanvasNodeData>();
     let unknown = false, batchUnverified = false, planned = 0;
-    for (const sourceId of new Set(proposal.production?.targets.map(t => t.nodeId) || proposal.nodeIds)) {
+    const productionTargets = Array.isArray(proposal.production?.targets) ? proposal.production.targets : null;
+    for (const sourceId of new Set(productionTargets?.map(t => t.nodeId) || proposal.nodeIds || [])) {
         const operationId = `proposal:${proposal.proposalId}:${sourceId}`;
         const matches = (node: CanvasNodeData) => {
             const actual = node.metadata?.taskClientOperationId || "";

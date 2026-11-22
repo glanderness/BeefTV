@@ -3,7 +3,6 @@ package app
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 
 	"gorm.io/gorm"
@@ -67,7 +66,7 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		if err != nil {
 			return err
 		}
-		if len(expectedTargets) > 0 && !reflect.DeepEqual(current, expectedTargets) {
+		if len(expectedTargets) > 0 && !operations.GenerationTargetsEqual(current, expectedTargets) {
 			return operations.Conflict("production_changed", "制作方案已变化，请重新确认", nil)
 		}
 		isMultiStage := len(input.Targets) > 0 || input.ContinuePlan || len(current) > len(input.NodeIDs)
@@ -78,7 +77,7 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		encoded, _ := json.Marshal(plan)
 		if source.GenerationAuthorizationJSON != "" && source.GenerationAuthorizationJSON != string(encoded) {
 			var existing operations.GenerationAuthorization
-			if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &existing) != nil || existing.SourceTurnID != "" {
+			if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &existing) != nil || (existing.SourceTurnID != "" && !existing.SamePlan(plan)) {
 				return operations.Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
 			}
 		}
@@ -193,7 +192,8 @@ func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID s
 		approved[target.NodeID] = target
 	}
 	for _, target := range targets {
-		if !reflect.DeepEqual(approved[target.NodeID], target) {
+		expected, ok := approved[target.NodeID]
+		if !ok || !operations.GenerationTargetEqual(expected, target) {
 			return nil, operations.PreconditionFailed("production_changed", "素材或参数超出已确认的制作方案，请重新确认", nil)
 		}
 	}
