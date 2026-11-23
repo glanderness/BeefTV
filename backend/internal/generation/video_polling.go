@@ -59,6 +59,23 @@ func (e VideoDownloadError) Error() string {
 
 func (e VideoDownloadError) Unwrap() error { return e.Cause }
 
+// VideoPersistError separates local workspace persistence failures (disk,
+// quota, SQLite) from upstream network download failures so callers do not
+// mislabel a local save error as a download failure.
+type VideoPersistError struct {
+	TaskID string
+	Cause  error
+}
+
+func (e VideoPersistError) Error() string {
+	if strings.TrimSpace(e.TaskID) == "" {
+		return fmt.Sprintf("视频结果保存失败：%v", e.Cause)
+	}
+	return fmt.Sprintf("视频结果保存失败（任务 %s）：%v", e.TaskID, e.Cause)
+}
+
+func (e VideoPersistError) Unwrap() error { return e.Cause }
+
 func DefaultVideoPollPolicy() VideoPollPolicy {
 	return VideoPollPolicy{
 		InitialDelay:          DefaultVideoPollInterval,
@@ -190,15 +207,24 @@ func NormalizeVideoPollPolicy(policy VideoPollPolicy) VideoPollPolicy {
 }
 
 func RunVideoDownload(ctx context.Context, taskID string, policy VideoPollPolicy, download func(context.Context) ([]byte, string, error)) ([]byte, string, error) {
+	return runVideoDownloadWith(ctx, taskID, policy, download)
+}
+
+func RunVideoDownloadFile(ctx context.Context, taskID string, policy VideoPollPolicy, download func(context.Context) (string, string, error)) (string, string, error) {
+	return runVideoDownloadWith(ctx, taskID, policy, download)
+}
+
+func runVideoDownloadWith[T any](ctx context.Context, taskID string, policy VideoPollPolicy, download func(context.Context) (T, string, error)) (T, string, error) {
+	var zero T
 	ctx, cancel := context.WithDeadline(ctx, PollingDeadline(ctx))
 	defer cancel()
 	runtime, _ := RuntimeFromContext(ctx)
 	if err := setExecutionStage(ctx, runtime, "正在取回生成结果"); err != nil {
-		return nil, "", err
+		return zero, "", err
 	}
 	ctx, cleanup, err := withVideoDownloadPartial(ctx)
 	if err != nil {
-		return nil, "", err
+		return zero, "", err
 	}
 	defer cleanup()
 	policy = NormalizeVideoPollPolicy(policy)
@@ -208,15 +234,15 @@ func RunVideoDownload(ctx context.Context, taskID string, policy VideoPollPolicy
 	freshConn := false
 	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return nil, "", err
+			return zero, "", err
 		}
 		attemptCtx := reporter.beginAttempt(ctx, attempt)
 		if freshConn {
 			attemptCtx = outbound.WithFreshConnection(attemptCtx)
 		}
-		data, mimeType, err := download(attemptCtx)
+		payload, mimeType, err := download(attemptCtx)
 		if err == nil {
-			return data, mimeType, nil
+			return payload, mimeType, nil
 		}
 		if outbound.IsConnectionDrop(err) {
 			freshConn = true
@@ -229,7 +255,7 @@ func RunVideoDownload(ctx context.Context, taskID string, policy VideoPollPolicy
 		}
 		retry, _ := RetryableVideoPollError(ctx, err)
 		if !retry || failures >= policy.MaxDownloadTries {
-			return nil, "", VideoDownloadError{TaskID: taskID, Cause: err}
+			return zero, "", VideoDownloadError{TaskID: taskID, Cause: err}
 		}
 		delay := ProviderRetryAfter(err)
 		if delay <= 0 {
@@ -237,7 +263,7 @@ func RunVideoDownload(ctx context.Context, taskID string, policy VideoPollPolicy
 		}
 		reporter.waitForRetry(attempt+1, pending)
 		if err := policy.Sleep(ctx, delay); err != nil {
-			return nil, "", err
+			return zero, "", err
 		}
 	}
 }
@@ -274,6 +300,10 @@ func RetryableVideoPollError(ctx context.Context, err error) (retry bool, notFou
 	}
 	var downloadError VideoDownloadError
 	if errors.As(err, &downloadError) {
+		return false, false
+	}
+	var persistError VideoPersistError
+	if errors.As(err, &persistError) {
 		return false, false
 	}
 	var expiredBackup videoBackupLinkExpiredError

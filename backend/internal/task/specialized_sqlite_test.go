@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/mediatools"
@@ -430,7 +431,10 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 		ResolveConfig:    func(c generation.Config) (generation.Config, error) { return c, nil },
 		BindRuntime:      bindRuntime,
 	}
-	kind, restored, mimeType, _, width, height, _, err := DecodeGenerationArtifact(
+	if _, _, _, _, _, _, _, err := DecodeGenerationArtifact(deps, "owner", "task-erase-audio:0", "video", srv.URL+"/muted-erased.mp4", 5*time.Second); err == nil {
+		t.Fatal("DecodeGenerationArtifact must reject remote HTTP video so callers use disk-streaming delivery")
+	}
+	artifact, cleanup, err := decodeRemoteVideoArtifactToFile(
 		deps,
 		"owner",
 		"task-erase-audio:0",
@@ -439,10 +443,16 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 		5*time.Second,
 	)
 	if err != nil {
-		t.Fatalf("DecodeGenerationArtifact failed: %v", err)
+		t.Fatalf("decodeRemoteVideoArtifactToFile failed: %v", err)
 	}
-	if kind != "video" || mimeType != "video/mp4" || width != 64 || height != 48 {
-		t.Fatalf("unexpected decoded metadata kind=%q mime=%q %dx%d", kind, mimeType, width, height)
+	if artifact.Kind != "video" || artifact.MimeType != "video/mp4" || artifact.Width != 64 || artifact.Height != 48 {
+		cleanup()
+		t.Fatalf("unexpected decoded metadata kind=%q mime=%q %dx%d", artifact.Kind, artifact.MimeType, artifact.Width, artifact.Height)
+	}
+	restored, err := io.ReadAll(artifact.Body)
+	cleanup()
+	if err != nil {
+		t.Fatalf("read restored video stream: %v", err)
 	}
 	outPath := filepath.Join(t.TempDir(), "restored.mp4")
 	if err := os.WriteFile(outPath, restored, 0o600); err != nil {
@@ -483,7 +493,7 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 				Resources: sqliteAudioResourcePort{user: "owner", id: "source", data: srcMovBytes},
 			})
 		}
-		gotKind, restoredMov, gotMime, gotFileName, _, _, _, dErr := DecodeGenerationArtifact(
+		movArtifact, movCleanup, dErr := decodeRemoteVideoArtifactToFile(
 			deps,
 			"owner",
 			"task-erase-audio:0",
@@ -492,10 +502,15 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 			5*time.Second,
 		)
 		if dErr != nil {
-			t.Fatalf("DecodeGenerationArtifact(.mov octet-stream with audio restore) failed: %v", dErr)
+			t.Fatalf("decodeRemoteVideoArtifactToFile(.mov octet-stream with audio restore) failed: %v", dErr)
 		}
-		if gotKind != "video" || gotMime != "video/quicktime" || gotFileName != "out.mov" {
-			t.Fatalf("expected video/quicktime out.mov, got kind=%q mime=%q file=%q", gotKind, gotMime, gotFileName)
+		restoredMov, rErr := io.ReadAll(movArtifact.Body)
+		movCleanup()
+		if rErr != nil {
+			t.Fatal(rErr)
+		}
+		if movArtifact.Kind != "video" || movArtifact.MimeType != "video/quicktime" || movArtifact.FileName != "out.mov" {
+			t.Fatalf("expected video/quicktime out.mov, got kind=%q mime=%q file=%q", movArtifact.Kind, movArtifact.MimeType, movArtifact.FileName)
 		}
 		if detected := generation.NormalizedMediaMIMEType("", restoredMov); detected != "video/quicktime" {
 			t.Fatalf("expected restored .mov bytes to remain video/quicktime, got %q", detected)
@@ -510,7 +525,7 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 		}
 
 		// Verify mismatched URL extension (.mp4 serving QuickTime .mov bytes) is rewritten to .mov to match normalized MIME.
-		mismatchKind, _, mismatchMime, mismatchFileName, _, _, _, mErr := DecodeGenerationArtifact(
+		mismatchArtifact, mismatchCleanup, mErr := decodeRemoteVideoArtifactToFile(
 			deps,
 			"owner",
 			"task-erase-audio:0",
@@ -519,10 +534,11 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 			5*time.Second,
 		)
 		if mErr != nil {
-			t.Fatalf("DecodeGenerationArtifact(mislabeled.mp4 -> .mov) failed: %v", mErr)
+			t.Fatalf("decodeRemoteVideoArtifactToFile(mislabeled.mp4 -> .mov) failed: %v", mErr)
 		}
-		if mismatchKind != "video" || mismatchMime != "video/quicktime" || mismatchFileName != "mislabeled.mov" {
-			t.Fatalf("expected extension rewritten to mislabeled.mov with video/quicktime, got kind=%q mime=%q file=%q", mismatchKind, mismatchMime, mismatchFileName)
+		mismatchCleanup()
+		if mismatchArtifact.Kind != "video" || mismatchArtifact.MimeType != "video/quicktime" || mismatchArtifact.FileName != "mislabeled.mov" {
+			t.Fatalf("expected extension rewritten to mislabeled.mov with video/quicktime, got kind=%q mime=%q file=%q", mismatchArtifact.Kind, mismatchArtifact.MimeType, mismatchArtifact.FileName)
 		}
 	}
 }
@@ -615,5 +631,114 @@ func TestExecuteClaimedTaskSyncsPersistedStageBeforeFailureDiagnostics(t *testin
 	stored, err := repo.Task(claimed.ID)
 	if err != nil || stored == nil || stored.FailureDiagnostics == nil || stored.FailureDiagnostics.Stage != "正在消除视频字幕" {
 		t.Fatalf("expected persisted FailureDiagnostics.Stage 正在消除视频字幕, got %+v (err=%v)", stored, err)
+	}
+}
+
+type localFileAudioResourcePort struct {
+	generation.ResourcePort
+	user string
+	id   string
+	path string
+}
+
+func (p localFileAudioResourcePort) LocalMode() bool { return true }
+
+func (p localFileAudioResourcePort) Open(userID, resourceID string) (generation.ResourceInfo, io.ReadCloser, error) {
+	if userID != p.user || resourceID != p.id {
+		return generation.ResourceInfo{}, nil, errors.New("not found")
+	}
+	f, err := os.Open(p.path)
+	if err != nil {
+		return generation.ResourceInfo{}, nil, err
+	}
+	info, _ := f.Stat()
+	return generation.ResourceInfo{
+		ID:       resourceID,
+		UserID:   userID,
+		Status:   "ready",
+		Kind:     "video",
+		MimeType: "video/mp4",
+		Size:     info.Size(),
+	}, f, nil
+}
+
+func TestPersistRemoteVideoArtifactStreamsToFileRestoresAudioAndCleansTemps(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	_, db, _ := specializedSQLite(t, nil)
+	if err := db.AutoMigrate(&model.UserDailyUploadUsage{}, &model.UserUploadReservation{}); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	sourceBytes := sqliteTestClip(t, 64, 48, true)
+	mutedBytes := sqliteTestClip(t, 64, 48, false)
+	sourcePath := filepath.Join(t.TempDir(), "source-audio.mp4")
+	if err := os.WriteFile(sourcePath, sourceBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inputJSON := `{"mode":"video","config":{"channelId":"beeftv","model":"topaz-proteus"},"upscale":{"factor":2},"referenceVideos":[{"storageKey":"resource:source-local"}]}`
+	if err := db.Create(&model.Task{
+		ID:        "task-upscale-stream",
+		UserID:    "owner",
+		Type:      "canvas_video",
+		Model:     "topaz-proteus",
+		Status:    model.TaskStatusRunning,
+		InputJSON: inputJSON,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"upscale-stream-1"`)
+		w.Header().Set("Content-Type", "video/mp4")
+		http.ServeContent(w, r, "upscaled.mp4", time.Time{}, bytes.NewReader(mutedBytes))
+	}))
+	defer srv.Close()
+
+	repo := repository.New(db)
+	resources := localasset.NewService(localasset.Dependencies{
+		Repository: localasset.NewRepository(repo),
+		Blobs:      localasset.NewFileStore(dataDir),
+		Quota: localasset.NewFileQuota(repo, func() (localasset.FileQuotaPolicy, error) {
+			return localasset.FileQuotaPolicy{ResourceUploadMB: 2048, GeneratedFileMB: 2048, DailyUploadMB: 999999, StoredFileGB: 999, Unlimited: true}, nil
+		}, nil),
+		DataDir:      dataDir,
+		LocalStorage: true,
+	})
+	deps := DeliveryMediaDeps{
+		Repo:             repo,
+		DataDir:          dataDir,
+		AllowHTTPForTest: true,
+		Resources:        resources,
+		BeginDownload: func(_, _ string, timeout time.Duration) (context.Context, func(error), error) {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			return ctx, func(error) { cancel() }, nil
+		},
+		MaxBytes:         func() (int64, error) { return 2048 << 20, nil },
+		DecryptTaskInput: func(s string) (string, error) { return s, nil },
+		DecryptSetting:   func(s string) (string, error) { return s, nil },
+		ResolveConfig:    func(c generation.Config) (generation.Config, error) { return c, nil },
+		BindRuntime: func(ctx context.Context, meta generation.CallMeta) context.Context {
+			return generation.WithRuntime(ctx, generation.Runtime{
+				Call:      meta,
+				Resources: localFileAudioResourcePort{user: "owner", id: "source-local", path: sourcePath},
+			})
+		},
+	}
+
+	res, err := PersistRemoteGenerationArtifact(deps, "owner", "video", srv.URL+"/upscaled.mp4", "task-upscale-stream:0", 15*time.Second)
+	if err != nil {
+		t.Fatalf("PersistRemoteGenerationArtifact failed: %v", err)
+	}
+	if res.Status != model.ResourceStatusReady || res.MimeType != "video/mp4" || res.Width != 64 || res.Height != 48 || res.DurationMs <= 0 {
+		t.Fatalf("unexpected persisted video resource: %+v", res)
+	}
+	persistedPath := filepath.Join(dataDir, "resources", res.ObjectKey)
+	facts, err := mediatools.ProbeLocal(context.Background(), persistedPath)
+	if err != nil || !facts.HasVideo || !facts.HasAudio || facts.Width != 64 || facts.Height != 48 {
+		t.Fatalf("persisted video missing restored audio or dimensions: facts=%+v err=%v", facts, err)
+	}
+	cacheDir := filepath.Join(dataDir, "cache", "artifact-downloads")
+	if entries, err := os.ReadDir(cacheDir); err == nil && len(entries) != 0 {
+		t.Fatalf("expected download cache dir to be clean after persistence, got %d leftover files", len(entries))
 	}
 }

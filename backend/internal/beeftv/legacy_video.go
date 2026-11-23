@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"infinite-canvas/backend/internal/assets"
 )
 
 type LegacyVideoReference struct{ ID, Kind, URL string }
@@ -310,10 +312,13 @@ func (c *MediaClient) QueryLegacyVideo(ctx context.Context, id string) (LegacyVi
 	return task, nil
 }
 
-// LegacyVideoContent downloads a finished video from the task content endpoint.
-// The gateway may answer with a redirect to object storage; only this GET
-// follows redirects through storageClient so credentials never leave the gateway.
+// LegacyVideoContent downloads a finished video from the task content endpoint
+// into memory (capped at 256 MiB). Production callers should prefer
+// LegacyVideoContentToFile to stream large 1-2 GiB results directly to disk.
 func (c *MediaClient) LegacyVideoContent(ctx context.Context, path string, limit int64) ([]byte, string, error) {
+	if limit <= 0 || limit > assets.MaxInlineMediaBytes {
+		limit = assets.MaxInlineMediaBytes
+	}
 	req, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, "", err
@@ -321,6 +326,11 @@ func (c *MediaClient) LegacyVideoContent(ctx context.Context, path string, limit
 	req.Header.Del(MediaProtocolHeader)
 	data, header, err := c.sendWith(c.storageClient("视频结果重定向次数过多"), req, limit)
 	return data, header.Get("Content-Type"), err
+}
+
+// LegacyVideoContentToFile streams a finished legacy video directly to a file on disk.
+func (c *MediaClient) LegacyVideoContentToFile(ctx context.Context, path, destDir string, limit int64) (string, string, int64, error) {
+	return c.downloadStorageToFile(ctx, path, "视频结果重定向次数过多", destDir, limit)
 }
 
 func legacyVideoResultURL(state map[string]any, depth int) string {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/outbound"
 )
 
@@ -23,14 +24,114 @@ func withVideoDownloadPartial(ctx context.Context) (context.Context, func(), err
 			return context.WithValue(ctx, videoDownloadPartialContext{}, path), func() {}, nil
 		}
 	}
-	directory, err := os.MkdirTemp("", "beeftv-video-download-")
+	f, err := os.CreateTemp("", "beeftv-video-download-*.part")
 	if err != nil {
 		return ctx, nil, err
 	}
-	return context.WithValue(ctx, videoDownloadPartialContext{}, filepath.Join(directory, "video.part")), func() { _ = os.RemoveAll(directory) }, nil
+	path := f.Name()
+	_ = f.Close()
+	_ = os.Remove(path)
+	return context.WithValue(ctx, videoDownloadPartialContext{}, path), func() {
+		_ = os.Remove(path)
+		_ = os.Remove(path + ".json")
+	}, nil
 }
 
 func getResumableVideoBinary(req *http.Request, partial string) ([]byte, string, error) {
+	filePath, mimeType, err := getResumableVideoFile(req, partial, assets.MaxInlineMediaBytes)
+	if err != nil {
+		return nil, "", err
+	}
+	defer os.Remove(filePath)
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, "", err
+	}
+	return data, mimeType, nil
+}
+
+// executeVideoRequestToFile streams a video result HTTP request directly to a
+// file on disk. GET requests without a body use DownloadResumableToFile for
+// Range-resumable transfer; non-GET protocol result requests stream directly
+// to a bounded temp file in the download cache directory.
+func executeVideoRequestToFile(req *http.Request) (string, string, error) {
+	ctx := req.Context()
+	partial, _ := ctx.Value(videoDownloadPartialContext{}).(string)
+	if partial == "" {
+		var cleanup func()
+		var err error
+		ctx, cleanup, err = withVideoDownloadPartial(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		defer cleanup()
+		partial, _ = ctx.Value(videoDownloadPartialContext{}).(string)
+		req = req.WithContext(ctx)
+	}
+	if req.Method == http.MethodGet && req.Body == nil {
+		return getResumableVideoFile(req, partial, 0)
+	}
+	limit, err := GeneratedFileLimit(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	if limit <= 0 {
+		return "", "", outbound.ErrResourceTooLarge
+	}
+	runtime, _ := RuntimeFromContext(ctx)
+	if runtime.Limits != nil {
+		slot := runtime.Call.ChannelID
+		if slot == "" {
+			slot = "custom:" + strings.ToLower(req.URL.Host)
+		}
+		release, concurrencyLimit, slotErr := runtime.Limits.AcquireChannelSlot(ctx, runtime.Call.ChannelID, slot, time.Until(PollingDeadline(ctx))+time.Minute)
+		if slotErr != nil {
+			return "", "", slotErr
+		}
+		defer release()
+		runtime.Call.ConcurrencyLimit = concurrencyLimit
+		ctx = WithRuntime(ctx, runtime)
+		req = req.WithContext(ctx)
+	}
+	resp, err := openVideoDownloadResponse(req, limit)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.ContentLength > limit {
+		return "", "", outbound.ErrResourceTooLarge
+	}
+	destDir := filepath.Dir(partial)
+	if err := os.MkdirAll(destDir, 0o700); err != nil {
+		return "", "", err
+	}
+	tmp, err := os.CreateTemp(destDir, "beeftv-content-*.bin")
+	if err != nil {
+		return "", "", err
+	}
+	tmpPath := tmp.Name()
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	written, copyErr := io.Copy(tmp, io.LimitReader(resp.Body, outbound.ExclusiveByteLimit(limit)))
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		return "", "", copyErr
+	}
+	if closeErr != nil {
+		return "", "", closeErr
+	}
+	if written > limit {
+		return "", "", outbound.ErrResourceTooLarge
+	}
+	keep = true
+	return tmpPath, resp.Header.Get("Content-Type"), nil
+}
+
+func getResumableVideoFile(req *http.Request, partial string, maxCap int64) (string, string, error) {
 	ctx := req.Context()
 	var err error
 	limit := MaxResponseBytes
@@ -38,11 +139,14 @@ func getResumableVideoBinary(req *http.Request, partial string) ([]byte, string,
 	if runtime.Limits != nil {
 		limit, err = runtime.Limits.GeneratedFileBytes(ctx)
 		if err != nil {
-			return nil, "", err
+			return "", "", err
 		}
 	}
+	if maxCap > 0 && limit > maxCap {
+		limit = maxCap
+	}
 	if limit <= 0 {
-		return nil, "", outbound.ErrResourceTooLarge
+		return "", "", outbound.ErrResourceTooLarge
 	}
 	if runtime.Limits != nil {
 		slot := runtime.Call.ChannelID
@@ -51,7 +155,7 @@ func getResumableVideoBinary(req *http.Request, partial string) ([]byte, string,
 		}
 		release, concurrencyLimit, err := runtime.Limits.AcquireChannelSlot(ctx, runtime.Call.ChannelID, slot, time.Until(PollingDeadline(ctx))+time.Minute)
 		if err != nil {
-			return nil, "", err
+			return "", "", err
 		}
 		defer release()
 		runtime.Call.ConcurrencyLimit = concurrencyLimit
@@ -62,8 +166,8 @@ func getResumableVideoBinary(req *http.Request, partial string) ([]byte, string,
 	headers.Del("Range")
 	headers.Del("If-Range")
 	total := int64(-1)
-	result, err := outbound.DownloadResumable(ctx, req.URL.String(), outbound.ResumableOptions{
-		PartialPath: partial, Headers: headers, MaxBytes: limit + 1,
+	result, err := outbound.DownloadResumableToFile(ctx, req.URL.String(), outbound.ResumableOptions{
+		PartialPath: partial, Headers: headers, MaxBytes: outbound.ExclusiveByteLimit(limit),
 		Attempts: 1, HeaderTimeout: 45 * time.Second, IdleTimeout: videoDeliveryIdleTimeout,
 		OpenResponse: func(request *http.Request) (*http.Response, error) { return openVideoDownloadResponse(request, limit) },
 		OnProgress: func(update outbound.ResumableProgress) {
@@ -76,7 +180,7 @@ func getResumableVideoBinary(req *http.Request, partial string) ([]byte, string,
 	// The shared downloader throttles body progress. Report the final retained
 	// count here too, including a short read that ended inside that interval.
 	if observe := downloadObserverFrom(ctx); observe != nil {
-		downloaded := int64(len(result.Data))
+		downloaded := result.Size
 		if err != nil {
 			if info, statErr := os.Stat(partial); statErr == nil {
 				downloaded = info.Size()
@@ -89,7 +193,7 @@ func getResumableVideoBinary(req *http.Request, partial string) ([]byte, string,
 	if errors.Is(err, context.Canceled) && ctx.Err() == nil {
 		err = context.DeadlineExceeded
 	}
-	return result.Data, result.MimeType, err
+	return result.Path, result.MimeType, err
 }
 
 // Preserve the generation transport's credentials policy while keeping range

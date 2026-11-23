@@ -404,9 +404,11 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
     if (input.output.mediaType === "video") {
         const video = result.video;
         if (!video) throw new Error("生成任务缺少视频输出");
+        const videoSource = video.dataUrl || video.url || "";
+        if (!video.storageKey && !videoSource) throw new Error("生成任务缺少视频输出");
         const stored = video.storageKey
             ? {
-                  url: await resolveMediaUrl(video.storageKey, video.dataUrl),
+                  url: await resolveMediaUrl(video.storageKey, videoSource),
                   storageKey: video.storageKey,
                   width: video.width || 0,
                   height: video.height || 0,
@@ -415,7 +417,7 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
                   mimeType: video.mimeType || "video/mp4",
               }
             : await storedGenerationMedia(
-                  video.dataUrl,
+                  videoSource,
                   input.effectKey,
                   "video",
                   {

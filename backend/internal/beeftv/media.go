@@ -18,6 +18,7 @@ import (
 
 const MediaProtocolHeader = "X-BeefAPI-Media-Protocol"
 const MediaProtocolVersion = "managed-media-v1"
+const UploadPurposeMediaTool = "media_tool"
 
 type MediaDiscovery struct {
 	Version              string                          `json:"version"`
@@ -57,6 +58,7 @@ type LocalMediaReference struct {
 	StorageKey string
 	DataURL    string
 	MIME       string
+	Purpose    string
 	Bytes      int64
 	MaxBytes   int64
 }

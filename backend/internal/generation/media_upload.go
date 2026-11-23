@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	beefTVSeedanceImageMaxBytes = int64(30 << 20)
-	beefTVSeedanceVideoMaxBytes = int64(200 << 20)
-	beefTVSeedanceAudioMaxBytes = int64(15 << 20)
+	beefTVSeedanceImageMaxBytes  = int64(30 << 20)
+	beefTVSeedanceVideoMaxBytes  = int64(200 << 20)
+	beefTVMediaToolVideoMaxBytes = int64(1 << 30)
+	beefTVSeedanceAudioMaxBytes  = int64(15 << 20)
 )
 
 var (
@@ -27,8 +28,9 @@ var (
 )
 
 const (
-	BeefTVSeedanceImageMaxBytes = beefTVSeedanceImageMaxBytes
-	BeefTVSeedanceVideoMaxBytes = beefTVSeedanceVideoMaxBytes
+	BeefTVSeedanceImageMaxBytes  = beefTVSeedanceImageMaxBytes
+	BeefTVSeedanceVideoMaxBytes  = beefTVSeedanceVideoMaxBytes
+	BeefTVMediaToolVideoMaxBytes = beefTVMediaToolVideoMaxBytes
 )
 
 var (
@@ -117,9 +119,14 @@ func PrepareBeefTVVideoReferences(ctx context.Context, config Config, input *Inp
 				case "audio":
 					ref.MaxBytes = input.VideoCapability.References.MaxAudioBytes
 				}
+			} else if group.kind == "video" {
+				if toolMax := mediaToolVideoMaxBytes(ctx, input); toolMax > 0 {
+					ref.MaxBytes = toolMax
+					ref.Purpose = beeftv.UploadPurposeMediaTool
+				}
 			}
 			if ref.MaxBytes > 0 && ref.Bytes > ref.MaxBytes {
-				return RequestPreparationError{Cause: fmt.Errorf("参考素材文件不能超过 %.0fMB", float64(ref.MaxBytes)/(1<<20))}
+				return RequestPreparationError{Cause: fmt.Errorf("参考素材文件不能超过 %s", formatStorageLimit(ref.MaxBytes))}
 			}
 			link, err := client.UploadReference(uploadCtx, ref)
 			if err != nil {
@@ -176,6 +183,13 @@ func ReadBeefTVSeedanceInlineMedia(_ string, media Media) ([]byte, string, bool,
 }
 
 func ownedSeedanceMediaReader(ctx context.Context, userID string) BeefTVSeedanceMediaReader {
+	return ownedMediaReaderWithVideoLimit(ctx, userID, beefTVSeedanceVideoMaxBytes)
+}
+
+func ownedMediaReaderWithVideoLimit(ctx context.Context, userID string, videoMaxBytes int64) BeefTVSeedanceMediaReader {
+	if videoMaxBytes <= 0 {
+		videoMaxBytes = beefTVSeedanceVideoMaxBytes
+	}
 	return func(kind string, media Media) ([]byte, string, bool, error) {
 		if SkipBeefTVSeedanceMedia(media) {
 			return nil, "", true, nil
@@ -187,7 +201,7 @@ func ownedSeedanceMediaReader(ctx context.Context, userID string) BeefTVSeedance
 			return nil, "", true, nil
 		}
 		if media.Bytes > 0 {
-			if err := ValidateBeefTVSeedanceMediaSize(kind, media.Bytes); err != nil {
+			if err := ValidateBeefTVMediaToolSize(kind, media.Bytes, videoMaxBytes); err != nil {
 				return nil, "", false, err
 			}
 		}
@@ -202,6 +216,9 @@ func ownedSeedanceMediaReader(ctx context.Context, userID string) BeefTVSeedance
 		}
 		defer body.Close()
 		max := BeefTVSeedanceKindMaxBytes(kind)
+		if strings.EqualFold(strings.TrimSpace(kind), "video") {
+			max = videoMaxBytes
+		}
 		data, err := io.ReadAll(io.LimitReader(body, max+1))
 		if err != nil {
 			return nil, "", false, fmt.Errorf("读取任务参考资源失败：%w", err)
@@ -244,6 +261,52 @@ func BeefTVSeedanceKindMaxBytes(kind string) int64 {
 	default:
 		return 0
 	}
+}
+
+// NormalizeToolVideoLimit is the single source of truth for video-tool
+// (upscale / smart-erase) upload byte ceilings: defaults safely to 200 MiB
+// whenever upstream capabilities omit or fail to advertise max_video_bytes,
+// and clamps to the 1 GiB hard ceiling. Local delivery budget (GeneratedFileLimit)
+// is enforced separately with its own copy.
+func NormalizeToolVideoLimit(declared int64) int64 {
+	if declared <= 0 {
+		return beefTVSeedanceVideoMaxBytes
+	}
+	if declared > beefTVMediaToolVideoMaxBytes {
+		return beefTVMediaToolVideoMaxBytes
+	}
+	return declared
+}
+
+func mediaToolVideoMaxBytes(_ context.Context, input *Input) int64 {
+	if input == nil {
+		return 0
+	}
+	if input.Upscale != nil {
+		return NormalizeToolVideoLimit(input.Upscale.MaxVideoBytes)
+	}
+	if input.SubtitleErase != nil {
+		return NormalizeToolVideoLimit(input.SubtitleErase.MaxVideoBytes)
+	}
+	return 0
+}
+
+func ValidateBeefTVMediaToolSize(kind string, size, maxVideoBytes int64) error {
+	if strings.EqualFold(strings.TrimSpace(kind), "video") {
+		if size <= 0 {
+			return PreparationUserError{Category: CategoryInvalidParams, Reason: "参考素材为空", Action: "请重新导入后重试", Cause: errBeefTVSeedanceUploadEmpty}
+		}
+		limit := NormalizeToolVideoLimit(maxVideoBytes)
+		if size > limit {
+			return PreparationUserError{
+				Category: CategoryInputTooLarge,
+				Reason:   fmt.Sprintf("参考视频不能超过 %s", formatStorageLimit(limit)),
+				Action:   "请压缩或裁剪后重试",
+			}
+		}
+		return nil
+	}
+	return ValidateBeefTVSeedanceMediaSize(kind, size)
 }
 
 func ValidateBeefTVSeedanceMediaSize(kind string, size int64) error {

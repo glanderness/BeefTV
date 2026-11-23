@@ -255,7 +255,7 @@ func specializeMediaConstraints(failure *Failure, fields extractedFields) {
 		if strings.Contains(lower, "video") {
 			failure.Category = CategoryInvalidParams
 			failure.Reason = "超分视频素材不符合要求"
-			failure.Action = "请使用 5 分钟以内、200MB 以内的有效 MP4/MOV 视频后重试"
+			failure.Action = "请使用 5 分钟以内的有效 MP4/MOV 视频后重试"
 			return
 		}
 		if strings.Contains(lower, "image") {

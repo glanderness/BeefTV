@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -134,5 +135,42 @@ func TestStorageRedirectHopPolicyInProduction(t *testing.T) {
 	_ = client.storageClient("too many").CheckRedirect(req, []*http.Request{req})
 	if len(req.Header) != 0 {
 		t.Fatalf("hop kept headers: %v", req.Header)
+	}
+}
+
+func TestUpscaleContentToFileExactAtLimitAndOverLimitAfterRedirect(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var payloadSize atomic.Int64
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := int(payloadSize.Load())
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("ETag", `"exact-limit-etag"`)
+		_, _ = w.Write(make([]byte, n))
+	}))
+	defer storage.Close()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, storage.URL+"/saved.mp4", http.StatusFound)
+	}))
+	defer api.Close()
+
+	client := &MediaClient{BaseURL: api.URL + "/v1", APIKey: "secret", AllowHTTPTest: true}
+	destDir := t.TempDir()
+
+	// Exact limit (1024 bytes with limit=1024) must succeed on 302 redirect.
+	payloadSize.Store(1024)
+	path, mime, size, err := client.LegacyUpscaleContentToFile(context.Background(), "task-exact", destDir, 1024)
+	if err != nil {
+		t.Fatalf("exact at-limit /content redirect failed: %v", err)
+	}
+	defer os.Remove(path)
+	if size != 1024 || mime != "video/mp4" {
+		t.Fatalf("exact at-limit got size=%d mime=%q, want 1024 video/mp4", size, mime)
+	}
+
+	// Limit + 1 (1025 bytes with limit=1024) must fail cleanly.
+	payloadSize.Store(1025)
+	if overPath, _, _, err := client.LegacyUpscaleContentToFile(context.Background(), "task-over", destDir, 1024); err == nil {
+		_ = os.Remove(overPath)
+		t.Fatal("accepted 1025-byte redirected file under 1024-byte limit")
 	}
 }

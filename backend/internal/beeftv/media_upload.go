@@ -25,7 +25,7 @@ import (
 var ErrUploadIncomplete = errors.New("参考素材未能确认，请重新提交")
 var ErrUploadRedirect = errors.New("参考素材上传不允许重定向")
 var uploadControlTimeout = 30 * time.Second
-var uploadCompleteTimeout = 90 * time.Second
+var uploadCompleteTimeout = 125 * time.Second
 
 type UploadPart struct {
 	Number          int               `json:"number"`
@@ -104,6 +104,7 @@ type UploadSession struct {
 type UploadRequest struct {
 	Resumable bool   `json:"resumable,omitempty"`
 	Kind      string `json:"kind"`
+	Purpose   string `json:"purpose,omitempty"`
 	Bytes     int64  `json:"bytes"`
 	SHA256    string `json:"sha256"`
 	Mime      string `json:"mime"`
@@ -497,7 +498,7 @@ func (c *MediaClient) UploadReference(ctx context.Context, ref LocalMediaReferen
 		}
 	}
 	hash := hex.EncodeToString(digest.Sum(nil))
-	session, err := c.CreateUpload(ctx, UploadRequest{Kind: ref.Kind, Bytes: size, Mime: mime, SHA256: hash})
+	session, err := c.CreateUpload(ctx, UploadRequest{Kind: ref.Kind, Purpose: ref.Purpose, Bytes: size, Mime: mime, SHA256: hash})
 	if err != nil {
 		return "", err
 	}

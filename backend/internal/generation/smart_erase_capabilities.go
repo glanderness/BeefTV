@@ -20,6 +20,7 @@ func SubtitleEraseCapabilities(ctx context.Context, lookupCred func() (string, s
 		"subtitleFormats":    append([]string(nil), supportedSubtitleFormats...),
 		"translateDstLangs":  append([]string(nil), supportedSmartEraseTranslateLangs...),
 		"maxVideoDurationMs": 600000,
+		"maxVideoBytes":      BeefTVSeedanceVideoMaxBytes,
 		"cloudProcessing":    true,
 		"available":          false,
 	}
@@ -184,6 +185,7 @@ func SubtitleEraseCapabilities(ctx context.Context, lookupCred func() (string, s
 	if caps.MaxVideoSeconds > 0 {
 		out["maxVideoDurationMs"] = caps.MaxVideoSeconds * 1000
 	}
+	out["maxVideoBytes"] = NormalizeToolVideoLimit(caps.MaxVideoBytes)
 	if strings.TrimSpace(caps.BillingMode) != "" {
 		out["billingMode"] = strings.TrimSpace(caps.BillingMode)
 	}
@@ -276,10 +278,25 @@ func ValidateSmartEraseRequestCapabilities(req *SubtitleEraseRequest, caps map[s
 	}
 	loaded, _ := caps["capabilitiesLoaded"].(bool)
 	if !loaded {
+		// When live capabilities could not be loaded, fall back safely to 200 MiB
+		// rather than optimistically assuming 1 GiB against an unknown server.
+		if req.MaxVideoBytes <= 0 {
+			req.MaxVideoBytes = NormalizeToolVideoLimit(0)
+		}
 		return nil
 	}
 	if available, ok := caps["available"].(bool); ok && !available {
 		return BadAuthRequest("当前官方算力暂未开放视频智能擦除服务")
+	}
+	if rawMax, ok := caps["maxVideoBytes"]; ok {
+		switch v := rawMax.(type) {
+		case int64:
+			req.MaxVideoBytes = NormalizeToolVideoLimit(v)
+		case int:
+			req.MaxVideoBytes = NormalizeToolVideoLimit(int64(v))
+		case float64:
+			req.MaxVideoBytes = NormalizeToolVideoLimit(int64(v))
+		}
 	}
 
 	eraseTypes, _ := stringSliceFromAny(caps["eraseTypes"])

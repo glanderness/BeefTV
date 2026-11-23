@@ -147,10 +147,13 @@ func QueryHandwrittenVideoTask(ctx context.Context, input Input, taskID string) 
 		return fresh, err
 	}
 	policy := videoPollPolicyForConfig(ctx, input.Config, DefaultVideoPollPolicy())
-	data, mimeType, err := RunVideoDownload(ctx, taskID, policy, VideoResultDownloader(input.Config, taskID, source, renew))
+	videoMap, err := downloadVideoArtifactMap(ctx, input.Config, taskID, policy, source, renew, "video")
 	if err != nil {
+		var persistErr VideoPersistError
+		if errors.As(err, &persistErr) {
+			return nil, status, err
+		}
 		return nil, status, fmt.Errorf("视频结果下载失败（原任务 %s）：%w", taskID, err)
 	}
-	mimeType = NormalizedMediaMIMEType(mimeType, data)
-	return map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}, status, nil
+	return map[string]interface{}{"mode": "video", "video": videoMap}, status, nil
 }

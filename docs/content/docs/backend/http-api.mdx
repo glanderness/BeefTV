@@ -146,7 +146,7 @@ BeefTV 官方算力视频模型的控件与校验使用 `/v1/models` 下发的 `
 
 ### 图片与视频超分及视频去字幕
 
-`GET /media-upscale/capabilities` 返回图片和视频支持的模式、各模式可选模型列表（`modelOptions`）、倍率、格式与计费维度。服务端在线时优先采用官方算力动态下发的模型目录；离线或暂未下发时保留默认选项。`POST /media-upscale/estimate` 接收 `resourceId,channelId,mode,model,scale,outputFormat?,enhancementStrength?`，通过官方算力返回源与输出规格、计费维度 `billingMode` 及人民币预留费用 `reservation,currency=CNY,generationSubmitted=false`。估价不提交生成；未取得有效报价时禁止提交。
+`GET /media-upscale/capabilities` 返回图片和视频支持的模式、各模式可选模型列表（`modelOptions`）、倍率、格式、视频大小上限（`maxVideoBytes`，服务端未下发时保守回落 `200 MiB`，最高截断至 `1 GiB`）与计费维度。服务端在线时优先采用官方算力动态下发的模型目录与大小上限；离线或暂未下发时保留默认选项。`POST /media-upscale/estimate` 接收 `resourceId,channelId,mode,model,scale,outputFormat?,enhancementStrength?`，通过官方算力返回源与输出规格、计费维度 `billingMode` 及人民币预留费用 `reservation,currency=CNY,generationSubmitted=false`。估价不提交生成；未取得有效报价时禁止提交。
 
 `POST /media-upscale/tasks` 增加 `clientOperationId,projectId?,nodeId?`，创建标准 `canvas_image` 或 `canvas_video` 任务。`channelId` 固定为 `beeftv`；模型 ID 由能力目录声明并经服务端核验，客户端不硬编码特定模型路由。倍率为一至四的整数，图片输出 PNG 或 JPEG。素材必须属于当前用户且已就绪；视频最长五分钟。
 
@@ -154,7 +154,7 @@ BeefTV 官方算力视频模型的控件与校验使用 `/v1/models` 下发的 `
 
 `POST /media-upscale/tasks/:id/recover` 校验归属和超分任务类型，优先取回原任务结果。已失败且有回执的任务只查询原云端任务；没有回执的任务仅在现有队列能证明尚未受理时允许沿用原操作 ID 重试，不确定提交仍被阻止。已取消任务要求先核对状态。源视频有音轨而云端结果缺失时，落库前尝试无重编码补回；不能安全保留则明确失败。
 
-`GET /video-subtitle-erase/capabilities` 返回支持的智能擦除类型（`subtitle` 去字幕、`watermark` 去水印、`privacy` 隐私打码）、擦除方式（`auto` 自动识别、`custom` 框选区域）、字幕档位（`standard` 标准无痕、`area` 花字增强、`mega` 大模型精擦）、去水印档位（`advanced`、`basic`）、隐私打码方式（`blur`、`mosaic`）与识别目标（`face`、`plate`），以及 OCR 字幕提取格式（`srt`、`vtt`）和翻译目标语种列表。`POST /video-subtitle-erase/estimate` 接收 `resourceId,channelId` 与所选擦除参数，返回视频宽高、时长及人民币预留费用 `reservation,currency=CNY,billingMode,generationSubmitted=false`。`POST /video-subtitle-erase/tasks` 接收上述参数及 `clientOperationId,projectId?,nodeId?`，按所选模式创建标准 `canvas_video` 任务（`operation=media.video.subtitle_erase | media.video.watermark_erase | media.video.privacy_protect`），完成后按实际字节头保留 `.mp4` 或 `.mov` 容器及原视频音轨并回填目标画布节点；开启字幕提取或翻译时，云端导出的原文字幕与译文字幕一并写入节点 `smartEraseSubtitles` 元数据。专属接口 `POST /video-subtitle-erase/tasks/:id/recover` 仅查询并取回原云端任务结果，不重新发起付费生成；通用接口 `POST /tasks/:id/recover` 按任务状态与类型执行结果续传或原任务核对（仅在确认请求尚未被云端受理时才允许手动重提），前端则根据只读字段 `task.outcome` 区分展示「取回原结果」与「重新配置」。
+`GET /video-subtitle-erase/capabilities` 返回支持的智能擦除类型（`subtitle` 去字幕、`watermark` 去水印、`privacy` 隐私打码）、擦除方式（`auto` 自动识别、`custom` 框选区域）、字幕档位（`standard` 标准无痕、`area` 花字增强、`mega` 大模型精擦）、去水印档位（`advanced`、`basic`）、隐私打码方式（`blur`、`mosaic`）与识别目标（`face`、`plate`）、视频大小上限（`maxVideoBytes`，服务端未下发时保守回落 `200 MiB`，最高截断至 `1 GiB`），以及 OCR 字幕提取格式（`srt`、`vtt`）和翻译目标语种列表。`POST /video-subtitle-erase/estimate` 接收 `resourceId,channelId` 与所选擦除参数，返回视频宽高、时长及人民币预留费用 `reservation,currency=CNY,billingMode,generationSubmitted=false`。`POST /video-subtitle-erase/tasks` 接收上述参数及 `clientOperationId,projectId?,nodeId?`，按所选模式创建标准 `canvas_video` 任务（`operation=media.video.subtitle_erase | media.video.watermark_erase | media.video.privacy_protect`），完成后按实际字节头保留 `.mp4` 或 `.mov` 容器及原视频音轨并回填目标画布节点；开启字幕提取或翻译时，云端导出的原文字幕与译文字幕一并写入节点 `smartEraseSubtitles` 元数据。大视频结果均按磁盘流式落库与 `Range` 续传处理（单机自用上传与生成资源上限提升至 `2048 MB`，内联 `data:` URL 上限保持 `256 MiB`）。专属接口 `POST /video-subtitle-erase/tasks/:id/recover` 仅查询并取回原云端任务结果，不重新发起付费生成；通用接口 `POST /tasks/:id/recover` 按任务状态与类型执行结果续传或原任务核对（仅在确认请求尚未被云端受理时才允许手动重提），前端则根据只读字段 `task.outcome` 区分展示「取回原结果」与「重新配置」。
 
 ### 画布可复用工作流
 

@@ -139,20 +139,21 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 		if VideoTaskSucceeded(status) {
 			lastFrameURL := SeedanceLastFrameURL(state)
 			if videoURL := NewAPIVideoResultURL(state); videoURL != "" {
-				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, newAPIVideoURLResolver(input.Config, id)))
+				videoMap, err := downloadVideoURLArtifactMap(ctx, input.Config, videoURL, id, pollPolicy, newAPIVideoURLResolver(input.Config, id))
 				if err != nil {
+					var persistErr VideoPersistError
+					if errors.As(err, &persistErr) {
+						return VideoPollOutcome{}, err
+					}
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败（任务 %s）：%w", id, err)
 				}
-				mimeType = NormalizedMediaMIMEType(mimeType, data)
-				videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
 				attachOptionalProviderLastFrame(ctx, input.Config, videoMap, lastFrameURL, true)
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 			}
-			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id, newAPIVideoURLResolver(input.Config, id)))
+			videoMap, err := downloadVideoURLArtifactMap(ctx, input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id, pollPolicy, newAPIVideoURLResolver(input.Config, id))
 			if err != nil {
 				return VideoPollOutcome{}, err
 			}
-			videoMap := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
 			attachOptionalProviderLastFrame(ctx, input.Config, videoMap, lastFrameURL, true)
 			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": videoMap}}, nil
 		}

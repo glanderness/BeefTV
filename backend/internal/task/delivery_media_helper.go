@@ -11,9 +11,11 @@ import (
 	"image"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	localasset "infinite-canvas/backend/internal/asset"
@@ -29,7 +31,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const imageHeaderDecodeLimit = 2 << 20
+const (
+	imageHeaderDecodeLimit = 2 << 20
+	videoHeaderSniffLimit  = 4 << 10
+)
 
 type DeliveryMediaDeps struct {
 	Repo              *repository.Repository
@@ -58,7 +63,20 @@ func PersistRemoteGenerationArtifact(deps DeliveryMediaDeps, userID, mediaType, 
 	if userID == "" || artifactURL == "" || identity == "" {
 		return nil, fmt.Errorf("generation artifact identity is incomplete")
 	}
+	var cleanups []func()
+	defer func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}()
 	return deps.Resources.RecoverOwned(userID, identity, func() (localasset.RecoveredArtifact, error) {
+		if strings.TrimSpace(mediaType) == "video" && (strings.HasPrefix(artifactURL, "http://") || strings.HasPrefix(artifactURL, "https://")) {
+			artifact, cleanup, err := decodeRemoteVideoArtifactToFile(deps, userID, identity, mediaType, artifactURL, downloadTimeout)
+			if cleanup != nil {
+				cleanups = append(cleanups, cleanup)
+			}
+			return artifact, err
+		}
 		kind, data, mimeType, fileName, width, height, durationMs, err := DecodeGenerationArtifact(deps, userID, identity, mediaType, artifactURL, downloadTimeout)
 		if err != nil {
 			return localasset.RecoveredArtifact{}, err
@@ -69,6 +87,227 @@ func PersistRemoteGenerationArtifact(deps DeliveryMediaDeps, userID, mediaType, 
 			Body: bytes.NewReader(data),
 		}, nil
 	})
+}
+
+// PersistGeneratedVideoFile streams an already-finalized local video file into
+// workspace resources via RecoverOwned without loading the video into RAM.
+func PersistGeneratedVideoFile(resources *localasset.Service, userID, identity, mimeType, filePath string, width, height int, durationMs int64) (generation.ResourceInfo, error) {
+	if resources == nil {
+		return generation.ResourceInfo{}, errors.New("generation media adapter is not initialized")
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		return generation.ResourceInfo{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return generation.ResourceInfo{}, err
+	}
+	ext := localasset.ExtensionFromMimeType(mimeType)
+	resource, err := resources.RecoverOwned(userID, identity, func() (localasset.RecoveredArtifact, error) {
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+			return localasset.RecoveredArtifact{}, seekErr
+		}
+		return localasset.RecoveredArtifact{
+			Kind:       "video",
+			FileName:   "generated." + ext,
+			MimeType:   mimeType,
+			Size:       info.Size(),
+			Width:      width,
+			Height:     height,
+			DurationMs: durationMs,
+			Body:       file,
+		}, nil
+	})
+	if err != nil {
+		return generation.ResourceInfo{}, err
+	}
+	return generation.ResourceInfoFromModel(userID, resource), nil
+}
+
+func resolveArtifactFileMeta(kind, mimeType, fileName string, head []byte) (string, string, string) {
+	if kind == "video" {
+		if normalized := generation.NormalizedMediaMIMEType("", head); strings.HasPrefix(normalized, "video/") {
+			mimeType = normalized
+		} else if normalized := generation.NormalizedMediaMIMEType(mimeType, head); strings.HasPrefix(normalized, "video/") {
+			mimeType = normalized
+		}
+	}
+	kind = localasset.NormalizeKind(kind, mimeType)
+	ext := localasset.ExtensionFromMimeType(mimeType)
+	if fileName == "" {
+		fileName = "resource." + ext
+	} else if ext != "bin" {
+		curExt := strings.ToLower(filepath.Ext(fileName))
+		if curExt == ".bin" || (kind == "video" && curExt != "" && curExt != "."+ext) {
+			fileName = strings.TrimSuffix(fileName, filepath.Ext(fileName)) + "." + ext
+		}
+	}
+	return kind, mimeType, fileName
+}
+
+func downloadManagedResumableFile(
+	ctx context.Context,
+	deps DeliveryMediaDeps,
+	userID, identity, kind, artifactURL string,
+	managed bool,
+) (outbound.ResumableFileResult, error) {
+	if managed && !deps.AllowHTTPForTest {
+		ctx = outbound.WithPublicHTTPS(ctx)
+	}
+	if _, urlErr := outbound.ValidateOutboundURLContext(ctx, artifactURL); urlErr != nil {
+		return outbound.ResumableFileResult{}, urlErr
+	}
+	limit, policyErr := deps.MaxBytes()
+	if policyErr != nil {
+		return outbound.ResumableFileResult{}, policyErr
+	}
+	headers, headerErr := ImageDownloadHeaders(deps.Repo, deps.DecryptTaskInput, deps.DecryptSetting, deps.ResolveConfig, deps.ProtocolRegistry, userID, identity, kind, artifactURL)
+	if headerErr != nil {
+		return outbound.ResumableFileResult{}, headerErr
+	}
+	downloadOptions := outbound.ResumableOptions{
+		PartialPath: ArtifactDownloadPartialPath(deps.DataDir, userID, identity),
+		Headers:     headers,
+		MaxBytes:    outbound.ExclusiveByteLimit(limit),
+		OnProgress: func(update outbound.ResumableProgress) {
+			if deps.Progress != nil {
+				deps.Progress.Record(identity, DeliveryProgressFromOutbound(identity, update))
+			}
+		},
+	}
+	fileResult, downloadErr := outbound.DownloadResumableToFile(ctx, artifactURL, downloadOptions)
+	if managed && downloadErr != nil && deps.RefreshManagedURL != nil {
+		freshURL, refreshed, refreshErr := deps.RefreshManagedURL(ctx, userID, identity, kind, downloadErr)
+		if refreshErr != nil {
+			return outbound.ResumableFileResult{}, refreshErr
+		}
+		if refreshed {
+			var err error
+			downloadOptions.Headers, err = ImageDownloadHeaders(deps.Repo, deps.DecryptTaskInput, deps.DecryptSetting, deps.ResolveConfig, deps.ProtocolRegistry, userID, identity, kind, freshURL)
+			if err != nil {
+				return outbound.ResumableFileResult{}, err
+			}
+			fileResult, downloadErr = outbound.DownloadResumableToFile(ctx, freshURL, downloadOptions)
+		}
+	}
+	if deps.Progress != nil {
+		deps.Progress.Clear(identity)
+	}
+	if downloadErr != nil {
+		if errors.Is(downloadErr, outbound.ErrResourceTooLarge) {
+			return outbound.ResumableFileResult{}, kernel.BadAuthRequest(fmt.Sprintf("远程资源必须小于 %s", localasset.FormatStorageLimit(limit)))
+		}
+		if outbound.IsConnectionDrop(downloadErr) {
+			return outbound.ResumableFileResult{}, &kernel.AppError{
+				Status:    kernel.CodeBadGateway,
+				Code:      kernel.CodeBadGateway,
+				Reason:    kernel.ReasonBadGateway,
+				Message:   outbound.ResumableConnectionDropMessage,
+				Retryable: true,
+				Cause:     downloadErr,
+			}
+		}
+		return outbound.ResumableFileResult{}, downloadErr
+	}
+	return fileResult, nil
+}
+
+// decodeRemoteVideoArtifactToFile downloads, validates, optionally remuxes
+// source audio, and probes a remote video artifact entirely on disk so 1-2 GiB
+// videos never enter Go heap memory.
+func decodeRemoteVideoArtifactToFile(deps DeliveryMediaDeps, userID, identity, mediaType, artifactURL string, downloadTimeout time.Duration) (localasset.RecoveredArtifact, func(), error) {
+	var cleanups []func()
+	runCleanups := func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+		cleanups = nil
+	}
+	kind := strings.TrimSpace(mediaType)
+	ctx, finish, contextErr := deps.BeginDownload(userID, identity, downloadTimeout)
+	if contextErr != nil {
+		return localasset.RecoveredArtifact{}, nil, contextErr
+	}
+	var retErr error
+	defer func() { finish(retErr) }()
+
+	managed, identityErr := ManagedDeliveryArtifact(deps.Repo, deps.DecryptSetting, userID, identity)
+	if identityErr != nil {
+		retErr = identityErr
+		return localasset.RecoveredArtifact{}, nil, retErr
+	}
+	fileResult, downloadErr := downloadManagedResumableFile(ctx, deps, userID, identity, kind, artifactURL, managed)
+	if downloadErr != nil {
+		retErr = downloadErr
+		return localasset.RecoveredArtifact{}, nil, retErr
+	}
+	cleanups = append(cleanups, func() { _ = os.Remove(fileResult.Path) })
+
+	finalPath := fileResult.Path
+	mimeType := fileResult.MimeType
+	head, headErr := generation.ReadFileHeaderBytes(finalPath, videoHeaderSniffLimit)
+	if headErr != nil {
+		runCleanups()
+		retErr = headErr
+		return localasset.RecoveredArtifact{}, nil, retErr
+	}
+	if managed {
+		if err := generation.ValidateVideoArtifact(head, mimeType); err != nil {
+			runCleanups()
+			retErr = err
+			return localasset.RecoveredArtifact{}, nil, retErr
+		}
+		remuxedPath, remuxCleanup, err := RestoreManagedUpscaleAudioFile(ctx, deps.Repo, deps.DecryptTaskInput, deps.BindRuntime, userID, identity, finalPath)
+		if remuxCleanup != nil {
+			cleanups = append(cleanups, remuxCleanup)
+		}
+		if err != nil {
+			runCleanups()
+			retErr = err
+			return localasset.RecoveredArtifact{}, nil, retErr
+		}
+		if remuxedPath != finalPath {
+			finalPath = remuxedPath
+			head, headErr = generation.ReadFileHeaderBytes(finalPath, videoHeaderSniffLimit)
+			if headErr != nil {
+				runCleanups()
+				retErr = headErr
+				return localasset.RecoveredArtifact{}, nil, retErr
+			}
+		}
+	}
+	kind, mimeType, fileName := resolveArtifactFileMeta(kind, mimeType, fileResult.FileName, head)
+	file, err := os.Open(finalPath)
+	if err != nil {
+		runCleanups()
+		retErr = err
+		return localasset.RecoveredArtifact{}, nil, retErr
+	}
+	cleanups = append(cleanups, func() { _ = file.Close() })
+	info, err := file.Stat()
+	if err != nil {
+		runCleanups()
+		retErr = err
+		return localasset.RecoveredArtifact{}, nil, retErr
+	}
+	width, height, durationMs := playback.ProbeVideoReader(file, info.Size())
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		runCleanups()
+		retErr = err
+		return localasset.RecoveredArtifact{}, nil, retErr
+	}
+	return localasset.RecoveredArtifact{
+		Kind:       kind,
+		FileName:   fileName,
+		MimeType:   mimeType,
+		Size:       info.Size(),
+		Width:      width,
+		Height:     height,
+		DurationMs: durationMs,
+		Body:       file,
+	}, runCleanups, nil
 }
 
 func DecodeGenerationArtifact(deps DeliveryMediaDeps, userID, identity, mediaType, artifactURL string, downloadTimeout time.Duration) (kind string, data []byte, mimeType, fileName string, width, height int, durationMs int64, err error) {
@@ -90,6 +329,9 @@ func DecodeGenerationArtifact(deps DeliveryMediaDeps, userID, identity, mediaTyp
 		}
 		return kind, data, mimeType, fileName, width, height, durationMs, nil
 	case strings.HasPrefix(artifactURL, "http://") || strings.HasPrefix(artifactURL, "https://"):
+		if kind == "video" {
+			return "", nil, "", "", 0, 0, 0, errors.New("remote video artifacts must use disk-streaming PersistRemoteGenerationArtifact")
+		}
 		ctx, finish, contextErr := deps.BeginDownload(userID, identity, downloadTimeout)
 		if contextErr != nil {
 			return "", nil, "", "", 0, 0, 0, contextErr
@@ -99,85 +341,20 @@ func DecodeGenerationArtifact(deps DeliveryMediaDeps, userID, identity, mediaTyp
 		if identityErr != nil {
 			return "", nil, "", "", 0, 0, 0, identityErr
 		}
-		if managed && !deps.AllowHTTPForTest {
-			ctx = outbound.WithPublicHTTPS(ctx)
-		}
-		if _, urlErr := outbound.ValidateOutboundURLContext(ctx, artifactURL); urlErr != nil {
-			return "", nil, "", "", 0, 0, 0, urlErr
-		}
-		limit, policyErr := deps.MaxBytes()
-		if policyErr != nil {
-			return "", nil, "", "", 0, 0, 0, policyErr
-		}
-		maxBytes := limit + 1
-		headers, headerErr := ImageDownloadHeaders(deps.Repo, deps.DecryptTaskInput, deps.DecryptSetting, deps.ResolveConfig, deps.ProtocolRegistry, userID, identity, kind, artifactURL)
-		if headerErr != nil {
-			return "", nil, "", "", 0, 0, 0, headerErr
-		}
-		downloadOptions := outbound.ResumableOptions{
-			PartialPath: ArtifactDownloadPartialPath(deps.DataDir, userID, identity),
-			Headers:     headers,
-			MaxBytes:    maxBytes,
-			OnProgress: func(update outbound.ResumableProgress) {
-				if deps.Progress != nil {
-					deps.Progress.Record(identity, DeliveryProgressFromOutbound(identity, update))
-				}
-			},
-		}
-		result, downloadErr := outbound.DownloadResumable(ctx, artifactURL, downloadOptions)
-		if managed && downloadErr != nil && deps.RefreshManagedURL != nil {
-			freshURL, refreshed, refreshErr := deps.RefreshManagedURL(ctx, userID, identity, kind, downloadErr)
-			if refreshErr != nil {
-				return "", nil, "", "", 0, 0, 0, refreshErr
-			}
-			if refreshed {
-				downloadOptions.Headers, err = ImageDownloadHeaders(deps.Repo, deps.DecryptTaskInput, deps.DecryptSetting, deps.ResolveConfig, deps.ProtocolRegistry, userID, identity, kind, freshURL)
-				if err != nil {
-					return "", nil, "", "", 0, 0, 0, err
-				}
-				result, downloadErr = outbound.DownloadResumable(ctx, freshURL, downloadOptions)
-			}
-		}
-		if deps.Progress != nil {
-			deps.Progress.Clear(identity)
-		}
+		fileResult, downloadErr := downloadManagedResumableFile(ctx, deps, userID, identity, kind, artifactURL, managed)
 		if downloadErr != nil {
-			if errors.Is(downloadErr, outbound.ErrResourceTooLarge) {
-				return "", nil, "", "", 0, 0, 0, kernel.BadAuthRequest(fmt.Sprintf("远程资源必须小于 %s", localasset.FormatStorageLimit(maxBytes)))
-			}
-			if outbound.IsConnectionDrop(downloadErr) {
-				return "", nil, "", "", 0, 0, 0, &kernel.AppError{
-					Status:    kernel.CodeBadGateway,
-					Code:      kernel.CodeBadGateway,
-					Reason:    kernel.ReasonBadGateway,
-					Message:   outbound.ResumableConnectionDropMessage,
-					Retryable: true,
-					Cause:     downloadErr,
-				}
-			}
 			return "", nil, "", "", 0, 0, 0, downloadErr
 		}
-		mimeType, data = result.MimeType, result.Data
+		defer os.Remove(fileResult.Path)
+		data, err = os.ReadFile(fileResult.Path)
+		if err != nil {
+			return "", nil, "", "", 0, 0, 0, err
+		}
+		mimeType = fileResult.MimeType
 		if managed && kind == "audio" {
 			mimeType, err = generation.ValidateGeneratedAudio(mimeType, data, "")
 			if err != nil {
 				return "", nil, "", "", 0, 0, 0, err
-			}
-		}
-		if managed && kind == "video" {
-			if err := generation.ValidateVideoArtifact(data, mimeType); err != nil {
-				return "", nil, "", "", 0, 0, 0, err
-			}
-			data, err = RestoreManagedUpscaleAudio(ctx, deps.Repo, deps.DecryptTaskInput, deps.BindRuntime, userID, identity, data)
-			if err != nil {
-				return "", nil, "", "", 0, 0, 0, err
-			}
-		}
-		if kind == "video" {
-			if normalized := generation.NormalizedMediaMIMEType("", data); strings.HasPrefix(normalized, "video/") {
-				mimeType = normalized
-			} else if normalized := generation.NormalizedMediaMIMEType(mimeType, data); strings.HasPrefix(normalized, "video/") {
-				mimeType = normalized
 			}
 		}
 		if kind == "image" {
@@ -185,31 +362,9 @@ func DecodeGenerationArtifact(deps DeliveryMediaDeps, userID, identity, mediaTyp
 				return "", nil, "", "", 0, 0, 0, validationErr
 			}
 		}
-		kind = localasset.NormalizeKind(kind, mimeType)
-		fileName = result.FileName
-		ext := localasset.ExtensionFromMimeType(mimeType)
-		if fileName == "" {
-			fileName = "resource." + ext
-		} else if ext != "bin" {
-			curExt := strings.ToLower(filepath.Ext(fileName))
-			if curExt == ".bin" || (kind == "video" && curExt != "" && curExt != "."+ext) {
-				fileName = strings.TrimSuffix(fileName, filepath.Ext(fileName)) + "." + ext
-			}
-		}
+		kind, mimeType, fileName = resolveArtifactFileMeta(kind, mimeType, fileResult.FileName, data)
 		if kind == "image" {
 			width, height = decodeImageDimensions(data)
-		}
-		if kind == "video" {
-			probedWidth, probedHeight, probedDurationMs := playback.ProbeGeneratedVideoMedia(data)
-			if width <= 0 {
-				width = probedWidth
-			}
-			if height <= 0 {
-				height = probedHeight
-			}
-			if durationMs <= 0 {
-				durationMs = probedDurationMs
-			}
 		}
 		return kind, data, mimeType, fileName, width, height, durationMs, nil
 	default:
@@ -355,9 +510,28 @@ func ManagedDeliveryArtifact(repo *repository.Repository, decryptSetting func(st
 	return false, nil
 }
 
+var (
+	artifactDownloadSweepMu   sync.Mutex
+	artifactDownloadLastSweep = map[string]time.Time{}
+)
+
+func sweepArtifactDownloadsIfDue(dir string) {
+	now := time.Now()
+	artifactDownloadSweepMu.Lock()
+	if last, ok := artifactDownloadLastSweep[dir]; ok && now.Sub(last) < 6*time.Hour {
+		artifactDownloadSweepMu.Unlock()
+		return
+	}
+	artifactDownloadLastSweep[dir] = now
+	artifactDownloadSweepMu.Unlock()
+	outbound.SweepResumableArtifacts(dir, 24*time.Hour)
+}
+
 func ArtifactDownloadPartialPath(dataDir, userID, identity string) string {
+	dir := filepath.Join(dataDir, "cache", "artifact-downloads")
+	sweepArtifactDownloadsIfDue(dir)
 	sum := sha256.Sum256([]byte(userID + "\x00" + identity))
-	return filepath.Join(dataDir, "cache", "artifact-downloads", hex.EncodeToString(sum[:])+".part")
+	return filepath.Join(dir, hex.EncodeToString(sum[:])+".part")
 }
 
 func RefreshManagedArtifactURL(
@@ -393,40 +567,55 @@ func RefreshManagedArtifactURL(
 	return outputs[index].URL, true, nil
 }
 
-func RestoreManagedUpscaleAudio(
+func loadManagedAudioTaskInput(
 	ctx context.Context,
 	repo *repository.Repository,
 	decryptTaskInput func(string) (string, error),
 	bindRuntime func(context.Context, generation.CallMeta) context.Context,
 	userID, identity string,
-	data []byte,
-) ([]byte, error) {
+) (context.Context, generation.Input, bool, error) {
 	taskID, _, ok := strings.Cut(identity, ":")
 	if !ok {
-		return nil, errors.New("生成结果身份无效")
+		return ctx, generation.Input{}, false, errors.New("生成结果身份无效")
 	}
 	task, err := repo.TaskForUser(userID, taskID)
 	if err != nil {
-		return nil, err
+		return ctx, generation.Input{}, false, err
 	}
 	plain, err := decryptTaskInput(task.InputJSON)
 	if err != nil {
-		return nil, err
+		return ctx, generation.Input{}, false, err
 	}
 	var input generation.Input
 	if err := json.Unmarshal([]byte(plain), &input); err != nil {
-		return nil, err
+		return ctx, generation.Input{}, false, err
 	}
 	if (input.Upscale == nil && input.SubtitleErase == nil) || input.Mode != "video" {
-		return data, nil
+		return ctx, input, false, nil
 	}
 	if bindRuntime != nil {
 		ctx = bindRuntime(ctx, generation.CallMeta{UserID: userID, TaskID: taskID, TaskType: task.Type})
 	}
-	if input.SubtitleErase != nil {
-		return generation.RestoreSubtitleEraseSourceAudio(ctx, input, data)
+	return ctx, input, true, nil
+}
+
+func RestoreManagedUpscaleAudioFile(
+	ctx context.Context,
+	repo *repository.Repository,
+	decryptTaskInput func(string) (string, error),
+	bindRuntime func(context.Context, generation.CallMeta) context.Context,
+	userID, identity string,
+	outputPath string,
+) (string, func(), error) {
+	noop := func() {}
+	ctx, input, needsRestore, err := loadManagedAudioTaskInput(ctx, repo, decryptTaskInput, bindRuntime, userID, identity)
+	if err != nil || !needsRestore {
+		return outputPath, noop, err
 	}
-	return generation.RestoreUpscaleSourceAudio(ctx, input, data)
+	if input.SubtitleErase != nil {
+		return generation.RestoreSubtitleEraseSourceAudioFile(ctx, input, outputPath)
+	}
+	return generation.RestoreUpscaleSourceAudioFile(ctx, input, outputPath)
 }
 
 func decodeImageDimensions(data []byte) (int, int) {

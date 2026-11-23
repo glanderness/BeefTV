@@ -46,6 +46,7 @@ type SubtitleEraseCapabilities struct {
 	TranslateDstLangs []string                    `json:"translate_dst_langs,omitempty"`
 	RatesCNYPerMinute json.RawMessage             `json:"rates_cny_per_minute,omitempty"`
 	MaxVideoSeconds   int                         `json:"max_video_seconds"`
+	MaxVideoBytes     int64                       `json:"max_video_bytes,omitempty"`
 	BillingMode       string                      `json:"billing_mode,omitempty"`
 	BillingSummary    string                      `json:"billing_summary,omitempty"`
 	Billing           json.RawMessage             `json:"billing,omitempty"`
@@ -291,6 +292,14 @@ func (c *MediaClient) SubtitleEraseContent(ctx context.Context, id string, limit
 	req.Header.Del(MediaProtocolHeader)
 	data, header, err := c.sendWith(c.storageClient("去字幕结果重定向次数过多"), req, limit)
 	return data, header.Get("Content-Type"), err
+}
+
+func (c *MediaClient) SubtitleEraseContentToFile(ctx context.Context, id, destDir string, limit int64) (string, string, int64, error) {
+	path, err := SubtitleEraseTaskPath(id)
+	if err != nil {
+		return "", "", 0, err
+	}
+	return c.downloadStorageToFile(ctx, path, "去字幕结果重定向次数过多", destDir, limit)
 }
 
 func (c *MediaClient) GetSubtitleEraseSubtitles(ctx context.Context, id string) (SubtitleEraseSubtitles, error) {
