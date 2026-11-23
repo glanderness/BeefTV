@@ -20,6 +20,7 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
 import { isFileUploadOverlayActive } from "@/lib/canvas/canvas-file-upload";
 import { isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
+import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { useCanvasPickConnectStore } from "@/lib/canvas/canvas-text-mention";
 import { CanvasNodeType } from "@/types/canvas";
 import { shouldMountCanvasPromptPanel } from "./canvas-pointer-chrome";
@@ -118,6 +119,8 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
         selectedVideoNodes,
         toolbarNode,
     } = renderModel;
+    const isMediaGenerating = (toolbarNode?.type === CanvasNodeType.Image || toolbarNode?.type === CanvasNodeType.Video)
+        && isCanvasNodeGenerating(toolbarNode);
     const {
         beginBatchConnectionMode,
         cancelPendingConnectionCreate,
@@ -300,7 +303,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
             ) : null}
 
             <CanvasNodeToolbar
-                node={isCanvasNodeMoving || nodeImageSettingsOpen || annotationNodeId || maskEditNodeId || emotionNodeId || angleNodeId || (dialogNode && !isCanvasMediaResultNode(dialogNode)) || textEditorNodeId ? null : toolbarNode}
+                node={isMediaGenerating || isCanvasNodeMoving || nodeImageSettingsOpen || annotationNodeId || maskEditNodeId || emotionNodeId || angleNodeId || (dialogNode && !isCanvasMediaResultNode(dialogNode)) || textEditorNodeId ? null : toolbarNode}
                 workspaceMode={workspaceMode}
                 viewport={viewport}
                 containerRef={containerRef}
