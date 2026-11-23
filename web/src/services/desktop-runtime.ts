@@ -79,6 +79,7 @@ export type DesktopRuntimeBinding = {
     RevealDiagnosticBundle?: () => Promise<void>;
     SaveEagleMedia?: (fileName: string, baseURL: string, itemID: string) => Promise<boolean>;
     SaveOwnedMedia?: (fileName: string, resourceID: string) => Promise<boolean>;
+    CopyOwnedMediaToClipboard?: (fileName: string, resourceID: string) => Promise<void>;
     ChooseOwnedMediaBatchDirectory?: () => Promise<string>;
     SaveOwnedMediaBatch?: (items: DesktopOwnedMediaBatchItem[], dirToken: string) => Promise<DesktopOwnedMediaBatchResult>;
     SaveOwnedArtifact?: (fileName: string, data: string) => Promise<boolean>;
