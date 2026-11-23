@@ -30,6 +30,7 @@ assets/prototypes/.*.drawio.bkp
 .cache/
 .claude/
 .cursor/
+.dsh-companion/
 .playwright-mcp/
 .serena/
 .spec-workflow/

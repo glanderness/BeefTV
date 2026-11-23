@@ -1194,3 +1194,177 @@ test('宿主与嵌入页明暗相反时，控件、JSON 树、计划/交付/日�
   expect(tornDown.styles).toBe(0)
   await page.close()
 })
+
+test('本机未装 BeefTV 时独立工作区排首位，下载过程展示进度条并支持取消，完成后自动进入工作区', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  let status: Record<string, any> = {
+    connected: false,
+    mode: null,
+    switching: false,
+    error: null,
+    connectionId: null,
+    localApp: { compatible: false, version: null, message: '未找到本机 BeefTV。请安装 2.2.0 或更高版本后重新连接。' },
+    standaloneRuntime: { ready: false, source: null, version: null, supported: true, unsupportedReason: null, updateAvailable: null },
+    provision: { phase: 'idle', version: null, downloadedBytes: 0, totalBytes: 0, percent: null, sourceLabel: null, error: null },
+  }
+  let releaseConnect!: () => void
+  let cancelHits = 0
+  await page.route('**/beeftv/status', route => route.fulfill({ json: status }))
+  await page.route('**/beeftv/runtime/cancel', route => {
+    cancelHits += 1
+    status = { ...status, provision: { phase: 'idle', version: null, downloadedBytes: 0, totalBytes: 0, percent: null, sourceLabel: null, error: null } }
+    return route.fulfill({ json: status })
+  })
+  await page.route('**/beeftv/connect', async route => {
+    status = {
+      ...status,
+      switching: true,
+      provision: { phase: 'downloading', version: 'v2.4.2', downloadedBytes: 80 * 1_048_576, totalBytes: 160 * 1_048_576, percent: 50, sourceLabel: '国内镜像', error: null },
+    }
+    await new Promise<void>(resolve => { releaseConnect = resolve })
+    status = {
+      ...status,
+      connected: true,
+      mode: 'standalone',
+      switching: false,
+      connectionId: 'conn-managed',
+      appURL: new URL('/workspace/managed/', server.url).href,
+      standaloneRuntime: { ready: true, source: 'managed', version: 'v2.4.2', supported: true, unsupportedReason: null, updateAvailable: null },
+      provision: { phase: 'idle', version: null, downloadedBytes: 0, totalBytes: 0, percent: null, sourceLabel: null, error: null },
+    }
+    await route.fulfill({ json: status })
+  })
+  await page.route('**/beeftv/context', route => route.fulfill({ json: { ok: true } }))
+
+  await page.goto(server.url.href)
+  const options = page.locator('.beeftv-harness-option strong')
+  await options.first().waitFor()
+  expect(await options.allTextContents()).toEqual(['使用独立工作区', '连接本机 BeefTV'])
+  await page.getByText('首次使用会在插件内自动下载官方运行环境，无需单独安装 BeefTV 客户端。', { exact: true }).waitFor()
+
+  await page.getByRole('button', { name: /使用独立工作区/ }).click()
+  await page.getByText(/正在下载 BeefTV v2\.4\.2（50% · 80\.0 MB \/ 160\.0 MB） · 国内镜像/).waitFor({ timeout: 5000 })
+  await page.getByRole('button', { name: '取消' }).click()
+  expect(cancelHits).toBe(1)
+
+  releaseConnect()
+  await page.frameLocator('iframe').getByText('Workspace', { exact: true }).waitFor()
+  await page.close()
+})
+
+test('本机未装 BeefTV 且独立运行环境已就绪时自动进入独立工作区，并展示可一键更新的新版本提醒', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  let status: Record<string, any> = {
+    connected: false,
+    mode: null,
+    switching: false,
+    error: null,
+    connectionId: null,
+    localApp: { compatible: false, version: null, message: '未找到本机 BeefTV。请安装 2.2.0 或更高版本后重新连接。' },
+    standaloneRuntime: { ready: true, source: 'managed', version: 'v2.4.2', supported: true, unsupportedReason: null, updateAvailable: null },
+    provision: { phase: 'idle', version: null, downloadedBytes: 0, totalBytes: 0, percent: null, sourceLabel: null, error: null },
+  }
+  const connects: Array<Record<string, any>> = []
+  let updatedCalls = 0
+  let checkedCalls = 0
+  await page.route('**/beeftv/status', route => route.fulfill({ json: status }))
+  await page.route('**/beeftv/connect', async route => {
+    connects.push(route.request().postDataJSON())
+    status = {
+      ...status,
+      connected: true,
+      mode: 'standalone',
+      connectionId: 'conn-auto',
+      appURL: new URL('/workspace/auto/', server.url).href,
+      standaloneRuntime: { ready: true, source: 'managed', version: 'v2.4.2', supported: true, unsupportedReason: null, updateAvailable: { version: 'v2.4.3', size: 165_000_000 } },
+    }
+    await route.fulfill({ json: status })
+  })
+  await page.route('**/beeftv/runtime/update', async route => {
+    updatedCalls += 1
+    status = {
+      ...status,
+      connectionId: 'conn-v243',
+      appURL: new URL('/workspace/v243/', server.url).href,
+      standaloneRuntime: { ready: true, source: 'managed', version: 'v2.4.3', supported: true, unsupportedReason: null, updateAvailable: null },
+    }
+    await route.fulfill({ json: status })
+  })
+  await page.route('**/beeftv/runtime/check-update', async route => {
+    checkedCalls += 1
+    await route.fulfill({ json: status })
+  })
+  await page.route('**/beeftv/context', route => route.fulfill({ json: { ok: true } }))
+
+  await page.goto(server.url.href)
+  await page.frameLocator('iframe').getByText('Workspace', { exact: true }).waitFor()
+  expect(connects).toEqual([{ mode: 'standalone' }])
+
+  await page.getByText('BeefTV 运行环境有新版本（v2.4.3），更新完成后工作区会自动重启，画布和素材会完整保留。', { exact: true }).waitFor()
+  await page.getByRole('button', { name: '立即更新' }).click()
+  await page.waitForFunction(() => document.querySelector('iframe')?.getAttribute('src')?.includes('/workspace/v243/'))
+  expect(updatedCalls).toBe(1)
+
+  await page.getByRole('button', { name: '工作台操作' }).click()
+  await page.getByRole('button', { name: '检查运行环境更新' }).click()
+  await page.getByText('当前 BeefTV 运行环境已是最新版本。', { exact: true }).waitFor()
+  expect(checkedCalls).toBe(1)
+  await page.close()
+})
+
+test('运行环境更新期间落地的延迟 status 轮询不会用旧连接覆盖新连接', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  const oldStatus = {
+    connected: true,
+    mode: 'standalone',
+    switching: false,
+    error: null,
+    connectionId: 'conn-old',
+    appURL: new URL('/workspace/old/', server.url).href,
+    localApp: { compatible: false, version: null, message: '未找到本机 BeefTV。' },
+    standaloneRuntime: { ready: true, source: 'managed', version: 'v2.4.2', supported: true, unsupportedReason: null, updateAvailable: { version: 'v2.4.3', size: 165_000_000 } },
+    provision: { phase: 'idle', version: null, downloadedBytes: 0, totalBytes: 0, percent: null, sourceLabel: null, error: null },
+  }
+  const newStatus = {
+    ...oldStatus,
+    connectionId: 'conn-new',
+    appURL: new URL('/workspace/new/', server.url).href,
+    standaloneRuntime: { ready: true, source: 'managed', version: 'v2.4.3', supported: true, unsupportedReason: null, updateAvailable: null },
+  }
+  let statusCalls = 0
+  let releaseStalePoll!: () => void
+  let stalePollStarted!: () => void
+  const stalePollStartedPromise = new Promise<void>(resolve => { stalePollStarted = resolve })
+  await page.route('**/beeftv/status', async route => {
+    statusCalls += 1
+    if (statusCalls === 1) {
+      await route.fulfill({ json: oldStatus })
+      return
+    }
+    if (statusCalls === 2) {
+      stalePollStarted()
+      await new Promise<void>(resolve => { releaseStalePoll = resolve })
+      await route.fulfill({ json: oldStatus })
+      return
+    }
+    await route.fulfill({ json: newStatus })
+  })
+  await page.route('**/beeftv/runtime/update', route => route.fulfill({ json: newStatus }))
+  await page.route('**/beeftv/context', route => route.fulfill({ json: { ok: true } }))
+
+  await page.goto(server.url.href)
+  await page.waitForFunction(() => document.querySelector('iframe')?.getAttribute('src')?.includes('/workspace/old/'))
+  // 触发一次在途的 status 轮询（通过 focus 事件），保持挂起
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await stalePollStartedPromise
+
+  await page.getByRole('button', { name: '立即更新' }).click()
+  await page.waitForFunction(() => document.querySelector('iframe')?.getAttribute('src')?.includes('/workspace/new/'))
+
+  // 释放旧的延迟轮询响应，确认不会把 iframe 翻回 /workspace/old/
+  releaseStalePoll()
+  await page.waitForTimeout(150)
+  const iframeSrc = await page.locator('iframe').getAttribute('src')
+  expect(iframeSrc).toContain('/workspace/new/')
+  await page.close()
+})

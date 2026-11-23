@@ -20,7 +20,15 @@ register(`data:text/javascript,${encodeURIComponent(`export async function resol
 }`)}`)
 const host = await import('./host.js')
 
-const bundledExecutable = fileURLToPath(new URL('./runtime/Contents/MacOS/BeefTV', import.meta.url))
+const originalAccess = fsPromises.access
+const originalExecFile = childProcess.execFile
+const isLinux = process.platform === 'linux'
+const bundledExecutable = fileURLToPath(new URL(isLinux ? './runtime/BeefTV-linux/BeefTV' : './runtime/Contents/MacOS/BeefTV', import.meta.url))
+const localExecutable = isLinux ? '/opt/beeftv/BeefTV-linux/BeefTV' : '/Applications/BeefTV.app/Contents/MacOS/BeefTV'
+const localCLI = isLinux ? '/opt/beeftv/BeefTV-linux/cli/beeftv' : '/Applications/BeefTV.app/Contents/MacOS/cli/beeftv'
+const expectedLaunchCall = isLinux
+  ? { command: '/opt/beeftv/BeefTV-linux/BeefTV', args: [] }
+  : { command: '/usr/bin/open', args: ['-a', '/Applications/BeefTV.app'] }
 
 test('runtime readiness only accepts loopback bridges and complete credentials', () => {
   assert.throws(() => runtimeRecord({ bridgeURL: 'https://example.com', bridgeToken: 'x' }))
@@ -225,7 +233,7 @@ test('workspace handshake verifies the live build, database readiness and worksp
 })
 
 // Replaces only the operating-system boundary: executable checks, Info.plist reads, App launches and runtime processes.
-function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, launchError, appVersion = '2.2.0', installedVersion = appVersion, installed = true, bundled = true, bridgeURL = 'http://127.0.0.1:1234' } = {}) {
+function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, launchError, appVersion = '2.2.0', installedVersion = appVersion, installed = true, bundled = true, bridgeURL = 'http://127.0.0.1:1234', realRuntimesDir = null } = {}) {
   const calls = []
   let attempts = 0
   let plistReads = 0
@@ -234,12 +242,18 @@ function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, lau
     context.mock.restoreAll()
     syncBuiltinESMExports()
   })
-  context.mock.method(fsPromises, 'access', async path => {
-    const present = String(path).startsWith('/Applications/') ? installed : bundled
+  context.mock.method(fsPromises, 'access', async (path, mode) => {
+    const text = String(path)
+    if (realRuntimesDir && text.startsWith(realRuntimesDir)) return originalAccess(path, mode)
+    const isLocalPath = text.startsWith('/Applications/') || text.startsWith('/opt/beeftv/') || text.includes('.local/share/beeftv')
+    const present = isLocalPath ? installed : bundled
     if (!present) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
   })
   context.mock.method(childProcess, 'execFile', (command, args, options, callback) => {
-    if (command === '/usr/libexec/PlistBuddy') {
+    if (realRuntimesDir && (command === '/usr/bin/ditto' || command === 'unzip' || command === 'tar.exe')) {
+      return originalExecFile(command, args, options, callback)
+    }
+    if (command === '/usr/libexec/PlistBuddy' || command === 'dpkg-query' || (args?.[0] === '--version' && String(command).includes('beeftv'))) {
       plistReads += 1
       const version = typeof installedVersion === 'function' ? installedVersion() : installedVersion
       queueMicrotask(() => version ? callback(null, `${version}\n`, '') : callback(new Error('Print: Entry Does Not Exist'), '', ''))
@@ -250,6 +264,12 @@ function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, lau
   })
   context.mock.method(childProcess, 'spawn', (command, args) => {
     calls.push({ command, args })
+    if (isLinux && (!args || args.length === 0)) {
+      if (launchError) throw launchError
+      const detached = new EventEmitter()
+      detached.unref = () => {}
+      return detached
+    }
     const child = new EventEmitter()
     child.stdin = new PassThrough()
     child.stdout = new PassThrough()
@@ -272,10 +292,10 @@ function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, lau
 test('local connection opens the canonical App and attaches without starting an owner', async context => {
   const calls = mockRuntimeProcesses(context)
   const connected = await runtime.startLocalRuntime()
-  assert.deepEqual(calls[0], { command: '/usr/bin/open', args: ['-a', '/Applications/BeefTV.app'] })
+  assert.deepEqual(calls[0], expectedLaunchCall)
   assert.deepEqual(calls[1].args, ['--harness-runtime', '--harness-attach-only'])
-  assert.equal(calls[1].command, '/Applications/BeefTV.app/Contents/MacOS/BeefTV')
-  assert.equal(connected.cli, '/Applications/BeefTV.app/Contents/MacOS/cli/beeftv')
+  assert.equal(calls[1].command, localExecutable)
+  assert.equal(connected.cli, localCLI)
   assert.equal(connected.owned, false)
   connected.close()
 })
@@ -360,7 +380,7 @@ async function workspaceServer(context) {
       state.proxied.push({ method: req.method, url: req.url, headers: req.headers })
       return send(200, { proxied: true })
     }
-    if (path === '/api/health') return send(200, { ready: true, schema: { ready: true }, build: { version: '2.2.0' } })
+    if (path === '/api/health') return send(200, { ready: true, schema: { ready: true }, build: { version: state.version || '2.2.0' } })
     if (path === '/api/workspace/bootstrap') {
       if (state.bootstrapGate) await state.bootstrapGate
       return send(200, { contractVersion: 1, workspace: { id: state.workspaceId, name: 'Local', storage: 'sqlite' } })
@@ -386,8 +406,13 @@ async function workspaceServer(context) {
 async function startHost(context, options = {}) {
   const workspace = await workspaceServer(context)
   workspace.extraOps = options.extraOps || []
-  const calls = mockRuntimeProcesses(context, { available: () => workspace.available, bridgeURL: workspace.url, ...options })
   const home = await fsPromises.mkdtemp(join(tmpdir(), 'beeftv-dsh-'))
+  const calls = mockRuntimeProcesses(context, {
+    available: () => workspace.available,
+    bridgeURL: workspace.url,
+    ...options,
+    realRuntimesDir: options.realRuntimes ? join(home, 'storages', 'beeftv', 'runtimes') : null,
+  })
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = home
   if (options.initialSettings || options.rawSettings) {
@@ -494,7 +519,7 @@ test('Host rejects context from missing or previous connection IDs and reattache
   const restored = (await call('GET', '/beeftv/status')).body
   assert.equal(restored.connected, true)
   assert.notEqual(restored.connectionId, second)
-  assert.equal(calls.filter(call => call.command === '/usr/bin/open').length, 1)
+  assert.equal(calls.filter(call => call.command === expectedLaunchCall.command && call.args.length === expectedLaunchCall.args.length).length, 1)
   assert.equal(calls.filter(call => call.args.includes('--harness-attach-only')).length, 3)
 })
 
@@ -1524,4 +1549,248 @@ test('a backend agent.guide replaces the fixed section; without it the fixed tex
   const fixed = await startHost(context)
   await fixed.call('POST', '/beeftv/connect', { mode: 'standalone' })
   assert.match(fixed.section('beeftv-creation'), /长程视频创作与工作区定制按以下规范完成/)
+})
+
+async function startManagedFeedHarness(context) {
+  const { createHash, generateKeyPairSync, sign: signBytes } = await import('node:crypto')
+  const { createServer } = await import('node:http')
+  const { platformKey } = await import('./runtime-store.js')
+  const plat = platformKey()
+  assert.ok(plat)
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+  const spki = publicKey.export({ type: 'spki', format: 'der' })
+  const rawPublic = spki.subarray(spki.length - 32).toString('base64')
+  const crcTable = new Uint32Array(256)
+  for (let i = 0; i < 256; i += 1) {
+    let c = i
+    for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1)
+    crcTable[i] = c >>> 0
+  }
+  const crc32 = buf => {
+    let c = 0xffffffff
+    for (let i = 0; i < buf.length; i += 1) c = crcTable[(c ^ buf[i]) & 0xff] ^ (c >>> 8)
+    return (c ^ 0xffffffff) >>> 0
+  }
+  const makeZip = tag => {
+    const entryName = plat.startsWith('darwin-')
+      ? ['BeefTV.app/Contents/MacOS/BeefTV', 'BeefTV.app/Contents/MacOS/cli/beeftv']
+      : plat === 'linux-amd64'
+        ? ['BeefTV-linux/BeefTV', 'BeefTV-linux/cli/beeftv']
+        : ['BeefTV.exe', 'cli/beeftv.exe']
+    const entries = entryName.map(name => ({ name, data: Buffer.from(`#!/bin/sh\necho ${tag}\n`) }))
+    const localParts = []
+    const centralParts = []
+    let offset = 0
+    for (const item of entries) {
+      const name = Buffer.from(item.name, 'utf8')
+      const crc = crc32(item.data)
+      const local = Buffer.alloc(30 + name.length)
+      local.writeUInt32LE(0x04034b50, 0)
+      local.writeUInt16LE(20, 4)
+      local.writeUInt32LE(crc >>> 0, 14)
+      local.writeUInt32LE(item.data.length, 18)
+      local.writeUInt32LE(item.data.length, 22)
+      local.writeUInt16LE(name.length, 26)
+      name.copy(local, 30)
+      localParts.push(local, item.data)
+
+      const central = Buffer.alloc(46 + name.length)
+      central.writeUInt32LE(0x02014b50, 0)
+      central.writeUInt16LE((3 << 8) | 20, 4)
+      central.writeUInt16LE(20, 6)
+      central.writeUInt32LE(crc >>> 0, 16)
+      central.writeUInt32LE(item.data.length, 20)
+      central.writeUInt32LE(item.data.length, 24)
+      central.writeUInt16LE(name.length, 28)
+      central.writeUInt32LE((0o100755 << 16) >>> 0, 38)
+      central.writeUInt32LE(offset, 42)
+      name.copy(central, 46)
+      centralParts.push(central)
+      offset += local.length + item.data.length
+    }
+    const cd = Buffer.concat(centralParts)
+    const eocd = Buffer.alloc(22)
+    eocd.writeUInt32LE(0x06054b50, 0)
+    eocd.writeUInt16LE(entries.length, 8)
+    eocd.writeUInt16LE(entries.length, 10)
+    eocd.writeUInt32LE(cd.length, 12)
+    eocd.writeUInt32LE(offset, 16)
+    return Buffer.concat([...localParts, cd, eocd])
+  }
+  const zipV1 = makeZip('v2.4.2')
+  const zipV2 = makeZip('v2.4.3')
+  const shaV1 = createHash('sha256').update(zipV1).digest('hex')
+  const shaV2 = createHash('sha256').update(zipV2).digest('hex')
+  const state = { feedVersion: 'v2.4.2' }
+  let origin = ''
+  const feedServer = createServer((req, res) => {
+    if (req.url === '/feed.json') {
+      const zip = state.feedVersion === 'v2.4.2' ? zipV1 : zipV2
+      const sha = state.feedVersion === 'v2.4.2' ? shaV1 : shaV2
+      const payload = Buffer.from(JSON.stringify({
+        schema: 2,
+        version: state.feedVersion,
+        commit: '67becaab7cfd2abe0cb394ec3da81c16115cae7f',
+        platforms: { [plat]: { urls: [`${origin}/${state.feedVersion}.zip`], sha256: sha, size: zip.length } },
+      }), 'utf8')
+      const signature = signBytes(null, payload, privateKey)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ payload: payload.toString('base64'), signature: signature.toString('base64') }))
+      return
+    }
+    const zip = req.url === '/v2.4.3.zip' ? zipV2 : zipV1
+    res.writeHead(200, { 'content-length': String(zip.length) })
+    res.end(zip)
+  })
+  await new Promise(resolve => feedServer.listen(0, '127.0.0.1', resolve))
+  origin = `http://127.0.0.1:${feedServer.address().port}`
+  context.after(() => new Promise(resolve => feedServer.close(resolve)))
+
+  const prevFeed = process.env.BEEFTV_HARNESS_FEED_URL
+  const prevKey = process.env.BEEFTV_HARNESS_PUBLIC_KEY
+  process.env.BEEFTV_HARNESS_FEED_URL = `${origin}/feed.json`
+  process.env.BEEFTV_HARNESS_PUBLIC_KEY = rawPublic
+  context.after(() => {
+    if (prevFeed === undefined) delete process.env.BEEFTV_HARNESS_FEED_URL
+    else process.env.BEEFTV_HARNESS_FEED_URL = prevFeed
+    if (prevKey === undefined) delete process.env.BEEFTV_HARNESS_PUBLIC_KEY
+    else process.env.BEEFTV_HARNESS_PUBLIC_KEY = prevKey
+  })
+  return { plat, state }
+}
+
+test('Host provisions managed standalone runtime on first connect and supports check/update without dropping workspace', async context => {
+  const { state } = await startManagedFeedHarness(context)
+
+  // 真实文件访问与解压命令用于托管 runtimes 目录，只拦截 /Applications 与 bundled runtime 让它走托管下载路径。
+  const { call, home, calls, workspace } = await startHost(context, {
+    installed: false, bundled: false, realRuntimes: true, appVersion: () => state.feedVersion.replace(/^v/, ''),
+  })
+  workspace.version = '2.4.2'
+
+  const before = (await call('GET', '/beeftv/status')).body
+  assert.equal(before.localApp.compatible, false)
+  assert.equal(before.standaloneRuntime.ready, false)
+
+  const connected = await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  assert.equal(connected.status, 200, JSON.stringify(connected.body))
+  assert.equal(connected.body.connected, true)
+  assert.equal(connected.body.mode, 'standalone')
+  assert.equal(connected.body.standaloneRuntime.source, 'managed')
+  assert.equal(connected.body.standaloneRuntime.version, 'v2.4.2')
+  assert.ok(calls.some(item => String(item.command).startsWith(join(home, 'storages', 'beeftv', 'runtimes', 'v2.4.2-'))))
+
+  // 发布新版本 v2.4.3 后检查更新并平滑升级重启
+  state.feedVersion = 'v2.4.3'
+  const checked = await call('POST', '/beeftv/runtime/check-update', {})
+  assert.equal(checked.status, 200, JSON.stringify(checked.body))
+  assert.equal(checked.body.standaloneRuntime.updateAvailable.version, 'v2.4.3')
+
+  workspace.version = '2.4.3'
+  const updated = await call('POST', '/beeftv/runtime/update', {})
+  assert.equal(updated.status, 200, JSON.stringify(updated.body))
+  assert.equal(updated.body.connected, true)
+  assert.equal(updated.body.standaloneRuntime.version, 'v2.4.3')
+  assert.equal(updated.body.standaloneRuntime.updateAvailable, null)
+  assert.ok(calls.some(item => String(item.command).startsWith(join(home, 'storages', 'beeftv', 'runtimes', 'v2.4.3-'))))
+})
+
+test('Host refuses runtime update while paid generations are awaited', async context => {
+  const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
+  workspace.taskWait = () => new Promise(() => {})
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const { agent } = fakeAgent()
+  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['task-in-flight']))
+  const blocked = await call('POST', '/beeftv/runtime/update', {})
+  assert.equal(blocked.status, 503)
+  assert.match(blocked.body.error, /有生成或工具任务正在进行/)
+})
+
+test('Host refuses runtime update while an mcp__beeftv__ tool call is in flight and unblocks once it settles', async context => {
+  const prevFeed = process.env.BEEFTV_HARNESS_FEED_URL
+  process.env.BEEFTV_HARNESS_FEED_URL = 'http://127.0.0.1:1/feed.json'
+  context.after(() => {
+    if (prevFeed === undefined) delete process.env.BEEFTV_HARNESS_FEED_URL
+    else process.env.BEEFTV_HARNESS_FEED_URL = prevFeed
+  })
+  const { call, listeners } = await startHost(context)
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  let finishTool
+  const pendingTool = listeners.get('tools/execute')({ name: 'mcp__beeftv__canvas_create' }, () => new Promise(resolve => { finishTool = resolve }))
+  const blocked = await call('POST', '/beeftv/runtime/update', {})
+  assert.equal(blocked.status, 503)
+  assert.match(blocked.body.error, /有生成或工具任务正在进行/)
+  finishTool({ content: [] })
+  await pendingTool
+  // 工具完成后不再因在途调用拦截（离线 loopback feed 立即返回网络错误，不触发在途任务拦截）
+  const afterTool = await call('POST', '/beeftv/runtime/update', {})
+  assert.doesNotMatch(String(afterTool.body?.error || ''), /有生成或工具任务正在进行/)
+})
+
+test('runtime close waits for a slow-exiting owned child process to actually terminate', async context => {
+  context.after(() => {
+    context.mock.restoreAll()
+    syncBuiltinESMExports()
+  })
+  let exited = false
+  const signals = []
+  context.mock.method(fsPromises, 'access', async () => {})
+  context.mock.method(childProcess, 'spawn', () => {
+    const child = new EventEmitter()
+    child.exitCode = null
+    child.signalCode = null
+    child.stdin = new PassThrough()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    child.kill = sig => {
+      signals.push(sig)
+      if (sig === 'SIGKILL') {
+        setTimeout(() => {
+          exited = true
+          child.signalCode = 'SIGKILL'
+          child.emit('exit', null, 'SIGKILL')
+        }, 25)
+      }
+    }
+    queueMicrotask(() => {
+      child.stdout.end(JSON.stringify({
+        bridgeURL: 'http://127.0.0.1:1234', baseURL: 'http://127.0.0.1:1234/api',
+        bridgeToken: 'test-bridge', owned: true, version: '2.4.2',
+      }) + '\n')
+    })
+    return child
+  })
+  syncBuiltinESMExports()
+
+  const started = await runtime.startRuntime('/tmp/slow-close-workspace')
+  await started.close({ graceMs: 15, killMs: 15 })
+  assert.equal(exited, true)
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL'])
+})
+
+test('Host rolls back to previous managed runtime and discards broken candidate when updated binary fails version/health check', async context => {
+  const { plat, state } = await startManagedFeedHarness(context)
+
+  // 模拟新版本 v2.4.3 启动时意外返回旧版本号 2.4.2（如慢退出旧进程占用了控制通道），触发校验失败与回滚。
+  const { call, home, workspace } = await startHost(context, {
+    installed: false, bundled: false, realRuntimes: true, appVersion: '2.4.2',
+  })
+  workspace.version = '2.4.2'
+
+  const initial = await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  assert.equal(initial.status, 200, JSON.stringify(initial.body))
+  assert.equal(initial.body.standaloneRuntime.version, 'v2.4.2')
+
+  state.feedVersion = 'v2.4.3'
+  const failedUpdate = await call('POST', '/beeftv/runtime/update', {})
+  assert.equal(failedUpdate.status, 503)
+  assert.match(failedUpdate.body.error, /版本不匹配/)
+
+  // current.json 仍指向 v2.4.2，坏的 v2.4.3 目录已被清理，且工作区自动恢复为已连接 v2.4.2
+  const pointer = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'runtimes', 'current.json'), 'utf8'))
+  assert.equal(pointer.version, 'v2.4.2')
+  await assert.rejects(() => originalAccess(join(home, 'storages', 'beeftv', 'runtimes', `v2.4.3-${plat}`)))
+  const recovered = (await call('GET', '/beeftv/status')).body
+  assert.equal(recovered.connected, true)
+  assert.equal(recovered.standaloneRuntime.version, 'v2.4.2')
 })

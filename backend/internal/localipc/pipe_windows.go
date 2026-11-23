@@ -41,11 +41,17 @@ func validPlatformEndpoint(endpoint string) bool {
 }
 
 type windowsPipeFileConn struct {
-	file *os.File
+	mu     sync.RWMutex
+	file   *os.File
+	handle windows.Handle
+	closed bool
 }
 
 func newWindowsPipeConn(h windows.Handle, name string) net.Conn {
-	return &windowsPipeFileConn{file: os.NewFile(uintptr(h), name)}
+	return &windowsPipeFileConn{
+		file:   os.NewFile(uintptr(h), name),
+		handle: h,
+	}
 }
 
 func (c *windowsPipeFileConn) Read(b []byte) (int, error) {
@@ -59,7 +65,11 @@ func (c *windowsPipeFileConn) Write(b []byte) (int, error) {
 }
 
 func (c *windowsPipeFileConn) Close() error {
-	return wrapPipeConnError("close", c.LocalAddr(), c.RemoteAddr(), c.file.Close())
+	c.mu.Lock()
+	c.closed = true
+	err := c.file.Close()
+	c.mu.Unlock()
+	return wrapPipeConnError("close", c.LocalAddr(), c.RemoteAddr(), err)
 }
 
 func (c *windowsPipeFileConn) SetDeadline(t time.Time) error {
@@ -78,6 +88,42 @@ func (c *windowsPipeFileConn) LocalAddr() net.Addr {
 }
 func (c *windowsPipeFileConn) RemoteAddr() net.Addr {
 	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+}
+
+// VerifyCurrentUserPipeOwner confirms that the connected Windows Named Pipe
+// kernel object is owned by the exact current user SID (Windows equivalent of
+// Unix SO_PEERCRED / socket UID validation). It uses the stored raw handle
+// instead of os.File.Fd() so Go's runtime IOCP poller and deadlines stay intact.
+func VerifyCurrentUserPipeOwner(conn net.Conn) error {
+	pipeConn, ok := conn.(*windowsPipeFileConn)
+	if !ok || pipeConn == nil {
+		return errors.New("not a Windows local IPC pipe connection")
+	}
+	wantSID, err := currentUserSIDString()
+	if err != nil {
+		return err
+	}
+	pipeConn.mu.RLock()
+	defer pipeConn.mu.RUnlock()
+	if pipeConn.closed || pipeConn.handle == 0 || pipeConn.handle == windows.InvalidHandle {
+		return net.ErrClosed
+	}
+	sd, err := windows.GetSecurityInfo(
+		pipeConn.handle,
+		windows.SE_KERNEL_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		return err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		return errors.New("unable to verify Windows pipe owner SID")
+	}
+	if !strings.EqualFold(owner.String(), wantSID) {
+		return fmt.Errorf("harness control pipe is not owned by the current user (owner=%s want=%s)", owner.String(), wantSID)
+	}
+	return nil
 }
 
 type windowsPipeListener struct {
@@ -398,13 +444,15 @@ func currentUserSecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Protected DACL explicitly denying NT AUTHORITY\NETWORK (NU) and granting
-	// GENERIC_ALL only to the exact current user SID (stripping Everyone/Anonymous),
-	// plus Medium Mandatory Label so normal-integrity CLI processes can talk to an
-	// elevated desktop instance of the same user while Low/Untrusted sandboxes cannot.
-	baseDACL := "D:P(D;;GA;;;NU)(A;;GA;;;" + sid + ")"
-	if sd, err := windows.SecurityDescriptorFromString(baseDACL + "S:(ML;;NW;;;ME)"); err == nil {
+	// Explicit Owner = current user SID (so elevated Administrators own pipes as their
+	// exact TokenUser SID rather than defaulting to BUILTIN\Administrators), protected
+	// DACL explicitly denying NT AUTHORITY\NETWORK (NU) and granting GENERIC_ALL only
+	// to the exact current user SID (stripping Everyone/Anonymous), plus Medium Mandatory
+	// Label so normal-integrity CLI processes can talk to an elevated desktop instance of
+	// the same user while Low/Untrusted sandboxes cannot.
+	baseSD := "O:" + sid + "D:P(D;;GA;;;NU)(A;;GA;;;" + sid + ")"
+	if sd, err := windows.SecurityDescriptorFromString(baseSD + "S:(ML;;NW;;;ME)"); err == nil {
 		return sd, nil
 	}
-	return windows.SecurityDescriptorFromString(baseDACL)
+	return windows.SecurityDescriptorFromString(baseSD)
 }

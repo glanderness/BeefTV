@@ -1,13 +1,15 @@
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { access } from 'node:fs/promises'
-import { constants } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createInterface } from 'node:readline'
 import { setTimeout as delay } from 'node:timers/promises'
+import { inspectLocalApp, localAppStatus } from './platform-app.js'
+import { platformKey, probeRuntimeDir } from './runtime-store.js'
 
 const root = fileURLToPath(new URL('.', import.meta.url))
+export const bundledRuntimeDir = join(root, 'runtime')
+export { localAppStatus }
 
 const mcpOperationName = id => `mcp__beeftv__${id.replace(/[^A-Za-z0-9_-]/g, '_')}`
 const mcpToolBase = name => typeof name === 'string' ? name.replace(/_[a-f0-9]{12}$/, '') : ''
@@ -518,81 +520,33 @@ export function embeddedPathRejection(rawPath) {
   return managedWorkspacePaths.some(managed => effective === managed || effective.startsWith(`${managed}/`)) ? 403 : 0
 }
 
-const localApp = {
-  bundle: '/Applications/BeefTV.app',
-  info: '/Applications/BeefTV.app/Contents/Info.plist',
-  executable: '/Applications/BeefTV.app/Contents/MacOS/BeefTV',
-  cli: '/Applications/BeefTV.app/Contents/MacOS/cli/beeftv',
-}
-// 2.2.0 is the first desktop release with the harness bridge. Older builds pass unknown flags to the
-// GUI, so starting them with harness flags would open the desktop window instead of attaching.
-const minimumLocalAppVersion = '2.2.0'
-
-function supportsHarness(version) {
-  const parts = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version || '')?.slice(1).map(Number)
-  if (!parts) return false
-  const minimum = minimumLocalAppVersion.split('.').map(Number)
-  const index = parts.findIndex((part, position) => part !== minimum[position])
-  return index === -1 || parts[index] > minimum[index]
-}
-
-function bundleVersion(plist) {
-  return new Promise(resolve => {
-    execFile('/usr/libexec/PlistBuddy', ['-c', 'Print CFBundleShortVersionString', plist], { timeout: 5_000 }, (error, stdout) => {
-      resolve(error ? null : String(stdout).trim() || null)
-    })
-  })
-}
-
-export async function localAppStatus() {
-  try {
-    await Promise.all([access(localApp.executable, constants.X_OK), access(localApp.cli, constants.X_OK)])
-  } catch {
-    return { compatible: false, version: null, message: `未找到本机 BeefTV。请安装 ${minimumLocalAppVersion} 或更高版本后重新连接。` }
-  }
-  const version = await bundleVersion(localApp.info)
-  if (supportsHarness(version)) return { compatible: true, version, message: null }
-  return {
-    compatible: false, version,
-    message: version
-      ? `本机 BeefTV 版本为 ${version}，需要 ${minimumLocalAppVersion} 或更高版本。请升级后重新连接。`
-      : `无法读取本机 BeefTV 的版本。请重新安装 ${minimumLocalAppVersion} 或更高版本后重新连接。`,
-  }
-}
-
 async function requireLocalApp() {
-  const app = await localAppStatus()
-  if (!app.compatible) throw new Error(app.message)
+  const { status, detected } = await inspectLocalApp()
+  if (!status.compatible || !detected) throw new Error(status.message)
+  return detected
 }
 
 async function bundledPaths() {
-  const contents = join(root, 'runtime', 'Contents')
-  const paths = { executable: join(contents, 'MacOS', 'BeefTV'), cli: join(contents, 'MacOS', 'cli', 'beeftv') }
-  try {
-    await Promise.all(Object.values(paths).map(path => access(path, constants.X_OK)))
-  } catch (error) {
-    throw new Error('插件缺少内置的 BeefTV 运行时，请重新安装插件', { cause: error })
+  const platKey = platformKey()
+  const found = await probeRuntimeDir(bundledRuntimeDir, platKey)
+  if (!found) {
+    throw new Error('插件缺少内置的 BeefTV 运行时，请重新安装插件')
   }
-  return paths
+  return found
 }
 
 export async function startLocalRuntime() {
-  await requireLocalApp()
+  const app = await requireLocalApp()
   try {
-    await new Promise((resolve, reject) => {
-      execFile('/usr/bin/open', ['-a', localApp.bundle], { timeout: 10_000 }, error => {
-        if (error) reject(error)
-        else resolve()
-      })
-    })
+    await app.launch()
   } catch (error) {
-    throw new Error('无法打开本机 BeefTV，请确认 /Applications/BeefTV.app 已完整安装', { cause: error })
+    throw new Error(app.launchFailureMessage || '无法打开本机 BeefTV，请确认已完整安装', { cause: error })
   }
   const deadline = Date.now() + 30_000
   let lastFailure
   while (Date.now() < deadline) {
     try {
-      return await launchRuntime(localApp, { attachOnly: true })
+      return await launchRuntime(app.paths, { attachOnly: true })
     } catch (error) {
       lastFailure = error
     }
@@ -603,13 +557,27 @@ export async function startLocalRuntime() {
 
 // Reconnects to a running desktop App without opening it again.
 export async function attachLocalRuntime() {
-  await requireLocalApp()
-  return launchRuntime(localApp, { attachOnly: true })
+  const app = await requireLocalApp()
+  return launchRuntime(app.paths, { attachOnly: true })
 }
 
-// The standalone workspace only ever runs the runtime bundled with the plugin.
-export async function startRuntime(dataDir) {
-  return launchRuntime(await bundledPaths(), { dataDir })
+// The standalone workspace runs either a verified managed runtime or the bundled runtime.
+// It never falls back to the desktop App.
+export async function startRuntime(dataDir, { runtimePaths } = {}) {
+  return launchRuntime(runtimePaths || await bundledPaths(), { dataDir })
+}
+
+function summarizeStartupStderr(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return ''
+  if (/libwebkit2gtk|libgtk-3|cannot open shared object file/i.test(text)) {
+    return '（缺少系统图形运行库，请先安装 libgtk-3 与 libwebkit2gtk-4.1）'
+  }
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  const last = (lines[lines.length - 1] || '')
+    .replace(/(?:token|secret|authorization|bearer)[\s:=]+\S+/gi, '[redacted]')
+    .slice(0, 140)
+  return last ? `（${last}）` : ''
 }
 
 async function launchRuntime(paths, { dataDir, attachOnly = false }) {
@@ -617,8 +585,11 @@ async function launchRuntime(paths, { dataDir, attachOnly = false }) {
   if (attachOnly) args.push('--harness-attach-only')
   if (dataDir) args.push('--data-dir', dataDir)
   const child = spawn(paths.executable, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
-  // Runtime logs stay out of model output and the browser. Readiness is the only stdout record.
-  child.stderr.resume()
+  // Runtime logs stay out of model output and the browser. Keep only a bounded tail for startup failure diagnosis.
+  let stderrTail = ''
+  child.stderr.on('data', chunk => {
+    if (stderrTail.length < 2048) stderrTail = (stderrTail + chunk.toString('utf8')).slice(-2048)
+  })
   const lines = createInterface({ input: child.stdout })
   let ready = false
   const record = await new Promise((resolve, reject) => {
@@ -629,7 +600,8 @@ async function launchRuntime(paths, { dataDir, attachOnly = false }) {
     const fail = () => {
       if (ready) return
       clearTimeout(timer)
-      reject(new Error('BeefTV 运行时启动失败，请确认安装完整且工作区未被旧版本占用'))
+      const hint = summarizeStartupStderr(stderrTail)
+      reject(new Error(`BeefTV 运行时启动失败，请确认安装完整且工作区未被旧版本占用${hint}`))
     }
     child.once('error', fail)
     child.once('exit', fail)
@@ -652,20 +624,38 @@ async function launchRuntime(paths, { dataDir, attachOnly = false }) {
   })
   return {
     ...record, cli: paths.cli, child,
-    close() {
+    close({ graceMs = record.owned ? 5_000 : 1_000, killMs = record.owned ? 3_000 : 1_000 } = {}) {
       lines.close()
       child.stdin.end()
       if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
       return new Promise(resolve => {
-        const timer = setTimeout(() => {
-          if (record.owned) child.kill('SIGTERM')
+        let settled = false
+        let graceTimer = null
+        let killTimer = null
+        let finalTimer = null
+        const finish = () => {
+          if (settled) return
+          settled = true
+          clearTimeout(graceTimer)
+          clearTimeout(killTimer)
+          clearTimeout(finalTimer)
+          child.off('exit', finish)
+          child.off('close', finish)
           resolve()
-        }, record.owned ? 10_000 : 1_000)
-        timer.unref()
-        child.once('exit', () => {
-          clearTimeout(timer)
-          resolve()
-        })
+        }
+        child.once('exit', finish)
+        child.once('close', finish)
+        graceTimer = setTimeout(() => {
+          if (!record.owned) {
+            finish()
+            return
+          }
+          try { child.kill('SIGTERM') } catch { /* process already exited */ }
+          killTimer = setTimeout(() => {
+            try { child.kill('SIGKILL') } catch { /* process already exited */ }
+            finalTimer = setTimeout(finish, 2_000)
+          }, killMs)
+        }, graceMs)
       })
     },
   }

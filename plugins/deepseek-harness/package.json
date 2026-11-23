@@ -1,7 +1,7 @@
 {
   "name": "dsh-beeftv",
-  "version": "0.1.1",
-  "description": "AI 驱动的视频创作工作台，连接 BeefTV 画布、素材与创作生态。",
+  "version": "0.2.0",
+  "description": "AI 驱动的视频创作工作台，连接 BeefTV 画布、素材与创作生态，无需单独安装 BeefTV 即可在 DSH 内直接使用。",
   "type": "module",
   "main": "host.js",
   "exports": {
@@ -35,6 +35,9 @@
     "host.js",
     "client.js",
     "runtime.js",
+    "platform-app.js",
+    "runtime-store.js",
+    "runtime-verify.js",
     "await-machine.js",
     "await-runner.js",
     "connection.js",
@@ -42,7 +45,6 @@
     "step-limit.js",
     "prompts.js",
     "cordis.patch.yml",
-    "runtime",
     "README.md"
   ],
   "keywords": [
@@ -53,6 +55,6 @@
   ],
   "repository": "https://github.com/glanderness/BeefTV",
   "scripts": {
-    "test": "node --test runtime.test.js await-machine.test.js"
+    "test": "node --test runtime.test.js runtime-store.test.js await-machine.test.js"
   }
 }
