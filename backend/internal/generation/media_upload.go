@@ -248,22 +248,22 @@ func BeefTVSeedanceKindMaxBytes(kind string) int64 {
 
 func ValidateBeefTVSeedanceMediaSize(kind string, size int64) error {
 	if size <= 0 {
-		return errBeefTVSeedanceUploadEmpty
+		return PreparationUserError{Category: CategoryInvalidParams, Reason: "参考素材为空", Action: "请重新导入后重试", Cause: errBeefTVSeedanceUploadEmpty}
 	}
 	max := BeefTVSeedanceKindMaxBytes(kind)
 	if max <= 0 {
-		return errBeefTVSeedanceUploadFormat
+		return PreparationUserError{Category: CategoryInvalidParams, Reason: errBeefTVSeedanceUploadFormat.Error(), Cause: errBeefTVSeedanceUploadFormat}
 	}
 	if size > max {
-		switch kind {
+		switch strings.ToLower(strings.TrimSpace(kind)) {
 		case "image":
-			return errors.New("参考图片不能超过 30MB")
+			return PreparationUserError{Category: CategoryInputTooLarge, Reason: "参考图片不能超过 30MB", Action: "请压缩或裁剪后重试"}
 		case "video":
-			return errors.New("参考视频不能超过 200MB")
+			return PreparationUserError{Category: CategoryInputTooLarge, Reason: "参考视频不能超过 200MB", Action: "请压缩或裁剪后重试"}
 		case "audio":
-			return errors.New("参考音频不能超过 15MB")
+			return PreparationUserError{Category: CategoryInputTooLarge, Reason: "参考音频不能超过 15MB", Action: "请压缩或裁剪后重试"}
 		default:
-			return errBeefTVSeedanceUploadFormat
+			return PreparationUserError{Category: CategoryInvalidParams, Reason: errBeefTVSeedanceUploadFormat.Error(), Cause: errBeefTVSeedanceUploadFormat}
 		}
 	}
 	return nil

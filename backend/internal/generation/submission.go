@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 
 	"infinite-canvas/backend/internal/platform"
 )
@@ -32,6 +33,39 @@ func (e RequestPreparationError) Error() string {
 	return fmt.Sprintf("本次请求准备失败：%v", e.Cause)
 }
 func (e RequestPreparationError) Unwrap() error { return e.Cause }
+
+// PreparationUserError carries an explicitly authored, user-safe reason and
+// next action for a local preflight failure before any upstream call is sent.
+type PreparationUserError struct {
+	Category FailureCategory
+	Reason   string
+	Action   string
+	Cause    error
+}
+
+func (e PreparationUserError) Error() string {
+	if e.Action != "" {
+		return joinSentences(e.Reason, e.Action)
+	}
+	if e.Reason != "" {
+		return e.Reason
+	}
+	if e.Cause != nil {
+		return e.Cause.Error()
+	}
+	return ""
+}
+func (e PreparationUserError) Unwrap() error { return e.Cause }
+
+func localMediaOpenError(err error) error {
+	if errors.Is(err, os.ErrNotExist) {
+		return PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地素材文件不存在或已被移除", Action: "请重新导入素材后重试", Cause: err}
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地素材文件无读取权限", Action: "请检查文件权限或重新导入素材后重试", Cause: err}
+	}
+	return err
+}
 
 // ProtocolPreparationError is emitted only by local interface validation before
 // a new create request; provider messages cannot attest this failure phase.

@@ -17,27 +17,16 @@ func upscaleTempFile(dir, name string, data []byte) (string, error) {
 	return path, os.WriteFile(path, data, 0600)
 }
 
-func ValidateUpscaleVideoSource(ctx context.Context, data []byte) error {
-	dir, err := os.MkdirTemp("", "beeftv-upscale-probe-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dir)
-	path, err := upscaleTempFile(dir, "source.mp4", data)
-	if err != nil {
-		return err
-	}
-	facts, err := mediatools.ProbeLocal(ctx, path)
-	if err != nil {
-		return err
-	}
+func validateUpscaleVideoFacts(facts mediatools.MediaMetadata) error {
 	if !facts.HasVideo || facts.DurationMs <= 0 || facts.DurationMs > 300_000 || !strings.Contains(","+facts.FormatName+",", ",mov,") && !strings.Contains(","+facts.FormatName+",", ",mp4,") {
-		return errors.New("超分视频须为不超过 5 分钟的 MP4 或 MOV")
+		return PreparationUserError{Category: CategoryInvalidParams, Reason: "超分视频须为不超过 5 分钟的 MP4 或 MOV", Action: "请裁剪时长或转码为 MP4/MOV 后重试"}
 	}
 	if facts.HasAudio {
-		_, err = mediatools.ResolveFFmpeg()
+		if _, err := mediatools.ResolveFFmpeg(); err != nil {
+			return err
+		}
 	}
-	return err
+	return nil
 }
 
 func PreserveUpscaleAudio(ctx context.Context, source, output []byte) ([]byte, error) {
