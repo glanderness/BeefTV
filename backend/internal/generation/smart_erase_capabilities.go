@@ -33,7 +33,7 @@ func SubtitleEraseCapabilities(ctx context.Context, lookupCred func() (string, s
 	qctx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
 	defer cancel()
 	if bindRuntime != nil {
-		qctx = bindRuntime(qctx, CallMeta{RequestKind: "capabilities"})
+		qctx = bindRuntime(qctx, CallMeta{UserID: CanonicalCallMeta(ctx).UserID, RequestKind: "capabilities"})
 	}
 	qctx = WithRequestKind(qctx, "capabilities")
 	caps, err := managedMediaClient(qctx, cfg).GetSubtitleEraseCapabilities(qctx)

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"github.com/gin-gonic/gin"
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/topaz"
 	"net/http"
@@ -36,11 +37,13 @@ func registerMediaUpscaleRoutes(r *gin.RouterGroup, svc mediaUpscaleService) {
 		ok(c, task)
 	})
 	r.GET("/media-upscale/capabilities", func(c *gin.Context) {
-		if _, e := currentUser(c, svc); e != nil {
+		user, e := currentUser(c, svc)
+		if e != nil {
 			failService(c, e)
 			return
 		}
-		ok(c, svc.MediaUpscaleCapabilities(c.Request.Context()))
+		ctx := generation.WithCallMeta(c.Request.Context(), generation.CallMeta{UserID: user.ID})
+		ok(c, svc.MediaUpscaleCapabilities(ctx))
 	})
 	for _, path := range []string{"estimate", "tasks"} {
 		action := path

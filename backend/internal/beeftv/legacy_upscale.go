@@ -55,6 +55,9 @@ func LegacyUpscaleBody(input LegacyUpscaleInput) map[string]any {
 			body["image_url"] = input.SourceURL
 		}
 		body["output_format"], body["face_enhancement"] = format, false
+		if input.EstimateOnly && input.Width > 0 && input.Height > 0 {
+			body["width"], body["height"] = input.Width, input.Height
+		}
 	} else {
 		if input.SourceURL != "" {
 			body["video_url"] = input.SourceURL

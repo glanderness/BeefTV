@@ -1,8 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -174,5 +179,41 @@ func TestUpscaleFourModelsAdmitAndReplayThroughTaskDomain(t *testing.T) {
 				t.Fatalf("admitted input cannot execute: %v", err)
 			}
 		})
+	}
+}
+
+// Contract test pinning the zero-copy local file preflight invariant:
+// appResourcePort.Open in local mode must return a reader providing Name() + Stat()
+// (*os.File) so generation preflight never silently regresses to 200 MiB RAM reads.
+func TestAppResourcePortLocalModeOpenReturnsStatableFile(t *testing.T) {
+	dir := t.TempDir()
+	svc, db := newManagedImageDirectService(t, filepath.Join(t.TempDir(), "workspace.db"), dir)
+	defer closeDB(t, db)
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewNRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	data := encoded.Bytes()
+	source := seedManagedImageLocalResource(t, svc, "source", data)
+	port := appResourcePort{service: svc}
+	if !port.LocalMode() {
+		t.Fatal("expected local mode")
+	}
+	_, rc, err := port.Open("user-1", strings.TrimPrefix(source.StorageKey, "resource:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	type statableFile interface {
+		Name() string
+		Stat() (os.FileInfo, error)
+	}
+	file, ok := rc.(statableFile)
+	if !ok {
+		t.Fatalf("appResourcePort.Open returned %T, must expose Name() and Stat() for zero-copy preflight", rc)
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(data)) || file.Name() == "" {
+		t.Fatalf("statable local resource file invalid: name=%q info=%v err=%v", file.Name(), info, err)
 	}
 }

@@ -3,7 +3,6 @@ package generation
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -59,31 +58,21 @@ func prepareOwnedSubtitleEraseSource(ctx context.Context, input Input) (Input, e
 	}
 	label := resolveSmartEraseSpec(input.SubtitleErase, input.Config.Model).Prompt
 	if !managedConnection(input.Config) && !IsBeefTVVideoConfig(ctx, input.Config) {
-		return input, fmt.Errorf("%s需要连接官方算力账号", label)
+		return input, PreparationUserError{Category: CategoryAuth, Reason: fmt.Sprintf("%s需要连接官方算力账号", label), Action: "请先在设置中连接官方算力账号后重试"}
 	}
 	runtime, _ := RuntimeFromContext(ctx)
 	if err := HydrateMedia(ctx, runtime.Call.UserID, &input, MediaHydrationPolicy{KeepLocal: true}); err != nil {
 		return input, err
 	}
 	if len(input.ReferenceVideos) == 0 || input.ReferenceVideos[0].StorageKey == "" {
-		return input, errors.New("请先将视频导入素材库，再开始处理")
-	}
-	data, _, skip, err := ownedSeedanceMediaReader(ctx, runtime.Call.UserID)("video", input.ReferenceVideos[0])
-	if err != nil {
-		return input, err
-	}
-	if skip {
-		return input, errors.New("视频素材未通过素材库归属校验")
-	}
-	if len(data) == 0 {
-		return input, errors.New("视频素材内容为空")
+		return input, PreparationUserError{Category: CategoryInputInaccessible, Reason: "请先将视频导入素材库，再开始处理"}
 	}
 	deliveryLimit, err := GeneratedFileLimit(ctx)
 	if err != nil {
 		return input, err
 	}
-	if int64(len(data)) > deliveryLimit {
-		return input, fmt.Errorf("视频大小超过本机单个生成资源上限 %s，请调高资源上限后重试", formatStorageLimit(deliveryLimit))
+	if err := preflightOwnedVideoDelivery(ctx, runtime.Call.UserID, &input.ReferenceVideos[0], deliveryLimit); err != nil {
+		return input, err
 	}
 	return input, nil
 }
@@ -252,7 +241,7 @@ func RunSubtitleEraseTask(ctx context.Context, input Input) (map[string]any, err
 	}
 	label := resolveSmartEraseSpec(input.SubtitleErase, input.Config.Model).Prompt
 	if !managedConnection(input.Config) && !IsBeefTVVideoConfig(ctx, input.Config) {
-		return nil, RequestPreparationError{Cause: fmt.Errorf("%s需要连接官方算力账号", label)}
+		return nil, RequestPreparationError{Cause: PreparationUserError{Category: CategoryAuth, Reason: fmt.Sprintf("%s需要连接官方算力账号", label), Action: "请先在设置中连接官方算力账号后重试"}}
 	}
 	managedOp := smartEraseManagedOperation(input.SubtitleErase, input.Config.Model)
 	client, unified, err := useManagedMediaEnvelopeForSubtitleErase(ctx, input.Config, managedOp)

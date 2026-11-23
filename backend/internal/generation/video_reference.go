@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
@@ -37,13 +36,13 @@ func HydrateVideoReferenceMetadata(ctx context.Context, userID string, input *In
 				return fmt.Errorf("读取任务参考资源失败：%w", err)
 			}
 			if resource.Status != "ready" {
-				return errors.New("任务参考资源尚未上传完成")
+				return resourceNotReadyError()
 			}
 			if (resource.Kind == "audio" && resource.DurationMs <= 0) ||
 				(resource.Kind == "video" && (resource.DurationMs <= 0 || resource.Width <= 0 || resource.Height <= 0)) {
 				metadata, ok := runtime.Resources.(ResourceMetadataPort)
 				if !ok {
-					return errors.New("参考素材缺少时长或尺寸，媒体检查服务不可用")
+					return missingMediaMetadataPortError()
 				}
 				resource, err = metadata.EnsureMetadata(ctx, userID, resource.ID)
 				if err != nil {
@@ -112,9 +111,6 @@ func HydrateVideoReferenceMetadata(ctx context.Context, userID string, input *In
 }
 
 func imageHeaderDimensions(r io.Reader) (int, int, error) {
-	config, _, err := image.DecodeConfig(io.LimitReader(r, videoReferenceHeaderDecodeLimit))
-	if err != nil {
-		return 0, 0, err
-	}
-	return config.Width, config.Height, nil
+	width, height, _, err := probeImageHeader(r)
+	return width, height, err
 }

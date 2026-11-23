@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/beeftv"
+	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/outbound"
 )
 
@@ -377,6 +379,9 @@ func ClassifyError(err error) Failure {
 			failure.Retryable = false
 			return failure
 		}
+		if classified, ok := classifyPreparationCause(preparation.Cause); ok {
+			return classified
+		}
 		return normalizeFailure(Failure{Category: CategoryInputInaccessible, Reason: "本次请求在准备时失败，未发送到模型服务", Action: "请检查参考素材和生成参数后重试"})
 	}
 	if _, echoed := persistedReferencePreparationFailure(err.Error()); echoed {
@@ -745,4 +750,55 @@ func normalizeFailure(failure Failure) Failure {
 	failure.Reason = reason
 	failure.Action = action
 	return failure
+}
+
+func classifyPreparationCause(cause error) (Failure, bool) {
+	var userPrep PreparationUserError
+	if errors.As(cause, &userPrep) && strings.TrimSpace(userPrep.Reason) != "" {
+		category := userPrep.Category
+		if category == "" {
+			category = CategoryInputInaccessible
+		}
+		failure := normalizeFailure(Failure{Category: category, Reason: userPrep.Reason, Action: userPrep.Action})
+		failure.Uncertain = false
+		failure.Retryable = false
+		return failure, true
+	}
+	var appErr *kernel.AppError
+	if errors.As(cause, &appErr) && strings.TrimSpace(appErr.Message) != "" {
+		var category FailureCategory
+		switch appErr.Status {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			category = CategoryAuth
+		case http.StatusRequestEntityTooLarge:
+			category = CategoryInputTooLarge
+		case http.StatusBadRequest, http.StatusUnprocessableEntity:
+			category = CategoryInvalidParams
+		case http.StatusNotFound:
+			category = CategoryInputInaccessible
+		default:
+			// Do not flatten 5xx internal/config errors into user input_inaccessible.
+			return Failure{}, false
+		}
+		failure := normalizeFailure(Failure{Category: category, Reason: strings.TrimSpace(appErr.Message)})
+		failure.Uncertain = false
+		failure.Retryable = false
+		return failure, true
+	}
+	switch {
+	case errors.Is(cause, mediatools.ErrToolUnavailable):
+		failure := normalizeFailure(Failure{Category: CategoryInputInaccessible, Reason: "视频处理工具不可用", Action: "请重新安装官方安装包后重试"})
+		failure.Uncertain, failure.Retryable = false, false
+		return failure, true
+	case errors.Is(cause, mediatools.ErrInvalidMedia):
+		failure := normalizeFailure(Failure{Category: CategoryInputInaccessible, Reason: "无法检查媒体文件", Action: "请确认素材完整且格式受支持后重试"})
+		failure.Uncertain, failure.Retryable = false, false
+		return failure, true
+	case errors.Is(cause, mediatools.ErrMediaProcessFailed):
+		failure := normalizeFailure(Failure{Category: CategoryInputInaccessible, Reason: "本地媒体处理失败", Action: "请确认素材完整后重试"})
+		failure.Uncertain, failure.Retryable = false, false
+		return failure, true
+	default:
+		return Failure{}, false
+	}
 }

@@ -177,3 +177,37 @@ func TestEveryNativeCaseReferenceIsPinnedAndConfirmed(t *testing.T) {
 		}
 	}
 }
+
+func TestMediaToolCheckRequiresBothFFmpegAndFFprobe(t *testing.T) {
+	binDir := t.TempDir()
+	ffmpeg := filepath.Join(binDir, "ffmpeg")
+	ffprobe := filepath.Join(binDir, "ffprobe")
+	for _, p := range []string{ffmpeg, ffprobe} {
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	missing := filepath.Join(binDir, "missing-tool")
+	ws := t.TempDir()
+
+	t.Setenv("CANVAS_FFMPEG_PATH", ffmpeg)
+	t.Setenv("CANVAS_FFPROBE_PATH", missing)
+	check := checkByID(t, Inspect(context.Background(), ws, false), "media-tool")
+	if check.Status != "warning" || !strings.Contains(check.Detail, "ffprobe") {
+		t.Fatalf("missing ffprobe not flagged: %+v", check)
+	}
+
+	t.Setenv("CANVAS_FFMPEG_PATH", missing)
+	t.Setenv("CANVAS_FFPROBE_PATH", ffprobe)
+	check = checkByID(t, Inspect(context.Background(), ws, false), "media-tool")
+	if check.Status != "warning" || !strings.Contains(check.Detail, "ffmpeg") {
+		t.Fatalf("missing ffmpeg not flagged: %+v", check)
+	}
+
+	t.Setenv("CANVAS_FFMPEG_PATH", ffmpeg)
+	t.Setenv("CANVAS_FFPROBE_PATH", ffprobe)
+	check = checkByID(t, Inspect(context.Background(), ws, false), "media-tool")
+	if check.Status != "pass" {
+		t.Fatalf("both tools present should pass: %+v", check)
+	}
+}

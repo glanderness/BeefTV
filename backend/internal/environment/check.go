@@ -92,12 +92,15 @@ func Inspect(ctx context.Context, dir string, repair bool) Report {
 	if stop() {
 		return r
 	}
-	path, err := mediatools.ResolveFFmpeg()
-	info, statErr := os.Stat(path)
-	if err != nil || statErr != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
-		add("media-tool", "视频处理工具", "warning", "未找到可执行的视频处理工具。部分视频预览、转码和导出将不可用，请从官方安装包重新安装。", "ENV-0014", "ENV-0015", "ENV-0016")
-	} else {
-		add("media-tool", "视频处理工具", "pass", "已找到工具文件；具体素材的编解码能力仍在使用时检查。", "ENV-0014", "ENV-0015")
+	ffmpegPath, ffmpegErr := mediatools.ResolveFFmpeg()
+	ffprobePath, ffprobeErr := mediatools.ResolveFFprobe()
+	switch {
+	case !isExecutableRegularFile(ffmpegPath, ffmpegErr):
+		add("media-tool", "视频处理工具", "warning", "未找到可执行的视频处理工具（ffmpeg）。部分视频预览、转码和导出将不可用，请从官方安装包重新安装。", "ENV-0014", "ENV-0015", "ENV-0016")
+	case !isExecutableRegularFile(ffprobePath, ffprobeErr):
+		add("media-tool", "视频处理工具", "warning", "未找到可执行的视频检查工具（ffprobe）。视频超分、时长检查和音轨保留将不可用，请从官方安装包重新安装。", "ENV-0014", "ENV-0015", "ENV-0016")
+	default:
+		add("media-tool", "视频处理工具", "pass", "已找到 ffmpeg 与 ffprobe 工具文件；具体素材的编解码能力仍在使用时检查。", "ENV-0014", "ENV-0015")
 	}
 	if stop() {
 		return r
@@ -121,6 +124,17 @@ func Inspect(ctx context.Context, dir string, repair bool) Report {
 		add("proxy", "下载代理", "pass", map[string]string{"environment": "沿用明确配置的代理环境变量。", "system": "沿用系统静态代理，并向组件下载子进程传递。", "direct": "未发现静态代理配置，当前使用直连。"}[proxy.Mode]+"此项没有测试外网连通性。", "ENV-0010", "ENV-0011")
 	}
 	return r
+}
+
+func isExecutableRegularFile(path string, resolveErr error) bool {
+	if resolveErr != nil || path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	return runtime.GOOS == "windows" || info.Mode().Perm()&0o111 != 0
 }
 
 func probeWrite(ctx context.Context, root *os.Root) error {

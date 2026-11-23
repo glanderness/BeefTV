@@ -576,7 +576,7 @@ func UpscaleConfig(name string, lookupCred func() (string, string, string, strin
 	return Config{BaseURL: base, APIKey: key, CredentialRef: beeftv.CredentialRef, Model: name, InterfaceType: "newapi"}, nil
 }
 
-func fetchUpstreamUpscaleModes(ctx context.Context, lookupCred func() (string, string, string, string, error), bindRuntime func(context.Context, CallMeta) context.Context) ([]topaz.Mode, int) {
+func fetchUpstreamUpscaleModes(ctx context.Context, user string, lookupCred func() (string, string, string, string, error), bindRuntime func(context.Context, CallMeta) context.Context) ([]topaz.Mode, int) {
 	if lookupCred == nil {
 		return topaz.Modes(), 300000
 	}
@@ -587,7 +587,7 @@ func fetchUpstreamUpscaleModes(ctx context.Context, lookupCred func() (string, s
 	qctx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
 	defer cancel()
 	if bindRuntime != nil {
-		qctx = bindRuntime(qctx, CallMeta{RequestKind: "capabilities"})
+		qctx = bindRuntime(qctx, CallMeta{UserID: user, RequestKind: "capabilities"})
 	}
 	qctx = WithRequestKind(qctx, "capabilities")
 	upstream, err := managedMediaClient(qctx, cfg).GetUpscaleCapabilities(qctx)
@@ -606,7 +606,7 @@ func fetchUpstreamUpscaleModes(ctx context.Context, lookupCred func() (string, s
 }
 
 func LiveUpscaleCapabilities(ctx context.Context, lookupCred func() (string, string, string, string, error), bindRuntime func(context.Context, CallMeta) context.Context) map[string]any {
-	modes, maxVideoDurationMs := fetchUpstreamUpscaleModes(ctx, lookupCred, bindRuntime)
+	modes, maxVideoDurationMs := fetchUpstreamUpscaleModes(ctx, CanonicalCallMeta(ctx).UserID, lookupCred, bindRuntime)
 	return map[string]any{"modes": modes, "cloudProcessing": true, "maxVideoDurationMs": maxVideoDurationMs}
 }
 
@@ -621,7 +621,7 @@ func UpscaleInput(ctx context.Context, user string, request topaz.Request, ensur
 	if len(bindRuntime) > 0 {
 		bind = bindRuntime[0]
 	}
-	modes, _ := fetchUpstreamUpscaleModes(ctx, lookupCred, bind)
+	modes, _ := fetchUpstreamUpscaleModes(ctx, user, lookupCred, bind)
 	resolvedModel, err := topaz.ResolveModelID(request, kind, modes)
 	if err != nil {
 		return input, nil, BadAuthRequest(err.Error())
@@ -652,14 +652,21 @@ func EstimateMediaUpscale(ctx context.Context, user string, request topaz.Reques
 	if bindRuntime != nil {
 		ctx = bindRuntime(ctx, CallMeta{UserID: user, RequestKind: "estimate"})
 	}
-	estimate, err := EstimateUpscale(ctx, input)
+	estimate, facts, err := EstimateUpscale(ctx, input)
 	if err != nil {
 		return nil, BadAuthRequest(ClassifyError(err).UserMessage())
 	}
+	srcWidth, srcHeight, srcDurationMs := resource.Width, resource.Height, resource.DurationMs
+	if facts.Width > 0 && facts.Height > 0 {
+		srcWidth, srcHeight = facts.Width, facts.Height
+	}
+	if facts.DurationMs > 0 {
+		srcDurationMs = facts.DurationMs
+	}
 	return map[string]any{
 		"mediaType":           input.Mode,
-		"source":              map[string]any{"width": resource.Width, "height": resource.Height, "durationMs": resource.DurationMs},
-		"output":              map[string]any{"width": int(math.Round(float64(resource.Width) * request.Scale)), "height": int(math.Round(float64(resource.Height) * request.Scale)), "durationMs": resource.DurationMs},
+		"source":              map[string]any{"width": srcWidth, "height": srcHeight, "durationMs": srcDurationMs},
+		"output":              map[string]any{"width": int(math.Round(float64(srcWidth) * request.Scale)), "height": int(math.Round(float64(srcHeight) * request.Scale)), "durationMs": srcDurationMs},
 		"reservation":         estimate.Reservation,
 		"currency":            estimate.Currency,
 		"billingMode":         estimate.BillingMode,
