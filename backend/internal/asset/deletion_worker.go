@@ -20,7 +20,9 @@ const maxDetachedCleanupAttempts = 3
 
 var deletionRetryBase = 15 * time.Second
 var detachedCleanupRetryBackoff = 25 * time.Millisecond
-var startupCleanupDelay = 2 * time.Minute
+var detachedBusyRetryBase = 15 * time.Second
+var detachedBusyRetryMax = 5 * time.Minute
+var startupCleanupDelay = 20 * time.Second
 var startupCleanupAfter = func(delay time.Duration) (<-chan time.Time, func()) {
 	timer := time.NewTimer(delay)
 	return timer.C, func() { timer.Stop() }
@@ -102,17 +104,63 @@ func (s *Service) StartDeletionWorker(ctx context.Context, loop func(func(contex
 			armRetry(delay)
 		}
 
+		var cleanupRetryTimer *time.Timer
+		var cleanupRetryC <-chan time.Time
+		var cleanupBusyAttempts int
+		stopCleanupRetryTimer := func() {
+			if cleanupRetryTimer != nil {
+				if !cleanupRetryTimer.Stop() {
+					select {
+					case <-cleanupRetryTimer.C:
+					default:
+					}
+				}
+			}
+			cleanupRetryC = nil
+		}
+		defer stopCleanupRetryTimer()
+
+		armCleanupRetry := func() {
+			cleanupBusyAttempts++
+			delay := detachedBusyRetryBase
+			for i := 1; i < cleanupBusyAttempts && delay < detachedBusyRetryMax; i++ {
+				delay *= 2
+			}
+			if delay > detachedBusyRetryMax {
+				delay = detachedBusyRetryMax
+			}
+			if delay <= 0 {
+				delay = 10 * time.Millisecond
+			}
+			if cleanupRetryTimer == nil {
+				cleanupRetryTimer = time.NewTimer(delay)
+			} else {
+				stopCleanupRetryTimer()
+				cleanupRetryTimer.Reset(delay)
+			}
+			cleanupRetryC = cleanupRetryTimer.C
+		}
+
+		runMaintenance := func() {
+			s.CleanupExpiredArchivedAssets()
+			if s.cleanupDetachedResources() {
+				armCleanupRetry()
+				return
+			}
+			cleanupBusyAttempts = 0
+			stopCleanupRetryTimer()
+		}
+
 		runDrain()
-		// Defer full-workspace archive/orphan scans past startup so the single
-		// SQLite connection stays free for initial UI bootstrap and workspace loads.
+		// Defer full-workspace archive/orphan scans past the initial startup
+		// window so the single SQLite connection stays free for UI bootstrap.
 		var startupCleanupC <-chan time.Time
 		if startupCleanupDelay > 0 {
 			var stopStartupCleanup func()
 			startupCleanupC, stopStartupCleanup = startupCleanupAfter(startupCleanupDelay)
 			defer stopStartupCleanup()
 		} else {
-			s.CleanupExpiredArchivedAssets()
-			s.CleanupDetachedResources()
+			runMaintenance()
 		}
 		hourlyTicker := time.NewTicker(time.Hour)
 		defer hourlyTicker.Stop()
@@ -127,20 +175,29 @@ func (s *Service) StartDeletionWorker(ctx context.Context, loop func(func(contex
 				runDrain()
 			case <-startupCleanupC:
 				startupCleanupC = nil
-				s.CleanupExpiredArchivedAssets()
-				s.CleanupDetachedResources()
+				runMaintenance()
+			case <-cleanupRetryC:
+				cleanupRetryC = nil
+				if s.cleanupDetachedResources() {
+					armCleanupRetry()
+				} else {
+					cleanupBusyAttempts = 0
+				}
 			case <-hourlyTicker.C:
 				runDrain()
-				s.CleanupExpiredArchivedAssets()
-				s.CleanupDetachedResources()
+				runMaintenance()
 			}
 		}
 	})
 }
 
 func (s *Service) CleanupDetachedResources() {
+	_ = s.cleanupDetachedResources()
+}
+
+func (s *Service) cleanupDetachedResources() bool {
 	if s == nil || s.repo == nil {
-		return
+		return false
 	}
 	now := time.Now()
 	candidates, err := s.repo.ResourceCleanupCandidates(
@@ -150,17 +207,23 @@ func (s *Service) CleanupDetachedResources() {
 	)
 	if err != nil {
 		log.Printf("detached resource cleanup query failed: %v", err)
-		return
+		return false
 	}
 	byUser := map[string][]model.Resource{}
 	for _, resource := range candidates {
 		byUser[resource.UserID] = append(byUser[resource.UserID], resource)
 	}
+	deferred := false
 	for userID, resources := range byUser {
 		if err := s.CleanupDetachedUserResources(userID, resources); err != nil {
+			if errors.Is(err, repository.ErrResourceCleanupSnapshotStale) {
+				deferred = true
+				continue
+			}
 			log.Printf("detached resource cleanup failed for user %s: %v", userID, err)
 		}
 	}
+	return deferred
 }
 
 func (s *Service) CleanupDetachedUserResources(userID string, candidates []model.Resource) error {
@@ -281,7 +344,7 @@ func (s *Service) CleanupDetachedUserResources(userID string, candidates []model
 				continue
 			}
 			log.Printf("detached resource cleanup deferred for user %s after %d attempts: workspace busy", userID, maxDetachedCleanupAttempts)
-			return nil
+			return repository.ErrResourceCleanupSnapshotStale
 		}
 		if commitErr != nil {
 			return commitErr

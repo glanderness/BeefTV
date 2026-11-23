@@ -11,6 +11,7 @@ import (
 
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 type failOnceDeleteBlobStore struct {
@@ -419,4 +420,91 @@ func TestStartDeletionWorkerDefersDetachedCleanupPastStartup(t *testing.T) {
 		time.Sleep(15 * time.Millisecond)
 	}
 	t.Fatal("expected deferred detached resource cleanup to remove orphan after timer fires")
+}
+
+type staleOnceDetachedRepo struct {
+	Repository
+	staleBudget atomic.Int64
+	deleteCalls atomic.Int64
+}
+
+func (r *staleOnceDetachedRepo) DeleteDetachedResources(resources []model.Resource, deletionJobs []model.ResourceDeletionJob, verifiedWatermark ...repository.SQLiteSnapshotWatermark) error {
+	r.deleteCalls.Add(1)
+	if r.staleBudget.Add(-1) >= 0 {
+		return repository.ErrResourceCleanupSnapshotStale
+	}
+	return r.Repository.DeleteDetachedResources(resources, deletionJobs, verifiedWatermark...)
+}
+
+func TestStartDeletionWorkerRearmsAndConvergesAfterStaleWatermark(t *testing.T) {
+	prevAfter := startupCleanupAfter
+	prevBackoff := detachedCleanupRetryBackoff
+	prevBusyBase := detachedBusyRetryBase
+	prevBusyMax := detachedBusyRetryMax
+	fireCleanup := make(chan time.Time, 1)
+	startupCleanupAfter = func(delay time.Duration) (<-chan time.Time, func()) {
+		return fireCleanup, func() {}
+	}
+	detachedCleanupRetryBackoff = 5 * time.Millisecond
+	detachedBusyRetryBase = 35 * time.Millisecond
+	detachedBusyRetryMax = 70 * time.Millisecond
+	t.Cleanup(func() {
+		startupCleanupAfter = prevAfter
+		detachedCleanupRetryBackoff = prevBackoff
+		detachedBusyRetryBase = prevBusyBase
+		detachedBusyRetryMax = prevBusyMax
+	})
+
+	svc, repo, _ := newTestDomain(t)
+	if err := database.MigrateLocalSchema(repo.DB()); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-48 * time.Hour)
+	orphan := model.Resource{
+		ID:        "res-stale-retry-orphan",
+		UserID:    "owner",
+		Kind:      "image",
+		Status:    model.ResourceStatusReady,
+		Provider:  "local",
+		ObjectKey: "users/owner/image/stale-retry-orphan.png",
+		CreatedAt: oldTime,
+		UpdatedAt: oldTime,
+	}
+	if err := repo.DB().Create(&orphan).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	staleRepo := &staleOnceDetachedRepo{Repository: svc.repo}
+	// Exhaust all 3 inner attempts on the first pass so StartDeletionWorker MUST
+	// re-arm cleanupRetryTimer rather than waiting for the hourly ticker.
+	staleRepo.staleBudget.Store(int64(maxDetachedCleanupAttempts))
+	svc.repo = staleRepo
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	svc.StartDeletionWorker(ctx, func(run func(context.Context)) bool {
+		go func() {
+			defer close(done)
+			run(ctx)
+		}()
+		return true
+	})
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	fireCleanup <- time.Now()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var remaining int64
+		if err := repo.DB().Model(&model.Resource{}).Where("id = ?", orphan.ID).Count(&remaining).Error; err == nil && remaining == 0 {
+			if got := staleRepo.deleteCalls.Load(); got != int64(maxDetachedCleanupAttempts)+1 {
+				t.Fatalf("delete calls = %d, want %d (3 stale + 1 converged)", got, maxDetachedCleanupAttempts+1)
+			}
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatalf("expected busy-deferred detached cleanup to re-arm and converge (calls=%d)", staleRepo.deleteCalls.Load())
 }

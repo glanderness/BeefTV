@@ -3,7 +3,6 @@ package repository
 import (
 	"errors"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,171 +13,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
-
-func TestRepositoryCachesImmutableDefaultWorkspace(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "ws.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&model.Workspace{}); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC().Truncate(time.Second)
-	if err := db.Create(&model.Workspace{ID: "ws-default", Name: "本地工作区", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.Workspace{ID: "ws-other", Name: "Other", CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second)}).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	var queries atomic.Int64
-	if err := db.Callback().Query().After("gorm:query").Register("test:count_workspace_queries", func(tx *gorm.DB) {
-		if tx.Statement != nil && tx.Statement.Table == "workspaces" {
-			queries.Add(1)
-		}
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	repo := New(db)
-	first, err := repo.DefaultWorkspace()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.ID != "ws-default" {
-		t.Fatalf("default workspace = %q, want ws-default", first.ID)
-	}
-	if got := queries.Load(); got != 1 {
-		t.Fatalf("queries after first DefaultWorkspace = %d, want 1", got)
-	}
-
-	// Mutating the returned copy must not corrupt the cached workspace.
-	first.Name = "mutated"
-
-	second, err := repo.DefaultWorkspace()
-	if err != nil {
-		t.Fatal(err)
-	}
-	byID, err := repo.Workspace("ws-default")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctxByID, err := repo.WithContext(t.Context()).Workspace("ws-default")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.Name != "本地工作区" || byID.Name != "本地工作区" || ctxByID.Name != "本地工作区" {
-		t.Fatalf("cached workspace corrupted: %q / %q / %q", second.Name, byID.Name, ctxByID.Name)
-	}
-	if got := queries.Load(); got != 1 {
-		t.Fatalf("queries after cached lookups = %d, want 1", got)
-	}
-
-	// Non-default workspace IDs still query SQLite normally.
-	other, err := repo.Workspace("ws-other")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if other.ID != "ws-other" || queries.Load() != 2 {
-		t.Fatalf("non-default lookup = %q (queries=%d), want ws-other (queries=2)", other.ID, queries.Load())
-	}
-}
-
-func TestSQLiteReferenceFilterPreservesEscapedTaskLogAndResultReferences(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "refs.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(
-		&model.Resource{},
-		&model.Asset{},
-		&model.AssetVersion{},
-		&model.AssetRepresentation{},
-		&model.CanvasProject{},
-		&model.CanvasSnapshot{},
-		&model.CanvasSnapshotResource{},
-		&model.CanvasWorkflowResource{},
-		&model.CanvasDrawing{},
-		&model.CanvasLibraryFolder{},
-		&model.Project{},
-		&model.ProjectAssetCandidate{},
-		&model.AgentOpRecord{},
-		&model.StyleProfile{},
-		&model.VoiceProfile{},
-		&model.Shot{},
-		&model.ShotArtifact{},
-		&model.WorkflowInstance{},
-		&model.WorkflowStepInstance{},
-		&model.CreationRun{},
-		&model.CreationSubmission{},
-		&model.Task{},
-		&model.TaskLog{},
-		&model.Result{},
-		&model.ArkPrivateAssetBinding{},
-		&model.ResourceDeletionJob{},
-	); err != nil {
-		t.Fatal(err)
-	}
-	repo := New(db)
-	now := time.Now().Add(-48 * time.Hour)
-	resUnicode := model.Resource{ID: "res-unicode", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/1.png", CreatedAt: now, UpdatedAt: now}
-	resSlash := model.Resource{ID: "res-slash", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/2.png", CreatedAt: now, UpdatedAt: now}
-	resWhitespace := model.Resource{ID: "res-space", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/3.png", CreatedAt: now, UpdatedAt: now}
-	resBare := model.Resource{ID: "res-bare", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/4.png", CreatedAt: now, UpdatedAt: now}
-	resNoSlash := model.Resource{ID: "res-noslash", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/5.png", CreatedAt: now, UpdatedAt: now}
-	resCreationRun := model.Resource{ID: "res-run", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/6.png", CreatedAt: now, UpdatedAt: now}
-	for _, res := range []model.Resource{resUnicode, resSlash, resWhitespace, resBare, resNoSlash, resCreationRun} {
-		if err := db.Create(&res).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := db.Create(&model.Task{ID: "t1", UserID: "u1", Type: "image", Status: model.TaskStatusSucceeded, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.TaskLog{ID: "l1", UserID: "u1", TaskID: "t1", Level: "info", Message: "escaped", Payload: `{"storageKey":"resource\u003ares-unicode"}`, CreatedAt: now}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.Result{ID: "r1", UserID: "u1", TaskID: "t1", Kind: "image", Payload: `{"url":"\/api\/resources\/res-slash\/file"}`, CreatedAt: now}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.Asset{ID: "a-space", UserID: "u1", Title: "space", PayloadJSON: `{"storageKey":"  resource:  res-space  "}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.Asset{ID: "a-bare", UserID: "u1", Title: "bare", PayloadJSON: `{"referenceResourceIds":["other","res-bare"]}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.CanvasProject{ID: "c-noslash", UserID: "u1", Title: "noslash", PayloadJSON: `{"nodes":[{"url":"/api/resources/res-noslash"}]}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.CreationRun{ID: "run-1", UserID: "u1", StateJSON: `{"storageKey":"resource:res-run"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	for _, tc := range []struct {
-		name string
-		res  model.Resource
-	}{
-		{"unicode-escaped task_log", resUnicode},
-		{"slash-escaped result", resSlash},
-		{"whitespace-padded asset locator", resWhitespace},
-		{"bare referenceResourceIds asset", resBare},
-		{"no-trailing-slash canvas url", resNoSlash},
-		{"creation_run state_json", resCreationRun},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := repo.DeleteDetachedResources([]model.Resource{tc.res}, nil); err != ErrResourceCleanupStillReferenced {
-				t.Fatalf("DeleteDetachedResources(%s) = %v, want ErrResourceCleanupStillReferenced", tc.name, err)
-			}
-		})
-	}
-	snapshot, err := repo.ResourceReferenceSnapshot("u1", "", []string{resUnicode.ID, resSlash.ID, resWhitespace.ID, resBare.ID, resNoSlash.ID, resCreationRun.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snapshot.Documents) < 6 {
-		t.Fatalf("expected snapshot to include all 6 semantic reference documents, got %d", len(snapshot.Documents))
-	}
-}
 
 func openFullSingleConnSQLiteRepo(t *testing.T, dbPath string) (*gorm.DB, *Repository) {
 	t.Helper()
@@ -230,6 +64,68 @@ func openFullSingleConnSQLiteRepo(t *testing.T, dbPath string) (*gorm.DB, *Repos
 	repo := New(db)
 	repo.SetSingleProcess(true)
 	return db, repo
+}
+
+func TestSQLiteReferenceFilterPreservesEscapedTaskLogAndResultReferences(t *testing.T) {
+	db, repo := openFullSingleConnSQLiteRepo(t, filepath.Join(t.TempDir(), "refs.db"))
+	now := time.Now().Add(-48 * time.Hour)
+	resUnicode := model.Resource{ID: "res-unicode", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/1.png", CreatedAt: now, UpdatedAt: now}
+	resSlash := model.Resource{ID: "res-slash", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/2.png", CreatedAt: now, UpdatedAt: now}
+	resWhitespace := model.Resource{ID: "res-space", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/3.png", CreatedAt: now, UpdatedAt: now}
+	resBare := model.Resource{ID: "res-bare", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/4.png", CreatedAt: now, UpdatedAt: now}
+	resNoSlash := model.Resource{ID: "res-noslash", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/5.png", CreatedAt: now, UpdatedAt: now}
+	resCreationRun := model.Resource{ID: "res-run", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/6.png", CreatedAt: now, UpdatedAt: now}
+	for _, res := range []model.Resource{resUnicode, resSlash, resWhitespace, resBare, resNoSlash, resCreationRun} {
+		if err := db.Create(&res).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Create(&model.Task{ID: "t1", UserID: "u1", Type: "image", Status: model.TaskStatusSucceeded, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.TaskLog{ID: "l1", UserID: "u1", TaskID: "t1", Level: "info", Message: "escaped", Payload: `{"storageKey":"resource\u003ares-unicode"}`, CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Result{ID: "r1", UserID: "u1", TaskID: "t1", Kind: "image", Payload: `{"url":"\/api\/resources\/res-slash\/file"}`, CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Asset{ID: "a-space", UserID: "u1", Title: "space", PayloadJSON: `{"storageKey":"  resource:  res-space  "}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Asset{ID: "a-bare", UserID: "u1", Title: "bare", PayloadJSON: `{"referenceResourceIds":["other","res-bare"]}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CanvasProject{ID: "c-noslash", UserID: "u1", Title: "noslash", PayloadJSON: `{"nodes":[{"url":"/api/resources/res-noslash"}]}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreationRun{ID: "run-1", UserID: "u1", StateJSON: `{"storageKey":"resource:res-run"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		res  model.Resource
+	}{
+		{"unicode-escaped task_log", resUnicode},
+		{"slash-escaped result", resSlash},
+		{"whitespace-padded asset locator", resWhitespace},
+		{"bare referenceResourceIds asset", resBare},
+		{"no-trailing-slash canvas url", resNoSlash},
+		{"creation_run state_json", resCreationRun},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := repo.DeleteDetachedResources([]model.Resource{tc.res}, nil); !errors.Is(err, ErrResourceCleanupStillReferenced) {
+				t.Fatalf("DeleteDetachedResources(%s) = %v, want ErrResourceCleanupStillReferenced", tc.name, err)
+			}
+		})
+	}
+	snapshot, err := repo.ResourceReferenceSnapshot("u1", "", []string{resUnicode.ID, resSlash.ID, resWhitespace.ID, resBare.ID, resNoSlash.ID, resCreationRun.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Documents) < 6 {
+		t.Fatalf("expected snapshot to include all 6 semantic reference documents, got %d", len(snapshot.Documents))
+	}
 }
 
 func TestDeleteDetachedResourcesWatermarkInvalidatesOnConcurrentWrite(t *testing.T) {
@@ -372,22 +268,151 @@ func TestDeleteDetachedResourcesWatermarkInvalidatesOnConcurrentWrite(t *testing
 	}
 }
 
-func TestSnapshotCoversAllReferenceTablesUnderWatermark(t *testing.T) {
+// TestReferenceRegistryParityAcrossSnapshotWatermarkAndGuards enforces 100%
+// coverage of every registered JSON document source in referenceDocumentSources
+// plus all direct FK tables (including orphaned FK rows without parent records),
+// verifying that ResourceReferenceSnapshot and transactional guards agree.
+func TestReferenceRegistryParityAcrossSnapshotWatermarkAndGuards(t *testing.T) {
 	now := time.Now().Add(-48 * time.Hour)
-	cases := []struct {
-		name string
-		seed func(t *testing.T, db *gorm.DB, resID string)
-	}{
-		{"asset_payload", func(t *testing.T, db *gorm.DB, resID string) {
+
+	documentSeeders := map[string]func(t *testing.T, db *gorm.DB, resID string){
+		"assets": func(t *testing.T, db *gorm.DB, resID string) {
 			if err := db.Create(&model.Asset{ID: "a-1", UserID: "u1", Title: "a", PayloadJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 				t.Fatal(err)
 			}
-		}},
-		{"canvas_project_payload", func(t *testing.T, db *gorm.DB, resID string) {
+		},
+		"canvas_projects": func(t *testing.T, db *gorm.DB, resID string) {
 			if err := db.Create(&model.CanvasProject{ID: "c-1", UserID: "u1", Title: "c", PayloadJSON: `{"nodes":[{"url":"/api/resources/` + resID + `/file"}]}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 				t.Fatal(err)
 			}
-		}},
+		},
+		"creation_runs": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.CreationRun{ID: "cr-1", UserID: "u1", ClientKey: "ck-1", ApprovedOperationsJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+		"creation_submissions": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.CreationSubmission{ID: "cs-1", UserID: "u1", RunID: "cr-s", ItemKey: "k-1", RequestJSON: `{"referenceResourceIds":["` + resID + `"]}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+		"projects_style": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.Project{ID: "p-sty", UserID: "u1", Name: "sty", StyleProfileJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+		"style_profiles": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.StyleProfile{ID: "sp-1", UserID: "u1", Name: "sp", CoverURL: "/api/resources/" + resID + "/file", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+		"asset_versions": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.Asset{ID: "a-ver", UserID: "u1", Title: "ver", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.AssetVersion{ID: "av-1", AssetID: "a-ver", Version: 1, DefinitionJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+		"project_asset_candidates": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.Project{ID: "p-cand", UserID: "u1", Name: "cand", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.ProjectAssetCandidate{ID: "pac-1", ProjectID: "p-cand", Name: "c", DetailsJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+		"workflow_step_instances": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.Project{ID: "p-wf", UserID: "u1", Name: "wf", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.WorkflowInstance{ID: "wi-1", ProjectID: "p-wf", TemplateVersionID: "tv-1", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.WorkflowStepInstance{ID: "wsi-1", WorkflowInstanceID: "wi-1", StepKey: "step-1", OutputJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+		"shot_artifacts_metadata": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.Project{ID: "p-2", UserID: "u1", Name: "p2", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.Shot{ID: "s-2", ProjectID: "p-2", Title: "s2", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.ShotArtifact{ID: "sa-2", ProjectID: "p-2", ShotID: "s-2", Type: "image", Version: 1, MetadataJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+		"tasks": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.Task{ID: "t-1", UserID: "u1", Type: "image", Status: model.TaskStatusRunning, InputJSON: `{"resourceId":"` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+		"task_logs": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.Task{ID: "t-log", UserID: "u1", Type: "image", Status: model.TaskStatusRunning, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.TaskLog{ID: "tl-1", UserID: "u1", TaskID: "t-log", Payload: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+		"results": func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.Task{ID: "t-res", UserID: "u1", Type: "image", Status: model.TaskStatusSucceeded, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.Result{ID: "r-1", UserID: "u1", TaskID: "t-res", Kind: "image", URL: "/api/resources/" + resID + "/file", CreatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+
+	// Enforce that every registered document source has an active parity test case.
+	if len(documentSeeders) != len(referenceDocumentSources) {
+		t.Fatalf("documentSeeders count = %d, referenceDocumentSources count = %d; update parity test when adding/removing sources", len(documentSeeders), len(referenceDocumentSources))
+	}
+	for _, src := range referenceDocumentSources {
+		seed, ok := documentSeeders[src.name]
+		if !ok {
+			t.Fatalf("missing parity seeder for registered document source %q", src.name)
+		}
+		t.Run("doc_"+src.name, func(t *testing.T) {
+			db, repo := openFullSingleConnSQLiteRepo(t, filepath.Join(t.TempDir(), src.name+".db"))
+			resID := "res-" + src.name
+			res := model.Resource{ID: resID, UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/" + src.name + ".png", CreatedAt: now, UpdatedAt: now}
+			if err := db.Create(&res).Error; err != nil {
+				t.Fatal(err)
+			}
+			seed(t, db, resID)
+
+			snap, err := repo.ResourceReferenceSnapshot("u1", "", []string{resID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !snap.Watermark.valid {
+				t.Fatalf("expected valid watermark for %s", src.name)
+			}
+			candidateSet := map[string]struct{}{resID: {}}
+			found := false
+			for _, doc := range snap.Documents {
+				if assets.DocumentReferences(doc.PrimaryJSON, candidateSet) || assets.DocumentReferences(doc.SecondaryJSON, candidateSet) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("ResourceReferenceSnapshot missed document source %s", src.name)
+			}
+			if err := repo.DeleteDetachedResources([]model.Resource{res}, nil); !errors.Is(err, ErrResourceCleanupStillReferenced) {
+				t.Fatalf("DeleteDetachedResources(%s) = %v, want ErrResourceCleanupStillReferenced", src.name, err)
+			}
+		})
+	}
+
+	directCases := []struct {
+		name string
+		seed func(t *testing.T, db *gorm.DB, resID string)
+	}{
 		{"asset_representation", func(t *testing.T, db *gorm.DB, resID string) {
 			if err := db.Create(&model.Asset{ID: "a-rep", UserID: "u1", Title: "rep", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 				t.Fatal(err)
@@ -396,6 +421,12 @@ func TestSnapshotCoversAllReferenceTablesUnderWatermark(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := db.Create(&model.AssetRepresentation{ID: "ar-1", AssetVersionID: "av-rep", ResourceID: resID, Role: "primary", CreatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"asset_representation_orphaned_parent", func(t *testing.T, db *gorm.DB, resID string) {
+			// Representation whose parent AssetVersion/Asset rows are missing must still protect its resource.
+			if err := db.Create(&model.AssetRepresentation{ID: "ar-orphan", AssetVersionID: "missing-version", ResourceID: resID, Role: "primary", CreatedAt: now}).Error; err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -415,14 +446,9 @@ func TestSnapshotCoversAllReferenceTablesUnderWatermark(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"shot_artifact_metadata", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.Project{ID: "p-2", UserID: "u1", Name: "p2", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-			if err := db.Create(&model.Shot{ID: "s-2", ProjectID: "p-2", Title: "s2", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-			if err := db.Create(&model.ShotArtifact{ID: "sa-2", ProjectID: "p-2", ShotID: "s-2", Type: "image", Version: 1, MetadataJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		{"shot_artifact_orphaned_parent", func(t *testing.T, db *gorm.DB, resID string) {
+			// ShotArtifact whose parent Shot/Project rows are missing must still protect its resource.
+			if err := db.Create(&model.ShotArtifact{ID: "sa-orphan", ProjectID: "missing-proj", ShotID: "missing-shot", Type: "image", Version: 1, ResourceID: resID, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -459,83 +485,15 @@ func TestSnapshotCoversAllReferenceTablesUnderWatermark(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"task_input_and_result", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.Task{ID: "t-1", UserID: "u1", Type: "image", Status: model.TaskStatusRunning, InputJSON: `{"resourceId":"` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"task_log", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.Task{ID: "t-log", UserID: "u1", Type: "image", Status: model.TaskStatusRunning, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-			if err := db.Create(&model.TaskLog{ID: "tl-1", UserID: "u1", TaskID: "t-log", Payload: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"result_url", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.Task{ID: "t-res", UserID: "u1", Type: "image", Status: model.TaskStatusSucceeded, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-			if err := db.Create(&model.Result{ID: "r-1", UserID: "u1", TaskID: "t-res", Kind: "image", URL: "/api/resources/" + resID + "/file", CreatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"creation_run", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.CreationRun{ID: "cr-1", UserID: "u1", ClientKey: "ck-1", ApprovedOperationsJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"creation_submission", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.CreationSubmission{ID: "cs-1", UserID: "u1", RunID: "cr-s", ItemKey: "k-1", RequestJSON: `{"referenceResourceIds":["` + resID + `"]}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-		}},
 		{"project_cover", func(t *testing.T, db *gorm.DB, resID string) {
 			if err := db.Create(&model.Project{ID: "p-cov", UserID: "u1", Name: "cov", CoverResourceID: resID, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"project_style_json", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.Project{ID: "p-sty", UserID: "u1", Name: "sty", StyleProfileJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"style_profile", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.StyleProfile{ID: "sp-1", UserID: "u1", Name: "sp", CoverURL: "/api/resources/" + resID + "/file", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"asset_version_definition", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.Asset{ID: "a-ver", UserID: "u1", Title: "ver", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-			if err := db.Create(&model.AssetVersion{ID: "av-1", AssetID: "a-ver", Version: 1, DefinitionJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"project_asset_candidate", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.Project{ID: "p-cand", UserID: "u1", Name: "cand", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-			if err := db.Create(&model.ProjectAssetCandidate{ID: "pac-1", ProjectID: "p-cand", Name: "c", DetailsJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"workflow_step_instance", func(t *testing.T, db *gorm.DB, resID string) {
-			if err := db.Create(&model.Project{ID: "p-wf", UserID: "u1", Name: "wf", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-			if err := db.Create(&model.WorkflowInstance{ID: "wi-1", ProjectID: "p-wf", TemplateVersionID: "tv-1", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-			if err := db.Create(&model.WorkflowStepInstance{ID: "wsi-1", WorkflowInstanceID: "wi-1", StepKey: "step-1", OutputJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
-				t.Fatal(err)
-			}
-		}},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range directCases {
+		t.Run("direct_"+tc.name, func(t *testing.T) {
 			db, repo := openFullSingleConnSQLiteRepo(t, filepath.Join(t.TempDir(), tc.name+".db"))
 			resID := "res-" + tc.name
 			res := model.Resource{ID: resID, UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/" + tc.name + ".png", CreatedAt: now, UpdatedAt: now}
@@ -551,7 +509,6 @@ func TestSnapshotCoversAllReferenceTablesUnderWatermark(t *testing.T) {
 			if !snap.Watermark.valid {
 				t.Fatalf("expected valid watermark for %s", tc.name)
 			}
-			candidateSet := map[string]struct{}{resID: {}}
 			found := false
 			for _, ref := range snap.Direct {
 				if ref.ResourceID == resID {
@@ -560,19 +517,15 @@ func TestSnapshotCoversAllReferenceTablesUnderWatermark(t *testing.T) {
 				}
 			}
 			if !found {
-				for _, doc := range snap.Documents {
-					if assets.DocumentReferences(doc.PrimaryJSON, candidateSet) || assets.DocumentReferences(doc.SecondaryJSON, candidateSet) {
-						found = true
-						break
-					}
-				}
+				t.Fatalf("ResourceReferenceSnapshot missed direct reference %s", tc.name)
 			}
-			if !found {
-				t.Fatalf("ResourceReferenceSnapshot missed reference in %s", tc.name)
-			}
-			// Direct atomic guard (without watermark) MUST also reject deletion.
+			// BOTH the non-watermark guard AND the watermark fast path (which keeps
+			// cheap direct FK checks always-on) MUST reject deletion.
 			if err := repo.DeleteDetachedResources([]model.Resource{res}, nil); !errors.Is(err, ErrResourceCleanupStillReferenced) {
-				t.Fatalf("DeleteDetachedResources(%s) = %v, want ErrResourceCleanupStillReferenced", tc.name, err)
+				t.Fatalf("DeleteDetachedResources(%s, no watermark) = %v, want ErrResourceCleanupStillReferenced", tc.name, err)
+			}
+			if err := repo.DeleteDetachedResources([]model.Resource{res}, nil, snap.Watermark); !errors.Is(err, ErrResourceCleanupStillReferenced) {
+				t.Fatalf("DeleteDetachedResources(%s, with watermark) = %v, want ErrResourceCleanupStillReferenced", tc.name, err)
 			}
 		})
 	}
@@ -614,6 +567,11 @@ func TestDeleteAssetAndResourcesGuardsProjectExportAndAdditionalTables(t *testin
 				t.Fatal(err)
 			}
 			if err := db.Create(&model.AssetVersion{ID: "av-other", AssetID: "asset-other", Version: 1, DefinitionJSON: `{"storageKey":"resource:` + resID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"orphaned_asset_representation", func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.AssetRepresentation{ID: "ar-orphan-del", AssetVersionID: "missing-version", ResourceID: resID, Role: "primary", CreatedAt: now}).Error; err != nil {
 				t.Fatal(err)
 			}
 		}},

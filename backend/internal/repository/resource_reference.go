@@ -111,11 +111,16 @@ func (r *Repository) DeleteAssetAndResources(userID string, assetID string, reso
 		if expected != "" && string(asset.Status) != expected {
 			return ErrAssetExpectedStatusMismatch
 		}
+		if err := guardAssetBusinessLinks(tx, assetID); err != nil {
+			return err
+		}
 		if err := guardAssetDeletionReferences(tx, userID, assetID, resourceIDs); err != nil {
 			return err
 		}
-		if err := New(tx).RequireNoCanvasHistoryReferences(resourceIDs); err != nil {
-			return err
+		if tx.Migrator().HasTable(&model.CanvasSnapshotResource{}) {
+			if err := New(tx).RequireNoCanvasHistoryReferences(resourceIDs); err != nil {
+				return err
+			}
 		}
 		versionIDs := tx.Model(&model.AssetVersion{}).Select("id").Where("asset_id = ?", assetID)
 		if err := tx.Where("asset_version_id IN (?)", versionIDs).Delete(&model.ShotAssetReference{}).Error; err != nil {

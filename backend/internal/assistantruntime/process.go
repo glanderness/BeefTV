@@ -308,7 +308,13 @@ func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerpr
 		s.mu.Lock()
 		s.lastErr = err
 		s.mu.Unlock()
-		_ = s.stop()
+		if ctx.Err() != nil {
+			cancelStopCtx, cancelStop := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			_ = s.stopContext(cancelStopCtx)
+			cancelStop()
+		} else {
+			_ = s.stop()
+		}
 		return err
 	}
 	s.mu.Lock()
@@ -381,12 +387,19 @@ func waitChildReady(ctx context.Context, baseURL, pipePath, nonce, token string,
 }
 
 func (s *supervisor) stop() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.stopLocked()
+	return s.stopContext(context.Background())
 }
 
-func (s *supervisor) stopLocked() error {
+func (s *supervisor) stopContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stopLocked(ctx)
+}
+
+func (s *supervisor) stopLocked(ctx context.Context) error {
 	if s.testOwned {
 		s.clearIdentityLocked()
 		return nil
@@ -400,7 +413,8 @@ func (s *supervisor) stopLocked() error {
 		_ = s.lifetimeW.Close()
 		s.lifetimeW = nil
 	}
-	if runtime.GOOS == "windows" {
+	forceKillNow := runtime.GOOS == "windows" || ctx.Err() != nil
+	if forceKillNow {
 		_ = cmd.Process.Kill()
 	} else {
 		_ = cmd.Process.Signal(syscall.SIGTERM)
@@ -409,14 +423,32 @@ func (s *supervisor) stopLocked() error {
 	s.mu.Unlock()
 	var waitErr error
 	if done != nil {
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			_ = cmd.Process.Kill()
+		if forceKillNow {
 			select {
 			case <-done:
-			case <-time.After(3 * time.Second):
+			case <-time.After(1 * time.Second):
 				waitErr = errors.New("宿主进程未在超时内退出")
+			}
+		} else {
+			graceTimer := time.NewTimer(5 * time.Second)
+			select {
+			case <-done:
+				graceTimer.Stop()
+			case <-ctx.Done():
+				graceTimer.Stop()
+				_ = cmd.Process.Kill()
+				select {
+				case <-done:
+				case <-time.After(1 * time.Second):
+					waitErr = errors.New("宿主进程未在超时内退出")
+				}
+			case <-graceTimer.C:
+				_ = cmd.Process.Kill()
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					waitErr = errors.New("宿主进程未在超时内退出")
+				}
 			}
 		}
 	}

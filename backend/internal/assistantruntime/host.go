@@ -35,7 +35,8 @@ type Options struct {
 type Host struct {
 	opts               Options
 	proc               *supervisor
-	lifecycle          sync.Mutex
+	lifecycleOnce      sync.Once
+	lifecycle          chan struct{}
 	startControlMu     sync.Mutex
 	startGen           uint64
 	activeStartCancel  context.CancelFunc
@@ -46,7 +47,52 @@ type Host struct {
 }
 
 func New(opts Options) *Host {
-	return &Host{opts: opts, proc: &supervisor{}}
+	h := &Host{opts: opts, proc: &supervisor{}}
+	_ = h.lifecycleChan()
+	return h
+}
+
+func (h *Host) lifecycleChan() chan struct{} {
+	h.lifecycleOnce.Do(func() {
+		h.lifecycle = make(chan struct{}, 1)
+	})
+	return h.lifecycle
+}
+
+func (h *Host) lockLifecycle(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ch := h.lifecycleChan()
+	select {
+	case ch <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (h *Host) unlockLifecycle() {
+	<-h.lifecycleChan()
+}
+
+func (h *Host) isClosed() bool {
+	h.startControlMu.Lock()
+	closed := h.closed
+	h.startControlMu.Unlock()
+	return closed
+}
+
+func (h *Host) markClosedAndCancelStart() {
+	h.startControlMu.Lock()
+	h.closed = true
+	h.startGen++
+	cancel := h.activeStartCancel
+	h.activeStartCancel = nil
+	h.startControlMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func OptionsFromService(svc ProviderService) Options {
@@ -175,8 +221,10 @@ func (h *Host) StartContext(ctx context.Context, opsURL, desktopToken string) er
 		return err
 	}
 	gen := h.captureStartGen()
-	h.lifecycle.Lock()
-	defer h.lifecycle.Unlock()
+	if err := h.lockLifecycle(ctx); err != nil {
+		return err
+	}
+	defer h.unlockLifecycle()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -209,7 +257,7 @@ func (h *Host) captureStartGen() uint64 {
 
 func (h *Host) beginStartLocked(parent context.Context, expectedGen uint64) (context.Context, func(), bool) {
 	h.startControlMu.Lock()
-	if h.startGen != expectedGen {
+	if h.closed || h.startGen != expectedGen {
 		h.startControlMu.Unlock()
 		return nil, nil, false
 	}
@@ -243,10 +291,15 @@ func (h *Host) Launch(provider assistant.Provider, opsURL, desktopToken string) 
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
 	gen := h.captureStartGen()
-	h.lifecycle.Lock()
-	defer h.lifecycle.Unlock()
+	if err := h.lockLifecycle(context.Background()); err != nil {
+		return err
+	}
+	defer h.unlockLifecycle()
 	startCtx, cleanupStart, ok := h.beginStartLocked(context.Background(), gen)
 	if !ok {
+		if h.isClosed() {
+			return invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+		}
 		return context.Canceled
 	}
 	defer cleanupStart()
@@ -266,8 +319,8 @@ func (h *Host) Stop() error {
 		return nil
 	}
 	h.cancelInFlightStart()
-	h.lifecycle.Lock()
-	defer h.lifecycle.Unlock()
+	_ = h.lockLifecycle(context.Background())
+	defer h.unlockLifecycle()
 	return h.proc.stop()
 }
 
@@ -275,48 +328,57 @@ func (h *Host) Stop() error {
 //
 // 只对它自己启动过的进程生效（未启动时是 no-op），不会去清理外接宿主或别人的 PID；
 // 宿主不可达/已退出时返回 nil，避免把关闭流程拖成失败。
-// 超时仍等到 stop 结束才释放生命周期锁，避免 Ensure/Restart 在回收中途再拉起进程。
-// 关闭后不再接受启动；用户手动停止后仍需重启的场景使用 Stop。
+// 关闭标记在抢锁之前原子写入，确保不会再拉起新进程；ctx 到期时会立即升级 SIGKILL。
 func (h *Host) StopContext(ctx context.Context) error {
 	if h == nil {
 		return nil
 	}
-	h.cancelInFlightStart()
-	h.lifecycle.Lock()
-	defer h.lifecycle.Unlock()
-	h.closed = true
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	h.markClosedAndCancelStart()
+	if err := h.lockLifecycle(ctx); err != nil {
+		// Force-kill any stubborn child that hasn't exited yet without waiting
+		// indefinitely for lifecycle handoff.
+		_ = h.proc.stopContext(ctx)
+		return fmt.Errorf("停止内置创作助手宿主超时：%w", err)
+	}
+	defer h.unlockLifecycle()
 	if !h.proc.running() {
 		return nil
 	}
-	done := make(chan error, 1)
-	go func() { done <- h.proc.stop() }()
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("停止内置创作助手宿主：%w", err)
-		}
-		return nil
-	case <-ctx.Done():
-		err := <-done
-		if err != nil {
+	if err := h.proc.stopContext(ctx); err != nil {
+		if ctx.Err() != nil {
 			return fmt.Errorf("停止内置创作助手宿主超时：%w", ctx.Err())
 		}
-		return fmt.Errorf("停止内置创作助手宿主超时：%w", ctx.Err())
+		return fmt.Errorf("停止内置创作助手宿主：%w", err)
 	}
+	return nil
 }
 
 // Ensure 让状态查询自己把宿主带起来：
 // 没跑就按当前配置启动；跑着但供应商指纹变了、而且此刻空闲，就重启到新配置。
-// 返回 launched=true 表示这次调用刚拉起进程（界面此时应显示 host_starting）。
+// 返回 launched=true 表示这次调用刚拉起进程（或已有异步启动在进行，界面此时应显示 host_starting）。
 func (h *Host) Ensure(provider assistant.Provider, opsURL, desktopToken string, idle bool) (launched bool, err error) {
 	if h == nil {
 		return false, invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
+	if h.isClosed() {
+		return false, invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+	}
+	if h.proc.state().Starting {
+		return true, nil
+	}
 	gen := h.captureStartGen()
-	h.lifecycle.Lock()
-	defer h.lifecycle.Unlock()
+	if err := h.lockLifecycle(context.Background()); err != nil {
+		return false, err
+	}
+	defer h.unlockLifecycle()
 	startCtx, cleanupStart, ok := h.beginStartLocked(context.Background(), gen)
 	if !ok {
+		if h.isClosed() {
+			return false, invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+		}
 		return false, context.Canceled
 	}
 	defer cleanupStart()
@@ -341,7 +403,7 @@ func (h *Host) Ensure(provider assistant.Provider, opsURL, desktopToken string, 
 }
 
 func (h *Host) startOwned(ctx context.Context, config HostConfig, provider assistant.Provider, opsURL, desktopToken string) error {
-	if h.closed {
+	if h.isClosed() {
 		return invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
 	}
 	opsPipe := h.opsPipePath()
@@ -366,10 +428,15 @@ func (h *Host) Restart(provider assistant.Provider, opsURL, desktopToken string)
 	}
 	h.cancelInFlightStart()
 	gen := h.captureStartGen()
-	h.lifecycle.Lock()
-	defer h.lifecycle.Unlock()
+	if err := h.lockLifecycle(context.Background()); err != nil {
+		return err
+	}
+	defer h.unlockLifecycle()
 	startCtx, cleanupStart, ok := h.beginStartLocked(context.Background(), gen)
 	if !ok {
+		if h.isClosed() {
+			return invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+		}
 		return context.Canceled
 	}
 	defer cleanupStart()
