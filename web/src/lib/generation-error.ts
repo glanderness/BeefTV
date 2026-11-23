@@ -118,6 +118,7 @@ export type GenerationFailureDiagnostics = {
 };
 
 const normalizedFailures = new WeakMap<Error, GenerationFailureExplanation>();
+const UNSAFE_SLASH_PATH_PATTERN = /(?:^|[^A-Za-z0-9._-])\/+(?!v\d+\/)[A-Za-z0-9._-]+\/[A-Za-z0-9._/-]+/;
 
 export function preserveGenerationFailure(error: Error, explanation: GenerationFailureExplanation) {
     normalizedFailures.set(error, explanation);
@@ -142,7 +143,7 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
     return {
         category: classified.category,
         httpStatus: classified.status,
-        summary: ["local_storage", "local_disk_full"].includes(classified.category) || Boolean(resourceStorageFailureMessage(rawSummary)) ? copy.reason : sanitizedSummary.includes("[已隐藏]") || sanitizedSummary.includes("[路径已隐藏]") || /[{}]/.test(sanitizedSummary) || /(?<![A-Za-z0-9._-])\/+(?!v\d+\/)[A-Za-z0-9._-]+\/[A-Za-z0-9._/-]+/.test(sanitizedSummary) ? "" : sanitizedSummary,
+        summary: ["local_storage", "local_disk_full"].includes(classified.category) || Boolean(resourceStorageFailureMessage(rawSummary)) ? copy.reason : sanitizedSummary.includes("[已隐藏]") || sanitizedSummary.includes("[路径已隐藏]") || /[{}]/.test(sanitizedSummary) || UNSAFE_SLASH_PATH_PATTERN.test(sanitizedSummary) ? "" : sanitizedSummary,
         reason: copy.reason,
         action: copy.action,
         message: message || DEFAULT_GENERATION_ERROR_MESSAGE,
@@ -272,7 +273,7 @@ function normalizeComparableText(value: string) {
 function cleanUpstreamCandidate(raw: string | undefined, explanation: GenerationFailureExplanation): string {
     if (!raw || resourceStorageFailureMessage(raw) || /<\/?[a-z!][^>]*>/i.test(raw)) return "";
     const sanitized = sanitizeProviderText(providerPayloadMessage(raw));
-    if (sanitized.includes("[已隐藏]") || sanitized.includes("[路径已隐藏]") || /[{}]/.test(sanitized) || /(?<![A-Za-z0-9._-])\/+(?!v\d+\/)[A-Za-z0-9._-]+\/[A-Za-z0-9._/-]+/.test(sanitized)) return "";
+    if (sanitized.includes("[已隐藏]") || sanitized.includes("[路径已隐藏]") || /[{}]/.test(sanitized) || UNSAFE_SLASH_PATH_PATTERN.test(sanitized)) return "";
     const cleaned = sanitized
         .replace(/\{\s*\[已隐藏\]/g, "")
         .replace(/\[已隐藏\]/g, "")

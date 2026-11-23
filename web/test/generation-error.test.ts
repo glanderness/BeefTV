@@ -1,6 +1,7 @@
 import referenceVideoErrors from "./fixtures/reference-video-errors.json";
 import { describe, expect, test } from "bun:test";
 import { ApiError } from "../src/services/api/request";
+import { redactLocalPaths } from "../src/lib/local-path-redaction";
 
 test("reference transport admission identifies blocked inputs and survives persisted display", () => {
     const message = "当前渠道需要在线素材链接：参考图片 2、参考视频 1无法直接读取。请替换为可访问的 HTTPS 链接，或切换支持本地素材的渠道";
@@ -776,4 +777,55 @@ test("custom relay failure header overrides local provider-text classification",
         expect(explained.reason).toContain("供应商");
         expect(explained.reason).not.toContain("内容安全");
     }
+});
+
+test("lookbehind-free credential and local path redaction preserves exact boundary semantics", () => {
+    for (const sample of [
+        "invalid: api_key = PRIVATE_VALUE",
+        "error:api_key=PRIVATE_VALUE",
+        "操作失败 Cookie: session=PRIVATE_VALUE",
+        "error: upstream rejected, Authorization: Bearer PRIVATE_VALUE",
+    ]) {
+        const explained = explainGenerationError({ status: 400, data: { error: { code: "custom_code", message: sample } } });
+        expect(explained.summary).not.toContain("PRIVATE_VALUE");
+        expect(explained.message).not.toContain("PRIVATE_VALUE");
+    }
+
+    for (const pathSample of [
+        'open "C:\\Users\\alice\\a.png" and "D:\\tmp\\b.png"',
+        "cannot read C:\\secret\\a.png:D:\\secret\\b.png",
+        "file:///Users/alice/secret.png",
+        "failed at /Users/alice/secret.png",
+        "failed at /internal/secret/path",
+    ]) {
+        const explained = explainGenerationError({ status: 400, data: { error: { code: "custom_code", message: pathSample } } });
+        expect(explained.summary).toBe("");
+        expect(explained.message).not.toContain("secret");
+        expect(explained.message).not.toContain("alice");
+    }
+
+    const fileUrlPrefix = explainGenerationError({ status: 400, data: { error: { code: "custom_code", message: "file:///Users/alice/secret.png failed" } } });
+    expect(fileUrlPrefix.summary).toBe("failed");
+    expect(fileUrlPrefix.message).not.toContain("alice");
+    expect(fileUrlPrefix.message).not.toContain("secret");
+
+    const versionedPath = explainGenerationError({ status: 400, data: { error: { code: "custom_code", message: "unsupported route /v1/videos" } } });
+    expect(versionedPath.summary).toBe("unsupported route /v1/videos");
+
+    const ratioText = explainGenerationError({ status: 400, data: { error: { code: "custom_code", message: "invalid ratio 16/9/crop" } } });
+    expect(ratioText.summary).toBe("invalid ratio 16/9/crop");
+
+    expect(redactLocalPaths("/home/a:/private/b", "[路径已隐藏]")).toBe("[路径已隐藏]:[路径已隐藏]");
+    expect(redactLocalPaths("C:\\\\A_.B", "[路径已隐藏]")).toBe("[路径已隐藏]");
+    expect(redactLocalPaths("open C:/Users/alice/img.png: denied", "[路径已隐藏]")).toBe("open [路径已隐藏]: denied");
+    expect(redactLocalPaths("open \\\\server\\share\\secret.png: denied", "[路径已隐藏]")).toBe("open [路径已隐藏]: denied");
+    expect(redactLocalPaths("GET /workspace/bootstrap", "[路径已隐藏]")).toBe("GET /workspace/bootstrap");
+    expect(redactLocalPaths(`GET${" ".repeat(20)}/workspace/bootstrap`, "[路径已隐藏]")).toBe(`GET${" ".repeat(20)}/workspace/bootstrap`);
+    expect(redactLocalPaths(`aGET${" ".repeat(12)}/workspace/bootstrap`, "[路径已隐藏]")).toBe(`aGET${" ".repeat(12)}[路径已隐藏]`);
+    expect(redactLocalPaths("open /workspace/bootstrap: permission denied", "[路径已隐藏]")).toBe("open [路径已隐藏]: permission denied");
+    expect(redactLocalPaths("open /workspace/secret/key.json: denied", "[路径已隐藏]")).toBe("open [路径已隐藏]: denied");
+    expect(redactLocalPaths("prefixfile:///Applications/BeefTV.app/a.js", "[路径已隐藏]")).toBe("prefix[路径已隐藏]");
+    expect(redactLocalPaths("open https://example.com/app/v1 and /opt/secret/file", "[路径已隐藏]")).toBe(
+        "open https://example.com/app/v1 and [路径已隐藏]",
+    );
 });

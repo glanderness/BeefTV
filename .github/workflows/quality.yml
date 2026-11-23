@@ -313,6 +313,9 @@ jobs:
       - name: Typecheck
         if: matrix.shard == 1
         run: bun run typecheck
+      - name: Build production bundle and verify WebView syntax compatibility
+        if: matrix.shard == 1
+        run: bunx vite build
       - name: Ensure Playwright Chromium browser
         run: |
           if ! bun -e 'import { chromium } from "playwright"; const b = await chromium.launch(); await b.close();' >/dev/null 2>&1; then

@@ -28,6 +28,9 @@ export type WorkspaceStartupFailure = {
     httpStatus?: number;
     dataDir?: string;
     diagnosticPath?: string;
+    errorName?: string;
+    errorDetail?: string;
+    errorStack?: string;
 };
 
 export type DesktopBootSnapshot = {
@@ -196,6 +199,28 @@ function isApiErrorLike(error: unknown): error is ApiErrorLike {
     return Boolean(error && typeof error === "object" && (error as ApiErrorLike).name === "ApiError");
 }
 
+function extractStartupErrorEvidence(error: unknown): Pick<WorkspaceStartupFailure, "errorName" | "errorDetail" | "errorStack"> {
+    if (error instanceof Error) {
+        return {
+            errorName: error.name?.trim() || undefined,
+            errorDetail: error.message?.trim() || undefined,
+            errorStack: error.stack?.trim() || undefined,
+        };
+    }
+    if (error && typeof error === "object") {
+        const record = error as { name?: unknown; message?: unknown; stack?: unknown };
+        return {
+            errorName: typeof record.name === "string" && record.name.trim() ? record.name.trim() : undefined,
+            errorDetail: typeof record.message === "string" && record.message.trim() ? record.message.trim() : undefined,
+            errorStack: typeof record.stack === "string" && record.stack.trim() ? record.stack.trim() : undefined,
+        };
+    }
+    if (typeof error === "string" && error.trim()) {
+        return { errorDetail: error.trim() };
+    }
+    return {};
+}
+
 export function normalizeWorkspaceStartupFailure(
     error: unknown,
     stageOverride?: WorkspaceStartupFailure["stage"],
@@ -213,6 +238,7 @@ export function normalizeWorkspaceStartupFailure(
         const reason =
             error.reason ||
             (error.status ? `http_${error.status}` : isTimeout ? "bootstrap_timeout" : "bootstrap_network_failed");
+        const evidence = extractStartupErrorEvidence(error);
         return {
             stage: stageOverride || "workspace_bootstrap",
             phase: bootSnapshot.phase || undefined,
@@ -222,8 +248,11 @@ export function normalizeWorkspaceStartupFailure(
             httpStatus: error.status,
             dataDir: bootSnapshot.dataDir || undefined,
             diagnosticPath: bootSnapshot.diagnosticPath || undefined,
+            errorName: evidence.errorName,
+            errorStack: evidence.errorStack,
         };
     }
+    const evidence = extractStartupErrorEvidence(error);
     return {
         stage: stageOverride || "workspace_bootstrap",
         phase: bootSnapshot.phase || undefined,
@@ -231,6 +260,7 @@ export function normalizeWorkspaceStartupFailure(
         message: "项目或模型配置未能完成读取。原有配置不会被覆盖，请重新加载或导出诊断包排查。",
         dataDir: bootSnapshot.dataDir || undefined,
         diagnosticPath: bootSnapshot.diagnosticPath || undefined,
+        ...evidence,
     };
 }
 

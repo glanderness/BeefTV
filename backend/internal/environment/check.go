@@ -25,6 +25,7 @@ type Check struct {
 type Report struct {
 	CheckedAt time.Time   `json:"checkedAt"`
 	OS        string      `json:"os"`
+	OSVersion string      `json:"osVersion,omitempty"`
 	Arch      string      `json:"arch"`
 	Catalog   CaseCatalog `json:"catalog"`
 	Checks    []Check     `json:"checks"`
@@ -34,7 +35,7 @@ type Report struct {
 // Repair only recreates missing scratch/download directories; existing files,
 // permissions, projects, credentials and system settings are left alone.
 func Inspect(ctx context.Context, dir string, repair bool) Report {
-	r := Report{CheckedAt: time.Now().UTC(), OS: runtime.GOOS, Arch: runtime.GOARCH, Catalog: catalog(), Checks: []Check{}}
+	r := Report{CheckedAt: time.Now().UTC(), OS: runtime.GOOS, OSVersion: osVersion(), Arch: runtime.GOARCH, Catalog: catalog(), Checks: []Check{}}
 	add := func(id, title, status, detail string, cases ...string) {
 		r.Checks = append(r.Checks, Check{id, title, status, detail, cases})
 	}
