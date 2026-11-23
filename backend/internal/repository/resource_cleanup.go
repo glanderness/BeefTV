@@ -2,7 +2,6 @@ package repository
 
 import (
 	"errors"
-	"strings"
 
 	"infinite-canvas/backend/internal/model"
 
@@ -11,17 +10,28 @@ import (
 
 var ErrResourceCleanupSetChanged = errors.New("resource cleanup set changed")
 var ErrResourceCleanupStillReferenced = errors.New("resource cleanup resource is still directly referenced")
+var ErrResourceCleanupSnapshotStale = errors.New("resource cleanup snapshot watermark changed")
 var ErrResourceNotReadyForAdmission = errors.New("resource is not ready for admission")
 var ErrTaskInputInvalid = errors.New("task input is invalid")
 
 // DeleteDetachedResources removes Resource rows and enqueues physical deletion in one transaction.
-// JSON references are checked by the service before this call; direct foreign-key-like references
-// and live task documents (including completed outputs) are checked again under BEGIN IMMEDIATE
-// so a newly admitted task cannot lose its material. User asset delete may skip completed
-// outputs; orphan cleanup must keep generation history.
-func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletionJobs []model.ResourceDeletionJob) error {
+// All indexed direct-reference checks always run under BEGIN IMMEDIATE (including on the
+// watermark fast path) so orphaned FK rows can never lose their media.
+//
+// When a verified single-connection SQLite watermark from the preceding
+// ResourceReferenceSnapshot covers every resource in the batch:
+//   - If SQLite's connection and change counters still match inside BEGIN IMMEDIATE,
+//     no SQLite writes occurred in between and the expensive JSON document scan is skipped.
+//   - If a write occurred after the snapshot began, DeleteDetachedResources returns
+//     ErrResourceCleanupSnapshotStale immediately so BEGIN IMMEDIATE (and the caller's
+//     storage lock) is released without holding a full-workspace scan under lock.
+func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletionJobs []model.ResourceDeletionJob, verifiedWatermark ...SQLiteSnapshotWatermark) error {
 	if len(resources) == 0 {
 		return nil
+	}
+	var watermark SQLiteSnapshotWatermark
+	if len(verifiedWatermark) > 0 {
+		watermark = verifiedWatermark[0]
 	}
 	resourceIDs := make([]string, 0, len(resources))
 	for _, resource := range resources {
@@ -29,71 +39,38 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 	}
 	return withImmediateTransaction(r.db, func(tx *gorm.DB) error {
 		var current []model.Resource
-		query := tx.Where("id IN ?", resourceIDs)
-		if err := query.Find(&current).Error; err != nil {
+		if err := tx.Where("id IN ?", resourceIDs).Find(&current).Error; err != nil {
 			return err
 		}
 		if len(current) != len(resources) {
 			return ErrResourceCleanupSetChanged
 		}
-		// The service performs exact JSON parsing before entering this transaction.
-		// This conservative second check closes the common race where an Asset or
-		// canvas is attached after that snapshot but before Resource deletion.
-		documentsByUser := map[string][]string{}
+		skipDocumentScan := false
+		if watermark.covers(current) {
+			if !r.watermarkMatchesTx(tx, watermark) {
+				return ErrResourceCleanupSnapshotStale
+			}
+			skipDocumentScan = true
+		}
+
 		idsByUser := map[string][]string{}
 		for _, resource := range current {
 			idsByUser[resource.UserID] = append(idsByUser[resource.UserID], resource.ID)
-			if _, loaded := documentsByUser[resource.UserID]; loaded {
-				continue
-			}
-			var assetDocuments []string
-			if err := tx.Model(&model.Asset{}).Where("user_id = ?", resource.UserID).Pluck("payload_json", &assetDocuments).Error; err != nil {
-				return err
-			}
-			var canvasDocuments []string
-			if err := tx.Model(&model.CanvasProject{}).Where("user_id = ?", resource.UserID).Pluck("payload_json", &canvasDocuments).Error; err != nil {
-				return err
-			}
-			documentsByUser[resource.UserID] = append(assetDocuments, canvasDocuments...)
-		}
-		for _, resource := range current {
-			storageKey := "resource:" + resource.ID + `"`
-			fileURL := "/api/resources/" + resource.ID + "/"
-			for _, document := range documentsByUser[resource.UserID] {
-				if strings.Contains(document, storageKey) || strings.Contains(document, fileURL) {
-					return ErrResourceCleanupStillReferenced
-				}
-			}
-		}
-		for _, check := range []struct {
-			model any
-			query string
-		}{
-			{&model.AssetRepresentation{}, "resource_id IN ?"},
-			{&model.VoiceProfile{}, "sample_resource_id IN ?"},
-			{&model.ShotArtifact{}, "resource_id IN ?"},
-		} {
-			var count int64
-			if err := tx.Model(check.model).Where(check.query, resourceIDs).Count(&count).Error; err != nil {
-				return err
-			}
-			if count > 0 {
-				return ErrResourceCleanupStillReferenced
-			}
 		}
 		for userID, ids := range idsByUser {
-			if err := guardCanvasWorkflowResourceReferences(tx, userID, ids); err != nil {
-				return err
-			}
-			exports, err := New(tx).ProjectExportResourceReferences(userID, ids)
+			directRefs, err := collectDirectResourceReferences(tx, userID, "", ids, true, true)
 			if err != nil {
 				return err
 			}
-			if len(exports) > 0 {
+			if len(directRefs) > 0 {
 				return ErrResourceCleanupStillReferenced
 			}
-			if err := guardTaskResourceReferences(tx, userID, ids, false); err != nil {
-				return err
+		}
+		if !skipDocumentScan {
+			for userID, ids := range idsByUser {
+				if err := guardReferenceDocuments(tx, userID, "", ids, false); err != nil {
+					return err
+				}
 			}
 		}
 		if err := tx.Where("resource_id IN ?", resourceIDs).Delete(&model.ArkPrivateAssetBinding{}).Error; err != nil {

@@ -164,6 +164,10 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 			ok(c, gin.H{"available": true, "model": modelInfo})
 			return
 		}
+		if state.Starting {
+			ok(c, gin.H{"available": false, "reason": "host_starting", "model": modelInfo})
+			return
+		}
 		if state.Running {
 			// 探测超时或失败不是空闲证据，不能授权杀掉仍在跑的子进程。
 			// 用户显式 POST /assistant/host/restart 才是重试。

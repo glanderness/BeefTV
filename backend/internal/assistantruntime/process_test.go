@@ -3,6 +3,7 @@ package assistantruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -38,6 +39,10 @@ func runProcessFixture(mode string) int {
 	switch mode {
 	case "sleep":
 		waitForStopSignal()
+		return 0
+	case "ignore-sigterm-sleep":
+		signal.Ignore(syscall.SIGTERM)
+		time.Sleep(30 * time.Second)
 		return 0
 	case "exit0":
 		return 0
@@ -596,5 +601,198 @@ func TestOwnedHealthJSONOmitsNonce(t *testing.T) {
 	}
 	if health.Instance == nonce {
 		t.Fatal("公开 instance 字段必须是证明而不是 nonce")
+	}
+}
+
+func TestStopCancelsInFlightAndQueuedStartContext(t *testing.T) {
+	host := fixtureHost(t, "sleep")
+	host.opts.ReadyTimeout = 10 * time.Second
+	host.opts.ResolveProvider = func() (assistant.Provider, string) { return fixtureProvider(), "" }
+
+	// 1. In-flight StartContext must be aborted promptly by Host.Stop().
+	startErrCh := make(chan error, 1)
+	go func() {
+		startErrCh <- host.StartContext(context.Background(), "http://127.0.0.1:18090/api", "")
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if host.State().Starting {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !host.State().Starting {
+		t.Fatal("expected Host.State().Starting while slow child boots")
+	}
+	stopBegin := time.Now()
+	if err := host.Stop(); err != nil {
+		t.Fatalf("Host.Stop failed: %v", err)
+	}
+	if elapsed := time.Since(stopBegin); elapsed > 2*time.Second {
+		t.Fatalf("Host.Stop took %v waiting on in-flight StartContext", elapsed)
+	}
+	select {
+	case err := <-startErrCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("in-flight StartContext error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight StartContext did not return after Host.Stop")
+	}
+	if host.Running() {
+		t.Fatal("host must not be running after Stop")
+	}
+
+	// 2. A queued StartContext waiting on lifecycle lock must not relaunch after Stop.
+	genCaptured := make(chan struct{}, 1)
+	host.startControlMu.Lock()
+	host.onStartGenCaptured = func() {
+		select {
+		case genCaptured <- struct{}{}:
+		default:
+		}
+	}
+	host.startControlMu.Unlock()
+	t.Cleanup(func() {
+		host.startControlMu.Lock()
+		host.onStartGenCaptured = nil
+		host.startControlMu.Unlock()
+	})
+
+	if err := host.lockLifecycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	queuedErrCh := make(chan error, 1)
+	go func() {
+		queuedErrCh <- host.StartContext(context.Background(), "http://127.0.0.1:18090/api", "")
+	}()
+	select {
+	case <-genCaptured:
+	case <-time.After(2 * time.Second):
+		host.unlockLifecycle()
+		t.Fatal("queued StartContext did not capture generation before unlock")
+	}
+	host.cancelInFlightStart()
+	host.unlockLifecycle()
+
+	select {
+	case err := <-queuedErrCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("queued StartContext error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued StartContext did not abort after generation bump")
+	}
+	if host.Running() {
+		t.Fatal("queued StartContext must not launch child after Stop")
+	}
+
+	// 3. StopContext must also cancel an in-flight Ensure promptly without waiting 10s.
+	ensureErrCh := make(chan error, 1)
+	go func() {
+		_, err := host.Ensure(fixtureProvider(), "http://127.0.0.1:18090/api", "", true)
+		ensureErrCh <- err
+	}()
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if host.State().Starting {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !host.State().Starting {
+		t.Fatal("expected Host.State().Starting while Ensure boots slow child")
+	}
+	stopCtxBegin := time.Now()
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelClose()
+	if err := host.StopContext(closeCtx); err != nil {
+		t.Fatalf("Host.StopContext failed: %v", err)
+	}
+	if elapsed := time.Since(stopCtxBegin); elapsed > 2*time.Second {
+		t.Fatalf("Host.StopContext took %v waiting on in-flight Ensure", elapsed)
+	}
+	select {
+	case err := <-ensureErrCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("in-flight Ensure error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight Ensure did not return after StopContext")
+	}
+	if host.Running() {
+		t.Fatal("host must not be running after StopContext")
+	}
+}
+
+func TestStopContextRespectsDeadlineOnSIGTERMResistantChildAndNonBlockingEnsure(t *testing.T) {
+	dataDir := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(HostConfig{Model: "fixture-model", HostCommand: exe})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "agent_config.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	host := New(Options{
+		DataDir:      dataDir,
+		ReadyTimeout: 10 * time.Second,
+		ResolveProvider: func() (assistant.Provider, string) {
+			return fixtureProvider(), ""
+		},
+		Environ: func() []string {
+			return append(os.Environ(), fixtureEnv+"=ignore-sigterm-sleep")
+		},
+	})
+
+	startErrCh := make(chan error, 1)
+	go func() {
+		startErrCh <- host.StartContext(context.Background(), "http://127.0.0.1:18090/api", "")
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if host.State().Starting {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !host.State().Starting {
+		t.Fatal("expected Host.State().Starting while SIGTERM-resistant child boots")
+	}
+
+	// Ensure while startup is already in flight must return (true, nil)
+	// immediately rather than blocking behind the 10s readiness wait.
+	ensureBegin := time.Now()
+	launched, ensureErr := host.Ensure(fixtureProvider(), "http://127.0.0.1:18090/api", "", true)
+	if ensureErr != nil || !launched {
+		t.Fatalf("Ensure during in-flight start = (%v, %v), want (true, nil)", launched, ensureErr)
+	}
+	if elapsed := time.Since(ensureBegin); elapsed > 500*time.Millisecond {
+		t.Fatalf("Ensure blocked for %v while startup already in flight", elapsed)
+	}
+
+	// StopContext with a short deadline must escalate to SIGKILL quickly rather
+	// than stalling 5-8s on a child that ignores SIGTERM.
+	stopBegin := time.Now()
+	stopCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_ = host.StopContext(stopCtx)
+	if elapsed := time.Since(stopBegin); elapsed > 2*time.Second {
+		t.Fatalf("StopContext on SIGTERM-resistant child took %v, want <= 2s", elapsed)
+	}
+	select {
+	case err := <-startErrCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("in-flight StartContext error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight StartContext did not return after StopContext")
+	}
+	if host.Running() {
+		t.Fatal("SIGTERM-resistant child still running after StopContext")
 	}
 }

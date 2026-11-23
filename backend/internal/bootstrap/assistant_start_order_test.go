@@ -54,6 +54,11 @@ func TestAssistantFirstLaunchCanReadRuntimeOperations(t *testing.T) {
 	if err := r.Start(); err != nil {
 		t.Fatal(err)
 	}
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer waitCancel()
+	if err := r.waitAssistantStartup(waitCtx); err != nil {
+		t.Fatalf("assistant startup did not settle: %v", err)
+	}
 	if r.assistantHost == nil || !r.assistantHost.Running() || r.assistantHost.PID() == 0 {
 		t.Fatal("first launch did not survive startup; no status/Ensure request may repair this assertion")
 	}
@@ -76,5 +81,20 @@ func TestAssistantFirstLaunchCanReadRuntimeOperations(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("HTTP shutdown callback did not complete")
+	}
+}
+
+func (r *Runtime) waitAssistantStartup(ctx context.Context) error {
+	r.assistantStartMu.Lock()
+	done := r.assistantStartDone
+	r.assistantStartMu.Unlock()
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }

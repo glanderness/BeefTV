@@ -4,6 +4,7 @@ import { initializeWorkspaceState } from "@/components/workspace/workspace-boots
 import { AgentStreamDetachedError, resetAgentUiSession, streamAgentChat } from "@/services/api/agent-assistant";
 import { requestStreamingChatCompletion } from "@/services/api/image-streaming";
 import { apiBaseURL, apiClient } from "@/services/api/request";
+import { getLocalModelConfig, getWorkspaceBootstrap, WORKSPACE_BOOTSTRAP_TIMEOUT_MS } from "@/services/api/workspace";
 import { shouldUseTaskTextEvents, waitForGenerationTask } from "@/services/api/task-center";
 import { subscribeCanvasEventsStream } from "@/services/canvas-external-writes";
 import { getClientDiagnosticEvents } from "@/services/diagnostics/client-diagnostics";
@@ -590,5 +591,84 @@ test("desktop:request-reload checks in-flight guard before acking via Wails even
         expect(reloadCalls).toBe(2);
     } finally {
         registerBeforeReloadFlusher(null);
+    }
+});
+
+test("workspace startup API calls allow 15s timeout beyond the 4s default and surface bounded bootstrap_timeout on timeout", async () => {
+    const previousAdapter = apiClient.defaults.adapter;
+    const observed: Array<{ url?: string; timeout?: number }> = [];
+    try {
+        apiClient.defaults.adapter = async (config) => {
+            observed.push({ url: config.url, timeout: config.timeout });
+            return {
+                data: { code: 0, data: {}, msg: "ok" },
+                status: 200,
+                statusText: "OK",
+                headers: {},
+                config,
+            };
+        };
+
+        await getWorkspaceBootstrap();
+        await getLocalModelConfig();
+
+        expect(WORKSPACE_BOOTSTRAP_TIMEOUT_MS).toBe(15_000);
+        expect(observed).toEqual([
+            { url: "/workspace/bootstrap", timeout: 15_000 },
+            { url: "/workspace/model-config", timeout: 15_000 },
+        ]);
+
+        // Verify a timed-out bootstrap surfaces a bounded failure without fabricating a session,
+        // and a subsequent retry recovers cleanly once the backend responds.
+        let attempts = 0;
+        apiClient.defaults.adapter = async (config) => {
+            attempts += 1;
+            if (attempts === 1) {
+                const err = Object.assign(new Error("timeout of 15000ms exceeded"), {
+                    code: "ECONNABORTED",
+                    isAxiosError: true,
+                    config,
+                });
+                throw err;
+            }
+            return {
+                data: {
+                    code: 0,
+                    data: {
+                        workspace: { id: "ws-1", name: "本地工作区" },
+                        user: { id: "u-1", nickname: "本地工作区" },
+                    },
+                    msg: "ok",
+                },
+                status: 200,
+                statusText: "OK",
+                headers: {},
+                config,
+            };
+        };
+
+        const applied: unknown[] = [];
+        await expect(
+            initializeWorkspaceState({
+                loadWorkspace: () => getWorkspaceBootstrap(),
+                applySession: async (payload) => {
+                    applied.push(payload);
+                },
+                restoreModelConfig: async () => {},
+            }),
+        ).rejects.toThrow("timeout of 15000ms exceeded");
+        expect(applied).toEqual([]);
+
+        await initializeWorkspaceState({
+            loadWorkspace: () => getWorkspaceBootstrap(),
+            applySession: async (payload) => {
+                applied.push(payload);
+            },
+            restoreModelConfig: async () => {},
+        });
+        expect(applied).toHaveLength(1);
+        expect(attempts).toBe(2);
+    } finally {
+        apiClient.defaults.adapter = previousAdapter;
     }
 });

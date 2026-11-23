@@ -1,0 +1,67 @@
+package repository
+
+import "infinite-canvas/backend/internal/model"
+
+// ResourceReferenceDocument 是资源删除校验使用的只读业务文档快照。
+// repository 只按用户范围读取记录；JSON 中的资源引用合同由 service 统一解释。
+type ResourceReferenceDocument struct {
+	Kind                string
+	ID                  string
+	Title               string
+	PrimaryJSON         string
+	SecondaryJSON       string
+	PrimaryMatchedIDs   []string
+	SecondaryMatchedIDs []string
+	TaskStatus          model.TaskStatus
+}
+
+type ResourceDirectReference struct {
+	Kind       string
+	ID         string
+	Title      string
+	ResourceID string
+}
+
+type ResourceReferenceSnapshot struct {
+	Documents []ResourceReferenceDocument
+	Direct    []ResourceDirectReference
+	Watermark SQLiteSnapshotWatermark
+}
+
+func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID string, resourceIDs []string) (ResourceReferenceSnapshot, error) {
+	snapshot := ResourceReferenceSnapshot{
+		Documents: []ResourceReferenceDocument{},
+		Direct:    []ResourceDirectReference{},
+	}
+	if len(resourceIDs) == 0 {
+		return snapshot, nil
+	}
+	candidateSet := make(map[string]struct{}, len(resourceIDs))
+	remaining := make(map[string]struct{}, len(resourceIDs))
+	for _, resourceID := range resourceIDs {
+		candidateSet[resourceID] = struct{}{}
+		remaining[resourceID] = struct{}{}
+	}
+	snapshot.Watermark = r.captureSQLiteWatermark(r.db, userID, excludingAssetID, candidateSet)
+
+	directRefs, err := collectDirectResourceReferences(r.db, userID, excludingAssetID, resourceIDs, true, false)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.Direct = append(snapshot.Direct, directRefs...)
+	for _, ref := range directRefs {
+		delete(remaining, ref.ResourceID)
+	}
+	if len(remaining) == 0 {
+		return snapshot, nil
+	}
+
+	if err := scanReferenceDocuments(r.db, documentScanOptions{
+		userID:           userID,
+		excludingAssetID: excludingAssetID,
+		remaining:        remaining,
+	}, &snapshot.Documents); err != nil {
+		return snapshot, err
+	}
+	return snapshot, nil
+}

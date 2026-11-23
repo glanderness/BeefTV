@@ -43,30 +43,33 @@ import (
 )
 
 type Runtime struct {
-	workspaceLock    *os.File
-	cfg              Config
-	db               *gorm.DB
-	repo             *repository.Repository
-	service          *app.Service
-	localApp         *localapp.App
-	handler          http.Handler
-	status           *systemStatus
-	launchToken      string
-	uiBootstrapToken string
-	beefTV           *beeftv.Service
-	assistantHost    *assistantruntime.Host
-	listener         net.Listener
-	pipeMu           sync.Mutex
-	pipeListener     net.Listener
-	pipePath         string
-	httpServer       *http.Server
-	serveErr            chan error
-	started           atomic.Bool
-	closed            atomic.Bool
-	safeModeRequested atomic.Bool
-	closeOnce         sync.Once
-	backgroundDone      chan struct{}
-	closeErr            error
+	workspaceLock        *os.File
+	cfg                  Config
+	db                   *gorm.DB
+	repo                 *repository.Repository
+	service              *app.Service
+	localApp             *localapp.App
+	handler              http.Handler
+	status               *systemStatus
+	launchToken          string
+	uiBootstrapToken     string
+	beefTV               *beeftv.Service
+	assistantHost        *assistantruntime.Host
+	assistantStartMu     sync.Mutex
+	assistantStartCancel context.CancelFunc
+	assistantStartDone   chan struct{}
+	listener             net.Listener
+	pipeMu               sync.Mutex
+	pipeListener         net.Listener
+	pipePath             string
+	httpServer           *http.Server
+	serveErr             chan error
+	started              atomic.Bool
+	closed               atomic.Bool
+	safeModeRequested    atomic.Bool
+	closeOnce            sync.Once
+	backgroundDone       chan struct{}
+	closeErr             error
 }
 
 func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
@@ -486,15 +489,29 @@ func (r *Runtime) Start() error {
 					}
 					r.pipeMu.Unlock()
 					if r.assistantHost != nil && !r.closed.Load() {
+						r.cancelAssistantStartup()
 						_ = r.assistantHost.Stop()
 					}
 				}
 			}(r.cfg.DataDir, opsURL, version, pipeListener)
 		}
+		// 异步拉起内置助手宿主，避免冷启动 Node/杀软扫描耗时阻塞主应用就绪。
 		if r.assistantHost != nil {
-			if err := r.assistantHost.Start(opsURL, r.launchToken); err != nil {
-				log.Printf("内置创作助手宿主未启动（不影响应用启动）：%v", err)
+			r.assistantStartMu.Lock()
+			if !r.closed.Load() {
+				assistantCtx, cancelAssistant := context.WithCancel(context.Background())
+				assistantDone := make(chan struct{})
+				r.assistantStartCancel = cancelAssistant
+				r.assistantStartDone = assistantDone
+				go func() {
+					defer close(assistantDone)
+					defer cancelAssistant()
+					if err := r.assistantHost.StartContext(assistantCtx, opsURL, r.launchToken); err != nil && !errors.Is(err, context.Canceled) {
+						log.Printf("内置创作助手宿主未启动（不影响应用启动）：%v", err)
+					}
+				}()
 			}
+			r.assistantStartMu.Unlock()
 		}
 	}
 	if r.beefTV != nil {
@@ -539,6 +556,30 @@ func (r *Runtime) PrepareStorageMigration(ctx context.Context) (func(), error) {
 	return r.service.PrepareStorageMigration(ctx)
 }
 
+func (r *Runtime) cancelAssistantStartup() chan struct{} {
+	r.assistantStartMu.Lock()
+	cancel := r.assistantStartCancel
+	done := r.assistantStartDone
+	r.assistantStartMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return done
+}
+
+func (r *Runtime) stopAssistantStartup(ctx context.Context) error {
+	done := r.cancelAssistantStartup()
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("等待内置创作助手宿主启动退出：%w", ctx.Err())
+	}
+}
+
 func (r *Runtime) Close(ctx context.Context) error {
 	if r == nil {
 		return nil
@@ -547,6 +588,9 @@ func (r *Runtime) Close(ctx context.Context) error {
 		r.closed.Store(true)
 		r.status.beginDrain()
 		var failures []error
+		if err := r.stopAssistantStartup(ctx); err != nil {
+			failures = append(failures, err)
+		}
 		// Durable must release its invocations while Go authorization and ops
 		// are still reachable; closing HTTP first turns Quit into fetch errors.
 		if r.assistantHost != nil {
