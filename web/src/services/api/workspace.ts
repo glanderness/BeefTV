@@ -40,12 +40,14 @@ export type WorkspaceBootstrapPayload = {
     features?: FeatureAvailability;
 };
 
+export const WORKSPACE_BOOTSTRAP_TIMEOUT_MS = 15_000;
+
 export function getWorkspaceBootstrap() {
-    return http.get<WorkspaceBootstrapPayload>("/workspace/bootstrap");
+    return http.get<WorkspaceBootstrapPayload>("/workspace/bootstrap", { timeout: WORKSPACE_BOOTSTRAP_TIMEOUT_MS });
 }
 
 export function getLocalModelConfig() {
-	return http.get<LocalModelConfigPayload>("/workspace/model-config");
+	return http.get<LocalModelConfigPayload>("/workspace/model-config", { timeout: WORKSPACE_BOOTSTRAP_TIMEOUT_MS });
 }
 
 export type LocalModelConfigPayload = {

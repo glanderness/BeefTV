@@ -16,6 +16,9 @@ func DocumentReferencedIDs(raw string, resourceIDs map[string]struct{}) map[stri
 	if raw == "" || len(resourceIDs) == 0 {
 		return matched
 	}
+	if !mayReferenceAnyResourceID(raw, resourceIDs) {
+		return matched
+	}
 	found := map[string]struct{}{}
 	var value any
 	if err := json.Unmarshal([]byte(raw), &value); err == nil {
@@ -146,4 +149,184 @@ func isResourceLocatorField(field string) bool {
 	default:
 		return false
 	}
+}
+
+// DocumentContainsLocator reports whether raw contains `"resource:<id>\""` or
+// `"/api/resources/<id>/"` for any id in resourceIDs in a single linear pass.
+func DocumentContainsLocator(raw string, resourceIDs map[string]struct{}) bool {
+	if raw == "" || len(resourceIDs) == 0 {
+		return false
+	}
+	maxLen := 0
+	for id := range resourceIDs {
+		if strings.IndexByte(id, '"') >= 0 || strings.IndexByte(id, '/') >= 0 {
+			if strings.Contains(raw, "resource:"+id+`"`) || strings.Contains(raw, "/api/resources/"+id+"/") {
+				return true
+			}
+		}
+		if len(id) > maxLen {
+			maxLen = len(id)
+		}
+	}
+	if maxLen == 0 {
+		return false
+	}
+	return containsDelimitedID(raw, "resource:", '"', maxLen, resourceIDs) ||
+		containsDelimitedID(raw, "/api/resources/", '/', maxLen, resourceIDs)
+}
+
+func containsDelimitedID(raw, prefix string, suffix byte, maxLen int, resourceIDs map[string]struct{}) bool {
+	for offset := 0; offset < len(raw); {
+		index := strings.Index(raw[offset:], prefix)
+		if index < 0 {
+			return false
+		}
+		start := offset + index + len(prefix)
+		endLimit := min(len(raw), start+maxLen+1)
+		if end := strings.IndexByte(raw[start:endLimit], suffix); end > 0 {
+			if _, exists := resourceIDs[raw[start:start+end]]; exists {
+				return true
+			}
+		}
+		offset = start
+	}
+	return false
+}
+
+// mayReferenceAnyResourceID is a zero-allocation conservative prefilter for
+// DocumentReferencedIDs. Returning false guarantees DocumentReferencedIDs would
+// find no match; returning true falls through to exact JSON parsing.
+func mayReferenceAnyResourceID(raw string, resourceIDs map[string]struct{}) bool {
+	if strings.Contains(raw, `\u`) || strings.Contains(raw, `\/`) {
+		return true
+	}
+	return scanLocatorCandidates(raw, "resource:", resourceIDs) ||
+		scanLocatorCandidates(raw, "/api/resources/", resourceIDs) ||
+		scanBareIDKeyCandidates(raw, "resourceId", resourceIDs) ||
+		scanBareIDKeyCandidates(raw, "ResourceId", resourceIDs)
+}
+
+func isValidIDByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '-' || b == '_'
+}
+
+func scanLocatorCandidates(raw, prefix string, resourceIDs map[string]struct{}) bool {
+	for offset := 0; offset < len(raw); {
+		index := strings.Index(raw[offset:], prefix)
+		if index < 0 {
+			return false
+		}
+		start := offset + index + len(prefix)
+		if start >= len(raw) {
+			return false
+		}
+		first := raw[start]
+		if first == '\\' || first <= ' ' || first >= 0x80 {
+			return true
+		}
+		end := start
+		for end < len(raw) && end-start < 80 && isValidIDByte(raw[end]) {
+			end++
+		}
+		if end > start {
+			if _, exists := resourceIDs[raw[start:end]]; exists {
+				return true
+			}
+		}
+		offset = start
+	}
+	return false
+}
+
+func scanBareIDKeyCandidates(raw, keySuffix string, resourceIDs map[string]struct{}) bool {
+	for offset := 0; offset < len(raw); {
+		index := strings.Index(raw[offset:], keySuffix)
+		if index < 0 {
+			return false
+		}
+		p := offset + index + len(keySuffix)
+		offset = p
+		if p < len(raw) && raw[p] == 's' {
+			p++
+		}
+		if p >= len(raw) || raw[p] != '"' {
+			continue
+		}
+		p = skipJSONWhitespace(raw, p+1)
+		if p >= len(raw) || raw[p] != ':' {
+			continue
+		}
+		p = skipJSONWhitespace(raw, p+1)
+		if p >= len(raw) {
+			return true
+		}
+		switch raw[p] {
+		case '"':
+			matched, conservative, _ := scanJSONStringCandidate(raw, p, resourceIDs)
+			if matched || conservative {
+				return true
+			}
+		case '[':
+			if scanJSONArrayCandidates(raw, p, resourceIDs) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func scanJSONStringCandidate(raw string, quotePos int, resourceIDs map[string]struct{}) (matched bool, conservative bool, nextPos int) {
+	start := quotePos + 1
+	for i := start; i < len(raw); i++ {
+		b := raw[i]
+		if b == '\\' {
+			return false, true, i
+		}
+		if b == '"' {
+			trimmed := strings.TrimSpace(raw[start:i])
+			if trimmed != "" {
+				if _, exists := resourceIDs[trimmed]; exists {
+					return true, false, i + 1
+				}
+			}
+			return false, false, i + 1
+		}
+	}
+	return false, true, len(raw)
+}
+
+func scanJSONArrayCandidates(raw string, openPos int, resourceIDs map[string]struct{}) bool {
+	depth := 0
+	for i := openPos; i < len(raw); i++ {
+		switch raw[i] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return false
+			}
+		case '"':
+			matched, conservative, nextPos := scanJSONStringCandidate(raw, i, resourceIDs)
+			if matched || conservative {
+				return true
+			}
+			i = nextPos - 1
+		case '{':
+			return true
+		}
+	}
+	return true
+}
+
+func skipJSONWhitespace(raw string, p int) int {
+	for p < len(raw) {
+		switch raw[p] {
+		case ' ', '\t', '\n', '\r':
+			p++
+		default:
+			return p
+		}
+	}
+	return p
 }

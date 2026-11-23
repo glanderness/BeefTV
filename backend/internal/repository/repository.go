@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -41,9 +42,15 @@ var ErrCanvasRevisionConflict = errors.New("canvas revision changed")
 
 var ErrAssetExpectedStatusMismatch = errors.New("asset expected status mismatch")
 
+type workspaceCache struct {
+	mu           sync.RWMutex
+	defaultValue *model.Workspace
+}
+
 type Repository struct {
-	db            *gorm.DB
-	singleProcess bool
+	db             *gorm.DB
+	singleProcess  bool
+	workspaceCache *workspaceCache
 }
 
 func (r *Repository) SetSingleProcess(enabled bool) {
@@ -92,11 +99,11 @@ type UserStorageUsage struct {
 }
 
 func New(db *gorm.DB) *Repository {
-	return &Repository{db: db}
+	return &Repository{db: db, workspaceCache: &workspaceCache{}}
 }
 
 func (r *Repository) WithContext(ctx context.Context) *Repository {
-	return &Repository{db: r.db.WithContext(ctx), singleProcess: r.SingleProcess()}
+	return &Repository{db: r.db.WithContext(ctx), singleProcess: r.SingleProcess(), workspaceCache: r.workspaceCache}
 }
 
 func (r *Repository) Transaction(fn func(*Repository) error) error {

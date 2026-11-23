@@ -156,11 +156,25 @@ func (h *Host) TestingUseOwnedEndpoint(baseURL, nonce, fingerprint string) {
 // 未配置启动命令或模型/凭据还没解析出来时是 no-op（用户没配好助手不应该让应用启动失败）；
 // 之后界面查询 /assistant/status 会按当时的配置补上这次启动。
 func (h *Host) Start(opsURL, desktopToken string) error {
+	return h.StartContext(context.Background(), opsURL, desktopToken)
+}
+
+// StartContext 与 Start 相同，但允许调用方在退出或超时时提前取消子进程就绪等待。
+func (h *Host) StartContext(ctx context.Context, opsURL, desktopToken string) error {
 	if h == nil {
 		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	config, configured := h.EffectiveConfig()
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return nil
@@ -169,7 +183,7 @@ func (h *Host) Start(opsURL, desktopToken string) error {
 	if reason != "" {
 		return nil
 	}
-	return h.startOwned(config, provider, opsURL, desktopToken)
+	return h.startOwned(ctx, config, provider, opsURL, desktopToken)
 }
 
 // Launch 按已解析的供应商启动；已在跑则是 no-op。调用方负责先检查配置是否存在。
@@ -187,7 +201,7 @@ func (h *Host) launchLocked(provider assistant.Provider, opsURL, desktopToken st
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
-	return h.startOwned(config, provider, opsURL, desktopToken)
+	return h.startOwned(context.Background(), config, provider, opsURL, desktopToken)
 }
 
 func (h *Host) Stop() error {
@@ -255,18 +269,18 @@ func (h *Host) Ensure(provider assistant.Provider, opsURL, desktopToken string, 
 			return false, stopErr
 		}
 	}
-	if startErr := h.startOwned(config, provider, opsURL, desktopToken); startErr != nil {
+	if startErr := h.startOwned(context.Background(), config, provider, opsURL, desktopToken); startErr != nil {
 		return false, startErr
 	}
 	return true, nil
 }
 
-func (h *Host) startOwned(config HostConfig, provider assistant.Provider, opsURL, desktopToken string) error {
+func (h *Host) startOwned(ctx context.Context, config HostConfig, provider assistant.Provider, opsURL, desktopToken string) error {
 	if h.closed {
 		return invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
 	}
 	opsPipe := h.opsPipePath()
-	return h.proc.startOwned(config, provider.Fingerprint(), h.readyTimeout(), func(port int, nonce, listenFD, listenPipe string) []string {
+	return h.proc.startOwned(ctx, config, provider.Fingerprint(), h.readyTimeout(), func(port int, nonce, listenFD, listenPipe string) []string {
 		return h.buildEnv(provider, childPin{
 			Port:       port,
 			Nonce:      nonce,
@@ -294,5 +308,5 @@ func (h *Host) Restart(provider assistant.Provider, opsURL, desktopToken string)
 	if err := h.proc.stop(); err != nil {
 		return err
 	}
-	return h.startOwned(config, provider, opsURL, desktopToken)
+	return h.startOwned(context.Background(), config, provider, opsURL, desktopToken)
 }

@@ -4,6 +4,7 @@ import { initializeWorkspaceState } from "@/components/workspace/workspace-boots
 import { AgentStreamDetachedError, resetAgentUiSession, streamAgentChat } from "@/services/api/agent-assistant";
 import { requestStreamingChatCompletion } from "@/services/api/image-streaming";
 import { apiBaseURL, apiClient } from "@/services/api/request";
+import { getLocalModelConfig, getWorkspaceBootstrap, WORKSPACE_BOOTSTRAP_TIMEOUT_MS } from "@/services/api/workspace";
 import { shouldUseTaskTextEvents, waitForGenerationTask } from "@/services/api/task-center";
 import { subscribeCanvasEventsStream } from "@/services/canvas-external-writes";
 import { getClientDiagnosticEvents } from "@/services/diagnostics/client-diagnostics";
@@ -591,4 +592,27 @@ test("desktop:request-reload checks in-flight guard before acking via Wails even
     } finally {
         registerBeforeReloadFlusher(null);
     }
+});
+
+test("workspace startup API calls allow 15s timeout beyond the 4s default", async () => {
+    const observed: Array<{ url?: string; timeout?: number }> = [];
+    apiClient.defaults.adapter = async (config) => {
+        observed.push({ url: config.url, timeout: config.timeout });
+        return {
+            data: { code: 0, data: {}, msg: "ok" },
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            config,
+        };
+    };
+
+    await getWorkspaceBootstrap();
+    await getLocalModelConfig();
+
+    expect(WORKSPACE_BOOTSTRAP_TIMEOUT_MS).toBe(15_000);
+    expect(observed).toEqual([
+        { url: "/workspace/bootstrap", timeout: 15_000 },
+        { url: "/workspace/model-config", timeout: 15_000 },
+    ]);
 });

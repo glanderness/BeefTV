@@ -2,8 +2,8 @@ package repository
 
 import (
 	"errors"
-	"strings"
 
+	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -56,11 +56,13 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 			}
 			documentsByUser[resource.UserID] = append(assetDocuments, canvasDocuments...)
 		}
-		for _, resource := range current {
-			storageKey := "resource:" + resource.ID + `"`
-			fileURL := "/api/resources/" + resource.ID + "/"
-			for _, document := range documentsByUser[resource.UserID] {
-				if strings.Contains(document, storageKey) || strings.Contains(document, fileURL) {
+		for userID, ids := range idsByUser {
+			idSet := make(map[string]struct{}, len(ids))
+			for _, id := range ids {
+				idSet[id] = struct{}{}
+			}
+			for _, document := range documentsByUser[userID] {
+				if assets.DocumentContainsLocator(document, idSet) {
 					return ErrResourceCleanupStillReferenced
 				}
 			}

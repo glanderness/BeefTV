@@ -60,3 +60,54 @@ func TestReferenceNumberValidationSkipsQuotedText(t *testing.T) {
 		}
 	}
 }
+
+func TestDocumentReferencedIDsPrefilterPreservesAllEdgeCases(t *testing.T) {
+	targets := map[string]struct{}{
+		"res-target-1": {},
+		"res_target_2": {},
+	}
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"plain locator storageKey", `{"storageKey":"resource:res-target-1"}`, "res-target-1"},
+		{"plain locator file url", `{"imageUrl":"/api/resources/res_target_2/file?v=1"}`, "res_target_2"},
+		{"unicode escaped colon", `{"storageKey":"resource\u003ares-target-1"}`, "res-target-1"},
+		{"escaped slash url", `{"url":"\/api\/resources\/res-target-1\/file"}`, "res-target-1"},
+		{"whitespace padded locator", `{"storageKey":"  resource:  res-target-1  "}`, "res-target-1"},
+		{"bare resourceId", `{"resourceId":"res-target-1"}`, "res-target-1"},
+		{"bare resourceIds nested array", `{"referenceResourceIds":[["res-other","res_target_2"]]}`, "res_target_2"},
+		{"bare sampleResourceId padded", `{"sampleResourceId":" res-target-1 "}`, "res-target-1"},
+		{"prompt text ignored despite locator substring", `{"prompt":"resource:res-target-1 /api/resources/res_target_2/file"}`, ""},
+		{"other resources skipped without match", `{"nodes":[{"storageKey":"resource:res-other-1","url":"/api/resources/res-other-2/file","resourceId":"res-other-3"}]}`, ""},
+		{"non-json scalar locator", `resource:res-target-1`, "res-target-1"},
+		{"json scalar file url", `"/api/resources/res_target_2/file"`, "res_target_2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Join(SortedIDs(DocumentReferencedIDs(tc.raw, targets)), ",")
+			if got != tc.want {
+				t.Fatalf("DocumentReferencedIDs(%s) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDocumentContainsLocatorSinglePass(t *testing.T) {
+	targets := map[string]struct{}{
+		"res-a": {},
+		"res-b": {},
+	}
+	if !DocumentContainsLocator(`{"a":"resource:res-other","b":"resource:res-a"}`, targets) {
+		t.Fatal("expected storageKey match")
+	}
+	if !DocumentContainsLocator(`{"a":"/api/resources/res-other/file","b":"/api/resources/res-b/file"}`, targets) {
+		t.Fatal("expected file URL match")
+	}
+	if DocumentContainsLocator(`{"a":"resource:res-a-longer","b":"/api/resources/res-b-longer/file"}`, targets) {
+		t.Fatal("prefix-only longer ID must not match")
+	}
+	if DocumentContainsLocator(`{"a":"resource:res-other"}`, targets) {
+		t.Fatal("unrelated resource must not match")
+	}
+}

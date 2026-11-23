@@ -16,6 +16,7 @@ const incompleteResourceRetention = time.Hour
 const detachedReadyResourceRetention = 24 * time.Hour
 
 var deletionRetryBase = 15 * time.Second
+var startupCleanupDelay = 2 * time.Minute
 
 func (s *Service) signalDeletionWorker() {
 	if s == nil || s.deletionWake == nil {
@@ -94,8 +95,18 @@ func (s *Service) StartDeletionWorker(ctx context.Context, loop func(func(contex
 		}
 
 		runDrain()
-		s.CleanupExpiredArchivedAssets()
-		s.CleanupDetachedResources()
+		// Defer full-workspace archive/orphan scans past startup so the single
+		// SQLite connection stays free for initial UI bootstrap and workspace loads.
+		var startupCleanupTimer *time.Timer
+		var startupCleanupC <-chan time.Time
+		if startupCleanupDelay > 0 {
+			startupCleanupTimer = time.NewTimer(startupCleanupDelay)
+			defer startupCleanupTimer.Stop()
+			startupCleanupC = startupCleanupTimer.C
+		} else {
+			s.CleanupExpiredArchivedAssets()
+			s.CleanupDetachedResources()
+		}
 		hourlyTicker := time.NewTicker(time.Hour)
 		defer hourlyTicker.Stop()
 		for {
@@ -107,6 +118,10 @@ func (s *Service) StartDeletionWorker(ctx context.Context, loop func(func(contex
 			case <-retryC:
 				retryC = nil
 				runDrain()
+			case <-startupCleanupC:
+				startupCleanupC = nil
+				s.CleanupExpiredArchivedAssets()
+				s.CleanupDetachedResources()
 			case <-hourlyTicker.C:
 				runDrain()
 				s.CleanupExpiredArchivedAssets()

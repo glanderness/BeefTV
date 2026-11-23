@@ -150,7 +150,11 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 	}
 
 	var taskLogs []model.TaskLog
-	if err := r.db.Select("id", "task_id", "message", "payload").Where("user_id = ?", userID).Find(&taskLogs).Error; err != nil {
+	taskLogQuery := applySQLiteReferenceFilter(
+		r.db.Select("id", "task_id", "message", "payload").Where("user_id = ? AND payload <> ''", userID),
+		"payload",
+	)
+	if err := taskLogQuery.Find(&taskLogs).Error; err != nil {
 		return snapshot, err
 	}
 	for _, taskLog := range taskLogs {
@@ -158,7 +162,11 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 	}
 
 	var results []model.Result
-	if err := r.db.Select("id", "task_id", "kind", "url", "payload").Where("user_id = ?", userID).Find(&results).Error; err != nil {
+	resultQuery := applySQLiteReferenceFilter(
+		r.db.Select("id", "task_id", "kind", "url", "payload").Where("user_id = ? AND (url <> '' OR payload <> '')", userID),
+		"url", "payload",
+	)
+	if err := resultQuery.Find(&results).Error; err != nil {
 		return snapshot, err
 	}
 	for _, result := range results {
@@ -424,13 +432,13 @@ func guardAssetDeletionReferences(tx *gorm.DB, userID string, assetID string, re
 		return err
 	}
 	documents := append(assetDocuments, canvasDocuments...)
+	idSet := make(map[string]struct{}, len(resourceIDs))
 	for _, resourceID := range resourceIDs {
-		storageKey := "resource:" + resourceID + `"`
-		fileURL := "/api/resources/" + resourceID + "/"
-		for _, document := range documents {
-			if strings.Contains(document, storageKey) || strings.Contains(document, fileURL) {
-				return ErrResourceCleanupStillReferenced
-			}
+		idSet[resourceID] = struct{}{}
+	}
+	for _, document := range documents {
+		if assets.DocumentContainsLocator(document, idSet) {
+			return ErrResourceCleanupStillReferenced
 		}
 	}
 	var representationCount int64
@@ -519,12 +527,21 @@ func guardTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []strin
 		owned[resourceID] = struct{}{}
 	}
 	var tasks []model.Task
-	if err := tx.Select("id", "prompt", "status", "input_json", "result_json").Where("user_id = ?", userID).Find(&tasks).Error; err != nil {
+	taskQuery := tx.Select("id", "status", "input_json", "result_json").Where("user_id = ?", userID)
+	if !skipCompletedOutput {
+		taskQuery = applySQLiteReferenceFilter(taskQuery.Where("input_json <> '' OR result_json <> ''"), "input_json", "result_json")
+	}
+	if err := taskQuery.Find(&tasks).Error; err != nil {
 		return err
 	}
-	statuses := make(map[string]model.TaskStatus, len(tasks))
+	var statuses map[string]model.TaskStatus
+	if skipCompletedOutput {
+		statuses = make(map[string]model.TaskStatus, len(tasks))
+	}
 	for _, task := range tasks {
-		statuses[task.ID] = task.Status
+		if skipCompletedOutput {
+			statuses[task.ID] = task.Status
+		}
 		primary, secondary := task.InputJSON, task.ResultJSON
 		if skipCompletedOutput {
 			switch task.Status {
@@ -537,7 +554,11 @@ func guardTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []strin
 		}
 	}
 	var logs []model.TaskLog
-	if err := tx.Select("id", "task_id", "payload").Where("user_id = ?", userID).Find(&logs).Error; err != nil {
+	logQuery := applySQLiteReferenceFilter(
+		tx.Select("id", "task_id", "payload").Where("user_id = ? AND payload <> ''", userID),
+		"payload",
+	)
+	if err := logQuery.Find(&logs).Error; err != nil {
 		return err
 	}
 	for _, log := range logs {
@@ -552,7 +573,11 @@ func guardTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []strin
 		}
 	}
 	var results []model.Result
-	if err := tx.Select("id", "task_id", "url", "payload").Where("user_id = ?", userID).Find(&results).Error; err != nil {
+	resultQuery := applySQLiteReferenceFilter(
+		tx.Select("id", "task_id", "url", "payload").Where("user_id = ? AND (url <> '' OR payload <> '')", userID),
+		"url", "payload",
+	)
+	if err := resultQuery.Find(&results).Error; err != nil {
 		return err
 	}
 	for _, result := range results {
@@ -567,6 +592,24 @@ func guardTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []strin
 		}
 	}
 	return nil
+}
+
+func applySQLiteReferenceFilter(query *gorm.DB, columns ...string) *gorm.DB {
+	if query == nil || query.Dialector == nil || query.Dialector.Name() != "sqlite" || len(columns) == 0 {
+		return query
+	}
+	parts := make([]string, 0, len(columns))
+	for _, column := range columns {
+		parts = append(parts,
+			"(instr("+column+", 'resource:') > 0 OR "+
+				"instr("+column+", '/api/resources/') > 0 OR "+
+				"instr("+column+", 'resourceId') > 0 OR "+
+				"instr("+column+", 'ResourceId') > 0 OR "+
+				"instr("+column+", '\\u') > 0 OR "+
+				"instr("+column+", '\\/') > 0)",
+		)
+	}
+	return query.Where(strings.Join(parts, " OR "))
 }
 
 func withImmediateTransaction(db *gorm.DB, fn func(*gorm.DB) error) error {

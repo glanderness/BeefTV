@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -337,4 +338,73 @@ func TestStartDeletionWorkerBacksOffOnPersistentClaimError(t *testing.T) {
 	if got < 2 || got > 4 {
 		t.Fatalf("claim attempts during 240ms persistent error = %d, want bounded backoff [2, 4] (not 10ms spin)", got)
 	}
+}
+
+func TestStartDeletionWorkerDefersDetachedCleanupPastStartup(t *testing.T) {
+	prevDelay := startupCleanupDelay
+	startupCleanupDelay = 160 * time.Millisecond
+	t.Cleanup(func() { startupCleanupDelay = prevDelay })
+
+	svc, repo, _ := newTestDomain(t)
+	if err := database.MigrateLocalSchema(repo.DB()); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-48 * time.Hour)
+	orphan := model.Resource{
+		ID:        "res-deferred-orphan",
+		UserID:    "owner",
+		Kind:      "image",
+		Status:    model.ResourceStatusReady,
+		Provider:  "local",
+		ObjectKey: "users/owner/image/deferred-orphan.png",
+		CreatedAt: oldTime,
+		UpdatedAt: oldTime,
+	}
+	if err := repo.DB().Create(&orphan).Error; err != nil {
+		t.Fatal(err)
+	}
+	countingRepo := &countingDeletionRepo{Repository: svc.repo}
+	svc.repo = countingRepo
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	svc.StartDeletionWorker(ctx, func(run func(context.Context)) bool {
+		go func() {
+			defer close(done)
+			run(ctx)
+		}()
+		return true
+	})
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	// Startup outbox drain runs immediately, while detached cleanup waits past startup.
+	deadline := time.Now().Add(time.Second)
+	for countingRepo.claims.Load() < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if countingRepo.claims.Load() < 1 {
+		t.Fatal("expected immediate startup drain claim")
+	}
+	time.Sleep(40 * time.Millisecond)
+	var beforeDelay int64
+	if err := repo.DB().Model(&model.Resource{}).Where("id = ?", orphan.ID).Count(&beforeDelay).Error; err != nil {
+		t.Fatal(err)
+	}
+	if beforeDelay != 1 {
+		t.Fatalf("orphan resource count before startupCleanupDelay = %d, want 1 (cleanup ran too early)", beforeDelay)
+	}
+
+	// Once startupCleanupDelay elapses, detached cleanup runs and removes the orphan.
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var remaining int64
+		if err := repo.DB().Model(&model.Resource{}).Where("id = ?", orphan.ID).Count(&remaining).Error; err == nil && remaining == 0 {
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatal("expected deferred detached resource cleanup to remove orphan after startupCleanupDelay")
 }
