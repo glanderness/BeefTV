@@ -1,6 +1,7 @@
 package app
 
 import (
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/resource"
@@ -17,12 +18,6 @@ func validateStructuredStorageQuotaWithPolicy(u repository.UserStorageUsage, k s
 func validateStructuredCountQuotaWithPolicy(u repository.UserStorageUsage, k string, c int, d int64, p RuntimeResourcePolicy) error {
 	return resource.ValidateStructuredCountQuota(u, k, c, d, p)
 }
-func validateTaskStorageQuotaWithPolicy(u repository.UserStorageUsage, in int64, p RuntimeResourcePolicy) error {
-	return resource.ValidateTaskStorageQuota(u, in, p)
-}
-func validateAPICallLogQuotaWithPolicy(u repository.UserStorageUsage, in int64, p RuntimeResourcePolicy) error {
-	return resource.ValidateAPICallLogQuota(u, in, p)
-}
 func (s *Service) createTaskWithinStorageQuota(task *model.Task, policy RuntimePolicySetting) error {
 	return resource.CreateTaskWithinStorageQuota(s.repo, &s.storageMu, task, policy)
 }
@@ -30,7 +25,11 @@ func createTaskWithStorageQuotaRepository(repo *repository.Repository, task *mod
 	return resource.CreateTaskWithStorageQuota(repo, task, policy)
 }
 func (s *Service) saveTaskCompletionWithinStorageQuota(task *model.Task, resultJSON, opsJSON []byte, hasCanvasOps bool) error {
-	err := resource.SaveTaskCompletionWithLoader(s.repo, &s.storageMu, s.RuntimePolicy, task, resultJSON, opsJSON, hasCanvasOps, s.completionInputJSON, s.captureCanvasWorkflowSource)
+	resultJSON, err := generation.PrepareLocalMaskTaskCompletion(*task, resultJSON, s.decryptTaskInputJSON, s.bindGenerationRuntime)
+	if err != nil {
+		return err
+	}
+	err = resource.SaveTaskCompletionWithLoader(s.repo, &s.storageMu, s.RuntimePolicy, task, resultJSON, opsJSON, hasCanvasOps, s.completionInputJSON, s.captureCanvasWorkflowSource)
 	if err == nil {
 		s.deliveryWakeup.Signal()
 	}

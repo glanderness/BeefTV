@@ -1,14 +1,71 @@
 package app
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
+
+func TestImageDeliveryCompositesRecoveredLocalMaskBeforeSaving(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	makePNG := func(first, second color.NRGBA) string {
+		img := image.NewNRGBA(image.Rect(0, 0, 2, 1))
+		img.SetNRGBA(0, 0, first)
+		img.SetNRGBA(1, 0, second)
+		var body bytes.Buffer
+		if err := png.Encode(&body, img); err != nil {
+			t.Fatal(err)
+		}
+		return generation.DataURL("image/png", body.Bytes())
+	}
+	red, green := color.NRGBA{R: 200, A: 255}, color.NRGBA{G: 150, A: 255}
+	input, _ := json.Marshal(generation.Input{Mode: "image", ReferenceImages: []generation.Media{{DataURL: makePNG(red, red)}}, Mask: &generation.Media{DataURL: makePNG(color.NRGBA{A: 255}, color.NRGBA{})}, Metadata: map[string]any{"maskEditMode": "local-composite"}})
+	task := model.Task{ID: "recovered-local-mask", UserID: "user", Type: "canvas_image", Status: model.TaskStatusRunning, InputJSON: string(input)}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	receipt, _ := json.Marshal(map[string]any{"mode": "image", "images": []any{map[string]any{"url": makePNG(green, green)}}})
+	if err := s.saveTaskCompletionWithinStorageQuota(&task, receipt, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Images []struct {
+			DataURL string `json:"dataUrl"`
+		} `json:"images"`
+		Done bool `json:"localMaskComposited"`
+	}
+	if err := json.Unmarshal([]byte(stored.ResultJSON), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Done || len(result.Images) != 1 {
+		t.Fatal("completion saved raw provider output")
+	}
+	raw, _, err := generation.MediaBytes(generation.Media{DataURL: result.Images[0].DataURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if color.NRGBAModel.Convert(img.At(0, 0)) != red || color.NRGBAModel.Convert(img.At(1, 0)) != green {
+		t.Fatal("recovered image did not preserve original pixels outside selection")
+	}
+}
 
 func TestImageDeliveryRetainsEncryptedAuthUntilMaterialized(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")

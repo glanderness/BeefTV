@@ -44,7 +44,7 @@ function Harness() {
         bindGenerationTask: () => { fixture.bound++; },
     });
     useLayoutEffect(() => {
-        fixture.snapshot = () => ({ projectId, nodes, connections, running, ui: [...pageUi.getState().selectedNodeIds], calls: [...fixture.calls], persisted: fixture.persisted, bound: fixture.bound, done: fixture.done, error: fixture.error });
+        fixture.snapshot = () => ({ projectId, nodes, connections, running, ui: [...pageUi.getState().selectedNodeIds], calls: [...fixture.calls], persisted: fixture.persisted, bound: fixture.bound, done: fixture.done, error: fixture.error, requests: fixture.requests || [] });
         fixture.switchOwner = (mode: string) => {
             if (mode === "account") setActiveUserScope("media-owner-b");
             if (mode === "account-return") { setActiveUserScope("media-owner-b"); setActiveUserScope("media-owner-a"); }

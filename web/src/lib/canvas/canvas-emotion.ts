@@ -193,6 +193,18 @@ export function buildEmotionPrompt(params: CanvasEmotionParams, editRegion: Canv
     ].join("\n");
 }
 
+// The same full-image mask operation works with native masks and local fusion,
+// including models that accept only one reference image or return fixed batches.
+export function buildFullImageEmotionEdit(params: CanvasEmotionParams & { imageWidth: number; imageHeight: number }) {
+    const region = { x: 0, y: 0, width: params.imageWidth, height: params.imageHeight };
+    const face = clampFaceBox(params.faceBox, region.width, region.height);
+    const prompt = buildEmotionPrompt({ ...params, faceBox: face }, region)
+        .split("\n")
+        .filter((line) => !line.includes("第二张输入图") && !line.includes("输入图已裁切"))
+        .join("\n");
+    return { prompt, maskDataUrl: drawFaceMask(face, region) };
+}
+
 export function normalizeEmotionPromptForProvider(prompt: string) {
     return prompt
         .replaceAll("实际可编辑范围以该人脸周围的透明椭圆蒙版为最终边界。", "最终仅将该人脸周围的椭圆区域融合回原图。")

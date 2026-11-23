@@ -80,6 +80,7 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
         if (!input) return "";
         if (input.videoCount > 0) return "图片模型不支持参考视频";
         if (input.audioCount > 0) return "图片模型不支持参考音频";
+        if (hasDeclaredImageCapability && visualInputCount > 0 && image.references.maxImages === 0) return "仅支持文生图，不支持图片重绘";
         if (hasDeclaredImageCapability && visualInputCount > image.references.maxImages) return `最多支持 ${image.references.maxImages} 张参考图`;
         return "";
     }
@@ -186,11 +187,8 @@ export function resolveMaskEditModel(config: AiConfig, requestedModel?: string) 
         ...(config.models || []),
     ].filter((item): item is string => Boolean(item?.trim()));
     const imageCandidates = filterModelsByCapability(rawCandidates, "image", config.channels);
-    return (
-        imageCandidates.find((candidate) => modelCapabilityConfigFor(config, candidate).image?.references.maskSupported) ||
-        imageCandidates[0] ||
-        ""
-    );
+    // 局部编辑不能因为蒙版能力差异静默切换用户选择的模型。
+    return imageCandidates[0] || "";
 }
 
 export function normalizeMaskEditQuality(quality: string | undefined, size: string | undefined, supportedValues?: string[], defaultQuality = "auto") {
@@ -235,7 +233,7 @@ export function initialMaskEditConfig(config: AiConfig): AiConfig {
     const image = modelCapabilityConfigFor(config, targetModel).image;
     const size = normalizeMaskEditSize(config.size, image?.size.values, defaults.size, image?.size.allowCustom);
     const quality = normalizeMaskEditQuality(config.quality, config.size, image?.quality.supported ? image.quality.values : [], defaults.quality);
-    return { ...config, model: targetModel, imageModel: targetModel, size, quality };
+    return { ...config, model: targetModel, imageModel: targetModel, size, quality, count: image ? normalizeImageValue(image, { count: config.count }).count : config.count };
 }
 
 export type ModelGenerationDefaults = Pick<AiConfig, "size" | "quality" | "transparentBackground" | "count" | "videoSeconds" | "vquality" | "videoGenerateAudio" | "videoWatermark">;

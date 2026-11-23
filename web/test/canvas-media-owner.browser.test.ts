@@ -17,10 +17,10 @@ const mocks: Record<string, string> = {
     "@/lib/canvas/canvas-video-merge": `${step} export const warmFFmpeg=async()=>{}; export const mergeVideos=async()=>step('mergeVideos',new Blob(['fixture']));`,
     "@/lib/canvas/canvas-video-frame": `${step} export const captureVideoFrames=async()=>step('captureVideoFrames',{frames:[{timeMs:0,blob:new Blob(['fixture'])}],failures:[]}); export const resolveVideoFramePresetTimeMs=()=>0;`,
     "@/lib/canvas/canvas-media-persist": "export async function persistOwnedCanvasMediaNodes(){window.__mediaTest.persisted++;return true;}",
-    "@/lib/canvas/canvas-project-generation": `${step} export * from ${JSON.stringify(root + "lib/canvas/canvas-project-generation.ts")}; export const buildGenerationConfig=(config)=>config; export const buildImageGenerationMetadata=()=>({}); export const nodeReferenceImage=()=>({id:'source',dataUrl:${JSON.stringify(image)}}); export async function runBackendCanvasGenerationTask(input){const value=await step('createTask',{images:[{dataUrl:${JSON.stringify(image)}}]});input.onTaskCreated?.({id:'original-task'});return value;}`,
-    "@/lib/model-capabilities": "export const modelCapabilityConfigFor=()=>({image:{references:{maskSupported:true}}});",
-    "@/lib/model-selection": "export const defaultImageParamsForModel=()=>({size:'1024x1024',quality:'high',transparentBackground:'false'}); export const resolveMaskEditModel=(c)=>c?.imageModel||c?.model||''; export const normalizeMaskEditQuality=(q)=>q||'high'; export const normalizeMaskEditSize=(s)=>s||'1024x1024';",
-    "@/stores/use-config-store": "export const defaultConfig={model:'fixture-model',imageModel:'fixture-model',count:'1',quality:'high',size:'1024x1024'}; export const useEffectiveConfig=()=>defaultConfig; export const useConfigStore=(select)=>select({isAiConfigReady:()=>true}); export const resolveModelRequestConfig=()=>({interfaceType:'openai-image'});",
+    "@/lib/canvas/canvas-project-generation": `${step} export * from ${JSON.stringify(root + "lib/canvas/canvas-project-generation.ts")}; export const buildGenerationConfig=(config)=>({...config,...window.__mediaTest?.config}); export const buildImageGenerationMetadata=()=>({}); export const nodeReferenceImage=()=>({id:'source',dataUrl:${JSON.stringify(image)}}); export async function runBackendCanvasGenerationTask(input){window.__mediaTest.requests??=[];window.__mediaTest.requests.push({model:input.config.model,count:input.config.count,referenceCount:input.referenceImages.length,mask:!!input.mask,metadata:input.metadata});const value=await step('createTask',{images:Array.from({length:Number(input.config.count)||1},()=>({dataUrl:${JSON.stringify(image)}}))});input.onTaskCreated?.({id:'original-task'});return value;}`,
+    "@/lib/model-capabilities": `export * from ${JSON.stringify(root + "lib/model-capabilities.ts")}; export const modelCapabilityConfigFor=()=>({image:window.__mediaTest?.profile||{references:{maskSupported:true,maxImages:16},size:{parameter:'size',values:['1024x1024'],default:'1024x1024',allowCustom:true},quality:{supported:true,values:['high'],default:'high'},transparentBackground:{supported:false,default:false},maxOutputs:8}});`,
+    "@/lib/model-selection": "export const defaultImageParamsForModel=()=>({size:'1024x1024',quality:'high',transparentBackground:'false'}); export const resolveMaskEditModel=(c,requested)=>requested||c?.imageModel||c?.model||''; export const normalizeMaskEditQuality=(q)=>q||'high'; export const normalizeMaskEditSize=(s)=>s||'1024x1024';",
+    "@/stores/use-config-store": "export const defaultConfig={model:'fixture-model',imageModel:'fixture-model',count:'1',quality:'high',size:'1024x1024'}; export const useEffectiveConfig=()=>({...defaultConfig,...window.__mediaTest?.config}); export const useConfigStore=(select)=>select({isAiConfigReady:()=>true}); export const resolveModelRequestConfig=()=>({interfaceType:'openai-image'});",
     "@/lib/canvas/canvas-emotion": `${step} export * from ${JSON.stringify(root + "lib/canvas/canvas-emotion.ts")}; export const compositeEmotionImage=async()=>step('compositeEmotionImage',${JSON.stringify(image)});`,
 };
 
@@ -43,6 +43,51 @@ beforeAll(async () => {
 afterAll(async () => { await browser?.close(); server?.stop(true); });
 
 const tools = ["cropImageNode", "cropVideoNode", "saveAnnotatedImageNode", "extractVideoFrames", "confirmInlineVideoTrim", "extractAudioFromVideo", "mergeVideosByIds", "addPanoramaCaptureNode", "splitImageNode", "maskEditImageNode", "upscaleImageNode", "generateAngleNode", "generateEmotionNode"];
+
+for (const scenario of [
+    { name: "native-mask", native: true, outputs: 1, tool: "maskEditImageNode" },
+    { name: "local-fusion", native: false, outputs: 1, tool: "maskEditImageNode" },
+    { name: "fixed-four", native: false, outputs: 4, tool: "maskEditImageNode" },
+    { name: "single-reference-expression", native: false, outputs: 4, tool: "generateEmotionNode" },
+    { name: "fixed-four-angle", native: false, outputs: 4, tool: "generateAngleNode" },
+]) {
+    test(`image editing preserves model and every output: ${scenario.name}`, async () => {
+        const page = await browser.newPage();
+        try {
+            await page.goto(server.url.toString());
+            await page.waitForFunction(() => Boolean((window as any).__mediaTest?.start));
+            await page.evaluate((scenario) => {
+                const fixture = (window as any).__mediaTest;
+                fixture.config = { model: "selected-image-model", imageModel: "selected-image-model" };
+                fixture.profile = {
+                    references: { maskSupported: scenario.native, maxImages: 1 },
+                    size: { parameter: "size", values: ["1024x1024"], default: "1024x1024", allowCustom: true },
+                    quality: { supported: false, values: [], default: "auto" },
+                    transparentBackground: { supported: false, default: false },
+                    maxOutputs: scenario.outputs, fixedOutputs: scenario.outputs === 4 ? 4 : undefined,
+                };
+                fixture.start(scenario.tool);
+            }, scenario);
+            await page.waitForFunction(() => Boolean((window as any).__mediaTest.release) || (window as any).__mediaTest.done);
+            await page.evaluate(() => (window as any).__mediaTest.release?.());
+            await page.waitForFunction(() => (window as any).__mediaTest.done);
+            const result = await page.evaluate(() => (window as any).__mediaTest.snapshot());
+            expect(result.error).toBeNull();
+            expect(result.requests).toHaveLength(1);
+            const request = result.requests[0];
+            expect(request.model).toBe("selected-image-model");
+            expect(request.count).toBe(String(scenario.outputs));
+            expect(request.referenceCount).toBe(1);
+            expect(request.metadata.outputNodeIds).toHaveLength(scenario.outputs);
+            expect(request.mask).toBe(scenario.tool !== "generateAngleNode");
+            expect(request.metadata.maskEditMode).toBe(!scenario.native && scenario.tool !== "generateAngleNode" ? "local-composite" : undefined);
+            const outputs = result.nodes.filter((node: any) => request.metadata.outputNodeIds.includes(node.id));
+            expect(outputs).toHaveLength(scenario.outputs);
+            expect(outputs.map((node: any) => node.metadata.taskOutputIndex)).toEqual(Array.from({ length: scenario.outputs }, (_, index) => index));
+            expect(outputs.every((node: any) => node.metadata.status === "success")).toBe(true);
+        } finally { await page.close(); }
+    });
+}
 for (const tool of tools) {
     test(`${tool}: same owner finishes and keeps the existing result path`, async () => {
         const page = await browser.newPage();

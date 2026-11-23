@@ -20,18 +20,19 @@ import { buildAngleLabel, buildAnglePrompt, createCanvasNode } from "@/lib/canva
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
 import { buildGenerationConfig, buildImageGenerationMetadata, nodeReferenceImage, isGenerationCanceled, runBackendCanvasGenerationTask } from "@/lib/canvas/canvas-project-generation";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
-import { compositeEmotionImage, emotionGenerationSize, emotionProviderMask, normalizeEmotionPromptForProvider, resolveEmotionEditPlan } from "@/lib/canvas/canvas-emotion";
+import { buildFullImageEmotionEdit } from "@/lib/canvas/canvas-emotion";
 import { DEFAULT_PORTRAIT_TEXTURE_SETTINGS } from "@/lib/canvas/canvas-portrait-texture";
 import { getEffectiveReversePrompt } from "@/lib/reverse-prompt-preference";
 import { createPortraitTextureNode } from "@/lib/canvas/canvas-image-source";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { generationErrorMessage } from "@/lib/generation-error";
+import { imageEditOutputGroups, imageEditPlan } from "@/lib/canvas/canvas-image-edit-plan";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { defaultImageParamsForModel, normalizeMaskEditQuality, normalizeMaskEditSize, resolveMaskEditModel } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import type { GenerationTask } from "@/services/api/task-center";
-import { defaultConfig, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 import type { createCanvasMediaOperation } from "./canvas-media-operation";
@@ -243,7 +244,7 @@ export function useCanvasImageTools({
         }
     }, [beginMediaOperation, pageUi, projectId, message, persistMediaNodes, setConnections, setNodes]);
 
-    const maskEditImageNode = useCallback(async (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => {
+    const generateImageEditNode = useCallback(async (node: CanvasNodeData, payload: Omit<CanvasImageMaskEditPayload, "maskDataUrl"> & { maskDataUrl?: string; title?: string }) => {
         const operation = beginMediaOperation();
         if (!operation.isCurrent()) return;
         try {
@@ -256,10 +257,8 @@ export function useCanvasImageTools({
             );
             const modelDefaults = defaultImageParamsForModel(baseGenerationConfig, selectedModel);
             const selectedImageProfile = modelCapabilityConfigFor(baseGenerationConfig, selectedModel).image;
-            if (!selectedImageProfile?.references.maskSupported) {
-                message.error("当前图片模型不支持局部重绘蒙版，请选择支持蒙版编辑的模型");
-                return;
-            }
+            const editPlan = imageEditPlan(selectedImageProfile!, Number(payload.generationConfig?.count || 1));
+            const localComposite = Boolean(payload.maskDataUrl) && editPlan.mode === "local-composite";
             const explicitSize = payload.generationConfig?.size;
             const rawSize = explicitSize || node.metadata?.size || modelDefaults.size;
             const generationConfig = {
@@ -267,17 +266,17 @@ export function useCanvasImageTools({
                 ...payload.generationConfig,
                 model: selectedModel,
                 imageModel: selectedModel,
-                quality: normalizeMaskEditQuality(payload.generationConfig?.quality || node.metadata?.quality || baseGenerationConfig.quality || modelDefaults.quality, rawSize, selectedImageProfile.quality?.supported ? selectedImageProfile.quality.values : [], modelDefaults.quality),
-                count: String(payload.generationConfig?.count || 1),
+                quality: normalizeMaskEditQuality(payload.generationConfig?.quality || node.metadata?.quality || baseGenerationConfig.quality || modelDefaults.quality, rawSize, selectedImageProfile?.quality?.supported ? selectedImageProfile.quality.values : [], modelDefaults.quality),
+                count: String(editPlan.count),
                 // 原图像素尺寸不是模型的输出尺寸合同；非高级设置时使用模型默认尺寸，避免把节点尺寸误发给上游。
-                size: normalizeMaskEditSize(rawSize, selectedImageProfile.size?.values ?? [], modelDefaults.size, Boolean(explicitSize) && Boolean(selectedImageProfile.size?.allowCustom)),
+                size: normalizeMaskEditSize(rawSize, selectedImageProfile?.size?.values ?? [], modelDefaults.size, Boolean(explicitSize) && Boolean(selectedImageProfile?.size?.allowCustom)),
             };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 navigateToSettings({ continueCreation: true });
                 return;
             }
             const userPrompt = payload.prompt.trim();
-            const prompt = `只修改蒙版透明区域，其他区域保持不变。${userPrompt}`;
+            const prompt = payload.maskDataUrl && !localComposite ? `只修改蒙版透明区域，其他区域保持不变。${userPrompt}` : userPrompt;
             const source = nodeReferenceImage(node);
             if (!source) return;
             const styleExecution = resolveImageEditStyle(node, prompt, generationConfig);
@@ -285,6 +284,7 @@ export function useCanvasImageTools({
             const { prompt: effectivePrompt, metadata: styleMetadata } = styleExecution;
             const requestedCount = Math.max(1, Number(generationConfig.count) || 1);
             const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, requestedCount, [source]);
+            if (localComposite) message.info("当前模型使用选区标记与本地蒙版融合，未选区域保留原图");
             setMaskEditNodeId(null);
             const rootId = nanoid();
             const childIds = requestedCount > 1 ? Array.from({ length: requestedCount }, () => nanoid()) : [];
@@ -293,7 +293,7 @@ export function useCanvasImageTools({
             const preferredPosition = { x: node.position.x + node.width + 96, y: node.position.y };
             const rootPosition = findAvailableGenerationGroupPosition(nodesRef.current, preferredPosition, imageGenerationGroupSize(imageSize, imageSize, childIds.length));
             const rootNode: CanvasNodeData = {
-                id: rootId, type: CanvasNodeType.Image, title: userPrompt.slice(0, 32) || "局部编辑结果",
+                id: rootId, type: CanvasNodeType.Image, title: payload.title || userPrompt.slice(0, 32) || "局部编辑结果",
                 position: rootPosition, width: node.width, height: node.height,
                 metadata: {
                     ...canvasGenerationPromptMetadata(userPrompt, effectivePrompt), status: NODE_STATUS_LOADING,
@@ -309,7 +309,7 @@ export function useCanvasImageTools({
                 width: node.width, height: node.height,
                 metadata: {
                     ...canvasGenerationPromptMetadata(userPrompt, effectivePrompt), status: NODE_STATUS_LOADING,
-                    batchRootId: rootId, ...generationMetadata, ...styleMetadata,
+                    batchRootId: rootId, ...generationMetadata, ...styleMetadata, taskOutputIndex: index % editPlan.outputsPerRequest,
                 },
             }));
             setRunningNodeId(rootId);
@@ -324,38 +324,43 @@ export function useCanvasImageTools({
             let failureCount = 0;
             let representativeError: string | undefined;
             try {
-                await operation.wait(Promise.all(targetIds.map(async (targetId) => {
+                await operation.wait(Promise.all(imageEditOutputGroups(targetIds, editPlan.outputsPerRequest).map(async (outputNodeIds) => {
+                    const targetId = outputNodeIds[0]!;
+                    const completedOutputIds = new Set<string>();
                     try {
                         const result = await operation.wait(runBackendCanvasGenerationTask({
                             projectId, nodeId: targetId, mode: "image", prompt: effectivePrompt,
-                            config: { ...generationConfig, count: "1" }, referenceImages: [source],
-                            mask: { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl },
-                            signal: controller.signal, metadata: { sourceNodeId: node.id, edit: "mask", ...styleMetadata },
-                            onTaskCreated: (task) => operation.run(() => bindGenerationTask(targetId, task)),
+                            config: { ...generationConfig, count: String(editPlan.outputsPerRequest) }, referenceImages: [source],
+                            mask: payload.maskDataUrl ? { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl } : undefined,
+                            signal: controller.signal, metadata: { sourceNodeId: node.id, edit: payload.maskDataUrl ? "mask" : "angle", outputNodeIds, ...(localComposite ? { maskEditMode: "local-composite" } : {}), ...styleMetadata },
+                            onTaskCreated: (task) => operation.run(() => outputNodeIds.forEach((id) => bindGenerationTask(id, task))),
                         }));
-                        const image = result.images?.find((item) => item?.dataUrl);
-                        if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
-                        const uploaded = await operation.wait(uploadImage(image.dataUrl));
-                        const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
-                        const currentNode = nodesRef.current.find((item) => item.id === targetId);
-                        if (!currentNode) throw new Error("局部编辑节点已被删除");
-                        const finalizedNode = { ...currentNode, width: size.width, height: size.height, metadata: { ...currentNode.metadata, ...imageMetadata(uploaded), prompt: effectivePrompt, ...generationMetadata } };
-                        setNodes((current) => current.map((item) => {
-                            if (item.id === targetId) return finalizedNode;
-                            if (item.id !== rootId || requestedCount <= 1 || item.metadata?.primaryImageId) return item;
-                            return { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), primaryImageId: targetId, status: NODE_STATUS_SUCCESS } };
-                        }));
-                        await operation.wait(persistMediaNodes([finalizedNode], [], {}));
-                        hasSuccess = true;
+                        for (const [outputIndex, targetId] of outputNodeIds.entries()) {
+                            const image = result.images?.[outputIndex];
+                            if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
+                            const uploaded = await operation.wait(uploadImage(image.dataUrl));
+                            const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
+                            const currentNode = nodesRef.current.find((item) => item.id === targetId);
+                            if (!currentNode) throw new Error("局部编辑节点已被删除");
+                            const finalizedNode = { ...currentNode, width: size.width, height: size.height, metadata: { ...currentNode.metadata, ...imageMetadata(uploaded), prompt: effectivePrompt, ...generationMetadata, taskOutputIndex: outputIndex } };
+                            setNodes((current) => current.map((item) => {
+                                if (item.id === targetId) return finalizedNode;
+                                if (item.id !== rootId || requestedCount <= 1 || item.metadata?.primaryImageId) return item;
+                                return { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), primaryImageId: targetId, status: NODE_STATUS_SUCCESS } };
+                            }));
+                            await operation.wait(persistMediaNodes([finalizedNode], [], {}));
+                            hasSuccess = true;
+                            completedOutputIds.add(targetId);
+                        }
                     } catch (error) {
                         if (!operation.isCurrent()) return;
                         if (isGenerationCanceled(error)) return;
-                        failureCount += 1;
+                        failureCount += outputNodeIds.filter((id) => !completedOutputIds.has(id)).length;
                         const details = generationErrorMessage(error);
                         representativeError = details;
-                        setNodes((current) => current.map((item) => (item.id === targetId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: details } } : item)));
+                        setNodes((current) => current.map((item) => (outputNodeIds.includes(item.id) && !completedOutputIds.has(item.id) ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: details } } : item)));
                     } finally {
-                        if (operation.isCurrent()) finishGenerationRequest(targetId, controller);
+                        if (operation.isCurrent()) outputNodeIds.forEach((id) => finishGenerationRequest(id, controller));
                     }
                 })));
                 if (controller.signal.aborted) {
@@ -420,54 +425,9 @@ export function useCanvasImageTools({
     }, [beginMediaOperation, pageUi, projectId, persistMediaNodes, setConnections, setNodes]);
 
     const generateAngleNode = useCallback(async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
-        const operation = beginMediaOperation();
-        if (!operation.isCurrent()) return;
-        if (!node.metadata?.content) return;
-        const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1" };
-        if (!isAiConfigReady(generationConfig, generationConfig.model)) {
-            navigateToSettings({ continueCreation: true });
-            return;
-        }
-        const childId = nanoid();
-        const imageSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
-        const title = buildAngleLabel(params);
-        const prompt = buildAnglePrompt(params);
-        const source = nodeReferenceImage(node);
-        if (!source) return;
-        const styleExecution = resolveImageEditStyle(node, prompt, generationConfig);
-        if (!styleExecution) return;
-        const { prompt: effectivePrompt, metadata: styleMetadata } = styleExecution;
-        const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [source]);
         setAngleNodeId(null);
-        setRunningNodeId(childId);
-        setNodes((current) => [...current, { id: childId, type: CanvasNodeType.Image, title, position: { x: node.position.x + node.width + 96, y: node.position.y }, width: imageSpec.width, height: imageSpec.height, metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, ...generationMetadata, ...styleMetadata } }]);
-        setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
-        pageUi.getState().setSelectedNodeIds(new Set([childId]));
-        pageUi.getState().setDialogNodeId(childId);
-        const controller = startGenerationRequest(childId, node.id, childId);
-        try {
-            const result = await operation.wait(runBackendCanvasGenerationTask({ projectId, nodeId: childId, mode: "image", prompt: effectivePrompt, config: generationConfig, referenceImages: [source], signal: controller.signal, metadata: { sourceNodeId: node.id, edit: "angle", ...styleMetadata }, onTaskCreated: (task) => operation.run(() => bindGenerationTask(childId, task)) }));
-            const image = result.images?.[0];
-            if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
-            const uploaded = await operation.wait(uploadImage(image.dataUrl));
-            const size = fitNodeSize(uploaded.width, uploaded.height, imageSpec.width, imageSpec.height);
-            const currentNode = nodesRef.current.find((item) => item.id === childId);
-            if (!currentNode) throw new Error("视角生成节点已被删除");
-            const finalizedNode = { ...currentNode, width: size.width, height: size.height, metadata: { ...currentNode.metadata, ...imageMetadata(uploaded), prompt: effectivePrompt, ...generationMetadata } };
-            setNodes((current) => current.map((item) => item.id === childId ? finalizedNode : item));
-            await operation.wait(persistMediaNodes([finalizedNode], [], {}));
-        } catch (error) {
-            if (!operation.isCurrent()) return;
-            if (isGenerationCanceled(error)) return;
-            const details = generationErrorMessage(error);
-            setNodes((current) => current.map((item) => item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: details } } : item));
-        } finally {
-            if (operation.isCurrent()) {
-                finishGenerationRequest(childId, controller);
-                setRunningNodeId(null);
-            }
-        }
-    }, [beginMediaOperation, pageUi, bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setNodes, setRunningNodeId, startGenerationRequest]);
+        await generateImageEditNode(node, { prompt: buildAnglePrompt(params), title: buildAngleLabel(params), generationConfig: { count: "1" } });
+    }, [generateImageEditNode, setAngleNodeId]);
 
     const generateLightingNode = useCallback((node: CanvasNodeData, options: CanvasImageLightingOptions, prompt: string) => {
         if (!node.metadata?.content) return;
@@ -491,71 +451,16 @@ export function useCanvasImageTools({
     }, [pageUi, projectId, effectiveConfig, setConnections, setLightingNodeId, setNodes]);
 
     const generateEmotionNode = useCallback(async (node: CanvasNodeData, payload: CanvasImageEmotionPayload) => {
-        const operation = beginMediaOperation();
-        if (!operation.isCurrent()) return;
         if (!node.metadata?.content) return;
-        const baseConfig = buildGenerationConfig(effectiveConfig, node, "image");
-        const providerSize = emotionGenerationSize(payload.editRegion);
-        const generationConfig = { ...baseConfig, count: "1", size: providerSize, quality: !baseConfig.quality || baseConfig.quality === "auto" ? "high" : baseConfig.quality };
-        if (!isAiConfigReady(generationConfig, generationConfig.model)) { navigateToSettings({ continueCreation: true }); return; }
-        if (resolveModelRequestConfig(generationConfig, generationConfig.model).interfaceType !== "openai-image") {
-            message.error("表情编辑需要支持多参考图编辑的 OpenAI Images 渠道");
-            return;
-        }
-        const imageProfile = modelCapabilityConfigFor(generationConfig, generationConfig.model).image!;
-        const editPlan = resolveEmotionEditPlan(imageProfile.references.maskSupported);
-        const source = nodeReferenceImage(node);
-        if (!source) return;
-        const editReference = { id: `${node.id}-${payload.presetId}-edit-region`, name: "emotion-edit-region.png", type: "image/png", dataUrl: payload.sourceDataUrl };
-        const characterReference = { id: `${node.id}-${payload.presetId}-character`, name: `${payload.characterName}-face.jpg`, type: "image/jpeg", dataUrl: payload.characterDataUrl };
-        const childId = nanoid();
-        const styleExecution = resolveImageEditStyle(node, payload.prompt, generationConfig);
-        if (!styleExecution) return;
-        const { prompt: effectivePrompt, metadata: styleMetadata } = styleExecution;
-        const providerPrompt = normalizeEmotionPromptForProvider(effectivePrompt);
-        const generationMetadata = { ...buildImageGenerationMetadata("edit", generationConfig, 1, [source]), size: `${payload.imageWidth}x${payload.imageHeight}` };
-        const emotionEdit = { sourceNodeId: node.id, characterName: payload.characterName, presetId: payload.presetId, intimacy: payload.intimacy, arousal: payload.arousal, label: payload.label, faceBox: payload.faceBox, editRegion: payload.editRegion, sourceWidth: payload.imageWidth, sourceHeight: payload.imageHeight, providerSize, editMode: editPlan.mode };
-        if (editPlan.notice) message.info(editPlan.notice);
+        const edit = buildFullImageEmotionEdit(payload);
         setEmotionNodeId(null);
-        setRunningNodeId(childId);
-        setNodes((current) => [...current, { id: childId, type: CanvasNodeType.Image, title: `${payload.characterName} · ${payload.label}`, position: { x: node.position.x + node.width + 96, y: node.position.y }, width: node.width, height: node.height, metadata: { prompt: providerPrompt, status: NODE_STATUS_LOADING, ...generationMetadata, ...styleMetadata, emotionEdit } }]);
-        setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
-        pageUi.getState().setSelectedNodeIds(new Set([childId]));
-        pageUi.getState().setSelectedConnectionId(null);
-        pageUi.getState().setDialogNodeId(childId);
-        const controller = startGenerationRequest(childId, node.id, childId);
-        try {
-            const mask = emotionProviderMask(editPlan, { id: `${node.id}-emotion-mask`, name: "emotion-mask.png", type: "image/png", dataUrl: payload.maskDataUrl });
-            const result = await operation.wait(runBackendCanvasGenerationTask({ projectId, nodeId: childId, mode: "image", prompt: providerPrompt, config: generationConfig, referenceImages: [editReference, characterReference], mask, signal: controller.signal, metadata: { sourceNodeId: node.id, edit: "emotion", emotionEditMode: editPlan.mode, emotion: emotionEdit, ...styleMetadata }, onTaskCreated: (task) => operation.run(() => bindGenerationTask(childId, task)) }));
-            const image = result.images?.[0];
-            if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
-            const sourceDataUrl = await operation.wait(resolveImageUrl(node.metadata.storageKey, node.metadata.content, { cacheMiss: true }));
-            const composited = await operation.wait(compositeEmotionImage(sourceDataUrl, image.dataUrl, payload.editRegion, payload.faceBox));
-            const uploaded = await operation.wait(uploadImage(composited));
-            const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
-            const currentNode = nodesRef.current.find((item) => item.id === childId);
-            if (!currentNode) throw new Error("表情编辑节点已被删除");
-            const finalizedNode = { ...currentNode, width: size.width, height: size.height, metadata: { ...currentNode.metadata, ...imageMetadata(uploaded), prompt: providerPrompt, ...generationMetadata, emotionEdit } };
-            setNodes((current) => current.map((item) => item.id === childId ? finalizedNode : item));
-            await operation.wait(persistMediaNodes([finalizedNode], [], {}));
-        } catch (error) {
-            if (!operation.isCurrent()) return;
-            if (isGenerationCanceled(error)) return;
-            const details = generationErrorMessage(error);
-            message.error(details);
-            setNodes((current) => current.map((item) => item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: details } } : item));
-        } finally {
-            if (operation.isCurrent()) {
-                finishGenerationRequest(childId, controller);
-                setRunningNodeId(null);
-            }
-        }
-    }, [beginMediaOperation, pageUi, bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setNodes, setRunningNodeId, startGenerationRequest]);
+        await generateImageEditNode(node, { ...edit, title: `${payload.characterName} · ${payload.label}`, generationConfig: { count: "1" } });
+    }, [generateImageEditNode, setEmotionNodeId]);
 
     return {
         clearDeletedImageNodes, angleNodeId, lightingNodeId, emotionNodeId, annotationNodeId,
         createImageReversePromptNodes, openPortraitTextureEditor, cropImageNode, cropNodeId,
-        generateAngleNode, generateLightingNode, maskEditImageNode, maskEditNodeId, saveAnnotatedImageNode,
+        generateAngleNode, generateLightingNode, maskEditImageNode: generateImageEditNode, maskEditNodeId, saveAnnotatedImageNode,
         setAngleNodeId, setLightingNodeId, generateEmotionNode, setEmotionNodeId, setAnnotationNodeId,
         setCropNodeId, setMaskEditNodeId, setUpscaleNodeId, splitImageNode, upscaleImageNode, upscaleNodeId,
     };

@@ -47,6 +47,16 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 	} else if strings.TrimSpace(input.Config.ChannelID) != "" {
 		return nil, errors.New("无法解析系统渠道配置")
 	}
+	if input.Mode == "image" && metadataString(input.Metadata, "maskEditMode") == "local-composite" {
+		return runLocalMaskImageTask(ctx, input, executeConfigured)
+	}
+	return executeConfigured(ctx, input)
+}
+
+func executeConfigured(ctx context.Context, input Input) (map[string]any, error) {
+	runtime, _ := RuntimeFromContext(ctx)
+	userID := strings.TrimSpace(runtime.Call.UserID)
+	promptTemplateOperation := metadataString(input.Metadata, "promptTemplateOperation")
 	applyCanvasTextStreaming(runtime.Call.TaskType, &input)
 	if input.Upscale != nil {
 		if err := requireTaskRuntime(ctx); err != nil {

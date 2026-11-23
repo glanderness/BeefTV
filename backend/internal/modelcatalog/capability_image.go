@@ -407,6 +407,9 @@ func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
 	}
 	modelName := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(input.Config.Model)), "models/")
 	if len(input.ReferenceImages) > profile.References.MaxImages {
+		if profile.References.MaxImages == 0 {
+			return kernel.BadAuthRequest("当前图片模型仅支持文生图，不支持图片重绘")
+		}
 		return kernel.BadAuthRequest(fmt.Sprintf("当前图片模型最多支持 %d 张参考图", profile.References.MaxImages))
 	}
 	for _, media := range input.ReferenceImages {
@@ -414,7 +417,11 @@ func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
 			return kernel.BadAuthRequest("参考图片文件超过当前模型大小限制")
 		}
 	}
-	if input.Mask != nil && !profile.References.MaskSupported {
+	localComposite := metadataString(input.Metadata, "maskEditMode") == "local-composite"
+	if localComposite && (input.Mask == nil || len(input.ReferenceImages) != 1) {
+		return kernel.BadAuthRequest("局部融合需要一张原图和一张蒙版")
+	}
+	if input.Mask != nil && !profile.References.MaskSupported && !localComposite {
 		return kernel.BadAuthRequest("当前图片模型不支持蒙版编辑")
 	}
 	if profile.Size.Parameter != "none" && !profile.Size.AllowCustom && strings.TrimSpace(input.Config.Size) != "" && !containsCapabilityString(profile.Size.Values, input.Config.Size) {
