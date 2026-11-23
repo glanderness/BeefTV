@@ -519,7 +519,7 @@ test('Host rejects context from missing or previous connection IDs and reattache
   const restored = (await call('GET', '/beeftv/status')).body
   assert.equal(restored.connected, true)
   assert.notEqual(restored.connectionId, second)
-  assert.equal(calls.filter(call => call.command === '/usr/bin/open').length, 1)
+  assert.equal(calls.filter(call => call.command === expectedLaunchCall.command && call.args.length === expectedLaunchCall.args.length).length, 1)
   assert.equal(calls.filter(call => call.args.includes('--harness-attach-only')).length, 3)
 })
 

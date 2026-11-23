@@ -85,10 +85,12 @@ func TestHarnessAttachTimesOutWhenPipeNeverWrites(t *testing.T) {
 	}()
 
 	start := time.Now()
-	if _, err := attachDesktopHarness(dataDir); err == nil {
+	_, attachErr := attachDesktopHarness(dataDir)
+	if attachErr == nil {
 		t.Fatal("expected attach to fail when peer never writes harness config")
 	}
-	if elapsed := time.Since(start); elapsed > 6*time.Second {
-		t.Fatalf("expected attach read deadline (~2s) to fire promptly, took %s", elapsed)
+	elapsed := time.Since(start)
+	if elapsed < 1500*time.Millisecond || elapsed > 6*time.Second {
+		t.Fatalf("expected attach read deadline (~2s) to fire after owner check passed, took %s (err=%v)", elapsed, attachErr)
 	}
 }

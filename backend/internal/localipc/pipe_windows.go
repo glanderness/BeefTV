@@ -121,7 +121,7 @@ func VerifyCurrentUserPipeOwner(conn net.Conn) error {
 		return errors.New("unable to verify Windows pipe owner SID")
 	}
 	if !strings.EqualFold(owner.String(), wantSID) {
-		return errors.New("harness control pipe is not owned by the current user")
+		return fmt.Errorf("harness control pipe is not owned by the current user (owner=%s want=%s)", owner.String(), wantSID)
 	}
 	return nil
 }
@@ -444,13 +444,15 @@ func currentUserSecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Protected DACL explicitly denying NT AUTHORITY\NETWORK (NU) and granting
-	// GENERIC_ALL only to the exact current user SID (stripping Everyone/Anonymous),
-	// plus Medium Mandatory Label so normal-integrity CLI processes can talk to an
-	// elevated desktop instance of the same user while Low/Untrusted sandboxes cannot.
-	baseDACL := "D:P(D;;GA;;;NU)(A;;GA;;;" + sid + ")"
-	if sd, err := windows.SecurityDescriptorFromString(baseDACL + "S:(ML;;NW;;;ME)"); err == nil {
+	// Explicit Owner = current user SID (so elevated Administrators own pipes as their
+	// exact TokenUser SID rather than defaulting to BUILTIN\Administrators), protected
+	// DACL explicitly denying NT AUTHORITY\NETWORK (NU) and granting GENERIC_ALL only
+	// to the exact current user SID (stripping Everyone/Anonymous), plus Medium Mandatory
+	// Label so normal-integrity CLI processes can talk to an elevated desktop instance of
+	// the same user while Low/Untrusted sandboxes cannot.
+	baseSD := "O:" + sid + "D:P(D;;GA;;;NU)(A;;GA;;;" + sid + ")"
+	if sd, err := windows.SecurityDescriptorFromString(baseSD + "S:(ML;;NW;;;ME)"); err == nil {
 		return sd, nil
 	}
-	return windows.SecurityDescriptorFromString(baseDACL)
+	return windows.SecurityDescriptorFromString(baseSD)
 }
