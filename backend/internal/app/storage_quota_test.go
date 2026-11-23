@@ -7,6 +7,7 @@ import (
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	"infinite-canvas/backend/internal/resource"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -84,13 +85,13 @@ func TestValidateStructuredStorageQuotaAllowsReplacementThatShrinksData(t *testi
 
 func TestValidateTaskStorageQuotaRejectsHistoryGrowth(t *testing.T) {
 	policy := defaultRuntimePolicy().Resource
-	if err := validateTaskStorageQuotaWithPolicy(repository.UserStorageUsage{TaskCount: policy.TaskCount}, 0, policy); err == nil {
+	if err := resource.ValidateTaskStorageQuota(repository.UserStorageUsage{TaskCount: policy.TaskCount}, 0, policy); err == nil {
 		t.Fatal("validateTaskStorageQuota() count error = nil")
 	}
-	if err := validateTaskStorageQuotaWithPolicy(repository.UserStorageUsage{TaskBytes: gigabytes(policy.TaskDataGB)}, 1, policy); err == nil {
+	if err := resource.ValidateTaskStorageQuota(repository.UserStorageUsage{TaskBytes: gigabytes(policy.TaskDataGB)}, 1, policy); err == nil {
 		t.Fatal("validateTaskStorageQuota() byte error = nil")
 	}
-	if err := validateAPICallLogQuotaWithPolicy(repository.UserStorageUsage{APICallCount: policy.APICallLogCount}, 0, policy); err == nil {
+	if err := resource.ValidateAPICallLogQuota(repository.UserStorageUsage{APICallCount: policy.APICallLogCount}, 0, policy); err == nil {
 		t.Fatal("validateAPICallLogQuota() count error = nil")
 	}
 }

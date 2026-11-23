@@ -287,6 +287,12 @@ func parseTIFFOrientation(tiff []byte) int {
 	return 1
 }
 
+// NormalizeEXIFOrientation applies JPEG EXIF orientation (tag 0x0112) when present
+// so decoded pixel dimensions match browser-oriented image rendering.
+func NormalizeEXIFOrientation(data []byte, img image.Image) image.Image {
+	return applyOrientation(img, extractJPEGEXIFOrientation(data))
+}
+
 func applyOrientation(src image.Image, orientation int) image.Image {
 	if src == nil || orientation <= 1 || orientation > 8 {
 		return src

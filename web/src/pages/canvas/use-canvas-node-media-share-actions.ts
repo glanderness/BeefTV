@@ -8,6 +8,7 @@ import { uploadImage } from "@/services/image-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import { copyImageToSystemClipboard } from "@/services/image-clipboard";
+import { copyVideoToSystemClipboard } from "@/services/video-clipboard";
 
 type UseCanvasNodeMediaShareActionsParams = {
     projectId: string;
@@ -35,7 +36,7 @@ export function useCanvasNodeMediaShareActions({
             releaseCopiedNodesPastePriority();
             const content = node?.metadata?.content?.trim();
             const resourceId = resourceIdFromStorageKey(node?.metadata?.storageKey);
-            const copySource = content || (node?.type === CanvasNodeType.Image && resourceId ? resourceFileUrl(resourceId) : "");
+            const copySource = content || (resourceId ? resourceFileUrl(resourceId) : "");
             if (!node || !copySource) {
                 copyingNodeContentRef.current = false;
                 message.warning("没有可复制的内容");
@@ -43,24 +44,15 @@ export function useCanvasNodeMediaShareActions({
             }
 
             try {
+                if (node.type === CanvasNodeType.Video) {
+                    await copyVideoToSystemClipboard(node);
+                    message.success("视频已复制到剪贴板");
+                    return;
+                }
                 if (node.type === CanvasNodeType.Image) {
-                    try {
-                        await copyImageToSystemClipboard(copySource, node.metadata?.storageKey);
-                        message.success("图片已复制到剪贴板");
-                        return;
-                    } catch (imageErr) {
-                        const fallbackUrl = new URL(copySource, window.location.href).toString();
-                        if (navigator.clipboard?.writeText) {
-                            await navigator.clipboard.writeText(fallbackUrl).catch(() => undefined);
-                            message.info("由于浏览器未获得焦点，已为您复制图片地址");
-                            return;
-                        }
-                        if (await copyToClipboard(fallbackUrl)) {
-                            message.info("由于浏览器未获得焦点，已为您复制图片地址");
-                            return;
-                        }
-                        throw imageErr;
-                    }
+                    await copyImageToSystemClipboard(copySource, node.metadata?.storageKey);
+                    message.success("图片已复制到剪贴板");
+                    return;
                 }
 
                 if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(copySource);

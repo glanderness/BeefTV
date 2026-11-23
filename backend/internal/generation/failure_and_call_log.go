@@ -1,6 +1,7 @@
 package generation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -502,15 +503,29 @@ func (p localReferenceStoragePort) Upload(ctx context.Context, userID, resourceI
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	config, err := referencestorage.Load(p.dataDir)
-	if err != nil {
-		return "", errors.New("参考素材对象存储配置无法读取")
-	}
 	_, body, err := p.openResource(userID, resourceID)
 	if err != nil {
 		return "", errors.New("参考素材无法读取，请检查素材是否仍在当前工作区")
 	}
 	defer body.Close()
+	return p.uploadReader(ctx, body)
+}
+
+func (p localReferenceStoragePort) UploadBytes(ctx context.Context, data []byte) (string, error) {
+	return p.uploadReader(ctx, bytes.NewReader(data))
+}
+
+func (p localReferenceStoragePort) uploadReader(ctx context.Context, body io.Reader) (string, error) {
+	if p.localMode == nil || !p.localMode() {
+		return "", errors.New("当前工作区未启用本地素材上传")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	config, err := referencestorage.Load(p.dataDir)
+	if err != nil {
+		return "", errors.New("参考素材对象存储配置无法读取")
+	}
 	temp := filepath.Join(p.dataDir, "cache", "tmp")
 	if err := os.MkdirAll(temp, 0700); err != nil {
 		return "", errors.New("无法准备参考素材，请检查本地磁盘")

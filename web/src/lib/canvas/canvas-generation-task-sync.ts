@@ -144,19 +144,20 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
         const imageSource = image?.dataUrl || image?.url || "";
         const reuseImageKey = reuseGeneratedMediaStorageKey(image?.storageKey, imageSource);
         if (!imageSource && !reuseImageKey) throw new Error("后端任务没有返回图片");
-        if (node.metadata?.emotionEdit && !image?.dataUrl) throw new Error("后端任务没有返回图片");
-        let resultDataUrl = image?.dataUrl || imageSource;
         const emotionEdit = node.metadata?.emotionEdit;
-        if (emotionEdit) {
-            if (!emotionEdit.editRegion) throw new Error("情绪编辑任务缺少局部合成区域，已拒绝使用整图重绘结果");
-            const sourceNode = nodes.find((item) => item.id === emotionEdit.sourceNodeId);
+        const legacyCroppedEmotion = emotionEdit && !emotionEdit.fullImage ? emotionEdit : undefined;
+        if (legacyCroppedEmotion && !image?.dataUrl) throw new Error("后端任务没有返回图片");
+        let resultDataUrl = image?.dataUrl || imageSource;
+        if (legacyCroppedEmotion) {
+            if (!legacyCroppedEmotion.editRegion) throw new Error("情绪编辑任务缺少局部合成区域，已拒绝使用整图重绘结果");
+            const sourceNode = nodes.find((item) => item.id === legacyCroppedEmotion.sourceNodeId);
             if (!sourceNode?.metadata?.content) throw new Error("情绪编辑源图片已删除，无法恢复局部合成结果");
             const sourceDataUrl = await resolveImageUrl(sourceNode.metadata.storageKey, sourceNode.metadata.content);
             if (!sourceDataUrl) throw new Error("无法读取情绪编辑源图片，未使用整图重绘结果");
-            resultDataUrl = await compositeEmotionImage(sourceDataUrl, resultDataUrl, emotionEdit.editRegion, emotionEdit.faceBox);
+            resultDataUrl = await compositeEmotionImage(sourceDataUrl, resultDataUrl, legacyCroppedEmotion.editRegion, legacyCroppedEmotion.faceBox);
         }
         const uploaded =
-            reuseImageKey && !emotionEdit
+            reuseImageKey && !legacyCroppedEmotion
                 ? { url: await mediaIO.resolveImageUrl(reuseImageKey, imageSource), storageKey: reuseImageKey, width: image?.width || 1024, height: image?.height || 1024, bytes: image?.bytes || 0, mimeType: image?.mimeType || "image/png" }
                 : await mediaIO.uploadImage(resultDataUrl);
         const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];

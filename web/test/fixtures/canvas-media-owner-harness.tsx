@@ -41,10 +41,22 @@ function Harness() {
         startUploadStatus: (() => ({ update() {}, done() {}, fail() {} })) as any,
         startGenerationRequest: () => new AbortController(),
         finishGenerationRequest: () => undefined,
-        bindGenerationTask: () => { fixture.bound++; },
+        bindGenerationTask: (targetNodeId, task) => {
+            fixture.bound++;
+            if (!nodesRef.current.some((item) => item.id === targetNodeId)) return;
+            const next = nodesRef.current.map((item) =>
+                item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, taskId: task.id } } : item,
+            );
+            nodesRef.current = next;
+            setNodes((current) => current.map((item) =>
+                item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, taskId: task.id } } : item,
+            ));
+        },
     });
     useLayoutEffect(() => {
-        fixture.snapshot = () => ({ projectId, nodes, connections, running, ui: [...pageUi.getState().selectedNodeIds], calls: [...fixture.calls], persisted: fixture.persisted, bound: fixture.bound, done: fixture.done, error: fixture.error });
+        fixture.snapshot = () => ({ projectId, nodes, connections, running, ui: [...pageUi.getState().selectedNodeIds], calls: [...fixture.calls], persisted: fixture.persisted, bound: fixture.bound, done: fixture.done, error: fixture.error, requests: fixture.requests || [], angleNodeId: tools.angleNodeId, emotionNodeId: tools.emotionNodeId, lastResult: fixture.lastResult });
+        fixture.openAngle = (id: string | null) => tools.setAngleNodeId(id);
+        fixture.openEmotion = (id: string | null) => tools.setEmotionNodeId(id);
         fixture.switchOwner = (mode: string) => {
             if (mode === "account") setActiveUserScope("media-owner-b");
             if (mode === "account-return") { setActiveUserScope("media-owner-b"); setActiveUserScope("media-owner-a"); }
@@ -55,10 +67,12 @@ function Harness() {
             setRunning(null);
             pageUi.getState().setSelectedNodeIds(new Set());
         };
-        fixture.start = (name: string, pauseAt = 1) => {
+        fixture.start = (name: string, pauseAt = 1, options?: { storageOnly?: boolean }) => {
             fixture.pauseAt = pauseAt;
             const video = nodesRef.current[0];
-            const picture = { ...video, type: CanvasNodeType.Image };
+            const picture = options?.storageOnly
+                ? { ...video, type: CanvasNodeType.Image, metadata: { storageKey: "resource:original", durationMs: 2000 } }
+                : { ...video, type: CanvasNodeType.Image };
             const args: Record<string, any[]> = {
                 cropImageNode: [picture, { x: 0, y: 0, width: 0.5, height: 0.5 }],
                 cropVideoNode: [video, { x: 0, y: 0, width: 160, height: 90 }, { width: 320, height: 180 }],
@@ -72,10 +86,10 @@ function Harness() {
                 maskEditImageNode: [picture, { prompt: "Edit", maskDataUrl: image }],
                 upscaleImageNode: [picture, { targetLongEdge: 2048, algorithm: "lanczos" }],
                 generateAngleNode: [picture, { horizontalAngle: 45, pitchAngle: 0, cameraDistance: 4.8, wideAngle: false }],
-                generateEmotionNode: [picture, { presetId: "fixture", characterName: "Actor", prompt: "Smile", label: "Smile", sourceDataUrl: image, maskDataUrl: image, characterDataUrl: image, editRegion: { x: 0, y: 0, width: 100, height: 100 }, faceBox: { id: "face", x: 0, y: 0, width: 100, height: 100, source: "manual" }, imageWidth: 320, imageHeight: 180 }],
+                generateEmotionNode: [picture, { presetId: "fixture", characterName: "Actor", label: "Smile", faceBox: { id: "face", x: 0, y: 0, width: 100, height: 100, source: "manual" }, imageWidth: 320, imageHeight: 180 }],
             };
             const action = (tools as any)[name];
-            Promise.resolve(action(...args[name])).catch(error => { fixture.error = String(error); }).finally(() => { fixture.done = true; });
+            Promise.resolve(action(...args[name])).then(result => { fixture.lastResult = result; }).catch(error => { fixture.error = String(error); }).finally(() => { fixture.done = true; });
         };
     });
     return <output>{nodes.length}</output>;

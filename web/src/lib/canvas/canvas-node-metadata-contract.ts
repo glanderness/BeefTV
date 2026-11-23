@@ -177,6 +177,7 @@ export const UPLOAD_REPLACEMENT_RESET_KEYS = [
     "depthSourceNodeId",
     "importSource",
     "emotionEdit",
+    "maskEdit",
     "portraitTexture",
     "cameraControl",
 ] as const satisfies ReadonlyArray<keyof CanvasNodeMetadata | (typeof GENERATION_ERROR_METADATA_KEYS)[number]>;

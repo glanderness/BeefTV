@@ -32,6 +32,9 @@ type DesktopApp struct {
 	migrationMu             sync.Mutex
 	workspaceLockMu         sync.Mutex
 	batchSaveMu             sync.Mutex
+	mediaClipboardMu        sync.Mutex
+	mediaClipboardPath      string
+	writeMediaClipboard     func(context.Context, string) error
 	batchDirToken           string
 	batchDirPath            string
 	batchDirExpiresAt       time.Time

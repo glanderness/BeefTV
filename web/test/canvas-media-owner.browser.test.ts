@@ -7,7 +7,7 @@ let server: ReturnType<typeof Bun.serve>;
 const root = resolve(import.meta.dir, "../src") + "/";
 const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const step = "const step=(name,value)=>window.__mediaTest.step(name,value);";
-const uploaded = JSON.stringify({ dataUrl: image, url: image, storageKey: "fixture-result", width: 320, height: 180, durationMs: 1000 });
+const uploaded = JSON.stringify({ dataUrl: image, url: image, storageKey: "resource:fixture-result", width: 320, height: 180, durationMs: 1000 });
 const mocks: Record<string, string> = {
     "@/services/image-storage": `${step} export const uploadImage=async()=>step('uploadImage',${uploaded}); export const resolveImageUrl=async()=>step('resolveImageUrl',${JSON.stringify(image)}); export const getImageBlob=async()=>null;`,
     "@/services/file-storage": `${step} export const uploadMediaFile=async()=>step('uploadMediaFile',${uploaded}); export const resolveMediaUrl=async()=>step('resolveMediaUrl','fixture-video'); export const getMediaBlob=async()=>null;`,
@@ -17,10 +17,10 @@ const mocks: Record<string, string> = {
     "@/lib/canvas/canvas-video-merge": `${step} export const warmFFmpeg=async()=>{}; export const mergeVideos=async()=>step('mergeVideos',new Blob(['fixture']));`,
     "@/lib/canvas/canvas-video-frame": `${step} export const captureVideoFrames=async()=>step('captureVideoFrames',{frames:[{timeMs:0,blob:new Blob(['fixture'])}],failures:[]}); export const resolveVideoFramePresetTimeMs=()=>0;`,
     "@/lib/canvas/canvas-media-persist": "export async function persistOwnedCanvasMediaNodes(){window.__mediaTest.persisted++;return true;}",
-    "@/lib/canvas/canvas-project-generation": `${step} export * from ${JSON.stringify(root + "lib/canvas/canvas-project-generation.ts")}; export const buildGenerationConfig=(config)=>config; export const buildImageGenerationMetadata=()=>({}); export const nodeReferenceImage=()=>({id:'source',dataUrl:${JSON.stringify(image)}}); export async function runBackendCanvasGenerationTask(input){const value=await step('createTask',{images:[{dataUrl:${JSON.stringify(image)}}]});input.onTaskCreated?.({id:'original-task'});return value;}`,
-    "@/lib/model-capabilities": "export const modelCapabilityConfigFor=()=>({image:{references:{maskSupported:true}}});",
-    "@/lib/model-selection": "export const defaultImageParamsForModel=()=>({size:'1024x1024',quality:'high',transparentBackground:'false'}); export const resolveMaskEditModel=(c)=>c?.imageModel||c?.model||''; export const normalizeMaskEditQuality=(q)=>q||'high'; export const normalizeMaskEditSize=(s)=>s||'1024x1024';",
-    "@/stores/use-config-store": "export const defaultConfig={model:'fixture-model',imageModel:'fixture-model',count:'1',quality:'high',size:'1024x1024'}; export const useEffectiveConfig=()=>defaultConfig; export const useConfigStore=(select)=>select({isAiConfigReady:()=>true}); export const resolveModelRequestConfig=()=>({interfaceType:'openai-image'});",
+    "@/lib/canvas/canvas-project-generation": `${step} export * from ${JSON.stringify(root + "lib/canvas/canvas-project-generation.ts")}; export const buildGenerationConfig=(config)=>({...config,...window.__mediaTest?.config}); export const buildImageGenerationMetadata=()=>({}); export const nodeReferenceImage=()=>({id:'source',dataUrl:${JSON.stringify(image)}}); export async function runBackendCanvasGenerationTask(input){window.__mediaTest.requests??=[];window.__mediaTest.requests.push({model:input.config.model,count:input.config.count,referenceCount:input.referenceImages.length,mask:!!input.mask,maskDataUrl:input.mask?.dataUrl,maskStorageKey:input.mask?.storageKey,metadata:input.metadata});const fallback={images:Array.from({length:Number(input.config.count)||1},()=>({dataUrl:${JSON.stringify(image)}}))};const value=await step('createTask',window.__mediaTest?.taskResult||fallback);input.onTaskCreated?.({id:'original-task',inputJson:JSON.stringify({mode:'image',metadata:input.metadata})});return value;}`,
+    "@/lib/model-capabilities": `export * from ${JSON.stringify(root + "lib/model-capabilities.ts")}; export const modelCapabilityConfigFor=()=>({image:window.__mediaTest?.profile||{references:{maskSupported:true,maxImages:16},size:{parameter:'size',values:['1024x1024'],default:'1024x1024',allowCustom:true},quality:{supported:true,values:['high'],default:'high'},transparentBackground:{supported:false,default:false},maxOutputs:8}});`,
+    "@/lib/model-selection": "export const defaultImageParamsForModel=()=>({size:'1024x1024',quality:'high',transparentBackground:'false'}); export const resolveMaskEditModel=(c,requested)=>requested||c?.imageModel||c?.model||''; export const normalizeMaskEditQuality=(q)=>q||'high'; export const normalizeMaskEditSize=(s)=>s||'1024x1024';",
+    "@/stores/use-config-store": "export const defaultConfig={model:'fixture-model',imageModel:'fixture-model',count:'1',quality:'high',size:'1024x1024'}; export const useEffectiveConfig=()=>({...defaultConfig,...window.__mediaTest?.config}); export const useConfigStore=(select)=>select({isAiConfigReady:()=>true}); export const resolveModelRequestConfig=()=>({interfaceType:'openai-image'});",
     "@/lib/canvas/canvas-emotion": `${step} export * from ${JSON.stringify(root + "lib/canvas/canvas-emotion.ts")}; export const compositeEmotionImage=async()=>step('compositeEmotionImage',${JSON.stringify(image)});`,
 };
 
@@ -43,6 +43,160 @@ beforeAll(async () => {
 afterAll(async () => { await browser?.close(); server?.stop(true); });
 
 const tools = ["cropImageNode", "cropVideoNode", "saveAnnotatedImageNode", "extractVideoFrames", "confirmInlineVideoTrim", "extractAudioFromVideo", "mergeVideosByIds", "addPanoramaCaptureNode", "splitImageNode", "maskEditImageNode", "upscaleImageNode", "generateAngleNode", "generateEmotionNode"];
+
+for (const scenario of [
+    { name: "native-mask", native: true, outputs: 1, tool: "maskEditImageNode" },
+    { name: "local-fusion", native: false, outputs: 1, tool: "maskEditImageNode" },
+    { name: "fixed-four", native: false, outputs: 4, tool: "maskEditImageNode" },
+    { name: "single-reference-expression", native: false, outputs: 4, tool: "generateEmotionNode" },
+    { name: "fixed-four-angle", native: false, outputs: 4, tool: "generateAngleNode" },
+]) {
+    test(`image editing preserves model and every output: ${scenario.name}`, async () => {
+        const page = await browser.newPage();
+        try {
+            await page.goto(server.url.toString());
+            await page.waitForFunction(() => Boolean((window as any).__mediaTest?.start));
+            await page.evaluate((scenario) => {
+                const fixture = (window as any).__mediaTest;
+                fixture.config = { model: "selected-image-model", imageModel: "selected-image-model" };
+                fixture.profile = {
+                    references: { maskSupported: scenario.native, maxImages: 1 },
+                    size: { parameter: "size", values: ["1024x1024"], default: "1024x1024", allowCustom: true },
+                    quality: { supported: false, values: [], default: "auto" },
+                    transparentBackground: { supported: false, default: false },
+                    maxOutputs: scenario.outputs, fixedOutputs: scenario.outputs === 4 ? 4 : undefined,
+                };
+                fixture.start(scenario.tool);
+            }, scenario);
+            await page.waitForFunction(() => Boolean((window as any).__mediaTest.release) || (window as any).__mediaTest.done);
+            await page.evaluate(() => (window as any).__mediaTest.release?.());
+            await page.waitForFunction(() => (window as any).__mediaTest.done);
+            const result = await page.evaluate(() => (window as any).__mediaTest.snapshot());
+            expect(result.error).toBeNull();
+            expect(result.requests).toHaveLength(1);
+            const request = result.requests[0];
+            expect(request.model).toBe("selected-image-model");
+            expect(request.count).toBe(String(scenario.outputs));
+            expect(request.referenceCount).toBe(1);
+            expect(request.metadata.outputNodeIds).toHaveLength(scenario.outputs);
+            expect(request.mask).toBe(scenario.tool !== "generateAngleNode");
+            expect(request.metadata.edit).toBe(scenario.tool === "generateEmotionNode" ? "emotion" : scenario.tool === "generateAngleNode" ? "angle" : "mask");
+            expect(request.metadata.maskEditMode).toBe(!scenario.native && scenario.tool !== "generateAngleNode" ? "local-composite" : undefined);
+            const outputs = result.nodes.filter((node: any) => request.metadata.outputNodeIds.includes(node.id));
+            expect(outputs).toHaveLength(scenario.outputs);
+            expect(outputs.map((node: any) => node.metadata.taskOutputIndex)).toEqual(Array.from({ length: scenario.outputs }, (_, index) => index));
+            expect(outputs.every((node: any) => node.metadata.status === "success")).toBe(true);
+            expect(outputs.every((node: any) => node.metadata.taskId === "original-task")).toBe(true);
+            if (scenario.tool === "maskEditImageNode") {
+                expect(request.maskStorageKey).toBe("resource:fixture-result");
+                expect(request.maskDataUrl).toBe("");
+                expect(outputs.every((node: any) => node.metadata.maskEdit?.sourceNodeId === "n0" && node.metadata.maskEdit?.maskStorageKey === "resource:fixture-result")).toBe(true);
+            }
+            if (scenario.tool === "generateEmotionNode") {
+                expect(outputs.every((node: any) => node.title.startsWith("Actor · Smile · "))).toBe(true);
+                expect(outputs.every((node: any) => node.metadata.emotionEdit?.fullImage === true && node.metadata.emotionEdit?.sourceNodeId === "n0")).toBe(true);
+                const maskAlphas = await page.evaluate(async (maskUrl: string) => {
+                    const img = new Image();
+                    img.src = maskUrl;
+                    await img.decode();
+                    const canvas = document.createElement("canvas");
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext("2d")!;
+                    ctx.drawImage(img, 0, 0);
+                    const data = ctx.getImageData(0, 0, img.width, img.height).data;
+                    let transparent = 0, feathered = 0, opaque = 0;
+                    for (let i = 3; i < data.length; i += 4) {
+                        if (data[i] === 0) transparent++;
+                        else if (data[i] === 255) opaque++;
+                        else feathered++;
+                    }
+                    return { transparent, feathered, opaque };
+                }, request.maskDataUrl);
+                expect(maskAlphas.transparent).toBeGreaterThan(0);
+                expect(maskAlphas.feathered).toBeGreaterThan(0);
+                expect(maskAlphas.opaque).toBeGreaterThan(0);
+            }
+        } finally { await page.close(); }
+    });
+}
+test("image editing reuses backend storageKey and accepts url-only outputs without re-uploading", async () => {
+    const page = await browser.newPage();
+    try {
+        await page.goto(server.url.toString());
+        await page.waitForFunction(() => Boolean((window as any).__mediaTest?.start));
+        await page.evaluate(() => {
+            const fixture = (window as any).__mediaTest;
+            fixture.taskResult = { images: [{ url: "/api/resources/backend-owned/file", storageKey: "resource:backend-owned", width: 512, height: 512 }] };
+            fixture.start("generateAngleNode");
+        });
+        await page.waitForFunction(() => Boolean((window as any).__mediaTest.release) || (window as any).__mediaTest.done);
+        await page.evaluate(() => (window as any).__mediaTest.release?.());
+        await page.waitForFunction(() => (window as any).__mediaTest.done);
+        const result = await page.evaluate(() => (window as any).__mediaTest.snapshot());
+        expect(result.error).toBeNull();
+        expect(result.calls).toContain("resolveImageUrl");
+        expect(result.calls).not.toContain("uploadImage");
+        const created = result.nodes.find((node: any) => node.id !== "n0" && node.id !== "n1");
+        expect(created?.metadata?.storageKey).toBe("resource:backend-owned");
+    } finally { await page.close(); }
+});
+test("generateAngleNode accepts storageKey-only nodes and angle/emotion editors stay open when validation rejects", async () => {
+    const page = await browser.newPage();
+    try {
+        await page.goto(server.url.toString());
+        await page.waitForFunction(() => Boolean((window as any).__mediaTest?.start));
+        await page.evaluate(() => {
+            const fixture = (window as any).__mediaTest;
+            fixture.openAngle("n0");
+            fixture.openEmotion("n0");
+            fixture.profile = {
+                references: { maskSupported: false, maxImages: 0 },
+                size: { parameter: "size", values: ["1024x1024"], default: "1024x1024", allowCustom: false },
+                quality: { supported: false, values: [], default: "auto" },
+                transparentBackground: { supported: false, default: false },
+                maxOutputs: 1,
+            };
+        });
+        await page.waitForFunction(() => (window as any).__mediaTest.snapshot().angleNodeId === "n0" && (window as any).__mediaTest.snapshot().emotionNodeId === "n0");
+        await page.evaluate(() => (window as any).__mediaTest.start("generateAngleNode", 1, { storageOnly: true }));
+        await page.waitForFunction(() => (window as any).__mediaTest.done);
+        let snap = await page.evaluate(() => (window as any).__mediaTest.snapshot());
+        expect(snap.lastResult).toBe(false);
+        expect(snap.requests).toHaveLength(0);
+        expect(snap.angleNodeId).toBe("n0");
+
+        await page.evaluate(() => {
+            const fixture = (window as any).__mediaTest;
+            fixture.done = false;
+            fixture.start("generateEmotionNode", 1);
+        });
+        await page.waitForFunction(() => (window as any).__mediaTest.done);
+        snap = await page.evaluate(() => (window as any).__mediaTest.snapshot());
+        expect(snap.lastResult).toBe(false);
+        expect(snap.requests).toHaveLength(0);
+        expect(snap.emotionNodeId).toBe("n0");
+
+        await page.evaluate(() => {
+            const fixture = (window as any).__mediaTest;
+            fixture.done = false;
+            fixture.profile = {
+                references: { maskSupported: false, maxImages: 1 },
+                size: { parameter: "size", values: ["1024x1024"], default: "1024x1024", allowCustom: false },
+                quality: { supported: false, values: [], default: "auto" },
+                transparentBackground: { supported: false, default: false },
+                maxOutputs: 1,
+            };
+            fixture.start("generateAngleNode", 1, { storageOnly: true });
+        });
+        await page.waitForFunction(() => Boolean((window as any).__mediaTest.release) || (window as any).__mediaTest.done);
+        snap = await page.evaluate(() => (window as any).__mediaTest.snapshot());
+        expect(snap.angleNodeId).toBeNull();
+        expect(snap.requests).toHaveLength(1);
+        await page.evaluate(() => (window as any).__mediaTest.release?.());
+        await page.waitForFunction(() => (window as any).__mediaTest.done);
+    } finally { await page.close(); }
+});
 for (const tool of tools) {
     test(`${tool}: same owner finishes and keeps the existing result path`, async () => {
         const page = await browser.newPage();

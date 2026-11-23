@@ -97,7 +97,7 @@ type CanvasProjectWorldLayersProps = {
     maskEditNodeId?: string | null;
     maskEditConfig?: AiConfig;
     onCancelMaskEdit?: () => void;
-    onConfirmMaskEdit?: (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => void | Promise<void>;
+    onConfirmMaskEdit?: (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => void | Promise<unknown>;
     videoCropNodeId?: string | null;
     onCancelVideoCrop?: () => void;
     onConfirmVideoCrop?: (node: CanvasNodeData, crop: CanvasVideoCropRect, sourceDimensions: { width: number; height: number }) => void | Promise<void>;

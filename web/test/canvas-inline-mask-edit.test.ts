@@ -36,6 +36,19 @@ beforeEach(() => {
 });
 
 describe("inline canvas mask editing", () => {
+    test("shows the text-only configuration notice before a repaint can be submitted", () => {
+        const model = "custom::moss-image-sft";
+        const html = renderToStaticMarkup(createElement(CanvasImageMaskEditor, {
+            imageDimensions: { width: 512, height: 512 }, scale: 1,
+            config: { ...defaultConfig, model, imageModel: model, imageModels: [model], channels: [{ id: "custom", name: "Custom", models: ["moss-image-sft"], interfaceType: "openai-image" }] },
+            onCancel: () => undefined, onConfirm: () => undefined,
+        }));
+        expect(html).toContain("当前模型配置仅支持文生图，不支持图片重绘");
+        expect(html).toContain('role="status"');
+        expect(html).toContain("disabled:cursor-not-allowed");
+        expect(html).not.toContain("disabled:cursor-wait");
+    });
+
     test("renders inline mask editor with prompt input, settings, and semantic theme tokens", () => {
         const html = renderToStaticMarkup(
             createElement(CanvasImageMaskEditor, {

@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { canvasNodeDragEndChrome, isCanvasPointerMoving } from "@/pages/canvas/canvas-pointer-chrome";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { fetchingTaskOutcome, readyTaskOutcome, runningTaskOutcome } from "@/lib/task-outcome";
 import { createCanvasStageOverlayProps, makeCanvasNode } from "./helpers/canvas-stage-overlays-fixture";
 
 const panelOverlays: Array<Record<string, unknown>> = [];
@@ -53,6 +54,29 @@ beforeEach(() => {
 });
 
 describe("canvas node drag overlays", () => {
+    for (const type of [CanvasNodeType.Image, CanvasNodeType.Video]) {
+        test(`hides ${type} processing tools throughout generation and restores them afterward`, () => {
+            const states = [
+                { status: "loading" },
+                { status: "loading", content: "previous-result" },
+                { taskId: "task-1", taskStatus: "queued" },
+                { taskId: "task-1", taskStatus: "running", content: "previous-result" },
+                { taskOutcome: runningTaskOutcome() },
+                { taskOutcome: fetchingTaskOutcome(), storageKey: "previous-result" },
+                { status: "success", taskOutcome: readyTaskOutcome(), content: "result" },
+                { status: "error", taskStatus: "failed" },
+                { taskStatus: "cancelled" },
+                { content: "imported-result" },
+            ];
+            for (const [index, metadata] of states.entries()) {
+                toolbars.length = 0;
+                const toolbarNode = makeCanvasNode("media-1", type, metadata);
+                renderToStaticMarkup(createElement(CanvasProjectStageOverlays, createCanvasStageOverlayProps({ toolbarNode })));
+                expect(toolbars[0]?.node).toEqual(index < 6 ? null : toolbarNode);
+            }
+        });
+    }
+
     test("treats either pointer dragging or active drag preview as moving", () => {
         expect(isCanvasPointerMoving(false, null)).toBe(false);
         expect(isCanvasPointerMoving(false, { nodeIds: new Set() })).toBe(false);

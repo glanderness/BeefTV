@@ -83,7 +83,7 @@ type CanvasNodeProps = {
     maskEditActive?: boolean;
     maskEditConfig?: AiConfig;
     onCancelMaskEdit?: () => void;
-    onConfirmMaskEdit?: (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => void | Promise<void>;
+    onConfirmMaskEdit?: (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => void | Promise<unknown>;
     videoCropActive?: boolean;
     onCancelVideoCrop?: () => void;
     onConfirmVideoCrop?: (node: CanvasNodeData, crop: CanvasVideoCropRect, sourceDimensions: { width: number; height: number }) => void | Promise<void>;

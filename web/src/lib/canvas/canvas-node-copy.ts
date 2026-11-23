@@ -115,6 +115,10 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
         faceBox: { ...node.metadata.emotionEdit.faceBox },
         editRegion: node.metadata.emotionEdit.editRegion ? { ...node.metadata.emotionEdit.editRegion } : undefined,
     } : undefined;
+    metadata.maskEdit = node.metadata?.maskEdit ? {
+        ...node.metadata.maskEdit,
+        sourceNodeId: remapReferenceId(node.metadata.maskEdit.sourceNodeId, idMap)!,
+    } : undefined;
     metadata.storyboard = node.metadata?.storyboard ? {
         rows: node.metadata.storyboard.rows.map((row) => copyStoryboardRow(row, idMap)),
         visibleColumns: [...node.metadata.storyboard.visibleColumns],

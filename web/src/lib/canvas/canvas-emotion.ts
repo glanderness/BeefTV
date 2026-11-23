@@ -15,15 +15,6 @@ export type CanvasEmotionEditRegion = {
     height: number;
 };
 
-export type CanvasEmotionImageArtifacts = {
-    sourceDataUrl: string;
-    maskDataUrl: string;
-    characterDataUrl: string;
-    editRegion: CanvasEmotionEditRegion;
-    imageWidth: number;
-    imageHeight: number;
-};
-
 export type CanvasEmotionPreset = {
     id: string;
     label: string;
@@ -39,24 +30,6 @@ export type CanvasEmotionParams = {
     characterName: string;
     faceBox: CanvasFaceBox;
 };
-
-export type CanvasEmotionEditMode = "provider-mask" | "local-composite";
-
-export type CanvasEmotionEditPlan = {
-    mode: CanvasEmotionEditMode;
-    includeMask: boolean;
-    notice?: string;
-};
-
-export function resolveEmotionEditPlan(maskSupported: boolean): CanvasEmotionEditPlan {
-    return maskSupported
-        ? { mode: "provider-mask", includeMask: true }
-        : { mode: "local-composite", includeMask: false, notice: "当前渠道不支持蒙版，使用脸部裁切与本地羽化融合" };
-}
-
-export function emotionProviderMask<T>(plan: CanvasEmotionEditPlan, mask: T) {
-    return plan.includeMask ? mask : undefined;
-}
 
 type BlendshapeName =
     | "browInnerUp"
@@ -181,23 +154,23 @@ export function buildEmotionPrompt(params: CanvasEmotionParams, editRegion: Canv
     const preset = canvasEmotionPresets.find((item) => item.id === params.presetId) || findEmotionPreset(params.intimacy, params.arousal);
     const targetRegion = describeEmotionTarget(params.faceBox, editRegion);
     return [
-        `仅修改第一张输入图中“${params.characterName}”脸部的表情，其他像素保持源图一致。`,
+        `仅修改原图中“${params.characterName}”脸部的表情，其他像素保持源图一致。`,
         `目标情绪：${preset.label}；表情要求：${preset.prompt}。情绪强度通过眉眼、嘴角和脸颊的肌肉张力表达，不要通过夸大嘴巴或重绘整张脸表达。`,
-        "第一张输入图是唯一编辑目标，第二张输入图仅用于核对同一人物身份，不得复制第二张图的构图、背景或光线。",
         targetRegion,
-        "如果第一张输入图中出现其他人脸，其他人脸全部视为不可编辑背景；只允许修改目标人脸框及其邻近表情区域。",
+        "如果原图中出现其他人脸，其他人脸全部视为不可编辑背景；只允许修改目标人脸框及其邻近表情区域。",
         "只改变眉眼开合、眼角、嘴角、脸颊和口腔内部的表情细节；保持眼睛大小与方向、嘴裂宽度、牙齿数量大小排列、嘴唇厚度、下巴轮廓和脸型自然且与原图一致。",
-        "输入图已裁切到目标人物头部区域；只重绘目标人脸及其表情相关细节，不要生成或修改裁切图中的其他内容。",
         "严格保持人物身份、五官比例、肤色、发型、发丝、耳朵、配饰、服装、姿势、头部朝向、镜头、景深、光线、背景及画面其他人物不变；不要重绘眼镜、帽子或遮挡物。",
         "禁止夸张卡通笑、嘴巴过大或拉宽、牙齿像整齐白墙、露出不自然牙龈、眼睛变形或眯成线、脸颊鼓包、塑料磨皮、重复五官，以及任何身份漂移。",
     ].join("\n");
 }
 
-export function normalizeEmotionPromptForProvider(prompt: string) {
-    return prompt
-        .replaceAll("实际可编辑范围以该人脸周围的透明椭圆蒙版为最终边界。", "最终仅将该人脸周围的椭圆区域融合回原图。")
-        .replaceAll("只允许修改目标框及其透明蒙版对应的这一张脸。", "只允许修改目标人脸框及其邻近表情区域。")
-        .replaceAll("输入图已裁切到目标人物头部区域；透明蒙版内允许编辑，白色蒙版区域必须保持不变，蒙版外绝对不要生成或修改任何内容。", "输入图已裁切到目标人物头部区域；只重绘目标人脸及其表情相关细节，不要生成或修改裁切图中的其他内容。");
+// The same full-image mask operation works with native masks and local fusion,
+// including models that accept only one reference image or return fixed batches.
+export function buildFullImageEmotionEdit(params: CanvasEmotionParams & { imageWidth: number; imageHeight: number }) {
+    const region = { x: 0, y: 0, width: params.imageWidth, height: params.imageHeight };
+    const face = clampFaceBox(params.faceBox, region.width, region.height);
+    const prompt = buildEmotionPrompt({ ...params, faceBox: face }, region);
+    return { prompt, maskDataUrl: drawFaceMask(face, region) };
 }
 
 function describeEmotionTarget(box: CanvasFaceBox, region: CanvasEmotionEditRegion) {
@@ -207,34 +180,7 @@ function describeEmotionTarget(box: CanvasFaceBox, region: CanvasEmotionEditRegi
     const height = Math.max(1, Math.min(region.height - y, Math.round(box.height)));
     const centerX = Math.round(((x + width / 2) / Math.max(1, region.width)) * 100);
     const centerY = Math.round(((y + height / 2) / Math.max(1, region.height)) * 100);
-    return `目标人脸框（相对于第一张裁切输入图）：x=${x}px，y=${y}px，width=${width}px，height=${height}px；人脸中心约位于裁切图的 ${centerX}% 横向、${centerY}% 纵向。最终仅将该人脸周围的椭圆区域融合回原图。`;
-}
-
-export async function buildEmotionImageArtifacts(dataUrl: string, box: CanvasFaceBox, imageWidth: number, imageHeight: number): Promise<CanvasEmotionImageArtifacts> {
-    const image = await loadImageBitmap(dataUrl);
-    try {
-        const width = image.width || imageWidth;
-        const height = image.height || imageHeight;
-        const normalized = clampFaceBox(box, width, height);
-        const editRegion = resolveEmotionEditRegion(normalized, width, height);
-        return {
-            sourceDataUrl: drawSourceCrop(image, editRegion),
-            maskDataUrl: drawFaceMask(normalized, editRegion),
-            characterDataUrl: drawFaceCrop(image, normalized, width, height),
-            editRegion,
-            imageWidth: width,
-            imageHeight: height,
-        };
-    } finally {
-        image.close();
-    }
-}
-
-export function emotionGenerationSize(region: CanvasEmotionEditRegion) {
-    const ratio = region.width / Math.max(1, region.height);
-    if (ratio >= 1.2) return "1536x1024";
-    if (ratio <= 0.83) return "1024x1536";
-    return "1024x1024";
+    return `目标人脸框（相对于原图）：x=${x}px，y=${y}px，width=${width}px，height=${height}px；人脸中心约位于原图的 ${centerX}% 横向、${centerY}% 纵向。最终仅将该人脸周围的椭圆区域融合回原图。`;
 }
 
 // 模型只负责局部重绘；最终结果始终以源图为底，仅在羽化人脸蒙版内混合生成像素。
@@ -284,14 +230,6 @@ export function clampFaceBox(box: CanvasFaceBox, imageWidth: number, imageHeight
     };
 }
 
-function resolveEmotionEditRegion(box: CanvasFaceBox, imageWidth: number, imageHeight: number): CanvasEmotionEditRegion {
-    const left = Math.floor(Math.max(0, box.x - box.width * 0.85));
-    const top = Math.floor(Math.max(0, box.y - box.height * 0.75));
-    const right = Math.ceil(Math.min(imageWidth, box.x + box.width * 1.85));
-    const bottom = Math.ceil(Math.min(imageHeight, box.y + box.height * 2));
-    return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
-}
-
 function clampEditRegion(region: CanvasEmotionEditRegion, imageWidth: number, imageHeight: number): CanvasEmotionEditRegion {
     const x = Math.max(0, Math.min(imageWidth - 1, Math.round(region.x)));
     const y = Math.max(0, Math.min(imageHeight - 1, Math.round(region.y)));
@@ -303,16 +241,6 @@ function clampEditRegion(region: CanvasEmotionEditRegion, imageWidth: number, im
     };
 }
 
-function drawSourceCrop(image: ImageBitmap, region: CanvasEmotionEditRegion) {
-    const canvas = document.createElement("canvas");
-    canvas.width = region.width;
-    canvas.height = region.height;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("浏览器无法裁切头部编辑区域");
-    context.drawImage(image, region.x, region.y, region.width, region.height, 0, 0, region.width, region.height);
-    return canvas.toDataURL("image/png");
-}
-
 function drawFaceMask(box: CanvasFaceBox, region: CanvasEmotionEditRegion) {
     const canvas = document.createElement("canvas");
     canvas.width = region.width;
@@ -322,10 +250,21 @@ function drawFaceMask(box: CanvasFaceBox, region: CanvasEmotionEditRegion) {
     context.fillStyle = "#fff";
     context.fillRect(0, 0, region.width, region.height);
     const ellipse = emotionEditEllipse(box, region);
+    context.save();
     context.globalCompositeOperation = "destination-out";
+    context.translate(ellipse.centerX, ellipse.centerY);
+    context.scale(ellipse.radiusX, ellipse.radiusY);
+    const gradient = context.createRadialGradient(0, 0, 0.7, 0, 0, 1);
+    gradient.addColorStop(0, "rgba(0,0,0,1)");
+    gradient.addColorStop(0.25, "rgba(0,0,0,0.844)");
+    gradient.addColorStop(0.5, "rgba(0,0,0,0.5)");
+    gradient.addColorStop(0.75, "rgba(0,0,0,0.156)");
+    gradient.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = gradient;
     context.beginPath();
-    context.ellipse(ellipse.centerX, ellipse.centerY, ellipse.radiusX, ellipse.radiusY, 0, 0, Math.PI * 2);
+    context.arc(0, 0, 1, 0, Math.PI * 2);
     context.fill();
+    context.restore();
     return canvas.toDataURL("image/png");
 }
 
@@ -396,28 +335,6 @@ function emotionFeatherAlpha(distance: number) {
     if (distance >= 1) return 0;
     const t = (distance - 0.7) / 0.3;
     return 1 - t * t * (3 - 2 * t);
-}
-
-function drawFaceCrop(image: ImageBitmap, box: CanvasFaceBox, imageWidth: number, imageHeight: number) {
-    const paddingX = box.width * 0.45;
-    const paddingTop = box.height * 0.35;
-    const paddingBottom = box.height * 0.65;
-    const sx = Math.max(0, Math.floor(box.x - paddingX));
-    const sy = Math.max(0, Math.floor(box.y - paddingTop));
-    const sw = Math.max(1, Math.min(imageWidth - sx, Math.ceil(box.width + paddingX * 2)));
-    const sh = Math.max(1, Math.min(imageHeight - sy, Math.ceil(box.height + paddingTop + paddingBottom)));
-    const canvas = document.createElement("canvas");
-    canvas.width = 384;
-    canvas.height = 384;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("浏览器无法创建人物参考图");
-    context.fillStyle = "#111";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    const scale = Math.min(canvas.width / sw, canvas.height / sh);
-    const dw = sw * scale;
-    const dh = sh * scale;
-    context.drawImage(image, sx, sy, sw, sh, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
-    return canvas.toDataURL("image/jpeg", 0.9);
 }
 
 async function loadImageBitmap(dataUrl: string) {

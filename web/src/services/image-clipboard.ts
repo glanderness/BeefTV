@@ -1,17 +1,17 @@
+import { ownedResourceStorageKey, resourceIdFromStorageKey } from "@/services/api/resources";
 import { getCachedResourceBlob } from "@/services/resource-blob-cache";
 
 export async function copyImageToSystemClipboard(source: string, storageKey?: string) {
     return writeImageToClipboard(async () => {
-        let sourceBlob: Blob | null = null;
-        if (storageKey) {
-            sourceBlob = await getCachedResourceBlob(storageKey).catch(() => null);
+        const resourceStorageKey = ownedResourceStorageKey(storageKey, source);
+        if (resourceIdFromStorageKey(resourceStorageKey)) {
+            const originalBlob = await getCachedResourceBlob(resourceStorageKey);
+            if (!originalBlob) throw new Error("原图资源读取失败，请重试");
+            return originalBlob;
         }
-        if (!sourceBlob) {
-            const response = await fetch(source);
-            if (!response.ok) throw new Error(`图片读取失败（HTTP ${response.status}）`);
-            sourceBlob = await response.blob();
-        }
-        return sourceBlob;
+        const response = await fetch(source);
+        if (!response.ok) throw new Error(`图片读取失败（HTTP ${response.status}）`);
+        return response.blob();
     });
 }
 

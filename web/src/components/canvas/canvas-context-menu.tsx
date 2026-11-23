@@ -323,6 +323,7 @@ export function CanvasNodeContextMenu({
                                             {storyboardMenuButton}
                                             {onNodeInfo ? <MenuButton icon={<Tags />} label="节点信息与标签" onClick={() => runAction(onNodeInfo)} /> : null}
                                             {onSetAssetCategory ? <MenuButton icon={<Tags />} label="资产分类" chevron onClick={() => setCategoryOpen(true)} /> : null}
+                                            <MenuButton icon={<Clipboard />} label="复制图片" disabled={!hasNodeContent && !node?.metadata?.storageKey} onClick={() => runAction(onCopyContent)} />
                                             <MenuButton icon={<Copy />} label="复制节点" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
                                         </>
                                     ) : (
@@ -347,6 +348,7 @@ export function CanvasNodeContextMenu({
                                             ) : null}
                                             {storyboardMenuButton}
                                             {onSetAssetCategory ? <MenuButton icon={<Tags />} label="资产分类" chevron onClick={() => setCategoryOpen(true)} /> : null}
+                                            <MenuButton icon={<Clipboard />} label="复制视频" disabled={!hasVideoPayload} onClick={() => runAction(onCopyContent)} />
                                             <MenuButton icon={<Copy />} label="复制节点" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
                                         </>
                                     )}

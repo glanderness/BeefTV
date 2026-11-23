@@ -5,7 +5,8 @@ import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
-import { defaultImageParamsForModel, initialMaskEditConfig } from "@/lib/model-selection";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { defaultImageParamsForModel, initialMaskEditConfig, modelCompatibilityError } from "@/lib/model-selection";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -14,6 +15,8 @@ export type CanvasImageMaskEditPayload = {
     maskDataUrl: string;
     generationConfig?: Partial<Pick<AiConfig, "model" | "imageModel" | "size" | "quality" | "count" | "transparentBackground">>;
 };
+
+const editRequirements = { capability: "image" as const, input: { textCount: 0, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 } };
 
 type DrawMode = "paint" | "erase";
 const defaultBrushSize = 100;
@@ -25,7 +28,7 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
     scale: number;
     config: AiConfig;
     onCancel: () => void;
-    onConfirm: (payload: CanvasImageMaskEditPayload) => void | Promise<void>;
+    onConfirm: (payload: CanvasImageMaskEditPayload) => void | Promise<unknown>;
 }) {
     const maskCanvasRef = useRef<HTMLCanvasElement>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -38,6 +41,10 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
     const [generationConfig, setGenerationConfig] = useState<AiConfig>(() => initialMaskEditConfig(config));
     const [isSubmitting, setIsSubmitting] = useState(false);
     const theme = canvasThemes[useActiveTheme()];
+    const compatibilityError = modelCompatibilityError(generationConfig, generationConfig.model, editRequirements);
+    const selectedImage = modelCapabilityConfigFor(generationConfig, generationConfig.model).image;
+    const fixedOutputs = selectedImage?.fixedOutputs;
+    const capabilityNotice = selectedImage?.references.maxImages === 0 ? "当前模型配置仅支持文生图，不支持图片重绘" : "";
 
     useEffect(() => {
         setPrompt(""); setBrushSize(defaultBrushSize); setMode("paint"); setError(""); setSettingsOpen(false);
@@ -73,6 +80,7 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
     const resetMask = () => { clearCanvas(maskCanvasRef.current); clearCanvas(previewCanvasRef.current); setError(""); };
     const submit = async () => {
         const nextPrompt = prompt.trim(); const canvas = maskCanvasRef.current;
+        if (compatibilityError) return setError(compatibilityError);
         if (!nextPrompt) return setError("请输入修改要求");
         if (!canvas || !canvasHasPaint(canvas)) return setError("请先涂抹局部区域");
         if (isSubmitting) return;
@@ -101,16 +109,17 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
         <div data-canvas-live-scale data-canvas-no-zoom="true" className="absolute left-1/2 top-[calc(100%+14px)] flex w-[min(520px,90vw)] items-center gap-1.5 rounded-2xl border p-1.5 shadow-2xl backdrop-blur-xl" style={{ ...barStyle, transform: screenTransform, transformOrigin: "center top" }}>
             <div className="relative min-w-0 flex-1">
                 <input aria-label="局部重绘要求" type="text" value={prompt} placeholder="描述选中区域需要如何修改…" onChange={(event) => { setPrompt(event.target.value); setError(""); }} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") void submit(); }} className="block h-9 w-full rounded-xl border px-3 text-sm outline-none placeholder:opacity-50" style={{ background: theme.toolbar.itemHover, borderColor: theme.node.stroke, color: theme.node.text }} />
-                {error ? <div className="absolute left-1 top-[calc(100%+8px)] whitespace-nowrap rounded-lg border px-2 py-1 text-xs font-medium shadow-lg" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.accent.danger }}>{error}</div> : null}
+                {error || compatibilityError || capabilityNotice ? <div role="status" className="absolute left-1 top-[calc(100%+8px)] whitespace-nowrap rounded-lg border px-2 py-1 text-xs font-medium shadow-lg" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.accent.danger }}>{error || compatibilityError || capabilityNotice}</div> : null}
             </div>
             <div className="relative">
                 <button type="button" aria-label="局部重绘设置" title="局部重绘设置" onClick={() => setSettingsOpen((value) => !value)} className="grid size-9 place-items-center rounded-xl transition hover:opacity-85" style={{ background: settingsOpen ? theme.toolbar.activeBg : "transparent", color: settingsOpen ? theme.toolbar.activeText : theme.toolbar.item }}><Settings2 className="size-4" /></button>
                 {settingsOpen ? <div className="absolute bottom-11 right-0 w-80 space-y-3 rounded-2xl border p-3 shadow-2xl" style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()}>
-                    <ModelPicker variant="canvas" config={generationConfig} value={generationConfig.imageModel || generationConfig.model} capability="image" fullWidth onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }))} />
+                    <ModelPicker variant="canvas" config={generationConfig} value={generationConfig.imageModel || generationConfig.model} capability="image" requirements={editRequirements} fullWidth onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }))} />
                     <ImageSettingsPanel config={generationConfig} showTitle={false} showCount={false} className="space-y-3" theme={theme} onConfigChange={(key, value) => setGenerationConfig((current) => ({ ...current, [key]: value }))} />
+                    {fixedOutputs ? <div className="text-xs" style={{ color: theme.node.muted }}>每次生成 {fixedOutputs} 张</div> : null}
                 </div> : null}
             </div>
-            <button type="button" aria-label={isSubmitting ? "正在修改" : "AI 修改"} title={isSubmitting ? "正在修改" : "AI 修改"} disabled={isSubmitting} onClick={() => void submit()} className="grid size-9 place-items-center rounded-xl transition hover:opacity-90 disabled:cursor-wait disabled:opacity-60" style={{ background: theme.accent.primary, color: theme.accent.onPrimary }}>{isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}</button>
+            <button type="button" aria-label={isSubmitting ? "正在修改" : "AI 修改"} title={isSubmitting ? "正在修改" : "AI 修改"} disabled={isSubmitting || Boolean(compatibilityError)} onClick={() => void submit()} className={`grid size-9 place-items-center rounded-xl transition hover:opacity-90 disabled:opacity-60 ${isSubmitting ? "disabled:cursor-wait" : "disabled:cursor-not-allowed"}`} style={{ background: theme.accent.primary, color: theme.accent.onPrimary }}>{isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}</button>
         </div>
     </div>;
 }

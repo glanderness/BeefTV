@@ -4,8 +4,11 @@ import { App } from "antd";
 
 import { compileNodeGenerationReferences, buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
-import { buildEmotionImageArtifacts, emotionGenerationSize, emotionProviderMask, normalizeEmotionPromptForProvider, resolveEmotionEditPlan } from "@/lib/canvas/canvas-emotion";
+import { buildFullImageEmotionEdit } from "@/lib/canvas/canvas-emotion";
+import { reconcileImageBatchRoot } from "@/lib/canvas/canvas-image-batch-retry";
+import { formatMaskEditPrompt, imageEditPlan } from "@/lib/canvas/canvas-image-edit-plan";
 import { nodeFailureExplanation } from "@/lib/canvas/canvas-node-failure-state";
+import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { buildAudioGenerationMetadata, buildGenerationConfig, buildImageGenerationMetadata, buildVideoGenerationMetadata, createGenerationRetryContext, generationReferenceUrls, isGenerationCanceled, resolveMetadataReferences, resolveStoredReferenceImages, resetGenerationTaskMetadata, runBackendCanvasGenerationTask, runCanvasGenerationTaskToConsumer, sourceNodeReferenceImages, supportsVideoReferenceAudio } from "@/lib/canvas/canvas-project-generation";
 import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import {
@@ -21,15 +24,15 @@ import {
     isCreativeInputFailureCategory,
     shouldConfirmUnchangedModerationRetry,
 } from "@/lib/generation-failure-ux";
-import { isRegenerateAllowed, isRegenerateBlocked, nodeRequiresFreshSubmission, nodeRequiresRegenerateConfirmation, readNodeTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
+import { isRegenerateAllowed, isRegenerateBlocked, isTaskOutcomeSubmissionUncertain, isTaskOutcomeWorking, nodeRequiresFreshSubmission, nodeRequiresRegenerateConfirmation, readNodeTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
+import { defaultImageParamsForModel, normalizeMaskEditQuality, normalizeMaskEditSize } from "@/lib/model-selection";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime, type SkillRuntimeMetadata } from "@/services/skill-runtime";
 import type { GenerationTask } from "@/services/api/task-center";
 import { retryStoredCanvasVideo } from "@/services/canvas-video-retry";
-import { resolveImageUrl } from "@/services/image-storage";
-import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeTypeId } from "@/types/canvas";
@@ -240,7 +243,10 @@ export function useCanvasGenerationRetry({
             const nativeOutputs = retryMode === "image" ? modelCapabilityConfigFor(generationConfig, generationConfig.model).image?.fixedOutputs || 0 : 0;
             const groupRoot = batchRoot || node;
             const multipleNativeBatches = nativeOutputs > 0 && (groupRoot.metadata?.batchChildIds?.length || 0) > nativeOutputs;
-            if (nativeOutputs && !multipleNativeBatches) {
+            const emotionEdit = retryMode === "image" ? (node.metadata?.emotionEdit || batchRoot?.metadata?.emotionEdit) : undefined;
+            const maskEdit = retryMode === "image" && !emotionEdit ? (node.metadata?.maskEdit || batchRoot?.metadata?.maskEdit) : undefined;
+            const isStructuredMaskEditRetry = Boolean(emotionEdit || maskEdit);
+            if (nativeOutputs && !multipleNativeBatches && !isStructuredMaskEditRetry) {
                 const batchTarget =
                     node.metadata?.failedInputFingerprint || node.metadata?.failedPromptFingerprint || nodeFailureExplanation(node.metadata).category !== "unknown"
                         ? node
@@ -287,6 +293,70 @@ export function useCanvasGenerationRetry({
                 surfaceRetryFailure(node.id, reason, setNodes);
                 return;
             }
+            const structuredBatchChildren =
+                isStructuredMaskEditRetry && nativeOutputs > 1 && !multipleNativeBatches && groupRoot.metadata?.batchChildIds?.length
+                    ? groupRoot.metadata.batchChildIds
+                          .map((id) => nodesRef.current.find((item) => item.id === id))
+                          .filter((item): item is CanvasNodeData => Boolean(item && item.type === CanvasNodeType.Image && item.metadata?.batchRootId === groupRoot.id))
+                    : [];
+            if (isStructuredMaskEditRetry && nativeOutputs > 1 && !multipleNativeBatches) {
+                if (!groupRoot.metadata?.isBatchRoot && !groupRoot.metadata?.batchChildIds?.length) {
+                    const reason = "当前模型固定输出多张图片，请在原图重新发起编辑以创建完整批次";
+                    message?.warning?.(reason);
+                    surfaceRetryFailure(node.id, reason, setNodes);
+                    return;
+                }
+                const batchNodes = [groupRoot, ...structuredBatchChildren];
+                const isLiveOrUncertain = (item: CanvasNodeData) => {
+                    const itemOutcome = readNodeTaskOutcome(item.metadata);
+                    const hasMedia = Boolean(item.metadata?.content || item.metadata?.storageKey);
+                    return (
+                        isCanvasNodeGenerating(item) ||
+                        isTaskOutcomeWorking(itemOutcome) ||
+                        isTaskOutcomeSubmissionUncertain(itemOutcome) ||
+                        item.metadata?.taskStatus === "queued" ||
+                        item.metadata?.taskStatus === "running" ||
+                        ((itemOutcome?.phase === "ready" || item.metadata?.taskStatus === "succeeded") && !hasMedia) ||
+                        item.metadata?.generationSubmissionState === "submitting" ||
+                        item.metadata?.generationSubmissionState === "unknown"
+                    );
+                };
+                if (batchNodes.some(isLiveOrUncertain)) {
+                    const reason = "该批次仍在生成或结果待确认，请稍候或先查询原任务";
+                    message?.warning?.(reason);
+                    surfaceRetryFailure(node.id, reason, setNodes);
+                    return;
+                }
+                const blockedNode = batchNodes.find((item) => isRegenerateBlocked(readNodeTaskOutcome(item.metadata)));
+                if (blockedNode) {
+                    const blockedOutcome = readNodeTaskOutcome(blockedNode.metadata);
+                    const reason = blockedNode.metadata?.errorDetails || taskOutcomeCopy(blockedOutcome, undefined, { providerCancelStatus: blockedNode.metadata?.taskProviderCancelStatus }).message;
+                    message?.warning?.(reason);
+                    surfaceRetryFailure(node.id, reason, setNodes);
+                    return;
+                }
+                if (
+                    structuredBatchChildren.length !== nativeOutputs ||
+                    structuredBatchChildren.some((item) => Boolean(item.metadata?.content || item.metadata?.storageKey))
+                ) {
+                    const reason = "该批次已有结果或任务状态不完整，请先取回原任务，避免重复生成";
+                    message?.warning?.(reason);
+                    surfaceRetryFailure(node.id, reason, setNodes);
+                    return;
+                }
+            }
+            const retryTargets = nativeRetryTargets.length
+                ? nativeRetryTargets
+                : structuredBatchChildren.length === nativeOutputs
+                    ? structuredBatchChildren
+                    : [];
+            const structuredBatchRootId =
+                isStructuredMaskEditRetry && structuredBatchChildren.length === nativeOutputs && groupRoot.metadata?.isBatchRoot
+                    ? groupRoot.id
+                    : undefined;
+            const retryTargetIds = retryTargets.length ? retryTargets.map((item) => item.id) : [node.id];
+            const retryTargetIdSet = new Set(retryTargetIds);
+            const primaryTarget = retryTargets.find((item) => Boolean(item.metadata?.taskId || readNodeTaskOutcome(item.metadata))) || retryTargets[0] || node;
             const retryContextPrompt = retryMode === "image" && sourceNode.metadata?.portraitTexture ? buildPortraitTexturePrompt(retryPromptSource, sourceNode.metadata.portraitTexture) : retryPromptSource;
             let rawContext: Awaited<ReturnType<typeof hydrateNodeGenerationContext>> | null;
             try {
@@ -364,15 +434,8 @@ export function useCanvasGenerationRetry({
                     generationConfig = { ...generationConfig, audioVoice: voice.voiceKey, audioInstructions: [voice.instructions, generationConfig.audioInstructions].filter(Boolean).join("；") };
                 }
             }
-            const isEmotionRetry = Boolean(node.metadata?.emotionEdit);
-            if (isEmotionRetry && resolveModelRequestConfig(generationConfig, generationConfig.model).interfaceType !== "openai-image") {
-                const reason = "表情编辑需要支持蒙版的 OpenAI Images 渠道，当前渠道已拒绝整图重绘";
-                message?.error?.(reason);
-                surfaceRetryFailure(node.id, reason, setNodes);
-                return;
-            }
-            const useReferenceImages = !isEmotionRetry && (Boolean(context?.referenceImages.length) || (useStoredSource && savedImageMetadata?.generationType === "edit"));
-            const retryReferenceImages = isEmotionRetry
+            const useReferenceImages = !isStructuredMaskEditRetry && (Boolean(context?.referenceImages.length) || (useStoredSource && savedImageMetadata?.generationType === "edit"));
+            const retryReferenceImages = isStructuredMaskEditRetry
                 ? []
                 : useStoredSource && savedImageMetadata
                     ? await resolveMetadataReferences(savedImageMetadata)
@@ -404,22 +467,29 @@ export function useCanvasGenerationRetry({
                       }
                     : undefined;
 
-            setRunningNodeId(node.id);
-            const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
+            const runningId = structuredBatchRootId || node.id;
+            setRunningNodeId(runningId);
+            const controller = startGenerationRequest(retryTargetIds[0]!, sourceNode.id, runningId);
+            retryTargetIds.slice(1).forEach((id) => startGenerationRequest(id, sourceNode.id, runningId, controller));
+            if (structuredBatchRootId && !retryTargetIdSet.has(structuredBatchRootId)) {
+                startGenerationRequest(structuredBatchRootId, sourceNode.id, runningId, controller);
+            }
             const capturedProjectId = projectId;
             const isCurrent = () => projectIdRef.current === capturedProjectId && !controller.signal.aborted;
             let submittedInput: CanvasGenerationFailureInput = { ...context, prompt: mediaPrompt };
+            const completedRetryTargetIds = new Set<string>();
             const runAndConsumeRetry = async (input: Parameters<typeof runBackendCanvasGenerationTask>[0]) => {
                 submittedInput = input;
-                const outcome = readNodeTaskOutcome(node.metadata);
+                const outcome = readNodeTaskOutcome(primaryTarget.metadata);
                 if (isRegenerateBlocked(outcome)) {
-                    const reason = node.metadata?.errorDetails || taskOutcomeCopy(outcome, undefined, { providerCancelStatus: node.metadata?.taskProviderCancelStatus }).message;
+                    const reason = primaryTarget.metadata?.errorDetails || taskOutcomeCopy(outcome, undefined, { providerCancelStatus: primaryTarget.metadata?.taskProviderCancelStatus }).message;
                     message?.warning?.(reason);
                     surfaceRetryFailure(node.id, reason, setNodes);
                     return;
                 }
                 if (!confirmedUnchangedModeration) {
-                    const gate = await confirmRetryGate(node, failureExplanation.category, input.prompt, submittedReferences(input), controller.signal);
+                    const targetExplanation = nodeFailureExplanation(primaryTarget.metadata);
+                    const gate = await confirmRetryGate(primaryTarget, targetExplanation.category !== "unknown" ? targetExplanation.category : failureExplanation.category, input.prompt, submittedReferences(input), controller.signal);
                     if (!gate.confirmed) return;
                     confirmedUnchangedModeration = gate.prompted;
                 }
@@ -431,28 +501,62 @@ export function useCanvasGenerationRetry({
                           : node.type === CanvasNodeType.Audio
                             ? "canvas_audio"
                             : undefined;
-                const requiresFreshSubmission = nodeRequiresFreshSubmission(node.metadata, { nodeTaskType, outcome });
+                const requiresFreshSubmission = nodeRequiresFreshSubmission(primaryTarget.metadata, { nodeTaskType, outcome });
                 // Edited input after a non-retryable failure or unconfirmed/submitted task is a new submission, not replay of the old retry operation.
-                const retryContext = !storedVideoFallbackError && !skipStoredVideoRetry && !requiresFreshSubmission && node.metadata?.taskId && isRegenerateAllowed(outcome)
-                    ? await createGenerationRetryContext(node.metadata.taskId, node.metadata.attemptGroupId)
-                    : node.metadata?.taskClientOperationId && !node.metadata?.taskId
-                      ? { clientOperationId: node.metadata.taskClientOperationId }
+                const retryContext = !storedVideoFallbackError && !skipStoredVideoRetry && !requiresFreshSubmission && primaryTarget.metadata?.taskId && isRegenerateAllowed(outcome)
+                    ? await createGenerationRetryContext(primaryTarget.metadata.taskId, primaryTarget.metadata.attemptGroupId)
+                    : primaryTarget.metadata?.taskClientOperationId && !primaryTarget.metadata?.taskId
+                      ? { clientOperationId: primaryTarget.metadata.taskClientOperationId }
                       : { clientOperationId: createClientId() };
-                const targetIds = nativeRetryTargets.length ? nativeRetryTargets.map((item) => item.id) : [node.id];
-                const targetIdSet = new Set(targetIds);
-                setNodes((current) => current.map((item) => targetIdSet.has(item.id) ? {
-                    ...item,
-                    metadata: {
-                        ...resetGenerationTaskMetadata(item.metadata, NODE_STATUS_LOADING),
-                        taskClientOperationId: retryContext.clientOperationId,
-                    },
-                } : item));
+                const targetIds = retryTargetIds;
+                const targetIdSet = retryTargetIdSet;
+                setNodes((current) => current.map((item) => {
+                    const outputIndex = targetIds.indexOf(item.id);
+                    if (outputIndex >= 0) {
+                        return {
+                            ...item,
+                            metadata: {
+                                ...resetGenerationTaskMetadata(item.metadata, NODE_STATUS_LOADING),
+                                ...(targetIds.length > 1 ? { taskOutputIndex: outputIndex } : {}),
+                                taskClientOperationId: retryContext.clientOperationId,
+                            },
+                        };
+                    }
+                    if (structuredBatchRootId && item.id === structuredBatchRootId) {
+                        return {
+                            ...item,
+                            metadata: {
+                                ...resetGenerationTaskMetadata(item.metadata, NODE_STATUS_LOADING),
+                                batchFailedCount: 0,
+                                primaryImageId: undefined,
+                            },
+                        };
+                    }
+                    return item;
+                }));
                 await runCanvasGenerationTaskToConsumer(
-                    { ...input, ...(nativeRetryTargets.length ? { config: { ...input.config, count: String(nativeOutputs) }, metadata: { ...input.metadata, outputNodeIds: targetIds } } : {}), ...retryContext },
+                    {
+                        ...input,
+                        ...(targetIds.length > 1
+                            ? {
+                                  config: { ...input.config, count: String(nativeOutputs || targetIds.length) },
+                                  metadata: { ...input.metadata, outputNodeIds: targetIds },
+                              }
+                            : {}),
+                        ...retryContext,
+                    },
                     {
                         onSubmission: (metadata) => setNodes((current) => current.map((item) => targetIdSet.has(item.id) ? { ...item, metadata: { ...item.metadata, ...metadata } } : item)),
                         bindTask: (task) => targetIds.forEach((id) => bindGenerationTask(id, task)),
-                        consumeTask: async (task) => { for (const id of targetIds) await applyGenerationTaskResult(id, task); },
+                        consumeTask: async (task) => {
+                            for (const id of targetIds) {
+                                await applyGenerationTaskResult(id, task);
+                                completedRetryTargetIds.add(id);
+                            }
+                            if (structuredBatchRootId && !targetIdSet.has(structuredBatchRootId)) {
+                                setNodes((current) => current.map((item) => (item.id === structuredBatchRootId ? reconcileImageBatchRoot(item, current) : item)));
+                            }
+                        },
                         isCurrent,
                     },
                 );
@@ -565,28 +669,51 @@ export function useCanvasGenerationRetry({
                     return;
                 }
 
-                const emotionEdit = node.metadata?.emotionEdit;
                 if (emotionEdit) {
                     const emotionSource = nodesRef.current.find((item) => item.id === emotionEdit.sourceNodeId);
-                    if (!emotionSource?.metadata?.content) throw new Error("情绪编辑源图片已删除，无法重试");
-                    const sourceDataUrl = await resolveImageUrl(emotionSource.metadata.storageKey, emotionSource.metadata.content, { cacheMiss: true });
-                    if (!sourceDataUrl) throw new Error("无法读取情绪编辑源图片");
-                    const artifacts = await buildEmotionImageArtifacts(sourceDataUrl, emotionEdit.faceBox, emotionSource.metadata.naturalWidth || 0, emotionSource.metadata.naturalHeight || 0);
-                    const emotionConfig = { ...generationConfig, size: emotionGenerationSize(artifacts.editRegion), quality: !generationConfig.quality || generationConfig.quality === "auto" ? "high" : generationConfig.quality };
-                    const imageProfile = modelCapabilityConfigFor(emotionConfig, emotionConfig.model).image!;
-                    const editPlan = resolveEmotionEditPlan(imageProfile.references.maskSupported);
+                    if (!emotionSource || (!emotionSource.metadata?.content && !emotionSource.metadata?.storageKey)) throw new Error("情绪编辑源图片已删除，无法重试");
+                    const imageProfile = modelCapabilityConfigFor(generationConfig, generationConfig.model).image!;
+                    if (imageProfile.references.maxImages === 0) throw new Error("当前图片模型仅支持文生图，不支持图片重绘");
                     const sourceReference = sourceNodeReferenceImages(emotionSource)[0];
                     if (!sourceReference) throw new Error("情绪编辑源图片不可用");
-                    const editReference = { id: `${emotionSource.id}-${emotionEdit.presetId}-edit-region`, name: "emotion-edit-region.png", type: "image/png", dataUrl: artifacts.sourceDataUrl };
-                    const characterReference = { id: `${emotionSource.id}-${emotionEdit.presetId}-character`, name: `${emotionEdit.characterName}-face.jpg`, type: "image/jpeg", dataUrl: artifacts.characterDataUrl };
-                    const nextEmotionEdit = { ...emotionEdit, editRegion: artifacts.editRegion, sourceWidth: artifacts.imageWidth, sourceHeight: artifacts.imageHeight, providerSize: emotionConfig.size, editMode: editPlan.mode };
-                    const providerPrompt = normalizeEmotionPromptForProvider(mediaPrompt);
-                    const mask = emotionProviderMask(editPlan, { id: `${emotionSource.id}-emotion-mask`, name: "emotion-mask.png", type: "image/png", dataUrl: artifacts.maskDataUrl });
-                    if (editPlan.notice) message?.info?.(editPlan.notice);
-                    const generationMetadata = { ...buildImageGenerationMetadata("edit", emotionConfig, 1, [sourceReference]), size: `${artifacts.imageWidth}x${artifacts.imageHeight}` };
+                    const sourceWidth = emotionSource.metadata.naturalWidth || emotionEdit.sourceWidth || emotionSource.width;
+                    const sourceHeight = emotionSource.metadata.naturalHeight || emotionEdit.sourceHeight || emotionSource.height;
+                    if (!sourceWidth || !sourceHeight) throw new Error("无法读取情绪编辑源图片尺寸");
+                    const editPlan = imageEditPlan(imageProfile, 1);
+                    const localComposite = editPlan.mode === "local-composite";
+                    const modelDefaults = defaultImageParamsForModel(generationConfig, generationConfig.model);
+                    const rawSize = emotionSource.metadata.size || modelDefaults.size;
+                    const emotionConfig = {
+                        ...generationConfig,
+                        count: String(editPlan.outputsPerRequest),
+                        size: normalizeMaskEditSize(rawSize, imageProfile.size?.values ?? [], modelDefaults.size, Boolean(imageProfile.size?.allowCustom)),
+                        quality: normalizeMaskEditQuality(generationConfig.quality || modelDefaults.quality, rawSize, imageProfile.quality?.supported ? imageProfile.quality.values : [], modelDefaults.quality),
+                    };
+                    const edit = buildFullImageEmotionEdit({
+                        presetId: emotionEdit.presetId,
+                        intimacy: emotionEdit.intimacy,
+                        arousal: emotionEdit.arousal,
+                        characterName: emotionEdit.characterName,
+                        faceBox: emotionEdit.faceBox,
+                        imageWidth: sourceWidth,
+                        imageHeight: sourceHeight,
+                    });
+                    const baseEmotionPrompt = emotionEdit.fullImage ? mediaPrompt : (resolveCanvasStyleExecution(nodesRef.current, sourceNode, edit.prompt, emotionConfig, "image")?.prompt ?? edit.prompt);
+                    const providerPrompt = formatMaskEditPrompt(baseEmotionPrompt, localComposite);
+                    const nextEmotionEdit = {
+                        ...emotionEdit,
+                        editRegion: undefined,
+                        sourceWidth,
+                        sourceHeight,
+                        editMode: editPlan.mode,
+                        fullImage: true,
+                    };
+                    if (localComposite) message?.info?.("当前模型使用选区标记与本地蒙版融合，未选区域保留原图");
+                    const generationMetadata = buildImageGenerationMetadata("edit", emotionConfig, editPlan.outputsPerRequest, [sourceReference]);
+                    const updateIds = new Set([...retryTargetIds, ...(structuredBatchRootId ? [structuredBatchRootId] : [])]);
                     setNodes((current) =>
                         current.map((item) =>
-                            item.id === node.id
+                            updateIds.has(item.id)
                                 ? {
                                       ...item,
                                       metadata: { ...item.metadata, prompt: providerPrompt, ...generationMetadata, ...styleMetadata, ...skillMetadata, emotionEdit: nextEmotionEdit },
@@ -596,14 +723,89 @@ export function useCanvasGenerationRetry({
                     );
                     await runAndConsumeRetry({
                         projectId,
-                        nodeId: node.id,
+                        nodeId: retryTargetIds[0]!,
                         mode: "image",
                         prompt: providerPrompt,
                         config: emotionConfig,
-                        referenceImages: [editReference, characterReference],
-                        mask,
+                        referenceImages: [sourceReference],
+                        mask: { id: `${emotionSource.id}-emotion-mask`, name: "emotion-mask.png", type: "image/png", dataUrl: edit.maskDataUrl },
                         signal: controller.signal,
-                        metadata: { retry: true, sourceNodeId: emotionSource.id, edit: "emotion", emotionEditMode: editPlan.mode, emotion: nextEmotionEdit, resolvedCharacterVersions: context?.resolvedCharacterVersions || [], ...styleMetadata, ...skillMetadata },
+                        metadata: {
+                            retry: true,
+                            sourceNodeId: emotionSource.id,
+                            edit: "emotion",
+                            ...(localComposite ? { maskEditMode: "local-composite" } : {}),
+                            emotion: nextEmotionEdit,
+                            resolvedCharacterVersions: context?.resolvedCharacterVersions || [],
+                            ...styleMetadata,
+                            ...skillMetadata,
+                        },
+                    });
+                    return;
+                }
+
+                if (maskEdit) {
+                    const maskSource = nodesRef.current.find((item) => item.id === maskEdit.sourceNodeId);
+                    const storedReferences = !maskSource && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : null;
+                    const sourceReference = (maskSource ? sourceNodeReferenceImages(maskSource)[0] : undefined) || storedReferences?.[0];
+                    if (!sourceReference) throw new Error("局部重绘源图片已删除，无法重试");
+                    const imageProfile = modelCapabilityConfigFor(generationConfig, generationConfig.model).image!;
+                    if (imageProfile.references.maxImages === 0) throw new Error("当前图片模型仅支持文生图，不支持图片重绘");
+                    const maskStorageKey = maskEdit.maskStorageKey?.trim() || "";
+                    if (!maskStorageKey) throw new Error("局部重绘蒙版已丢失，请重新在原图上涂抹后再生成");
+                    const editPlan = imageEditPlan(imageProfile, 1);
+                    const localComposite = editPlan.mode === "local-composite";
+                    const modelDefaults = defaultImageParamsForModel(generationConfig, generationConfig.model);
+                    const rawSize = generationConfig.size || maskSource?.metadata?.size || modelDefaults.size;
+                    const maskConfig = {
+                        ...generationConfig,
+                        count: String(editPlan.outputsPerRequest),
+                        size: normalizeMaskEditSize(rawSize, imageProfile.size?.values ?? [], modelDefaults.size, Boolean(imageProfile.size?.allowCustom)),
+                        quality: normalizeMaskEditQuality(generationConfig.quality || modelDefaults.quality, rawSize, imageProfile.quality?.supported ? imageProfile.quality.values : [], modelDefaults.quality),
+                    };
+                    const providerPrompt = formatMaskEditPrompt(mediaPrompt, localComposite);
+                    const nextMaskEdit = {
+                        ...maskEdit,
+                        editMode: editPlan.mode,
+                        maskStorageKey,
+                    };
+                    if (localComposite) message?.info?.("当前模型使用选区标记与本地蒙版融合，未选区域保留原图");
+                    const generationMetadata = buildImageGenerationMetadata("edit", maskConfig, editPlan.outputsPerRequest, [sourceReference]);
+                    const updateIds = new Set([...retryTargetIds, ...(structuredBatchRootId ? [structuredBatchRootId] : [])]);
+                    setNodes((current) =>
+                        current.map((item) =>
+                            updateIds.has(item.id)
+                                ? {
+                                      ...item,
+                                      metadata: { ...item.metadata, prompt: providerPrompt, ...generationMetadata, ...styleMetadata, ...skillMetadata, maskEdit: nextMaskEdit },
+                                  }
+                                : item,
+                        ),
+                    );
+                    await runAndConsumeRetry({
+                        projectId,
+                        nodeId: retryTargetIds[0]!,
+                        mode: "image",
+                        prompt: providerPrompt,
+                        config: maskConfig,
+                        referenceImages: [sourceReference],
+                        mask: {
+                            id: `${maskEdit.sourceNodeId}-mask`,
+                            name: "mask.png",
+                            type: "image/png",
+                            dataUrl: "",
+                            storageKey: maskStorageKey,
+                        },
+                        signal: controller.signal,
+                        metadata: {
+                            retry: true,
+                            sourceNodeId: maskEdit.sourceNodeId,
+                            edit: "mask",
+                            ...(localComposite ? { maskEditMode: "local-composite" } : {}),
+                            resolvedCharacterVersions: context?.resolvedCharacterVersions || [],
+                            ...styleMetadata,
+                            ...skillMetadata,
+                        },
                     });
                     return;
                 }
@@ -641,9 +843,20 @@ export function useCanvasGenerationRetry({
                 if (isGenerationCanceled(error)) return;
                 const failure = canvasGenerationFailureMetadata(error, submittedInput);
                 message?.error?.(failure.errorDetails);
-                setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } } : item)));
+                setNodes((current) => {
+                    const updated = current.map((item) =>
+                        retryTargetIdSet.has(item.id) && !completedRetryTargetIds.has(item.id)
+                            ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } }
+                            : item,
+                    );
+                    if (!structuredBatchRootId || retryTargetIdSet.has(structuredBatchRootId)) return updated;
+                    return updated.map((item) => (item.id === structuredBatchRootId ? reconcileImageBatchRoot(item, updated) : item));
+                });
             } finally {
-                finishGenerationRequest(node.id, controller);
+                retryTargetIds.forEach((id) => finishGenerationRequest(id, controller));
+                if (structuredBatchRootId && !retryTargetIdSet.has(structuredBatchRootId)) {
+                    finishGenerationRequest(structuredBatchRootId, controller);
+                }
                 setRunningNodeId(null);
             }
         },
