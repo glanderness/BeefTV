@@ -4,6 +4,7 @@ import { chromium, type Browser } from "playwright";
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
 let originalReads = 0;
+let previewReads = 0;
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 beforeAll(async () => {
@@ -20,6 +21,8 @@ beforeAll(async () => {
         const path = new URL(request.url).pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "application/javascript" } });
         if (path === "/api/resources/original/file") { originalReads++; return new Response(png, { headers: { "Content-Type": "image/png" } }); }
+        if (path === "/api/resources/missing/file") return new Response("missing original", { status: 500 });
+        if (path === "/preview-ok.png") { previewReads++; return new Response(png, { headers: { "Content-Type": "image/png" } }); }
         if (path === "/preview.png") return new Response("preview must not be copied", { status: 500 });
         return new Response('<!doctype html><meta charset="utf-8"><div id="root"></div><script src="/harness.js"></script>', { headers: { "Content-Type": "text/html; charset=utf-8" } });
     } });
@@ -66,6 +69,33 @@ test("does not replace a failed image copy with an address", async () => {
         await page.getByText("图片剪贴板写入失败", { exact: true }).waitFor();
         expect(await page.locator("body").getAttribute("data-copied-address")).toBeNull();
     } finally { await page.close(); }
+});
+
+test("fails explicitly when original resource read fails instead of silently copying an available preview", async () => {
+    const context = await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] });
+    const page = await context.newPage();
+    try {
+        const beforePreview = previewReads;
+        await page.addInitScript(() => {
+            const writes: unknown[] = [];
+            (window as any).__clipboardWrites = writes;
+            Object.defineProperty(navigator, "clipboard", {
+                value: {
+                    write: async (items: ClipboardItem[]) => {
+                        for (const item of items) {
+                            const blob = await item.getType("image/png");
+                            writes.push(blob.size);
+                        }
+                    },
+                },
+            });
+        });
+        await page.goto(`${server.url}?mode=missing-original`);
+        await page.getByRole("button", { name: "复制图片", exact: true }).click({ timeout: 5000 });
+        await page.getByText(/原图资源读取失败|HTTP 500|500|读取失败/).waitFor({ timeout: 5000 });
+        expect(previewReads).toBe(beforePreview);
+        expect(await page.evaluate(() => (window as any).__clipboardWrites.length)).toBe(0);
+    } finally { await context.close(); }
 });
 
 test("disables image copy for empty nodes and excludes video nodes", async () => {

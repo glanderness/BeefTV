@@ -28,7 +28,7 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
     scale: number;
     config: AiConfig;
     onCancel: () => void;
-    onConfirm: (payload: CanvasImageMaskEditPayload) => void | Promise<void>;
+    onConfirm: (payload: CanvasImageMaskEditPayload) => void | Promise<unknown>;
 }) {
     const maskCanvasRef = useRef<HTMLCanvasElement>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -119,7 +119,7 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
                     {fixedOutputs ? <div className="text-xs" style={{ color: theme.node.muted }}>每次生成 {fixedOutputs} 张</div> : null}
                 </div> : null}
             </div>
-            <button type="button" aria-label={isSubmitting ? "正在修改" : "AI 修改"} title={isSubmitting ? "正在修改" : "AI 修改"} disabled={isSubmitting || Boolean(compatibilityError)} onClick={() => void submit()} className="grid size-9 place-items-center rounded-xl transition hover:opacity-90 disabled:cursor-wait disabled:opacity-60" style={{ background: theme.accent.primary, color: theme.accent.onPrimary }}>{isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}</button>
+            <button type="button" aria-label={isSubmitting ? "正在修改" : "AI 修改"} title={isSubmitting ? "正在修改" : "AI 修改"} disabled={isSubmitting || Boolean(compatibilityError)} onClick={() => void submit()} className={`grid size-9 place-items-center rounded-xl transition hover:opacity-90 disabled:opacity-60 ${isSubmitting ? "disabled:cursor-wait" : "disabled:cursor-not-allowed"}`} style={{ background: theme.accent.primary, color: theme.accent.onPrimary }}>{isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}</button>
         </div>
     </div>;
 }

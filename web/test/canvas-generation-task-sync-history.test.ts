@@ -206,3 +206,35 @@ test("reuses canonical task.outputs resourceId for image, video, and audio when 
     expect(storedAudio).toEqual([]);
     expect(fetched).toEqual([]);
 });
+
+test("fullImage emotion node reuses backend-composited resource without legacy editRegion", async () => {
+    const { io, resolveImageCalls, uploaded } = mockIO();
+    const node = mediaNode(CanvasNodeType.Image);
+    node.metadata = {
+        ...node.metadata,
+        emotionEdit: {
+            sourceNodeId: "source-image",
+            characterName: "角色1",
+            presetId: "happy",
+            intimacy: 0.5,
+            arousal: 0.5,
+            label: "开心",
+            faceBox: { id: "f1", x: 10, y: 10, width: 40, height: 40, source: "detected" },
+            editMode: "local-composite",
+            fullImage: true,
+        },
+    };
+    const compositedTask: GenerationTask = {
+        ...task("canvas_image", {
+            mode: "image",
+            localMaskComposited: true,
+            images: [{ dataUrl: "/api/resources/emotion-composited/file", storageKey: "resource:emotion-composited", width: 512, height: 512 }],
+        }),
+        outputs: [{ outputIndex: 0, mediaType: "image", resourceId: "emotion-composited" }],
+    };
+
+    const recovered = await buildGenerationTaskNodeResult(node, compositedTask, [node], io);
+    expect(recovered.metadata?.storageKey).toBe("resource:emotion-composited");
+    expect(resolveImageCalls).toEqual([["resource:emotion-composited", "/api/resources/emotion-composited/file"]]);
+    expect(uploaded).toEqual([]);
+});

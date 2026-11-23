@@ -45,6 +45,8 @@ describe("inline canvas mask editing", () => {
         }));
         expect(html).toContain("当前模型配置仅支持文生图，不支持图片重绘");
         expect(html).toContain('role="status"');
+        expect(html).toContain("disabled:cursor-not-allowed");
+        expect(html).not.toContain("disabled:cursor-wait");
     });
 
     test("renders inline mask editor with prompt input, settings, and semantic theme tokens", () => {

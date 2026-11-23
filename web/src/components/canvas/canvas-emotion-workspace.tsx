@@ -12,9 +12,11 @@ import { CanvasNodePanelOverlay } from "@/components/canvas/canvas-workspace-ove
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { buildEmotionImageArtifacts, buildEmotionPrompt, neutralEmotionPreset, type CanvasEmotionPreset, type CanvasFaceBox } from "@/lib/canvas/canvas-emotion";
+import { neutralEmotionPreset, type CanvasEmotionPreset, type CanvasFaceBox } from "@/lib/canvas/canvas-emotion";
 import { detectCanvasFaces } from "@/lib/canvas/canvas-face-detection";
 import { subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
+import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { resolveImageUrl } from "@/services/image-storage";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData, Position, ViewportTransform } from "@/types/canvas";
 
@@ -27,11 +29,15 @@ type CanvasEmotionWorkspaceProps = {
     dragOffset?: Position | null;
     isDragging?: boolean;
     onClose: () => void;
-    onConfirm: (payload: CanvasImageEmotionPayload) => void;
+    onConfirm: (payload: CanvasImageEmotionPayload) => boolean | void | Promise<boolean | void>;
 };
 
 export function CanvasEmotionWorkspace({ node, viewport, containerRef, dragOffset, isDragging = false, onClose, onConfirm }: CanvasEmotionWorkspaceProps) {
-    const dataUrl = node.metadata?.content || "";
+    const directContent = node.metadata?.content || "";
+    const storageKey = node.metadata?.storageKey || "";
+    const preferOriginalResource = Boolean(resourceIdFromStorageKey(storageKey));
+    const [resolvedDataUrl, setResolvedDataUrl] = useState(preferOriginalResource ? "" : directContent);
+    const dataUrl = resolvedDataUrl || directContent;
     const [status, setStatus] = useState<WorkspaceStatus>("detecting");
     const [faces, setFaces] = useState<CanvasFaceBox[]>([]);
     const [characters, setCharacters] = useState<CanvasEmotionCharacter[]>([]);
@@ -50,24 +56,35 @@ export function CanvasEmotionWorkspace({ node, viewport, containerRef, dragOffse
         setCharacters([]);
         setActiveCharacterId("");
         setPreset(neutralEmotionPreset);
-        void detectCanvasFaces(dataUrl, controller.signal)
-            .then((result) => {
-                setImageSize({ width: result.imageWidth, height: result.imageHeight });
-                setFaces(result.faces);
-                if (result.faces.length) {
-                    setStatus("selecting");
-                    return;
-                }
+        const run = async () => {
+            const sourceUrl = preferOriginalResource
+                ? await resolveImageUrl(storageKey, directContent)
+                : directContent || (storageKey ? await resolveImageUrl(storageKey, "") : "");
+            if (controller.signal.aborted) return;
+            setResolvedDataUrl(sourceUrl);
+            if (!sourceUrl) {
                 setStatus("error");
-                setError("未识别到清晰人脸，请手动框选");
-            })
-            .catch((reason) => {
-                if (reason instanceof DOMException && reason.name === "AbortError") return;
-                setStatus("error");
-                setError(reason instanceof Error ? `${reason.message}，请手动框选` : "人脸识别失败，请手动框选");
-            });
+                setError("无法读取源图片，请手动框选或重试");
+                return;
+            }
+            const result = await detectCanvasFaces(sourceUrl, controller.signal);
+            if (controller.signal.aborted) return;
+            setImageSize({ width: result.imageWidth, height: result.imageHeight });
+            setFaces(result.faces);
+            if (result.faces.length) {
+                setStatus("selecting");
+                return;
+            }
+            setStatus("error");
+            setError("未识别到清晰人脸，请手动框选");
+        };
+        void run().catch((reason) => {
+            if (controller.signal.aborted || (reason instanceof DOMException && reason.name === "AbortError")) return;
+            setStatus("error");
+            setError(reason instanceof Error ? `${reason.message}，请手动框选` : "人脸识别失败，请手动框选");
+        });
         return () => controller.abort();
-    }, [dataUrl]);
+    }, [directContent, preferOriginalResource, storageKey]);
 
     const selectFace = (face: CanvasFaceBox) => {
         const existing = characters.find((character) => sameFace(character.faceBox, face));
@@ -96,26 +113,24 @@ export function CanvasEmotionWorkspace({ node, viewport, containerRef, dragOffse
         setStatus("generating");
         setError("");
         try {
-            const artifacts = await buildEmotionImageArtifacts(dataUrl, character.faceBox, imageSize.width, imageSize.height);
-            const params = { presetId: preset.id, intimacy: preset.intimacy, arousal: preset.arousal, characterName: character.name, faceBox: character.faceBox };
-            onConfirm({
-                ...params,
+            const accepted = await onConfirm({
+                presetId: preset.id,
+                intimacy: preset.intimacy,
+                arousal: preset.arousal,
+                characterName: character.name,
+                faceBox: character.faceBox,
                 label: preset.label,
-                prompt: buildEmotionPrompt(params, artifacts.editRegion),
-                sourceDataUrl: artifacts.sourceDataUrl,
-                maskDataUrl: artifacts.maskDataUrl,
-                characterDataUrl: artifacts.characterDataUrl,
-                editRegion: artifacts.editRegion,
-                imageWidth: artifacts.imageWidth,
-                imageHeight: artifacts.imageHeight,
+                imageWidth: imageSize.width,
+                imageHeight: imageSize.height,
             });
+            if (accepted === false) setStatus("editing");
         } catch (reason) {
             setStatus("editing");
-            setError(reason instanceof Error ? reason.message : "生成前处理失败");
+            setError(reason instanceof Error ? reason.message : "情绪生成启动失败");
         }
     };
 
-    if (!portalTarget || !dataUrl) return null;
+    if (!portalTarget || (!directContent && !storageKey)) return null;
     const activeCharacter = characters.find((character) => character.id === activeCharacterId);
     return createPortal(
         <>
@@ -140,7 +155,7 @@ export function CanvasEmotionWorkspace({ node, viewport, containerRef, dragOffse
             />
             <SelectionToolbar node={node} viewport={viewport} containerRef={containerRef} status={status} faceCount={faces.length} error={error} onManualSelect={beginManualSelection} onClose={onClose} />
             <AnimatePresence>
-                {activeCharacter && (status === "editing" || status === "generating") ? (
+                {dataUrl && activeCharacter && (status === "editing" || status === "generating") ? (
                     <CanvasNodePanelOverlay node={node} viewport={viewport} containerRef={containerRef} panelWidth={580} panelHeight={303} dragOffset={dragOffset} isDragging={isDragging}>
                         <Suspense fallback={null}>
                             <CanvasNodeEmotionPanel

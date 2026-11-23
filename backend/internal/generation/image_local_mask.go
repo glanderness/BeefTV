@@ -9,8 +9,9 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-	_ "image/jpeg"
+	"image/jpeg"
 	"image/png"
+	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/model"
 	"strings"
 	"time"
@@ -19,6 +20,12 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
+const localMaskPNGSizeLimit = 4 << 20
+
+type referenceBytesUploader interface {
+	UploadBytes(ctx context.Context, data []byte) (string, error)
+}
+
 // Local mask editing is an explicit canvas operation, not a claim that the
 // provider accepts masks. Composite before task persistence so downloads and
 // resumed tasks share exactly the same output, without another paid submission.
@@ -26,47 +33,67 @@ func runLocalMaskImageTask(ctx context.Context, input Input, execute func(contex
 	if input.Mask == nil || len(input.ReferenceImages) != 1 {
 		return nil, RequestPreparationError{Cause: errors.New("局部融合需要一张原图和一张蒙版")}
 	}
-	source, err := localMaskImage(ctx, input.ReferenceImages[0])
+	source, err := localMaskImage(ctx, &input.Config, input.ReferenceImages[0])
 	if err != nil {
 		return nil, RequestPreparationError{Cause: fmt.Errorf("读取局部重绘原图失败：%w", err)}
 	}
-	mask, err := localMaskImage(ctx, *input.Mask)
+	mask, err := localMaskImage(ctx, &input.Config, *input.Mask)
 	if err != nil {
 		return nil, RequestPreparationError{Cause: fmt.Errorf("读取局部重绘蒙版失败：%w", err)}
 	}
 	if source.Bounds().Size() != mask.Bounds().Size() {
 		return nil, RequestPreparationError{Cause: errors.New("局部重绘蒙版尺寸必须与原图一致")}
 	}
-	marked := image.NewNRGBA(source.Bounds())
-	draw.Draw(marked, marked.Bounds(), source, source.Bounds().Min, draw.Src)
+	srcBounds, maskBounds := source.Bounds(), mask.Bounds()
+	width, height := srcBounds.Dx(), srcBounds.Dy()
+	marked := image.NewNRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(marked, marked.Bounds(), source, srcBounds.Min, draw.Src)
 	selected := false
-	for y := 0; y < marked.Bounds().Dy(); y++ {
+	for y := 0; y < height; y++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		for x := 0; x < marked.Bounds().Dx(); x++ {
-			_, _, _, alpha := mask.At(x, y).RGBA()
+		for x := 0; x < width; x++ {
+			_, _, _, alpha := mask.At(maskBounds.Min.X+x, maskBounds.Min.Y+y).RGBA()
 			if alpha == 65535 {
 				continue
 			}
 			selected = true
 			pixel := marked.NRGBAAt(x, y)
-			pixel.R = uint8((int(pixel.R) + 255) / 2)
-			pixel.G /= 2
-			pixel.B /= 2
+			if alpha == 0 {
+				pixel.R = uint8((int(pixel.R) + 255) / 2)
+				pixel.G /= 2
+				pixel.B /= 2
+			} else {
+				redWeight := (65535 - alpha) / 2
+				keep := 65535 - redWeight
+				pixel.R = uint8((uint32(pixel.R)*keep + 255*redWeight + 32767) / 65535)
+				pixel.G = uint8((uint32(pixel.G)*keep + 32767) / 65535)
+				pixel.B = uint8((uint32(pixel.B)*keep + 32767) / 65535)
+			}
 			marked.SetNRGBA(x, y, pixel)
 		}
 	}
 	if !selected {
 		return nil, RequestPreparationError{Cause: errors.New("请先涂抹需要重绘的区域")}
 	}
-	markedURL, err := localMaskPNG(marked)
+	var maxRefBytes int64
+	if input.ImageCapability != nil {
+		maxRefBytes = input.ImageCapability.References.MaxImageBytes
+	}
+	markedBytes, mimeType, fileName, err := localMaskReferenceBytes(marked, maxRefBytes)
 	if err != nil {
 		return nil, err
 	}
+	markedMedia := Media{
+		DataURL:  DataURL(mimeType, markedBytes),
+		MimeType: mimeType,
+		Name:     fileName,
+		Bytes:    int64(len(markedBytes)),
+		Width:    width,
+		Height:   height,
+	}
 	input.Mask = nil // Never upload the local mask as a provider mask/reference.
-	input.ReferenceImages = []Media{{DataURL: markedURL, MimeType: "image/png", Name: "selected-region.png", Width: marked.Bounds().Dx(), Height: marked.Bounds().Dy()}}
-	input.Prompt = "仅修改参考图中红色半透明标记的区域，并彻底移除红色标记。保持原图构图、主体位置和其他内容不变。具体修改要求：\n" + input.Prompt
 	// The inner execution is a normal image edit; capability validation must not
 	// mistake the intentionally removed native mask for a missing local mask.
 	metadata := make(map[string]any, len(input.Metadata))
@@ -76,34 +103,59 @@ func runLocalMaskImageTask(ctx context.Context, input Input, execute func(contex
 		}
 	}
 	input.Metadata = metadata
+	if ResumedProviderRequestID(ctx) == "" && !managedConnection(input.Config) {
+		groupPolicy := mediaPolicyForKind(ctx, input, "image", MediaHydrationPolicyFor(ctx, input))
+		if groupPolicy.RequireURL && !groupPolicy.KeepLocal && !groupPolicy.ManualURL {
+			if runtime, ok := RuntimeFromContext(ctx); ok && runtime.ReferenceStorage != nil {
+				enabled, err := runtime.ReferenceStorage.Enabled()
+				if err != nil {
+					return nil, RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: err}}
+				}
+				if enabled {
+					if uploader, ok := runtime.ReferenceStorage.(referenceBytesUploader); ok {
+						link, err := uploader.UploadBytes(ctx, markedBytes)
+						if err != nil {
+							return nil, RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: err}}
+						}
+						markedMedia.URL, markedMedia.DataURL = link, ""
+					}
+				}
+			}
+		}
+	}
+	input.ReferenceImages = []Media{markedMedia}
+	input.Prompt = "仅修改参考图中红色半透明标记的区域，并彻底移除红色标记。保持原图构图、主体位置和其他内容不变。具体修改要求：\n" + input.Prompt
 	result, err := execute(ctx, input)
 	if err != nil {
 		return nil, err
 	}
-	return compositeLocalMaskResult(ctx, source, mask, result)
+	return compositeLocalMaskResult(ctx, &input.Config, source, mask, result)
 }
 
-func compositeLocalMaskResult(ctx context.Context, source, mask image.Image, result map[string]any) (map[string]any, error) {
+func compositeLocalMaskResult(ctx context.Context, config *Config, source, mask image.Image, result map[string]any) (map[string]any, error) {
 	images, err := localMaskResultImages(result["images"])
 	if err != nil {
 		return nil, err
 	}
 	result["images"] = images
+	srcBounds, maskBounds := source.Bounds(), mask.Bounds()
+	width, height := srcBounds.Dx(), srcBounds.Dy()
+	targetRect := image.Rect(0, 0, width, height)
 	for _, item := range images {
-		generated, err := localMaskImage(ctx, Media{DataURL: item["dataUrl"]})
+		generated, err := localMaskImage(ctx, config, Media{DataURL: item["dataUrl"], StorageKey: item["storageKey"]})
 		if err != nil {
 			return nil, fmt.Errorf("读取局部重绘结果失败：%w", err)
 		}
-		resized := image.NewNRGBA(source.Bounds())
+		resized := image.NewNRGBA(targetRect)
 		xdraw.CatmullRom.Scale(resized, resized.Bounds(), generated, generated.Bounds(), draw.Src, nil)
-		composited := image.NewNRGBA(source.Bounds())
-		draw.Draw(composited, composited.Bounds(), source, source.Bounds().Min, draw.Src)
-		for y := 0; y < source.Bounds().Dy(); y++ {
+		composited := image.NewNRGBA(targetRect)
+		draw.Draw(composited, composited.Bounds(), source, srcBounds.Min, draw.Src)
+		for y := 0; y < height; y++ {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			for x := 0; x < source.Bounds().Dx(); x++ {
-				_, _, _, alpha := mask.At(x, y).RGBA()
+			for x := 0; x < width; x++ {
+				_, _, _, alpha := mask.At(maskBounds.Min.X+x, maskBounds.Min.Y+y).RGBA()
 				if alpha == 65535 {
 					continue
 				}
@@ -152,25 +204,32 @@ func localMaskResultImages(value any) ([]map[string]string, error) {
 	}
 	images := make([]map[string]string, 0, len(entries))
 	for _, entry := range entries {
-		var address string
+		var address, storageKey string
 		switch item := entry.(type) {
 		case map[string]string:
 			address = firstNonEmpty(item["dataUrl"], item["url"])
+			storageKey = strings.TrimSpace(item["storageKey"])
 		case map[string]any:
 			address, _ = item["dataUrl"].(string)
 			if address == "" {
 				address, _ = item["url"].(string)
 			}
+			storageKey, _ = item["storageKey"].(string)
+			storageKey = strings.TrimSpace(storageKey)
 		}
-		if strings.TrimSpace(address) == "" {
+		if strings.TrimSpace(address) == "" && storageKey == "" {
 			return nil, errors.New("局部重绘结果缺少图片地址")
 		}
-		images = append(images, map[string]string{"dataUrl": address})
+		next := map[string]string{"dataUrl": address}
+		if storageKey != "" {
+			next["storageKey"] = storageKey
+		}
+		images = append(images, next)
 	}
 	return images, nil
 }
 
-func localMaskImage(ctx context.Context, media Media) (image.Image, error) {
+func localMaskImage(ctx context.Context, config *Config, media Media) (image.Image, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -183,20 +242,65 @@ func localMaskImage(ctx context.Context, media Media) (image.Image, error) {
 	if strings.HasPrefix(media.DataURL, "data:") || strings.HasPrefix(media.URL, "data:") {
 		data, _, err = MediaBytes(media)
 	} else {
-		data, _, err = GetExternalBinary(ctx, firstNonEmpty(media.URL, media.DataURL))
+		address := firstNonEmpty(media.URL, media.DataURL)
+		downloadCtx := WithRequestKind(ctx, "download")
+		if config != nil && strings.TrimSpace(config.BaseURL) != "" {
+			data, _, err = GetProviderExternalBinary(downloadCtx, *config, address)
+		} else {
+			data, _, err = GetExternalBinary(downloadCtx, address)
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
-	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
-	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 40_000_000 {
+	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > 40_000_000 {
 		return nil, errors.New("局部重绘图片像素数量超出处理范围")
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
-	return img, err
+	if err != nil {
+		return nil, err
+	}
+	return localasset.NormalizeEXIFOrientation(data, img), nil
+}
+
+func localMaskReferenceBytes(img *image.NRGBA, maxBytes int64) ([]byte, string, string, error) {
+	var pngData bytes.Buffer
+	if err := png.Encode(&pngData, img); err != nil {
+		return nil, "", "", err
+	}
+	pngLimit := int64(localMaskPNGSizeLimit)
+	if maxBytes > 0 && maxBytes < pngLimit {
+		pngLimit = maxBytes
+	}
+	if int64(pngData.Len()) <= pngLimit || !isOpaqueNRGBA(img) {
+		return pngData.Bytes(), "image/png", "selected-region.png", nil
+	}
+	for _, quality := range []int{92, 82} {
+		var jpgData bytes.Buffer
+		if err := jpeg.Encode(&jpgData, img, &jpeg.Options{Quality: quality}); err != nil {
+			break
+		}
+		if jpgData.Len() < pngData.Len() && (maxBytes <= 0 || int64(jpgData.Len()) <= maxBytes || quality == 82) {
+			return jpgData.Bytes(), "image/jpeg", "selected-region.jpg", nil
+		}
+	}
+	return pngData.Bytes(), "image/png", "selected-region.png", nil
+}
+
+func isOpaqueNRGBA(img *image.NRGBA) bool {
+	if img == nil {
+		return false
+	}
+	for i := 3; i < len(img.Pix); i += 4 {
+		if img.Pix[i] != 255 {
+			return false
+		}
+	}
+	return true
 }
 
 func localMaskPNG(img image.Image) (string, error) {
@@ -217,50 +321,53 @@ func LocalMaskCompositeRequested(inputJSON string) bool {
 	return json.Unmarshal([]byte(inputJSON), &operation) == nil && operation.Mode == "image" && metadataString(operation.Metadata, "maskEditMode") == "local-composite"
 }
 
-// FinalizeLocalMaskImageResult also covers receipt/manual recovery, which can
-// bypass Execute. It never calls a model and is idempotent for completed bytes.
-func FinalizeLocalMaskImageResult(ctx context.Context, inputJSON string, resultJSON []byte) ([]byte, error) {
+func finalizeLocalMaskMap(ctx context.Context, inputJSON string, resultJSON []byte) (map[string]any, bool, error) {
 	if !LocalMaskCompositeRequested(inputJSON) {
-		return resultJSON, nil
+		return nil, false, nil
 	}
 	var input Input
 	if err := json.Unmarshal([]byte(inputJSON), &input); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if input.Mode != "image" || metadataString(input.Metadata, "maskEditMode") != "local-composite" {
-		return resultJSON, nil
+		return nil, false, nil
 	}
 	var result map[string]any
 	if err := json.Unmarshal(resultJSON, &result); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if done, _ := result["localMaskComposited"].(bool); done {
-		return resultJSON, nil
+		return nil, false, nil
 	}
 	if input.Mask == nil || len(input.ReferenceImages) != 1 {
-		return nil, errors.New("局部融合需要一张原图和一张蒙版")
+		return nil, false, errors.New("局部融合需要一张原图和一张蒙版")
 	}
-	source, err := localMaskImage(ctx, input.ReferenceImages[0])
-	if err != nil {
-		return nil, err
+	if runtime, ok := RuntimeFromContext(ctx); ok && runtime.Config != nil && (strings.TrimSpace(input.Config.ChannelID) != "" || strings.TrimSpace(input.Config.CredentialRef) != "") {
+		if resolved, err := runtime.Config.Resolve(input.Config); err == nil {
+			input.Config = resolved
+		}
 	}
-	mask, err := localMaskImage(ctx, *input.Mask)
+	source, err := localMaskImage(ctx, &input.Config, input.ReferenceImages[0])
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	mask, err := localMaskImage(ctx, &input.Config, *input.Mask)
+	if err != nil {
+		return nil, false, err
 	}
 	if source.Bounds().Size() != mask.Bounds().Size() {
-		return nil, errors.New("局部重绘蒙版尺寸必须与原图一致")
+		return nil, false, errors.New("局部重绘蒙版尺寸必须与原图一致")
 	}
-	composited, err := compositeLocalMaskResult(ctx, source, mask, result)
+	composited, err := compositeLocalMaskResult(ctx, &input.Config, source, mask, result)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return json.Marshal(composited)
+	return composited, true, nil
 }
 
 // PrepareLocalMaskTaskCompletion keeps completion/recovery wiring out of the
 // application service and performs no work for unrelated generation tasks.
-func PrepareLocalMaskTaskCompletion(task model.Task, result []byte, decrypt func(string) (string, error), bind func(context.Context, CallMeta) context.Context) ([]byte, error) {
+func PrepareLocalMaskTaskCompletion(task model.Task, result []byte, decrypt func(string) (string, error), bind func(context.Context, CallMeta) context.Context, persist func(model.Task, map[string]any) (map[string]any, error)) ([]byte, error) {
 	if task.Type != "canvas_image" || !LocalMaskCompositeRequested(task.InputJSON) {
 		return result, nil
 	}
@@ -268,8 +375,18 @@ func PrepareLocalMaskTaskCompletion(task model.Task, result []byte, decrypt func
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	ctx = bind(ctx, CallMeta{UserID: task.UserID, TaskID: task.ID, ProjectID: task.ProjectID})
-	return FinalizeLocalMaskImageResult(ctx, input, result)
+	composited, changed, err := finalizeLocalMaskMap(ctx, input, result)
+	if err != nil || !changed {
+		return result, err
+	}
+	if persist != nil {
+		composited, err = persist(task, composited)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(composited)
 }

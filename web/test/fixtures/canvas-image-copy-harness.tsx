@@ -9,9 +9,13 @@ function Harness() {
     const [open, setOpen] = useState(true);
     const [copiedNode, setCopiedNode] = useState(false);
     const mode = new URLSearchParams(location.search).get("mode");
+    const metadata = mode?.endsWith("empty")
+        ? {}
+        : mode === "missing-original"
+            ? { storageKey: "resource:missing", content: "/preview-ok.png", mimeType: "image/png" }
+            : { storageKey: "resource:original", content: mode?.endsWith("storage") ? undefined : "/preview.png", mimeType: mode?.startsWith("video") ? "video/mp4" : "image/png" };
     const node = { id: "picture", title: "场景1", type: mode?.startsWith("video") ? CanvasNodeType.Video : CanvasNodeType.Image,
-        position: { x: 0, y: 0 }, width: 320, height: 180,
-        metadata: mode?.endsWith("empty") ? {} : { storageKey: "resource:original", content: mode?.endsWith("storage") ? undefined : "/preview.png", mimeType: mode?.startsWith("video") ? "video/mp4" : "image/png" } };
+        position: { x: 0, y: 0 }, width: 320, height: 180, metadata };
     const noop = () => undefined;
     const share = useCanvasNodeMediaShareActions({ projectId: "copy-fixture", localOnly: true,
         releaseCopiedNodesPastePriority: noop, handleConfigNodeChange: noop });

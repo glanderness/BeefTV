@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,7 +45,9 @@ func TestImageDeliveryCompositesRecoveredLocalMaskBeforeSaving(t *testing.T) {
 	}
 	var result struct {
 		Images []struct {
-			DataURL string `json:"dataUrl"`
+			DataURL    string `json:"dataUrl"`
+			StorageKey string `json:"storageKey"`
+			ResourceID string `json:"resourceId"`
 		} `json:"images"`
 		Done bool `json:"localMaskComposited"`
 	}
@@ -54,7 +57,18 @@ func TestImageDeliveryCompositesRecoveredLocalMaskBeforeSaving(t *testing.T) {
 	if !result.Done || len(result.Images) != 1 {
 		t.Fatal("completion saved raw provider output")
 	}
-	raw, _, err := generation.MediaBytes(generation.Media{DataURL: result.Images[0].DataURL})
+	if strings.Contains(stored.ResultJSON, "data:image/") {
+		t.Fatal("recovered local mask persisted raw base64 into tasks.result_json")
+	}
+	if result.Images[0].ResourceID == "" || result.Images[0].StorageKey != "resource:"+result.Images[0].ResourceID {
+		t.Fatalf("recovered local mask did not materialize resource: %+v", result.Images[0])
+	}
+	_, body, err := s.OpenResource(task.UserID, result.Images[0].ResourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer body.Close()
+	raw, err := io.ReadAll(body)
 	if err != nil {
 		t.Fatal(err)
 	}

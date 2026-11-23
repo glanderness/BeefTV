@@ -221,9 +221,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
                     dragOffset={dragPreview?.nodeIds.has(emotionNode.id) ? { x: dragPreview.x, y: dragPreview.y } : null}
                     isDragging={isNodeDragging && Boolean(dragPreview?.nodeIds.has(emotionNode.id))}
                     onClose={() => setEmotionNodeId(null)}
-                    onConfirm={(payload: CanvasImageEmotionPayload) => {
-                        void generateEmotionNode(emotionNode, payload);
-                    }}
+                    onConfirm={(payload: CanvasImageEmotionPayload) => generateEmotionNode(emotionNode, payload)}
                 />
             ) : null}
 

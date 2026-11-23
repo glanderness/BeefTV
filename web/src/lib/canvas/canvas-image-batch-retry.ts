@@ -155,7 +155,8 @@ export function reconcileImageBatchRoot(root: CanvasNodeData, nodes: CanvasNodeD
         .filter((node): node is CanvasNodeData => Boolean(node && node.type === CanvasNodeType.Image && node.metadata?.batchRootId === root.id));
     if (!children.length) return root;
 
-    const primary = children.find((node) => node.id === root.metadata?.primaryImageId && node.metadata?.content) || children.find((node) => node.metadata?.content);
+    const primary = children.find((node) => node.id === root.metadata?.primaryImageId && (node.metadata?.content || node.metadata?.storageKey))
+        || children.find((node) => node.metadata?.content || node.metadata?.storageKey);
     const loading = children.some((node) => node.metadata?.status === "loading");
     const failed = children.find((node) => node.metadata?.status === "error");
     const metadata: CanvasNodeMetadata = { ...root.metadata };
@@ -172,6 +173,12 @@ export function reconcileImageBatchRoot(root: CanvasNodeData, nodes: CanvasNodeD
         metadata.status = "success";
         delete metadata.errorDetails;
         delete metadata.generationErrorCode;
+        delete metadata.generationErrorSummary;
+        delete metadata.generationProviderCode;
+        delete metadata.taskOutcome;
+        delete metadata.taskOutcomeSource;
+        delete metadata.generationFailure;
+        delete metadata.taskFailureDiagnostics;
         delete metadata.failedPromptFingerprint;
         delete metadata.failedInputFingerprint;
         const nextRoot: CanvasNodeData = { ...root, metadata };

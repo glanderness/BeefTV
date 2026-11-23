@@ -16,18 +16,12 @@ import {
     emotionBlendshapes,
     type CanvasEmotionParams,
     type CanvasEmotionPreset,
-    type CanvasEmotionEditRegion,
     type CanvasFaceBox,
 } from "@/lib/canvas/canvas-emotion";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 
 export type CanvasImageEmotionPayload = CanvasEmotionParams & {
     label: string;
-    prompt: string;
-    sourceDataUrl: string;
-    maskDataUrl: string;
-    characterDataUrl: string;
-    editRegion: CanvasEmotionEditRegion;
     imageWidth: number;
     imageHeight: number;
 };

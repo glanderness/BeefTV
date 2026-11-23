@@ -207,6 +207,7 @@ export function CanvasNodeToolbar({
     const isVideo = node.type === CanvasNodeType.Video;
     const isAudio = node.type === CanvasNodeType.Audio;
     const hasImage = isImage && Boolean(node.metadata?.content);
+    const hasStorageOnlyImage = isImage && !hasImage && Boolean(node.metadata?.storageKey);
     const canDraftToFinal = isVideo && Boolean(node.metadata?.content) && node.metadata?.draft === "true" && Boolean(node.metadata?.taskProviderRequestId?.trim());
     const copyImagePrompt = (target: CanvasNodeData) => {
         const prompt = target.metadata?.prompt?.trim();
@@ -310,7 +311,9 @@ export function CanvasNodeToolbar({
             onClick: () => tool.run(nodeHoverCtx),
         };
     });
-    const allTools: ToolbarTool[] = hasImage && !simpleMode ? [...registryToolbarTools, ...imageTools] : registryToolbarTools;
+    const storageOnlyImageTools = hasStorageOnlyImage ? imageTools.filter((tool) => tool.id === "angle") : [];
+    const activeImageTools = hasImage ? imageTools : storageOnlyImageTools;
+    const allTools: ToolbarTool[] = activeImageTools.length && !simpleMode ? [...registryToolbarTools, ...activeImageTools] : registryToolbarTools;
     const compact = containerWidth < 640;
     const narrow = containerWidth < 420;
     const inGroup = (group: NodeToolbarGroup) => allTools.filter((tool) => tool.group === group).sort(compareToolbarTools);

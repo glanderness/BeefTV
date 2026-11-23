@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNativeMediaFileClipboard(t *testing.T) {
@@ -139,4 +141,165 @@ func TestCopyOwnedMediaToClipboardChecksOwnershipAndProtectsOriginal(t *testing.
 	if err != nil || string(original) != "original video" {
 		t.Fatal("clipboard recipient altered the workspace original", err)
 	}
+}
+
+func TestCopyOwnedMediaToClipboardCleansStaleTempFilesAcrossRestarts(t *testing.T) {
+	app := newDesktopApp(t.TempDir())
+	app.wailsCtx = context.Background()
+	app.tempDir = t.TempDir()
+	stale := filepath.Join(app.tempDir, mediaClipboardFilePrefix+"old-123.mp4")
+	fresh := filepath.Join(app.tempDir, mediaClipboardFilePrefix+"recent-456.mp4")
+	unrelated := filepath.Join(app.tempDir, "other-temp-file.mp4")
+	for _, file := range []string{stale, fresh, unrelated} {
+		if err := os.WriteFile(file, []byte("bytes"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldTime := time.Now().Add(-mediaClipboardStaleMaxAge - time.Minute)
+	if err := os.Chtimes(stale, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(unrelated, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	app.copyOwnedMedia = func(_, dest string) error { return os.WriteFile(dest, []byte("new"), 0600) }
+	var current string
+	app.writeMediaClipboard = func(_ context.Context, path string) error { current = path; return nil }
+	if err := app.CopyOwnedMediaToClipboard("clip.mp4", "owned-video"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatal("stale clipboard temp file from previous session was not removed")
+	}
+	for _, kept := range []string{fresh, unrelated, current} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Fatalf("expected file to remain: %s (%v)", kept, err)
+		}
+	}
+}
+
+func TestBuildClipboardWriteCommandCoversPlatforms(t *testing.T) {
+	darwinCmd, err := buildClipboardWriteCommand(context.Background(), "darwin", "/tmp/clip.mp4")
+	if err != nil || !strings.HasSuffix(darwinCmd.Path, "osascript") {
+		t.Fatalf("darwin command = %+v, err = %v", darwinCmd, err)
+	}
+	winCmd, err := buildClipboardWriteCommand(context.Background(), "windows", `C:\tmp\clip.mp4`)
+	if err != nil || !strings.Contains(strings.ToLower(winCmd.Path), "powershell") {
+		t.Fatalf("windows command = %+v, err = %v", winCmd, err)
+	}
+	if _, err := buildClipboardWriteCommand(context.Background(), "freebsd", "/tmp/clip.mp4"); err == nil {
+		t.Fatal("unsupported OS should report error")
+	}
+}
+
+func TestBuildLinuxClipboardWriteCommandBackends(t *testing.T) {
+	const videoPath = "/tmp/beeftv-clipboard-场景 1.mp4"
+	const expectedURI = "file:///tmp/beeftv-clipboard-%E5%9C%BA%E6%99%AF%201.mp4\r\n"
+
+	readStdin := func(t *testing.T, cmd *exec.Cmd) string {
+		t.Helper()
+		if cmd.Stdin == nil {
+			t.Fatal("expected stdin URI list")
+		}
+		data, err := io.ReadAll(cmd.Stdin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	t.Run("wayland prefers wl-copy", func(t *testing.T) {
+		cmd, err := buildClipboardWriteCommandWithEnv(
+			context.Background(),
+			"linux",
+			videoPath,
+			func(key string) string { return map[string]string{"WAYLAND_DISPLAY": "wayland-0"}[key] },
+			func(name string) (string, error) {
+				if name == "wl-copy" {
+					return "/usr/bin/wl-copy", nil
+				}
+				return "", exec.ErrNotFound
+			},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Path != "/usr/bin/wl-copy" || strings.Join(cmd.Args[1:], " ") != "--type text/uri-list" {
+			t.Fatalf("unexpected wl-copy command: %+v", cmd.Args)
+		}
+		if got := readStdin(t, cmd); got != expectedURI {
+			t.Fatalf("uri list = %q, want %q", got, expectedURI)
+		}
+	})
+
+	t.Run("wayland falls back to xclip on xwayland", func(t *testing.T) {
+		cmd, err := buildClipboardWriteCommandWithEnv(
+			context.Background(),
+			"linux",
+			videoPath,
+			func(key string) string {
+				return map[string]string{"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"}[key]
+			},
+			func(name string) (string, error) {
+				if name == "xclip" {
+					return "/usr/bin/xclip", nil
+				}
+				return "", exec.ErrNotFound
+			},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Path != "/usr/bin/xclip" || strings.Join(cmd.Args[1:], " ") != "-selection clipboard -t text/uri-list" {
+			t.Fatalf("unexpected xclip command: %+v", cmd.Args)
+		}
+		if got := readStdin(t, cmd); got != expectedURI {
+			t.Fatalf("uri list = %q, want %q", got, expectedURI)
+		}
+	})
+
+	t.Run("x11 uses xclip", func(t *testing.T) {
+		cmd, err := buildClipboardWriteCommandWithEnv(
+			context.Background(),
+			"linux",
+			videoPath,
+			func(key string) string { return map[string]string{"DISPLAY": ":0"}[key] },
+			func(name string) (string, error) {
+				if name == "xclip" {
+					return "/usr/bin/xclip", nil
+				}
+				return "", exec.ErrNotFound
+			},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Path != "/usr/bin/xclip" {
+			t.Fatalf("unexpected x11 command: %+v", cmd.Args)
+		}
+		if got := readStdin(t, cmd); got != expectedURI {
+			t.Fatalf("uri list = %q, want %q", got, expectedURI)
+		}
+	})
+
+	t.Run("missing tools and headless session return actionable errors", func(t *testing.T) {
+		if _, err := buildClipboardWriteCommandWithEnv(
+			context.Background(),
+			"linux",
+			videoPath,
+			func(key string) string { return map[string]string{"WAYLAND_DISPLAY": "wayland-0"}[key] },
+			func(string) (string, error) { return "", exec.ErrNotFound },
+		); err == nil || !strings.Contains(err.Error(), "wl-copy") {
+			t.Fatalf("expected actionable wl-copy error, got %v", err)
+		}
+		if _, err := buildClipboardWriteCommandWithEnv(
+			context.Background(),
+			"linux",
+			videoPath,
+			func(string) string { return "" },
+			func(string) (string, error) { return "/usr/bin/xclip", nil },
+		); err == nil || !strings.Contains(err.Error(), "桌面剪贴板会话") {
+			t.Fatalf("expected headless session error, got %v", err)
+		}
+	})
 }

@@ -44,6 +44,7 @@ export const ARCHIVE_MEDIA_CONTAINER_KEYS = new Set([
     "screenshots",
     "panoramaConfig",
     "emotionEdit",
+    "maskEdit",
     "mediaConversion",
 ]);
 

@@ -12,7 +12,7 @@ import type { CanvasImageEmotionPayload } from "@/components/canvas/canvas-node-
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { isValidGridSplit, layoutGridSplitCells } from "@/lib/canvas/canvas-grid-split";
-import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
+import { imageMetadata, reuseGeneratedMediaStorageKey } from "@/lib/canvas/canvas-generation-task-sync";
 import { findAvailableGenerationGroupPosition, imageGenerationChildPosition, imageGenerationGroupSize } from "@/lib/canvas/canvas-generation-layout";
 import { canvasGenerationPromptMetadata } from "@/lib/canvas/canvas-generation-submission";
 import { cancelIncompleteImageBatch } from "@/lib/canvas/canvas-image-batch-retry";
@@ -26,14 +26,15 @@ import { getEffectiveReversePrompt } from "@/lib/reverse-prompt-preference";
 import { createPortraitTextureNode } from "@/lib/canvas/canvas-image-source";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { generationErrorMessage } from "@/lib/generation-error";
-import { imageEditOutputGroups, imageEditPlan } from "@/lib/canvas/canvas-image-edit-plan";
+import { formatMaskEditPrompt, imageEditOutputGroups, imageEditPlan } from "@/lib/canvas/canvas-image-edit-plan";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { defaultImageParamsForModel, normalizeMaskEditQuality, normalizeMaskEditSize, resolveMaskEditModel } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
+import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import type { GenerationTask } from "@/services/api/task-center";
 import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 import type { createCanvasMediaOperation } from "./canvas-media-operation";
 
@@ -244,11 +245,11 @@ export function useCanvasImageTools({
         }
     }, [beginMediaOperation, pageUi, projectId, message, persistMediaNodes, setConnections, setNodes]);
 
-    const generateImageEditNode = useCallback(async (node: CanvasNodeData, payload: Omit<CanvasImageMaskEditPayload, "maskDataUrl"> & { maskDataUrl?: string; title?: string }) => {
+    const generateImageEditNode = useCallback(async (node: CanvasNodeData, payload: Omit<CanvasImageMaskEditPayload, "maskDataUrl"> & { maskDataUrl?: string; title?: string; editType?: "mask" | "angle" | "emotion"; nodeMetadata?: Partial<CanvasNodeMetadata>; onAccepted?: () => void }): Promise<boolean> => {
         const operation = beginMediaOperation();
-        if (!operation.isCurrent()) return;
+        if (!operation.isCurrent()) return false;
         try {
-            if (!node.metadata?.content) return;
+            if (!node.metadata?.content && !node.metadata?.storageKey) return false;
             const baseGenerationConfig = buildGenerationConfig(effectiveConfig, node, "image");
             const requestedModel = payload.generationConfig?.model || payload.generationConfig?.imageModel || baseGenerationConfig.model;
             const selectedModel = resolveMaskEditModel(
@@ -257,6 +258,10 @@ export function useCanvasImageTools({
             );
             const modelDefaults = defaultImageParamsForModel(baseGenerationConfig, selectedModel);
             const selectedImageProfile = modelCapabilityConfigFor(baseGenerationConfig, selectedModel).image;
+            if (selectedImageProfile?.references.maxImages === 0) {
+                message.error("当前图片模型仅支持文生图，不支持图片重绘");
+                return false;
+            }
             const editPlan = imageEditPlan(selectedImageProfile!, Number(payload.generationConfig?.count || 1));
             const localComposite = Boolean(payload.maskDataUrl) && editPlan.mode === "local-composite";
             const explicitSize = payload.generationConfig?.size;
@@ -273,25 +278,48 @@ export function useCanvasImageTools({
             };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 navigateToSettings({ continueCreation: true });
-                return;
+                return false;
             }
             const userPrompt = payload.prompt.trim();
-            const prompt = payload.maskDataUrl && !localComposite ? `只修改蒙版透明区域，其他区域保持不变。${userPrompt}` : userPrompt;
+            const prompt = payload.maskDataUrl ? formatMaskEditPrompt(userPrompt, localComposite) : userPrompt;
             const source = nodeReferenceImage(node);
-            if (!source) return;
+            if (!source) return false;
             const styleExecution = resolveImageEditStyle(node, prompt, generationConfig);
-            if (!styleExecution) return;
+            if (!styleExecution) return false;
             const { prompt: effectivePrompt, metadata: styleMetadata } = styleExecution;
             const requestedCount = Math.max(1, Number(generationConfig.count) || 1);
             const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, requestedCount, [source]);
+            let uploadedMaskKey: string | undefined;
+            if (payload.maskDataUrl && !payload.nodeMetadata?.emotionEdit) {
+                try {
+                    const uploadedMask = await operation.wait(uploadImage(payload.maskDataUrl));
+                    uploadedMaskKey = uploadedMask.storageKey?.trim() || undefined;
+                } catch (error) {
+                    if (!operation.isCurrent()) return false;
+                    message.error(generationErrorMessage(error));
+                    return false;
+                }
+            }
+            const extraNodeMetadata: Partial<CanvasNodeMetadata> = payload.nodeMetadata?.emotionEdit
+                ? { ...payload.nodeMetadata, emotionEdit: { ...payload.nodeMetadata.emotionEdit, editMode: editPlan.mode, fullImage: true } }
+                : payload.maskDataUrl
+                    ? { ...payload.nodeMetadata, maskEdit: { sourceNodeId: node.id, editMode: editPlan.mode, ...(uploadedMaskKey ? { maskStorageKey: uploadedMaskKey } : {}) } }
+                    : (payload.nodeMetadata || {});
+            const maskReference = payload.maskDataUrl
+                ? resourceIdFromStorageKey(uploadedMaskKey)
+                    ? { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: "", storageKey: uploadedMaskKey }
+                    : { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl, ...(uploadedMaskKey ? { storageKey: uploadedMaskKey } : {}) }
+                : undefined;
             if (localComposite) message.info("当前模型使用选区标记与本地蒙版融合，未选区域保留原图");
-            setMaskEditNodeId(null);
+            if (payload.onAccepted) payload.onAccepted();
+            else setMaskEditNodeId(null);
             const rootId = nanoid();
             const childIds = requestedCount > 1 ? Array.from({ length: requestedCount }, () => nanoid()) : [];
             const targetIds = requestedCount > 1 ? childIds : [rootId];
             const imageSize = { width: node.width, height: node.height };
             const preferredPosition = { x: node.position.x + node.width + 96, y: node.position.y };
             const rootPosition = findAvailableGenerationGroupPosition(nodesRef.current, preferredPosition, imageGenerationGroupSize(imageSize, imageSize, childIds.length));
+            const baseTitle = payload.title || userPrompt.slice(0, 28) || "局部编辑结果";
             const rootNode: CanvasNodeData = {
                 id: rootId, type: CanvasNodeType.Image, title: payload.title || userPrompt.slice(0, 32) || "局部编辑结果",
                 position: rootPosition, width: node.width, height: node.height,
@@ -300,19 +328,20 @@ export function useCanvasImageTools({
                     isBatchRoot: requestedCount > 1, batchChildIds: requestedCount > 1 ? childIds : undefined,
                     batchFailedCount: requestedCount > 1 ? 0 : undefined,
                     imageBatchExpanded: requestedCount > 1 ? true : undefined,
-                    ...generationMetadata, ...styleMetadata,
+                    ...generationMetadata, ...styleMetadata, ...extraNodeMetadata,
                 },
             };
             const childNodes: CanvasNodeData[] = childIds.map((id, index) => ({
-                id, type: CanvasNodeType.Image, title: `${userPrompt.slice(0, 28) || "局部编辑结果"} · ${index + 1}`,
+                id, type: CanvasNodeType.Image, title: `${baseTitle} · ${index + 1}`,
                 position: imageGenerationChildPosition(rootNode.position, rootNode.width, imageSize, index),
                 width: node.width, height: node.height,
                 metadata: {
                     ...canvasGenerationPromptMetadata(userPrompt, effectivePrompt), status: NODE_STATUS_LOADING,
-                    batchRootId: rootId, ...generationMetadata, ...styleMetadata, taskOutputIndex: index % editPlan.outputsPerRequest,
+                    batchRootId: rootId, ...generationMetadata, ...styleMetadata, ...extraNodeMetadata, taskOutputIndex: index % editPlan.outputsPerRequest,
                 },
             }));
             setRunningNodeId(rootId);
+            nodesRef.current = [...nodesRef.current, rootNode, ...childNodes];
             setNodes((current) => [...current, rootNode, ...childNodes]);
             setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: rootId }, ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))]);
             pageUi.getState().setSelectedNodeIds(new Set([rootId, ...childIds]));
@@ -323,6 +352,7 @@ export function useCanvasImageTools({
             let hasSuccess = false;
             let failureCount = 0;
             let representativeError: string | undefined;
+            const editKind = payload.editType || (payload.maskDataUrl ? "mask" : "angle");
             try {
                 await operation.wait(Promise.all(imageEditOutputGroups(targetIds, editPlan.outputsPerRequest).map(async (outputNodeIds) => {
                     const targetId = outputNodeIds[0]!;
@@ -331,18 +361,29 @@ export function useCanvasImageTools({
                         const result = await operation.wait(runBackendCanvasGenerationTask({
                             projectId, nodeId: targetId, mode: "image", prompt: effectivePrompt,
                             config: { ...generationConfig, count: String(editPlan.outputsPerRequest) }, referenceImages: [source],
-                            mask: payload.maskDataUrl ? { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl } : undefined,
-                            signal: controller.signal, metadata: { sourceNodeId: node.id, edit: payload.maskDataUrl ? "mask" : "angle", outputNodeIds, ...(localComposite ? { maskEditMode: "local-composite" } : {}), ...styleMetadata },
+                            mask: maskReference,
+                            signal: controller.signal, metadata: { sourceNodeId: node.id, edit: editKind, outputNodeIds, ...(localComposite ? { maskEditMode: "local-composite" } : {}), ...(extraNodeMetadata.emotionEdit ? { emotion: extraNodeMetadata.emotionEdit } : {}), ...styleMetadata },
                             onTaskCreated: (task) => operation.run(() => outputNodeIds.forEach((id) => bindGenerationTask(id, task))),
                         }));
                         for (const [outputIndex, targetId] of outputNodeIds.entries()) {
                             const image = result.images?.[outputIndex];
-                            if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
-                            const uploaded = await operation.wait(uploadImage(image.dataUrl));
+                            const imageSource = image?.dataUrl || image?.url || "";
+                            const reuseImageKey = reuseGeneratedMediaStorageKey(image?.storageKey, imageSource);
+                            if (!imageSource && !reuseImageKey) throw new Error("后端任务没有返回图片");
+                            const uploaded = reuseImageKey
+                                ? {
+                                      url: await operation.wait(resolveImageUrl(reuseImageKey, imageSource)),
+                                      storageKey: reuseImageKey,
+                                      width: image?.width || node.metadata?.naturalWidth || node.width,
+                                      height: image?.height || node.metadata?.naturalHeight || node.height,
+                                      bytes: image?.bytes || 0,
+                                      mimeType: image?.mimeType || "image/png",
+                                  }
+                                : await operation.wait(uploadImage(imageSource));
                             const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                             const currentNode = nodesRef.current.find((item) => item.id === targetId);
                             if (!currentNode) throw new Error("局部编辑节点已被删除");
-                            const finalizedNode = { ...currentNode, width: size.width, height: size.height, metadata: { ...currentNode.metadata, ...imageMetadata(uploaded), prompt: effectivePrompt, ...generationMetadata, taskOutputIndex: outputIndex } };
+                            const finalizedNode = { ...currentNode, width: size.width, height: size.height, metadata: { ...currentNode.metadata, ...imageMetadata(uploaded), prompt: effectivePrompt, ...generationMetadata, ...extraNodeMetadata, taskOutputIndex: outputIndex } };
                             setNodes((current) => current.map((item) => {
                                 if (item.id === targetId) return finalizedNode;
                                 if (item.id !== rootId || requestedCount <= 1 || item.metadata?.primaryImageId) return item;
@@ -375,7 +416,7 @@ export function useCanvasImageTools({
                             return { ...item, metadata: { ...item.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } };
                         });
                     });
-                    return;
+                    return true;
                 }
                 if (failureCount > 0) message.error(hasSuccess ? "部分局部编辑失败" : representativeError || "局部编辑失败");
                 setNodes((current) => current.map((item) => {
@@ -395,8 +436,10 @@ export function useCanvasImageTools({
                     setRunningNodeId(null);
                 }
             }
+            return true;
         } catch (error) {
             if (operation.isCurrent()) throw error;
+            return false;
         }
     }, [beginMediaOperation, pageUi, bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setNodes, setRunningNodeId, startGenerationRequest]);
 
@@ -425,8 +468,12 @@ export function useCanvasImageTools({
     }, [beginMediaOperation, pageUi, projectId, persistMediaNodes, setConnections, setNodes]);
 
     const generateAngleNode = useCallback(async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
-        setAngleNodeId(null);
-        await generateImageEditNode(node, { prompt: buildAnglePrompt(params), title: buildAngleLabel(params), generationConfig: { count: "1" } });
+        return generateImageEditNode(node, {
+            prompt: buildAnglePrompt(params),
+            title: buildAngleLabel(params),
+            generationConfig: { count: "1" },
+            onAccepted: () => setAngleNodeId(null),
+        });
     }, [generateImageEditNode, setAngleNodeId]);
 
     const generateLightingNode = useCallback((node: CanvasNodeData, options: CanvasImageLightingOptions, prompt: string) => {
@@ -451,10 +498,29 @@ export function useCanvasImageTools({
     }, [pageUi, projectId, effectiveConfig, setConnections, setLightingNodeId, setNodes]);
 
     const generateEmotionNode = useCallback(async (node: CanvasNodeData, payload: CanvasImageEmotionPayload) => {
-        if (!node.metadata?.content) return;
+        if (!node.metadata?.content && !node.metadata?.storageKey) return false;
         const edit = buildFullImageEmotionEdit(payload);
-        setEmotionNodeId(null);
-        await generateImageEditNode(node, { ...edit, title: `${payload.characterName} · ${payload.label}`, generationConfig: { count: "1" } });
+        return generateImageEditNode(node, {
+            ...edit,
+            title: `${payload.characterName} · ${payload.label}`,
+            editType: "emotion",
+            onAccepted: () => setEmotionNodeId(null),
+            nodeMetadata: {
+                emotionEdit: {
+                    sourceNodeId: node.id,
+                    characterName: payload.characterName,
+                    presetId: payload.presetId,
+                    intimacy: payload.intimacy,
+                    arousal: payload.arousal,
+                    label: payload.label,
+                    faceBox: payload.faceBox,
+                    sourceWidth: payload.imageWidth,
+                    sourceHeight: payload.imageHeight,
+                    fullImage: true,
+                },
+            },
+            generationConfig: { count: "1" },
+        });
     }, [generateImageEditNode, setEmotionNodeId]);
 
     return {
