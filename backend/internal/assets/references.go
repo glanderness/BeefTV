@@ -11,7 +11,7 @@ import (
 // documents. Semantic walking, in-memory prefiltering, and repository SQL
 // filters all derive from these definitions.
 var (
-	referenceLocatorPrefixes = []string{"resource:", "/api/resources/"}
+	referenceLocatorPrefixes = []string{resourceStoragePrefix, resourceFileURLPrefix}
 	bareResourceIDFields     = []string{"resourceId", "resourceIds", "sampleResourceId", "referenceResourceId", "referenceResourceIds"}
 	bareResourceIDKeyTokens  = []string{"resourceId", "ResourceId"}
 	referenceEscapeMarkers   = []string{`\u`, `\/`}

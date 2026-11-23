@@ -219,122 +219,155 @@ func TestStartupBootstrapNotBlockedByHeavyWorkspaceCleanup(t *testing.T) {
 		t.Fatalf("resource count right after Start() = %d, want 400 (detached GC must be deferred past startup)", countBeforeGC)
 	}
 
-	// Phase 2: Even while detached GC explicitly runs on the 40MB/20k-log workspace,
-	// /workspace/bootstrap, SQLite reads, AND storageMu-guarded writes must all
-	// run concurrently without starving, and GC itself must stay bounded.
-	gcStarted := make(chan struct{})
-	gcDone := make(chan time.Duration, 1)
-	go func() {
-		close(gcStarted)
-		gcStart := time.Now()
-		rt.service.ResourceService().CleanupDetachedResources()
-		gcDone <- time.Since(gcStart)
-	}()
-	<-gcStarted
+	// Phase 2a: While detached GC runs concurrently with continuous canvas writes
+	// and reads, stale-watermark exits keep BEGIN IMMEDIATE and storageMu free so
+	// neither reads nor writes stall, and GC itself exits boundedly.
+	runConcurrentGC := func(withWrites bool) (gcDur, maxBoot, maxList, maxWrite time.Duration, boots, lists, writes int64) {
+		gcStarted := make(chan struct{})
+		gcDone := make(chan time.Duration, 1)
+		go func() {
+			close(gcStarted)
+			gcStart := time.Now()
+			rt.service.ResourceService().CleanupDetachedResources()
+			gcDone <- time.Since(gcStart)
+		}()
+		<-gcStarted
 
-	var (
-		bootProbes   atomic.Int64
-		listProbes   atomic.Int64
-		writeProbes  atomic.Int64
-		maxBootNs    atomic.Int64
-		maxListNs    atomic.Int64
-		maxWriteNs   atomic.Int64
-		stopProbing  atomic.Bool
-		probeErrMu   sync.Mutex
-		firstProbeEr error
-	)
-	recordMax := func(target *atomic.Int64, d time.Duration) {
-		ns := d.Nanoseconds()
-		for {
-			cur := target.Load()
-			if ns <= cur || target.CompareAndSwap(cur, ns) {
-				return
+		var (
+			bootProbes   atomic.Int64
+			listProbes   atomic.Int64
+			writeProbes  atomic.Int64
+			maxBootNs    atomic.Int64
+			maxListNs    atomic.Int64
+			maxWriteNs   atomic.Int64
+			stopProbing  atomic.Bool
+			probeErrMu   sync.Mutex
+			firstProbeEr error
+		)
+		recordMax := func(target *atomic.Int64, d time.Duration) {
+			ns := d.Nanoseconds()
+			for {
+				cur := target.Load()
+				if ns <= cur || target.CompareAndSwap(cur, ns) {
+					return
+				}
 			}
 		}
-	}
-	recordErr := func(err error) {
-		probeErrMu.Lock()
-		if firstProbeEr == nil {
-			firstProbeEr = err
+		recordErr := func(err error) {
+			probeErrMu.Lock()
+			if firstProbeEr == nil {
+				firstProbeEr = err
+			}
+			probeErrMu.Unlock()
 		}
-		probeErrMu.Unlock()
-	}
-	probeWrite := func(idx int64) (time.Duration, error) {
-		id := fmt.Sprintf("probe-canvas-%d", idx)
-		body := fmt.Sprintf(`{"project":{"id":"%s","title":"probe","revision":0,"nodes":[],"connections":[]}}`, id)
-		req, _ := http.NewRequest(http.MethodPut, rt.BaseURL()+"/canvas-projects/"+id, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Desktop-Token", rt.LaunchToken())
-		start := time.Now()
-		resp, err := client.Do(req)
-		dur := time.Since(start)
-		if err != nil {
-			return dur, fmt.Errorf("PUT /canvas-projects/%s failed after %v: %w", id, dur, err)
-		}
-		respBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-			return dur, fmt.Errorf("PUT /canvas-projects/%s status = %d body=%s", id, resp.StatusCode, string(respBody))
-		}
-		return dur, nil
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		for {
-			d, err := probe("/workspace/bootstrap")
+		probeWrite := func(idx int64) (time.Duration, error) {
+			id := fmt.Sprintf("probe-canvas-%d", idx)
+			body := fmt.Sprintf(`{"project":{"id":"%s","title":"probe","revision":0,"nodes":[],"connections":[]}}`, id)
+			req, _ := http.NewRequest(http.MethodPut, rt.BaseURL()+"/canvas-projects/"+id, strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Desktop-Token", rt.LaunchToken())
+			start := time.Now()
+			resp, err := client.Do(req)
+			dur := time.Since(start)
 			if err != nil {
-				recordErr(err)
-				return
+				return dur, fmt.Errorf("PUT /canvas-projects/%s failed after %v: %w", id, dur, err)
 			}
-			bootProbes.Add(1)
-			recordMax(&maxBootNs, d)
-			d, err = probe("/canvas-projects?page=1&pageSize=1")
-			if err != nil {
-				recordErr(err)
-				return
+			respBody, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+				return dur, fmt.Errorf("PUT /canvas-projects/%s status = %d body=%s", id, resp.StatusCode, string(respBody))
 			}
-			listProbes.Add(1)
-			recordMax(&maxListNs, d)
-			if stopProbing.Load() {
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
+			return dur, nil
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		var idx int64
-		for {
-			idx++
-			d, err := probeWrite(idx)
-			if err != nil {
-				recordErr(err)
-				return
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				d, err := probe("/workspace/bootstrap")
+				if err != nil {
+					recordErr(err)
+					return
+				}
+				bootProbes.Add(1)
+				recordMax(&maxBootNs, d)
+				d, err = probe("/canvas-projects?page=1&pageSize=1")
+				if err != nil {
+					recordErr(err)
+					return
+				}
+				listProbes.Add(1)
+				recordMax(&maxListNs, d)
+				if stopProbing.Load() {
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
-			writeProbes.Add(1)
-			recordMax(&maxWriteNs, d)
-			if stopProbing.Load() {
-				return
-			}
-			time.Sleep(25 * time.Millisecond)
+		}()
+		if withWrites {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var idx int64
+				for {
+					idx++
+					d, err := probeWrite(idx)
+					if err != nil {
+						recordErr(err)
+						return
+					}
+					writeProbes.Add(1)
+					recordMax(&maxWriteNs, d)
+					if stopProbing.Load() {
+						return
+					}
+					time.Sleep(25 * time.Millisecond)
+				}
+			}()
 		}
-	}()
 
-	gcDur := <-gcDone
-	stopProbing.Store(true)
-	wg.Wait()
-
-	if firstProbeEr != nil {
-		t.Fatal(firstProbeEr)
+		gcDur = <-gcDone
+		stopProbing.Store(true)
+		wg.Wait()
+		if firstProbeEr != nil {
+			t.Fatal(firstProbeEr)
+		}
+		return gcDur, time.Duration(maxBootNs.Load()), time.Duration(maxListNs.Load()), time.Duration(maxWriteNs.Load()), bootProbes.Load(), listProbes.Load(), writeProbes.Load()
 	}
-	maxBootDuringGC := time.Duration(maxBootNs.Load())
-	maxListDuringGC := time.Duration(maxListNs.Load())
-	maxWriteDuringGC := time.Duration(maxWriteNs.Load())
-	if bootProbes.Load() == 0 || listProbes.Load() == 0 || writeProbes.Load() == 0 {
-		t.Fatalf("concurrent probes did not execute: boot=%d list=%d write=%d", bootProbes.Load(), listProbes.Load(), writeProbes.Load())
+
+	busyGCDur, busyBoot, busyList, busyWrite, busyBoots, busyLists, busyWrites := runConcurrentGC(true)
+	if busyBoots == 0 || busyLists == 0 || busyWrites == 0 {
+		t.Fatalf("busy-workspace concurrent probes did not execute: boot=%d list=%d write=%d", busyBoots, busyLists, busyWrites)
+	}
+	if busyGCDur > 5*time.Second {
+		t.Fatalf("busy-workspace detached GC exceeded bound: %v > 5s", busyGCDur)
+	}
+	if busyBoot > 500*time.Millisecond {
+		t.Fatalf("/workspace/bootstrap stalled during busy GC: max=%v", busyBoot)
+	}
+	if busyList > 1500*time.Millisecond {
+		t.Fatalf("/canvas-projects read stalled during busy GC: max=%v (gcDur=%v)", busyList, busyGCDur)
+	}
+	if busyWrite > 1500*time.Millisecond {
+		t.Fatalf("PUT /canvas-projects (storageMu write) stalled during busy GC: max=%v (gcDur=%v)", busyWrite, busyGCDur)
+	}
+
+	// Phase 2b: Once writes settle, detached GC completes via watermark fast-path
+	// while concurrent reads continue, removing all 200 orphans and preserving all
+	// 200 referenced resources within strict latency and duration bounds.
+	quietGCDur, quietBoot, quietList, _, quietBoots, quietLists, _ := runConcurrentGC(false)
+	if quietBoots == 0 || quietLists == 0 {
+		t.Fatalf("quiet-write concurrent probes did not execute: boot=%d list=%d", quietBoots, quietLists)
+	}
+	if quietGCDur > 5*time.Second {
+		t.Fatalf("quiet-write detached GC exceeded bound: %v > 5s", quietGCDur)
+	}
+	if quietBoot > 500*time.Millisecond {
+		t.Fatalf("/workspace/bootstrap stalled during quiet-write GC: max=%v", quietBoot)
+	}
+	if quietList > 1500*time.Millisecond {
+		t.Fatalf("/canvas-projects read stalled during quiet-write GC: max=%v (gcDur=%v)", quietList, quietGCDur)
 	}
 
 	var remainingCount int64
@@ -344,17 +377,8 @@ func TestStartupBootstrapNotBlockedByHeavyWorkspaceCleanup(t *testing.T) {
 	if remainingCount != 200 {
 		t.Fatalf("remaining resource count after GC = %d, want 200 referenced resources preserved", remainingCount)
 	}
-	if maxBootDuringGC > 500*time.Millisecond {
-		t.Fatalf("/workspace/bootstrap stalled during active GC: max=%v", maxBootDuringGC)
-	}
-	if maxListDuringGC > 1500*time.Millisecond {
-		t.Fatalf("/canvas-projects read stalled during active GC: max=%v (gcDur=%v)", maxListDuringGC, gcDur)
-	}
-	if maxWriteDuringGC > 1500*time.Millisecond {
-		t.Fatalf("POST /canvas-projects (storageMu write) stalled during active GC: max=%v (gcDur=%v)", maxWriteDuringGC, gcDur)
-	}
-	t.Logf("heavy workspace metrics: startupBoot=%v gcDur=%v probes(boot=%d,list=%d,write=%d) bootDuringGC=%v listDuringGC=%v writeDuringGC=%v",
-		maxStartupBoot, gcDur, bootProbes.Load(), listProbes.Load(), writeProbes.Load(), maxBootDuringGC, maxListDuringGC, maxWriteDuringGC)
+	t.Logf("heavy workspace metrics: startupBoot=%v busy(gc=%v boot=%v list=%v write=%v probes=%d/%d/%d) quiet(gc=%v boot=%v list=%v probes=%d/%d)",
+		maxStartupBoot, busyGCDur, busyBoot, busyList, busyWrite, busyBoots, busyLists, busyWrites, quietGCDur, quietBoot, quietList, quietBoots, quietLists)
 }
 
 // TestRuntimeStartDoesNotBlockOnSlowAssistantHost verifies that an unready or

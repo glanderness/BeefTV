@@ -10,7 +10,7 @@ import (
 // Project export receipts own the standalone ZIP: it is not inserted into the
 // canvas, which would recursively include previous exports in the next ZIP.
 func (r *Repository) ProjectExportResourceReferences(userID string, resourceIDs []string) ([]ResourceDirectReference, error) {
-	if len(resourceIDs) == 0 {
+	if len(resourceIDs) == 0 || !r.db.Migrator().HasTable(&model.AgentOpRecord{}) {
 		return nil, nil
 	}
 	wanted := make(map[string]bool, len(resourceIDs))
@@ -18,7 +18,11 @@ func (r *Repository) ProjectExportResourceReferences(userID string, resourceIDs 
 		wanted[id] = true
 	}
 	var records []model.AgentOpRecord
-	if err := r.db.Select("op_id", "result_json").Where("user_id = ? AND op = ? AND status = ?", userID, "canvas.project.export", "succeeded").Find(&records).Error; err != nil {
+	query := applySQLiteReferenceFilter(
+		r.db.Select("op_id", "result_json").Where("user_id = ? AND op = ? AND status = ? AND result_json <> ''", userID, "canvas.project.export", "succeeded"),
+		"result_json",
+	)
+	if err := query.Find(&records).Error; err != nil {
 		return nil, err
 	}
 	var references []ResourceDirectReference

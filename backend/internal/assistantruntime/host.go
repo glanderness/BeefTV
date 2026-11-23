@@ -33,15 +33,16 @@ type Options struct {
 // Host 是一个助手宿主监督器实例。bootstrap 为每个运行时持有一个；
 // 路由通过 RuntimeDependencies 拿到同一实例，而不是进程级全局变量。
 type Host struct {
-	opts              Options
-	proc              *supervisor
-	lifecycle         sync.Mutex
-	startControlMu    sync.Mutex
-	startGen          uint64
-	activeStartCancel context.CancelFunc
-	opsPipeMu         sync.RWMutex
-	opsPipe           string
-	closed            bool
+	opts               Options
+	proc               *supervisor
+	lifecycle          sync.Mutex
+	startControlMu     sync.Mutex
+	startGen           uint64
+	activeStartCancel  context.CancelFunc
+	onStartGenCaptured func()
+	opsPipeMu          sync.RWMutex
+	opsPipe            string
+	closed             bool
 }
 
 func New(opts Options) *Host {
@@ -173,7 +174,7 @@ func (h *Host) StartContext(ctx context.Context, opsURL, desktopToken string) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	gen := h.currentStartGen()
+	gen := h.captureStartGen()
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -195,10 +196,14 @@ func (h *Host) StartContext(ctx context.Context, opsURL, desktopToken string) er
 	return h.startOwned(startCtx, config, provider, opsURL, desktopToken)
 }
 
-func (h *Host) currentStartGen() uint64 {
+func (h *Host) captureStartGen() uint64 {
 	h.startControlMu.Lock()
 	gen := h.startGen
+	hook := h.onStartGenCaptured
 	h.startControlMu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	return gen
 }
 
@@ -237,17 +242,23 @@ func (h *Host) Launch(provider assistant.Provider, opsURL, desktopToken string) 
 	if h == nil {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
+	gen := h.captureStartGen()
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
-	return h.launchLocked(provider, opsURL, desktopToken)
+	startCtx, cleanupStart, ok := h.beginStartLocked(context.Background(), gen)
+	if !ok {
+		return context.Canceled
+	}
+	defer cleanupStart()
+	return h.launchLocked(startCtx, provider, opsURL, desktopToken)
 }
 
-func (h *Host) launchLocked(provider assistant.Provider, opsURL, desktopToken string) error {
+func (h *Host) launchLocked(ctx context.Context, provider assistant.Provider, opsURL, desktopToken string) error {
 	config, configured := h.EffectiveConfig()
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
-	return h.startOwned(context.Background(), config, provider, opsURL, desktopToken)
+	return h.startOwned(ctx, config, provider, opsURL, desktopToken)
 }
 
 func (h *Host) Stop() error {
@@ -301,8 +312,14 @@ func (h *Host) Ensure(provider assistant.Provider, opsURL, desktopToken string, 
 	if h == nil {
 		return false, invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
+	gen := h.captureStartGen()
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
+	startCtx, cleanupStart, ok := h.beginStartLocked(context.Background(), gen)
+	if !ok {
+		return false, context.Canceled
+	}
+	defer cleanupStart()
 	config, configured := h.EffectiveConfig()
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return false, invalidArg("host_command_missing", "未配置宿主启动命令")
@@ -317,7 +334,7 @@ func (h *Host) Ensure(provider assistant.Provider, opsURL, desktopToken string, 
 			return false, stopErr
 		}
 	}
-	if startErr := h.startOwned(context.Background(), config, provider, opsURL, desktopToken); startErr != nil {
+	if startErr := h.startOwned(startCtx, config, provider, opsURL, desktopToken); startErr != nil {
 		return false, startErr
 	}
 	return true, nil
@@ -348,8 +365,14 @@ func (h *Host) Restart(provider assistant.Provider, opsURL, desktopToken string)
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
 	h.cancelInFlightStart()
+	gen := h.captureStartGen()
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
+	startCtx, cleanupStart, ok := h.beginStartLocked(context.Background(), gen)
+	if !ok {
+		return context.Canceled
+	}
+	defer cleanupStart()
 	config, configured := h.EffectiveConfig()
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
@@ -357,5 +380,5 @@ func (h *Host) Restart(provider assistant.Provider, opsURL, desktopToken string)
 	if err := h.proc.stop(); err != nil {
 		return err
 	}
-	return h.startOwned(context.Background(), config, provider, opsURL, desktopToken)
+	return h.startOwned(startCtx, config, provider, opsURL, desktopToken)
 }

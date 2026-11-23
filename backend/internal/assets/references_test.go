@@ -2,6 +2,7 @@ package assets
 
 import (
 	"encoding/json"
+	"math/rand"
 	"strings"
 	"testing"
 )
@@ -127,4 +128,127 @@ func TestDocumentReferencedIDsPrefilterPreservesAllEdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertReferencePrefilterParity(t *testing.T, raw string, targets map[string]struct{}) {
+	t.Helper()
+	trimmed := strings.TrimSpace(raw)
+	exact := SortedIDs(documentReferencedIDsExact(trimmed, targets))
+	got := SortedIDs(DocumentReferencedIDs(raw, targets))
+	if strings.Join(got, ",") != strings.Join(exact, ",") {
+		t.Fatalf("parity mismatch: got=%v exact=%v raw=%q", got, exact, raw)
+	}
+	if len(exact) > 0 {
+		if !mayReferenceAnyResourceID(trimmed, targets) {
+			t.Fatalf("prefilter false negative: exact=%v raw=%q", exact, raw)
+		}
+		matchedSQLToken := false
+		for _, tok := range ReferencePrefilterTokens() {
+			if strings.Contains(raw, tok) {
+				matchedSQLToken = true
+				break
+			}
+		}
+		if !matchedSQLToken {
+			t.Fatalf("ReferencePrefilterTokens false negative: exact=%v raw=%q", exact, raw)
+		}
+	}
+}
+
+func TestDocumentReferencedIDsPrefilterDifferential(t *testing.T) {
+	rng := rand.New(rand.NewSource(20261123))
+	targets := map[string]struct{}{
+		"res-alpha_1": {},
+		"res-beta-2":  {},
+		"short":       {},
+	}
+	allIDs := []string{
+		"res-alpha_1",
+		"res-beta-2",
+		"short",
+		"res-other-1",
+		"res-alpha_1-suffix",
+		strings.Repeat("a", 81),
+	}
+	locatorFields := []string{
+		"storageKey", "content", "previewContent", "drawingPreviewStorageKey",
+		"drawingPreviewUrl", "url", "dataUrl", "coverUrl", "imageUrl", "videoUrl",
+		"audioUrl", "referenceUrl", "referenceUrls", "artifactRef", "providerArtifactRef",
+	}
+	noiseFields := []string{"prompt", "title", "note", "customResourceId", "myId"}
+
+	encodeValue := func(id string, mode int) string {
+		switch mode {
+		case 0:
+			return `"resource:` + id + `"`
+		case 1:
+			return `"/api/resources/` + id + `/file"`
+		case 2:
+			return `"/api/resources/` + id + `"`
+		case 3:
+			return `"/api/resources/` + id + `?v=1#hash"`
+		case 4:
+			return `"  resource:  ` + id + `  "`
+		case 5:
+			return `"resource\u003a` + id + `"`
+		case 6:
+			return `"\/api\/resources\/` + id + `\/file"`
+		case 7:
+			return `"` + id + `"`
+		case 8:
+			return `"  ` + id + ` \t"`
+		default:
+			return `["other",["` + id + `"]]`
+		}
+	}
+
+	for i := 0; i < 2000; i++ {
+		var parts []string
+		fields := 1 + rng.Intn(4)
+		for f := 0; f < fields; f++ {
+			id := allIDs[rng.Intn(len(allIDs))]
+			var key string
+			switch rng.Intn(3) {
+			case 0:
+				key = locatorFields[rng.Intn(len(locatorFields))]
+			case 1:
+				key = bareResourceIDFields[rng.Intn(len(bareResourceIDFields))]
+			default:
+				key = noiseFields[rng.Intn(len(noiseFields))]
+			}
+			val := encodeValue(id, rng.Intn(10))
+			if rng.Intn(4) == 0 {
+				val = `{"nested":[` + val + `]}`
+			}
+			parts = append(parts, `"`+key+`":`+val)
+		}
+		raw := `{` + strings.Join(parts, ",") + `}`
+		if rng.Intn(15) == 0 {
+			raw = encodeValue(allIDs[rng.Intn(len(allIDs))], rng.Intn(7))
+		}
+		assertReferencePrefilterParity(t, raw, targets)
+	}
+}
+
+func FuzzDocumentReferencedIDs(f *testing.F) {
+	seeds := []string{
+		`{"storageKey":"resource:res-alpha_1"}`,
+		`{"url":"\/api\/resources\/res-alpha_1"}`,
+		`{"resourceIds":[["res-other","res-alpha_1"]]}`,
+		`{"referenceResourceId":"  res-alpha_1  "}`,
+		`{"storageKey":"resource\u003ares-alpha_1"}`,
+		`resource:res-alpha_1`,
+		`"/api/resources/res-alpha_1/file"`,
+		`{"prompt":"resource:res-alpha_1","resourceId":null}`,
+	}
+	for _, seed := range seeds {
+		f.Add(seed)
+	}
+	targets := map[string]struct{}{
+		"res-alpha_1": {},
+		"res-beta-2":  {},
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		assertReferencePrefilterParity(t, raw, targets)
+	})
 }

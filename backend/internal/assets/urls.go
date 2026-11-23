@@ -2,8 +2,13 @@ package assets
 
 import "strings"
 
+const (
+	resourceStoragePrefix = "resource:"
+	resourceFileURLPrefix = "/api/resources/"
+)
+
 func FileURL(id string) string {
-	return "/api/resources/" + id + "/file"
+	return resourceFileURLPrefix + id + "/file"
 }
 
 func IsFileURL(value string) bool {
@@ -11,13 +16,12 @@ func IsFileURL(value string) bool {
 }
 
 func IDFromFileURL(value string) string {
-	const prefix = "/api/resources/"
 	value = strings.TrimSpace(value)
-	index := strings.Index(value, prefix)
+	index := strings.Index(value, resourceFileURLPrefix)
 	if index < 0 {
 		return ""
 	}
-	remainder := value[index+len(prefix):]
+	remainder := value[index+len(resourceFileURLPrefix):]
 	if remainder == "" {
 		return ""
 	}
@@ -29,8 +33,8 @@ func IDFromFileURL(value string) string {
 
 func ResourceID(value string) string {
 	value = strings.TrimSpace(value)
-	if strings.HasPrefix(value, "resource:") {
-		return ValidID(strings.TrimPrefix(value, "resource:"))
+	if strings.HasPrefix(value, resourceStoragePrefix) {
+		return ValidID(strings.TrimPrefix(value, resourceStoragePrefix))
 	}
 	return ValidID(IDFromFileURL(value))
 }

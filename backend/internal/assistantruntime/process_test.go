@@ -640,12 +640,32 @@ func TestStopCancelsInFlightAndQueuedStartContext(t *testing.T) {
 	}
 
 	// 2. A queued StartContext waiting on lifecycle lock must not relaunch after Stop.
+	genCaptured := make(chan struct{}, 1)
+	host.startControlMu.Lock()
+	host.onStartGenCaptured = func() {
+		select {
+		case genCaptured <- struct{}{}:
+		default:
+		}
+	}
+	host.startControlMu.Unlock()
+	t.Cleanup(func() {
+		host.startControlMu.Lock()
+		host.onStartGenCaptured = nil
+		host.startControlMu.Unlock()
+	})
+
 	host.lifecycle.Lock()
 	queuedErrCh := make(chan error, 1)
 	go func() {
 		queuedErrCh <- host.StartContext(context.Background(), "http://127.0.0.1:18090/api", "")
 	}()
-	time.Sleep(25 * time.Millisecond)
+	select {
+	case <-genCaptured:
+	case <-time.After(2 * time.Second):
+		host.lifecycle.Unlock()
+		t.Fatal("queued StartContext did not capture generation before unlock")
+	}
 	host.cancelInFlightStart()
 	host.lifecycle.Unlock()
 
@@ -659,5 +679,42 @@ func TestStopCancelsInFlightAndQueuedStartContext(t *testing.T) {
 	}
 	if host.Running() {
 		t.Fatal("queued StartContext must not launch child after Stop")
+	}
+
+	// 3. StopContext must also cancel an in-flight Ensure promptly without waiting 10s.
+	ensureErrCh := make(chan error, 1)
+	go func() {
+		_, err := host.Ensure(fixtureProvider(), "http://127.0.0.1:18090/api", "", true)
+		ensureErrCh <- err
+	}()
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if host.State().Starting {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !host.State().Starting {
+		t.Fatal("expected Host.State().Starting while Ensure boots slow child")
+	}
+	stopCtxBegin := time.Now()
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelClose()
+	if err := host.StopContext(closeCtx); err != nil {
+		t.Fatalf("Host.StopContext failed: %v", err)
+	}
+	if elapsed := time.Since(stopCtxBegin); elapsed > 2*time.Second {
+		t.Fatalf("Host.StopContext took %v waiting on in-flight Ensure", elapsed)
+	}
+	select {
+	case err := <-ensureErrCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("in-flight Ensure error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight Ensure did not return after StopContext")
+	}
+	if host.Running() {
+		t.Fatal("host must not be running after StopContext")
 	}
 }

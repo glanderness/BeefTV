@@ -166,6 +166,7 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string, ex
 			}
 		}
 		for _, document := range snapshot.Documents {
+			skipSecondary := false
 			switch document.TaskStatus {
 			case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
 				if document.Kind == "任务日志" || document.Kind == "任务结果" {
@@ -173,7 +174,23 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string, ex
 				}
 				if document.Kind == "任务" {
 					document.SecondaryJSON = ""
+					skipSecondary = true
 				}
+			}
+			if document.PrimaryMatchedIDs != nil || document.SecondaryMatchedIDs != nil {
+				for _, resourceID := range document.PrimaryMatchedIDs {
+					if _, exists := ownedIDSet[resourceID]; exists {
+						retainedResourceIDs[resourceID] = struct{}{}
+					}
+				}
+				if !skipSecondary {
+					for _, resourceID := range document.SecondaryMatchedIDs {
+						if _, exists := ownedIDSet[resourceID]; exists {
+							retainedResourceIDs[resourceID] = struct{}{}
+						}
+					}
+				}
+				continue
 			}
 			referencedIDs := assets.DocumentReferencedIDs(document.PrimaryJSON, ownedIDSet)
 			for resourceID := range assets.DocumentReferencedIDs(document.SecondaryJSON, ownedIDSet) {
