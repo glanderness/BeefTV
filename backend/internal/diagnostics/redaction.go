@@ -79,7 +79,14 @@ func sanitizePath(value string) string {
 	if index := strings.IndexAny(value, "?#"); index >= 0 {
 		value = value[:index]
 	}
+	if isStructuredWorkspaceRoute(value) {
+		return value
+	}
 	return redactText(value, 300)
+}
+
+func isStructuredWorkspaceRoute(value string) bool {
+	return value == "/workspace/bootstrap" || value == "/workspace/model-config" || value == "/workspace/model-config/capability"
 }
 
 func redactText(value string, limit int) string {
@@ -90,7 +97,8 @@ func redactText(value string, limit int) string {
 	for _, marker := range []string{"authorization", "cookie", "set-cookie", "x-goog-api-key", "x-canvas-upstream-headers", "api_key", "api-key", "apikey", "access_key", "access-key", "secret_key", "secret-key", "password", "token="} {
 		value = redactMarker(value, marker)
 	}
-	return kernel.TruncateRunes(redactURLs(value), limit)
+	value = generation.RedactLocalPaths(redactURLs(value), "[PATH_REDACTED]")
+	return kernel.TruncateRunes(value, limit)
 }
 
 func redactMarker(value string, marker string) string {

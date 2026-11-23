@@ -38,4 +38,10 @@ func TestDiagnosticSummaryDoesNotMangleHTTPURLsAsLocalPaths(t *testing.T) {
 	if strings.Contains(combined, "PRIVATE") || !strings.Contains(combined, "[路径已隐藏]") {
 		t.Fatalf("combined path+url+credential summary leaked: %q", combined)
 	}
+	if got := RedactLocalPaths(`/home/a:/private/b`, "[路径已隐藏]"); got != "[路径已隐藏]:[路径已隐藏]" {
+		t.Fatalf("mixed unix paths = %q", got)
+	}
+	if got := RedactLocalPaths(`C:\\A_.B`, "[路径已隐藏]"); got != "[路径已隐藏]" {
+		t.Fatalf("escaped windows path = %q", got)
+	}
 }

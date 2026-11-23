@@ -1,3 +1,4 @@
+import { hasLocalPath, redactLocalPaths } from "./local-path-redaction";
 import { moderationErrorCopy } from "./moderation-error";
 
 export const CONTENT_MODERATION_ERROR_CODE = "sensitive_words_detected";
@@ -230,10 +231,19 @@ const URL_PATTERN = /(?:https?:\/\/|file:\/\/|data:[a-z0-9.+-]+\/[^;]+;base64,)[
 const SECRET_PATTERN = /(?:[a-z0-9_-]*(?:api[_-]?key|access[_-]?key(?:[_-]?id)?|secret[_-]?key|client[_-]?secret|private[_-]?key|api[_-]?secret|access[_-]?token|refresh[_-]?token)|authorization|bearer|sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]{20,})[^\s,;]*/gi;
 const PROMPT_KEY = String.raw`(?:(?:choices|messages|message|delta|parts|input|prompt|contents?|system[_-]?instruction)(?:(?:\.\d+|\[\d+\]|\.[a-z0-9_]+)+)?|(?:(?:user|system)[_-]?)?prompt(?:[_-]?text)?|input(?:[_-]?text)?|query|content|text|提示词|输入内容)`;
 const PROMPT_ECHO = new RegExp(String.raw`(["']?${PROMPT_KEY}["']?\s*[=:：]\s*)(?:"[^"]{0,400}"|'[^']{0,400}'|\S{1,400})`, "gi");
-// (?<![\s\S]) means "start of text". A literal ^ inside the leading optional group
-// makes older WebKit (desktop WebView on older macOS/Linux) try only position 0, so
-// a credential in mid-message would survive.
-const CREDENTIAL_TAIL = /(?:(?<![\s\S])(?:invalid|missing|bad|expired|unauthorized|error)\s*[:：]?\s*)?["']?(?:(?:invalid|missing|bad|expired|unauthorized|aws|oss|cos|qiniu|x|goog|openai|anthropic|gemini|azure|bearer|auth|session|access|refresh|client|private|secret|api|app|service|signing)[\s_-]+)*(?:[a-z0-9_-]*(?:key(?:[\s_-]?id)?|secret|token|password|passwd|credential|signature)|authorization|proxy-authorization|cookie|set-cookie)["']?\s*[=:：][\s\S]*/i;
+const CREDENTIAL_TAIL_CORE = String.raw`["']?(?:(?:invalid|missing|bad|expired|unauthorized|aws|oss|cos|qiniu|x|goog|openai|anthropic|gemini|azure|bearer|auth|session|access|refresh|client|private|secret|api|app|service|signing)[\s_-]+)*(?:[a-z0-9_-]*(?:key(?:[\s_-]?id)?|secret|token|password|passwd|credential|signature)|authorization|proxy-authorization|cookie|set-cookie)["']?\s*[=:：][\s\S]*`;
+// Separate anchored prefix and unanchored core: Safari < 16.4 rejects regex lookbehind
+// at parse time, while putting `^` inside a leading optional group causes older WebKit
+// to attempt matching only at index 0 and leave mid-message credentials intact.
+const CREDENTIAL_PREFIX_TAIL = new RegExp(
+    String.raw`^(?:invalid|missing|bad|expired|unauthorized|error)\s*[:：]?\s*${CREDENTIAL_TAIL_CORE}`,
+    "i",
+);
+const CREDENTIAL_TAIL = new RegExp(CREDENTIAL_TAIL_CORE, "i");
+
+function stripCredentialTail(text: string) {
+    return text.replace(CREDENTIAL_PREFIX_TAIL, "").replace(CREDENTIAL_TAIL, "");
+}
 const UNSTRUCTURED_PROMPT_TAIL = new RegExp(
     String.raw`(?:(?:^(?:bad\s+request|invalid\s+request|error)\s*[:：]\s*)?\{?\s*)?(?:["']?(?:[a-z0-9_]+(?:\.\d+|\[\d+\]|\.)+)*${PROMPT_KEY}["']?\s*[=:：]|(?:(?:invalid\s+value\s+)?(?:for|parameter|param|field)\s+["']?${PROMPT_KEY}["']?(?:\s*[:=：]|\s+(?:contains|is)\b)?|\b(?:the\s+)?["']?${PROMPT_KEY}["']?\s+(?:field|parameter|param)\s+(?:contains|is|was)\b)|\{[^{}]*"(?:text|content|prompt|input|messages|query)"\s*:[\s\S]*)[\s\S]*`,
     "i",
@@ -563,8 +573,8 @@ export function sanitizeProviderText(value: string) {
     text = text.replace(/\b(?:get|post|put|head|delete|patch|options)\s+(?:""|''|["'])(?:\s*:)?\s*/gi, "");
     // Unstructured messages may echo whole headers or prompts; discard the suffix,
     // since a whitespace-based token matcher cannot know where a secret ends.
-    text = text.replace(CREDENTIAL_TAIL, "").replace(UNSTRUCTURED_PROMPT_TAIL, "[已隐藏]");
-    text = text.replace(/(?:file:\/\/[^\r\n"'<>]+|(?<![a-z])[a-z]:[\\/][^\r\n:"'<>]+|\\\\[^\r\n:"'<>]+|(?<![A-Za-z0-9._-])\/+(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc|data|app|workspace|usr|proc|sys|dev|lib|bin|sbin)\/[^\r\n:"'<>]+)/gi, "[路径已隐藏]");
+    text = stripCredentialTail(text).replace(UNSTRUCTURED_PROMPT_TAIL, "[已隐藏]");
+    text = redactLocalPaths(text, "[路径已隐藏]");
     text = text.replace(SIGNED_QUERY, "").replace(SECRET_PATTERN, "").replace(PROMPT_ECHO, "$1[已隐藏]");
     text = text.replace(/\s+/g, " ").trim();
     if (text.startsWith("{") || text.startsWith("[") || text.startsWith("<")) return "";
@@ -641,7 +651,6 @@ export function isCanvasSaveConflictText(text: string) {
     );
 }
 
-const LOCAL_PATH_PATTERN = /(?:file:\/\/[^\r\n"'<>]+|(?<![a-z])[a-z]:[\\/][^\r\n:"'<>]+|\\\\[^\r\n:"'<>]+|(?<![A-Za-z0-9._-])\/+(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc|data|app|workspace|usr|proc|sys|dev|lib|bin|sbin)\/[^\r\n:"'<>]+)/i;
 const GENERIC_CHINESE_WRAPPERS = new Set([
     "",
     "请求失败",
@@ -679,7 +688,7 @@ export function userFacingChineseCopy(raw: string): CategoryCopy | undefined {
         UNSTRUCTURED_PROMPT_TAIL.test(trimmed) ||
         /(?:[a-z0-9_-]*(?:api[_-]?key|access[_-]?key(?:[_-]?id)?|secret[_-]?key|client[_-]?secret|private[_-]?key|api[_-]?secret|access[_-]?token|refresh[_-]?token)|authorization|bearer|sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]{20,})/i.test(trimmed) ||
         new RegExp(String.raw`["']?${PROMPT_KEY}["']?\s*[=:：]`, "i").test(trimmed) ||
-        LOCAL_PATH_PATTERN.test(trimmed) ||
+        hasLocalPath(trimmed) ||
         LOCAL_DATABASE_ERROR.test(trimmed) ||
         containsInfrastructureDetails(trimmed) ||
         /(?:status(?:[_\s]+code)?\s*[:=]|素材转换失败:|无可用渠道|暂无可用渠道)/i.test(trimmed)

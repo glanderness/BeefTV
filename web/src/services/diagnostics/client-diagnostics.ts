@@ -1,6 +1,7 @@
 import { type AxiosError, type AxiosRequestConfig } from "axios";
 
 import { appPathnameFrom } from "@/lib/app-routing";
+import { redactDiagnosticText } from "@/lib/local-path-redaction";
 import { apiClient } from "@/services/api/request";
 import { browserCapabilities } from "./browser-environment";
 import { diagnosticsStorageForScope } from "@/lib/diagnostics-storage";
@@ -80,6 +81,7 @@ setStartupDiagnosticEventSink((event) => {
     recordDiagnosticEvent(event);
 });
 setStartupFailureDiagnosticSink((failure) => {
+    const detail = [failure.errorName, failure.errorDetail].filter(Boolean).join(": ");
     recordDiagnosticEvent({
         level: "error",
         category: "environment",
@@ -87,7 +89,8 @@ setStartupFailureDiagnosticSink((failure) => {
         reason: failure.reason,
         requestId: failure.requestId,
         httpStatus: failure.httpStatus,
-        message: failure.message,
+        message: detail && !failure.message.includes(detail) ? `${failure.message} (${detail})` : failure.message,
+        stack: failure.errorStack,
     });
 });
 
@@ -351,14 +354,7 @@ export function sanitizeCanvasBindingEvidence(value: unknown): CanvasBindingEvid
 }
 
 function redactClientText(value?: string, maxLength = 1200) {
-    let text = String(value || "").trim();
-    if (!text) return "";
-    if (/^[{[<]/.test(text)) return "[STRUCTURED_BODY_REDACTED]";
-    text = text.replace(/["']?(authorization|cookie|set-cookie|api[_-]?key|secret[_-]?key|password|token|prompt|input|query)["']?\s*[:=：][\s\S]*/gi, "$1=[REDACTED]");
-    text = text.replace(/\bBearer\s+[^\s,;]+|\bsk-[A-Za-z0-9_-]{8,}|\beyJ[A-Za-z0-9_-]{12,}(?:\.[A-Za-z0-9_-]+)*/gi, "[SECRET_REDACTED]");
-    text = text.replace(/(?:https?:\/\/|blob:|data:)[^\s"'<>]+/gi, "[URL_REDACTED]");
-    text = text.replace(/(?:[a-z]:[\\/]|\/(?:Users|home|private|tmp|var|Volumes|mnt|media|root|etc)\/)[^\r\n:"'<>]+/gi, "[PATH_REDACTED]");
-    return text.slice(0, maxLength);
+    return redactDiagnosticText(value, maxLength);
 }
 
 function clampNumber(value: number, min: number, max: number) {

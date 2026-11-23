@@ -10,11 +10,121 @@ import (
 
 // PathError separates the path and cause with a colon; spaces are legal in paths.
 // Without a reliable delimiter, conservatively hide the remaining suffix too.
-var diagnosticLocalPath = regexp.MustCompile(`(?i)(?:\b[a-z]:[\\/]|\\\\|/+(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc|data|app|workspace|usr|proc|sys|dev|lib|bin|sbin)/)[^\r\n:"'<>]+`)
+var diagnosticLocalPathScan = regexp.MustCompile(`(?i)(file://[^\r\n"'<>]+)|([a-z]:[\\/][^\r\n:"'<>]+)|(\\\\[^\r\n:"'<>]+)|(/+(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc|data|app|workspace|usr|proc|sys|dev|lib|bin|sbin)/[^\r\n:"'<>]+)`)
+var safeAppAPIRoute = regexp.MustCompile(`(?i)^/workspace/(?:bootstrap|model-config(?:/capability)?)(?:$|\s|[）),;\]])`)
 var diagnosticTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$`)
 
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func isUnixPathPrefixBlocked(b byte) bool {
+	return isASCIILetter(b) || (b >= '0' && b <= '9') || b == '.' || b == '_' || b == '-'
+}
+
+func isMethodBoundary(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\r' || b == '\n' || b == '"' || b == '\'' || b == '(' || b == '['
+}
+
+func hasHTTPMethodPrefix(value string, offset int) bool {
+	i := offset - 1
+	for i >= 0 && (value[i] == ' ' || value[i] == '\t') {
+		i--
+	}
+	if i == offset-1 || i < 0 {
+		return false
+	}
+	methodEnd := i + 1
+	for i >= 0 && isASCIILetter(value[i]) {
+		i--
+	}
+	methodStart := i + 1
+	if methodStart == methodEnd {
+		return false
+	}
+	if methodStart > 0 && !isMethodBoundary(value[methodStart-1]) {
+		return false
+	}
+	switch strings.ToUpper(value[methodStart:methodEnd]) {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidLocalPathMatch(value string, loc []int) bool {
+	start, end := loc[0], loc[1]
+	if loc[4] >= 0 {
+		return start == 0 || !isASCIILetter(value[start-1])
+	}
+	if loc[8] >= 0 {
+		if start > 0 && isUnixPathPrefixBlocked(value[start-1]) {
+			return false
+		}
+		if safeAppAPIRoute.MatchString(value[start:end]) && hasHTTPMethodPrefix(value, start) {
+			return false
+		}
+	}
+	return true
+}
+
+// HasLocalPath reports whether value contains a local filesystem, UNC, or file:// path.
+func HasLocalPath(value string) bool {
+	for scanFrom := 0; scanFrom < len(value); {
+		loc := diagnosticLocalPathScan.FindStringSubmatchIndex(value[scanFrom:])
+		if loc == nil {
+			return false
+		}
+		for i := range loc {
+			if loc[i] >= 0 {
+				loc[i] += scanFrom
+			}
+		}
+		if isValidLocalPathMatch(value, loc) {
+			return true
+		}
+		scanFrom = loc[0] + 1
+	}
+	return false
+}
+
+// RedactLocalPaths scrubs file://, Windows drive, UNC, and Unix local paths
+// in a single left-to-right pass while preserving HTTP(S) URLs and safe app API routes.
+func RedactLocalPaths(value, replacement string) string {
+	if value == "" {
+		return value
+	}
+	var out strings.Builder
+	cursor := 0
+	for scanFrom := 0; scanFrom < len(value); {
+		loc := diagnosticLocalPathScan.FindStringSubmatchIndex(value[scanFrom:])
+		if loc == nil {
+			break
+		}
+		for i := range loc {
+			if loc[i] >= 0 {
+				loc[i] += scanFrom
+			}
+		}
+		if isValidLocalPathMatch(value, loc) {
+			out.WriteString(value[cursor:loc[0]])
+			out.WriteString(replacement)
+			cursor = loc[1]
+			scanFrom = loc[1]
+		} else {
+			scanFrom = loc[0] + 1
+		}
+	}
+	if cursor == 0 {
+		return value
+	}
+	out.WriteString(value[cursor:])
+	return out.String()
+}
+
 func diagnosticToken(value string) string {
-	if !diagnosticTokenPattern.MatchString(value) || unsafeIDPattern.MatchString(value) || diagnosticLocalPath.MatchString(value) || strings.Contains(value, "://") {
+	if !diagnosticTokenPattern.MatchString(value) || unsafeIDPattern.MatchString(value) || HasLocalPath(value) || strings.Contains(value, "://") {
 		return ""
 	}
 	return value

@@ -553,7 +553,7 @@ func userFacingChineseCopy(raw string) (categoryCopy, bool) {
 	if trimmed == "" || htmlBodyPattern.MatchString(trimmed) || strings.ContainsAny(trimmed, "{}<>") {
 		return categoryCopy{}, false
 	}
-	if urlPattern.MatchString(trimmed) || signedQueryPattern.MatchString(trimmed) || credentialHeaderPattern.MatchString(trimmed) || secretPattern.MatchString(trimmed) || promptEchoPattern.MatchString(trimmed) || diagnosticLocalPath.MatchString(trimmed) {
+	if urlPattern.MatchString(trimmed) || signedQueryPattern.MatchString(trimmed) || credentialHeaderPattern.MatchString(trimmed) || secretPattern.MatchString(trimmed) || promptEchoPattern.MatchString(trimmed) || HasLocalPath(trimmed) {
 		return categoryCopy{}, false
 	}
 	if localDatabaseErrorPattern.MatchString(trimmed) || isLocalDiskFullMessage(trimmed) || infrastructureTextPattern.MatchString(trimmed) {

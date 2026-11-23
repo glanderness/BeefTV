@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -52,6 +53,29 @@ func TestRepairIsBoundedAndIdempotent(t *testing.T) {
 	data, _ := json.Marshal(first)
 	if strings.Contains(string(data), dir) {
 		t.Fatal("report leaked machine path")
+	}
+	if (runtime.GOOS == "darwin" || runtime.GOOS == "windows") && first.OSVersion == "" {
+		t.Fatalf("expected non-empty %s osVersion", runtime.GOOS)
+	}
+}
+
+func TestOSVersionFormatters(t *testing.T) {
+	ubuntu := "# comment\nNAME=\"Ubuntu\"\nID=ubuntu\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\n"
+	if got := parseLinuxOSRelease(ubuntu); got != "ubuntu 24.04" {
+		t.Fatalf("parseLinuxOSRelease(ubuntu) = %q, want %q", got, "ubuntu 24.04")
+	}
+	arch := "ID=arch\nPRETTY_NAME='Arch Linux'\n"
+	if got := parseLinuxOSRelease(arch); got != "Arch Linux" {
+		t.Fatalf("parseLinuxOSRelease(arch) = %q, want %q", got, "Arch Linux")
+	}
+	if got := parseLinuxOSRelease(""); got != "" {
+		t.Fatalf("parseLinuxOSRelease(empty) = %q, want empty", got)
+	}
+	if got := formatWindowsOSVersion(10, 0, 22631); got != "10.0.22631" {
+		t.Fatalf("formatWindowsOSVersion = %q, want %q", got, "10.0.22631")
+	}
+	if got := formatWindowsOSVersion(0, 0, 0); got != "" {
+		t.Fatalf("formatWindowsOSVersion(zero) = %q, want empty", got)
 	}
 }
 

@@ -203,6 +203,46 @@ func TestRedactTextRemovesMarkersAndURLQuery(t *testing.T) {
 	}
 }
 
+func TestRedactTextAndClientEventScrubLocalPathsDefenseInDepth(t *testing.T) {
+	event := sanitizeClientEvent(ClientEvent{
+		ID:      "event-paths",
+		Code:    "workspace_bootstrap_failed",
+		Message: `SyntaxError: bad regex in \\fileserver\private\share.png and /opt/secret/cfg.yml and /workspace/private-project/a.js and open /workspace/bootstrap: denied`,
+		Stack: strings.Join([]string{
+			"SyntaxError: Invalid regular expression",
+			"    at file:///Applications/BeefTV.app/Contents/Resources/static/chunk.js:1:2",
+			"    at prefixfile:///Applications/Hidden.app/a.js:1:2",
+			`    at C:\Users\alice\secret.js:1:3`,
+			"    at C:/Users/alice/forward.js:1:4",
+			"    at /home/a:/private/b",
+			"    at https://host.example/app/v1?token=secret",
+		}, "\n"),
+	})
+	for _, leaked := range []string{"fileserver", "cfg.yml", "private-project", "/workspace/bootstrap", "BeefTV.app", "Hidden.app", "alice", "/home/a", "/private/b", "token=secret"} {
+		if strings.Contains(event.Message, leaked) || strings.Contains(event.Stack, leaked) {
+			t.Fatalf("sanitizeClientEvent leaked %q: message=%q stack=%q", leaked, event.Message, event.Stack)
+		}
+	}
+	if !strings.Contains(event.Message, "SyntaxError") || !strings.Contains(event.Stack, "https://host.example/app/v1") {
+		t.Fatalf("sanitizeClientEvent dropped safe evidence: message=%q stack=%q", event.Message, event.Stack)
+	}
+	apiEvent := sanitizeClientEvent(ClientEvent{
+		ID:      "event-bootstrap",
+		Route:   "/workspace/bootstrap",
+		Message: "GET" + strings.Repeat(" ", 20) + "/workspace/bootstrap",
+	})
+	if apiEvent.Message != "GET"+strings.Repeat(" ", 20)+"/workspace/bootstrap" || apiEvent.Route != "/workspace/bootstrap" {
+		t.Fatalf("safe app route was mangled: %#v", apiEvent)
+	}
+	fakeMethod := sanitizeClientEvent(ClientEvent{
+		ID:      "event-fake-method",
+		Message: "aGET" + strings.Repeat(" ", 12) + "/workspace/bootstrap",
+	})
+	if strings.Contains(fakeMethod.Message, "/workspace/bootstrap") {
+		t.Fatalf("non-method boundary bypassed path redaction: %#v", fakeMethod)
+	}
+}
+
 func TestDefaultSevenDayWindowIncludesMultiDayEvidenceAndRejectsOverSevenDays(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:diagnostics-seven-day-window?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {

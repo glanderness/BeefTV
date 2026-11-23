@@ -1,3 +1,4 @@
+import { redactDiagnosticText } from "@/lib/local-path-redaction";
 import { browserCapabilities } from "./browser-environment";
 import { DEFAULT_DIAGNOSTIC_WINDOW_MS } from "./diagnostic-window";
 
@@ -18,6 +19,28 @@ export async function startCheckedWorkspace(load: () => Promise<unknown>, capabi
         showFailure("workspace", capabilities, error);
         return false;
     }
+}
+
+function buildPreflightClientEvents(stage: "capability" | "workspace", reason: string | undefined, error: unknown) {
+    if (stage !== "workspace" || error === undefined || error === null) return [];
+    const name = error instanceof Error ? error.name : typeof error === "object" && "name" in error && typeof (error as { name?: unknown }).name === "string" ? (error as { name: string }).name : "";
+    const rawMsg = error instanceof Error ? error.message : typeof error === "object" && "message" in error && typeof (error as { message?: unknown }).message === "string" ? (error as { message: string }).message : typeof error === "string" ? error : "";
+    const rawStack = error instanceof Error ? error.stack : typeof error === "object" && "stack" in error && typeof (error as { stack?: unknown }).stack === "string" ? (error as { stack: string }).stack : undefined;
+    const summary = [name.trim(), rawMsg.trim()].filter(Boolean).join(": ");
+    const message = redactDiagnosticText(summary ? `启动预检加载失败 (${summary})` : "启动预检加载失败");
+    const stack = rawStack ? redactDiagnosticText(rawStack, 4000) : undefined;
+    return [
+        {
+            id: `event-preflight-${Date.now().toString(36)}`,
+            timestamp: new Date().toISOString(),
+            level: "error",
+            category: "environment",
+            code: "workspace_bootstrap_failed",
+            reason: reason || "workspace_preflight_failed",
+            message,
+            ...(stack ? { stack } : {}),
+        },
+    ];
 }
 
 function extractSafeReason(error: unknown): string | undefined {
@@ -106,7 +129,7 @@ function showFailure(stage: "capability" | "workspace", capabilities: RequiredCa
                             browser: typeof navigator !== "undefined" ? navigator.userAgent : "",
                             os: typeof navigator !== "undefined" ? navigator.platform : "",
                         },
-                        clientEvents: [],
+                        clientEvents: buildPreflightClientEvents(stage, reason, error),
                     }),
                 )
                 .then((savedPath) => {

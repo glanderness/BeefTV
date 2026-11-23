@@ -6,6 +6,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin, searchForWorkspaceRoot } from "vite";
 
 import { resolveHeavyMediaEnabled } from "./media-build-mode";
+import { scanDistDirectoryForWebViewSyntax } from "./webview-compat-syntax.mjs";
 import { distributionNotices } from "../scripts/distribution-notices.mjs";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
@@ -72,9 +73,31 @@ function licenseNoticesPlugin(): Plugin {
     };
 }
 
+function webviewSyntaxCompatPlugin(): Plugin {
+    return {
+        name: "beeftv-webview-syntax-compat",
+        writeBundle(options) {
+            const outDir = options.dir ? resolve(options.dir) : resolve(webDir, "dist");
+            const { scannedFiles, violations } = scanDistDirectoryForWebViewSyntax(outDir);
+            if (scannedFiles === 0) {
+                this.error(`WebView syntax compatibility check scanned 0 JS files in ${outDir}`);
+            }
+            if (violations.length > 0) {
+                const preview = violations
+                    .slice(0, 12)
+                    .map((item) => `  - ${item.file}:${item.line}:${item.column} [${item.kind}] ${item.detail}`)
+                    .join("\n");
+                this.error(
+                    `Found ${violations.length} Safari 15.4+ WebView syntax incompatibility issue(s) across ${scannedFiles} built JS files:\n${preview}`,
+                );
+            }
+        },
+    };
+}
+
 export default defineConfig({
     base: "./",
-    plugins: [react(), pruneOptionalMediaPlugin(), licenseNoticesPlugin()],
+    plugins: [react(), pruneOptionalMediaPlugin(), licenseNoticesPlugin(), webviewSyntaxCompatPlugin()],
     define: {
         __APP_VERSION__: JSON.stringify(appVersion),
         __BEEFTV_HEAVY_MEDIA_ENABLED__: JSON.stringify(heavyMediaEnabled),
@@ -105,6 +128,10 @@ export default defineConfig({
         },
     },
     build: {
+        // Desktop macOS 12.3-13.2 WKWebView ships Safari 15.4-16.3, which lacks
+        // ES2022 class static initialization blocks (Safari 16.4+). Keep the
+        // modern Chrome/Firefox floor while lowering syntax for Safari 15.4+.
+        target: ["chrome111", "edge111", "firefox114", "safari15.4"],
         // Keep the SPA route `/assets` distinct from Vite's emitted static files.
         // Otherwise vite preview treats `/assets` as the physical asset directory
         // and a direct refresh of the asset library can return 404.
