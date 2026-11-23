@@ -93,14 +93,29 @@ func TestPreflightOwnedVideoDeliveryStreamingFallbackAndLimits(t *testing.T) {
 		t.Fatalf("empty non-file stream misclassified: err=%v classified=%#v", err, classified)
 	}
 
-	// 3. >200 MiB non-file stream rejected via bounded io.Copy(io.Discard, ...) without buffering 200 MiB in RAM.
+	// 3. >1 GiB non-file stream rejected via bounded io.Copy(io.Discard, ...) when server advertised 1 GiB.
+	runtime.Limits = configurableBudget{limit: 2048 << 20}
 	runtime.Resources = streamVideoResources{
 		info:        ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4"},
-		streamBytes: (200 << 20) + 1024,
+		streamBytes: BeefTVMediaToolVideoMaxBytes + 1024,
+	}
+	largeEraseInput := eraseInput
+	largeOpts := *eraseInput.SubtitleErase
+	largeOpts.MaxVideoBytes = BeefTVMediaToolVideoMaxBytes
+	largeEraseInput.SubtitleErase = &largeOpts
+	_, err = prepareOwnedSubtitleEraseSource(WithRuntime(context.Background(), runtime), largeEraseInput)
+	if classified := ClassifyError(RequestPreparationError{Cause: err}); classified.Category != CategoryInputTooLarge || !strings.Contains(classified.UserMessage(), "1GB") {
+		t.Fatalf("oversized non-file stream misclassified: err=%v classified=%#v", err, classified)
+	}
+
+	// 4. Default/legacy server cap (200 MiB when MaxVideoBytes is 0 or 200 MiB) fails fast on >200 MiB.
+	runtime.Resources = streamVideoResources{
+		info:        ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4"},
+		streamBytes: BeefTVSeedanceVideoMaxBytes + 1024,
 	}
 	_, err = prepareOwnedSubtitleEraseSource(WithRuntime(context.Background(), runtime), eraseInput)
 	if classified := ClassifyError(RequestPreparationError{Cause: err}); classified.Category != CategoryInputTooLarge || !strings.Contains(classified.UserMessage(), "200MB") {
-		t.Fatalf("oversized non-file stream misclassified: err=%v classified=%#v", err, classified)
+		t.Fatalf("default 200 MiB safe fallback misclassified: err=%v classified=%#v", err, classified)
 	}
 }
 

@@ -6,6 +6,11 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+// MaxInlineMediaBytes is the single source of truth bounding inline data URLs
+// and in-memory media fallbacks so large 1-2 GiB streaming deliveries never
+// spill into Go heap memory.
+const MaxInlineMediaBytes int64 = 256 << 20
+
 type ResourceStream struct {
 	Resource      *model.Resource
 	Body          io.ReadCloser

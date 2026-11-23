@@ -112,24 +112,48 @@ func GetExternalBinary(ctx context.Context, rawURL string) ([]byte, string, erro
 	return DoBinary(req)
 }
 
-func GetProviderExternalBinary(ctx context.Context, config Config, rawURL string) ([]byte, string, error) {
+func newProviderExternalRequest(ctx context.Context, config Config, rawURL string) (*http.Request, error) {
 	ctx = context.WithValue(ctx, providerDownloadContext{}, true)
 	downloadURL := ProviderDownloadURL(config.BaseURL, rawURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if SameProviderOrigin(config.BaseURL, downloadURL) {
 		if auth, ok := ctx.Value(videoProtocolAuthContext{}).(protocol.ManifestAuth); ok {
 			if err := ApplyProtocolAuth(req, config, auth); err != nil {
-				return nil, "", err
+				return nil, err
 			}
 		} else {
 			ApplyAuth(req, config)
 		}
 		outbound.ApplyOutboundHeaders(req, config.Headers)
 	}
+	return req, nil
+}
+
+func GetProviderExternalBinary(ctx context.Context, config Config, rawURL string) ([]byte, string, error) {
+	req, err := newProviderExternalRequest(ctx, config, rawURL)
+	if err != nil {
+		return nil, "", err
+	}
 	return DoBinary(req)
+}
+
+func getExternalVideoFile(ctx context.Context, rawURL string) (string, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", "", err
+	}
+	return executeVideoRequestToFile(req)
+}
+
+func getProviderExternalVideoFile(ctx context.Context, config Config, rawURL string) (string, string, error) {
+	req, err := newProviderExternalRequest(ctx, config, rawURL)
+	if err != nil {
+		return "", "", err
+	}
+	return executeVideoRequestToFile(req)
 }
 
 func PostStreamingBinary(ctx context.Context, config Config, path string, body interface{}, onChunk func(string, []byte)) ([]byte, string, error) {

@@ -46,31 +46,16 @@ func QuerySubtitleEraseResult(ctx context.Context, input Input, id string) (map[
 		return nil, status, StatePendingError{TaskID: id, Cause: fmt.Errorf("unknown subtitle erase status")}
 	}
 	dlCtx := WithRequestKind(ctx, "download")
-	data, mime, err := RunVideoDownload(dlCtx, id, DefaultVideoPollPolicy(), func(ctx context.Context) ([]byte, string, error) {
-		limit, limitErr := GeneratedFileLimit(ctx)
-		if limitErr != nil {
-			return nil, "", limitErr
+	out, err := downloadAndFinalizeLegacyToolVideo(dlCtx, input, id, label, func(attemptCtx context.Context, destDir string, limit int64) (string, string, error) {
+		path, mime, _, dlErr := managedMediaClient(attemptCtx, input.Config).SubtitleEraseContentToFile(attemptCtx, id, destDir, limit)
+		return path, mime, dlErr
+	}, RestoreSubtitleEraseSourceAudioFile)
+	if err != nil {
+		var persistErr VideoPersistError
+		if errors.As(err, &persistErr) {
+			return nil, status, err
 		}
-		return managedMediaClient(ctx, input.Config).SubtitleEraseContent(ctx, id, limit)
-	})
-	if err != nil {
 		return nil, status, VideoDownloadError{TaskID: id, Cause: err}
-	}
-	mime = NormalizedMediaMIMEType(mime, data)
-	if !strings.HasPrefix(mime, "video/") {
-		return nil, status, VideoDownloadError{TaskID: id, Cause: fmt.Errorf("%s结果不是有效视频", label)}
-	}
-	data, err = RestoreSubtitleEraseSourceAudio(ctx, input, data)
-	if err != nil {
-		return nil, status, VideoDownloadError{TaskID: id, Cause: err}
-	}
-	outMime := NormalizedMediaMIMEType("", data)
-	if !strings.HasPrefix(outMime, "video/") {
-		outMime = mime
-	}
-	out := map[string]any{
-		"mode":  "video",
-		"video": map[string]any{"dataUrl": DataURL(outMime, data), "mimeType": outMime},
 	}
 	attachSmartEraseSubtitles(ctx, client, input, id, out)
 	return out, status, nil
@@ -163,19 +148,14 @@ func setResultSubtitlesMetadata(result map[string]any, subMap map[string]string)
 	meta["subtitles"] = subMap
 }
 
-func RestoreSubtitleEraseSourceAudio(ctx context.Context, input Input, data []byte) ([]byte, error) {
+// RestoreSubtitleEraseSourceAudioFile preserves the source video's audio track
+// onto outputPath entirely on disk without loading either video into memory.
+func RestoreSubtitleEraseSourceAudioFile(ctx context.Context, input Input, outputPath string) (string, func(), error) {
+	noop := func() {}
 	if input.SubtitleErase == nil || input.Mode != "video" {
-		return data, nil
+		return outputPath, noop, nil
 	}
-	if len(input.ReferenceVideos) != 1 {
-		return nil, errors.New("缺少原视频，无法检查音轨")
-	}
-	runtime, _ := RuntimeFromContext(ctx)
-	source, _, skip, err := ownedSeedanceMediaReader(ctx, runtime.Call.UserID)("video", Media{StorageKey: input.ReferenceVideos[0].StorageKey})
-	if err != nil || skip {
-		return nil, errors.New("原视频无法读取，暂时不能保留音轨")
-	}
-	return PreserveUpscaleAudio(ctx, source, data)
+	return restoreMediaSourceAudioFile(ctx, input, outputPath)
 }
 
 func CancelSubtitleErase(ctx context.Context, config Config, id string) error {

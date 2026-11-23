@@ -11,6 +11,7 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
+	localtask "infinite-canvas/backend/internal/task"
 )
 
 type appResourcePort struct{ service *Service }
@@ -55,8 +56,9 @@ func (p appResourcePort) HTTPSPublicURL(info generation.ResourceInfo, expiresAt 
 	return p.service.signedHTTPSPublicResourceURL(resource, expiresAt)
 }
 
-func (p appResourcePort) LocalMode() bool {
-	return p.service != nil && p.service.IsLocalMode()
+func (p appResourcePort) LocalMode() bool { return p.service != nil && p.service.IsLocalMode() }
+func (p appResourcePort) PersistGeneratedVideoFile(userID, identity, mimeType, filePath string, width, height int, durationMs int64) (generation.ResourceInfo, error) {
+	return localtask.PersistGeneratedVideoFile(p.service.resourceDomain(), userID, identity, mimeType, filePath, width, height, durationMs)
 }
 
 type appLimitsPort struct{ service *Service }
@@ -87,13 +89,11 @@ func (p appLimitsPort) CircuitOpen(ctx context.Context, channelID string) (bool,
 func (p appLimitsPort) AcquireChannelSlot(ctx context.Context, channelID, slotID string, timeout time.Duration) (func(), int, error) {
 	return p.service.AcquireChannelSlot(ctx, channelID, slotID, timeout)
 }
-
 func (p appLimitsPort) RecordChannelResult(ctx context.Context, channelID string, failure bool) error {
 	return p.service.RecordChannelResult(ctx, channelID, failure)
 }
 
 type appReceiptPort struct{ service *Service }
-
 type appTaskStagePort struct {
 	service *Service
 	task    model.Task

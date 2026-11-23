@@ -576,13 +576,15 @@ func UpscaleConfig(name string, lookupCred func() (string, string, string, strin
 	return Config{BaseURL: base, APIKey: key, CredentialRef: beeftv.CredentialRef, Model: name, InterfaceType: "newapi"}, nil
 }
 
-func fetchUpstreamUpscaleModes(ctx context.Context, user string, lookupCred func() (string, string, string, string, error), bindRuntime func(context.Context, CallMeta) context.Context) ([]topaz.Mode, int) {
+func fetchUpstreamUpscaleModes(ctx context.Context, user string, lookupCred func() (string, string, string, string, error), bindRuntime func(context.Context, CallMeta) context.Context) ([]topaz.Mode, int, int64) {
+	// Default safely to 200 MiB whenever upstream capabilities cannot be verified.
+	// Higher tool limits (up to 1 GiB) require explicit server advertisement.
 	if lookupCred == nil {
-		return topaz.Modes(), 300000
+		return topaz.Modes(), 300000, BeefTVSeedanceVideoMaxBytes
 	}
 	cfg, err := UpscaleConfig("", lookupCred)
 	if err != nil {
-		return topaz.Modes(), 300000
+		return topaz.Modes(), 300000, BeefTVSeedanceVideoMaxBytes
 	}
 	qctx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
 	defer cancel()
@@ -592,7 +594,7 @@ func fetchUpstreamUpscaleModes(ctx context.Context, user string, lookupCred func
 	qctx = WithRequestKind(qctx, "capabilities")
 	upstream, err := managedMediaClient(qctx, cfg).GetUpscaleCapabilities(qctx)
 	if err != nil || len(upstream.SupportedModels) == 0 {
-		return topaz.Modes(), 300000
+		return topaz.Modes(), 300000, BeefTVSeedanceVideoMaxBytes
 	}
 	items := make([]topaz.UpstreamModel, 0, len(upstream.SupportedModels))
 	for _, m := range upstream.SupportedModels {
@@ -602,12 +604,13 @@ func fetchUpstreamUpscaleModes(ctx context.Context, user string, lookupCred func
 	if upstream.MaxVideoSeconds > 0 && upstream.MaxVideoSeconds*1000 < maxDurationMs {
 		maxDurationMs = upstream.MaxVideoSeconds * 1000
 	}
-	return topaz.ModesFromUpstream(items), maxDurationMs
+	maxVideoBytes := NormalizeToolVideoLimit(upstream.MaxVideoBytes)
+	return topaz.ModesFromUpstream(items), maxDurationMs, maxVideoBytes
 }
 
 func LiveUpscaleCapabilities(ctx context.Context, lookupCred func() (string, string, string, string, error), bindRuntime func(context.Context, CallMeta) context.Context) map[string]any {
-	modes, maxVideoDurationMs := fetchUpstreamUpscaleModes(ctx, CanonicalCallMeta(ctx).UserID, lookupCred, bindRuntime)
-	return map[string]any{"modes": modes, "cloudProcessing": true, "maxVideoDurationMs": maxVideoDurationMs}
+	modes, maxVideoDurationMs, maxVideoBytes := fetchUpstreamUpscaleModes(ctx, CanonicalCallMeta(ctx).UserID, lookupCred, bindRuntime)
+	return map[string]any{"modes": modes, "cloudProcessing": true, "maxVideoDurationMs": maxVideoDurationMs, "maxVideoBytes": maxVideoBytes}
 }
 
 func UpscaleInput(ctx context.Context, user string, request topaz.Request, ensureMetadata func(context.Context, string, string) (*model.Resource, error), lookupCred func() (string, string, string, string, error), bindRuntime ...func(context.Context, CallMeta) context.Context) (Input, *model.Resource, error) {
@@ -621,7 +624,7 @@ func UpscaleInput(ctx context.Context, user string, request topaz.Request, ensur
 	if len(bindRuntime) > 0 {
 		bind = bindRuntime[0]
 	}
-	modes, _ := fetchUpstreamUpscaleModes(ctx, user, lookupCred, bind)
+	modes, _, maxVideoBytes := fetchUpstreamUpscaleModes(ctx, user, lookupCred, bind)
 	resolvedModel, err := topaz.ResolveModelID(request, kind, modes)
 	if err != nil {
 		return input, nil, BadAuthRequest(err.Error())
@@ -634,7 +637,7 @@ func UpscaleInput(ctx context.Context, user string, request topaz.Request, ensur
 	if kind == "video" {
 		format = ""
 	}
-	input = Input{Mode: kind, Config: config, Upscale: &UpscaleOptions{Factor: int(request.Scale), OutputFormat: format}}
+	input = Input{Mode: kind, Config: config, Upscale: &UpscaleOptions{Factor: int(request.Scale), OutputFormat: format, MaxVideoBytes: maxVideoBytes}}
 	media := []Media{{StorageKey: "resource:" + resource.ID, MimeType: resource.MimeType, Width: resource.Width, Height: resource.Height, DurationMs: resource.DurationMs}}
 	if kind == "image" {
 		input.ReferenceImages = media

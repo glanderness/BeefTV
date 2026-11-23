@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/beeftv"
 	"net/http"
 	"strings"
@@ -74,9 +75,18 @@ func DecodeProviderDataURL(value string) (string, []byte, error) {
 	if !ok || !strings.HasPrefix(header, "data:") || !strings.HasSuffix(strings.ToLower(header), ";base64") {
 		return "", nil, errors.New("data URL 格式无效")
 	}
+	if int64(len(encoded)) > int64(base64.StdEncoding.EncodedLen(int(assets.MaxInlineMediaBytes))) {
+		return "", nil, errors.New("内联媒体数据超过 256 MiB 上限")
+	}
 	mimeType := strings.TrimSuffix(strings.TrimPrefix(header, "data:"), ";base64")
 	data, err := base64.StdEncoding.DecodeString(encoded)
-	return mimeType, data, err
+	if err != nil {
+		return "", nil, err
+	}
+	if int64(len(data)) > assets.MaxInlineMediaBytes {
+		return "", nil, errors.New("内联媒体数据超过 256 MiB 上限")
+	}
+	return mimeType, data, nil
 }
 
 func ValidateGeneratedAudio(declared string, data []byte, format string) (string, error) {

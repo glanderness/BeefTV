@@ -234,10 +234,16 @@ func DecodeInlineDataURL(value string) (string, []byte, error) {
 	if !ok || !strings.HasPrefix(header, "data:") || !strings.HasSuffix(strings.ToLower(header), ";base64") {
 		return "", nil, fmt.Errorf("%w：格式无效", ErrInvalidGeneratedDataURL)
 	}
+	if int64(len(encoded)) > int64(base64.StdEncoding.EncodedLen(int(assets.MaxInlineMediaBytes))) {
+		return "", nil, fmt.Errorf("%w：内联资源超过 256 MiB 上限", ErrInvalidGeneratedDataURL)
+	}
 	mimeType := strings.TrimSuffix(strings.TrimPrefix(header, "data:"), ";base64")
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return "", nil, fmt.Errorf("%w：base64 解码失败：%v", ErrInvalidGeneratedDataURL, err)
+	}
+	if int64(len(data)) > assets.MaxInlineMediaBytes {
+		return "", nil, fmt.Errorf("%w：内联资源超过 256 MiB 上限", ErrInvalidGeneratedDataURL)
 	}
 	return mimeType, data, nil
 }

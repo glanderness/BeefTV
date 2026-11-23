@@ -19,12 +19,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/beeftv"
 	"infinite-canvas/backend/internal/mediatools"
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
+	"infinite-canvas/backend/internal/protocol"
 )
 
 type upscaleResources struct {
@@ -312,11 +316,48 @@ func TestUpscaleOriginalStatusIdentityAndCancellation(t *testing.T) {
 	}
 }
 
+func upscaleTempFile(dir, name string, data []byte) (string, error) {
+	path := filepath.Join(dir, name)
+	return path, os.WriteFile(path, data, 0600)
+}
+
+func preserveUpscaleAudioForTest(ctx context.Context, source, output []byte) ([]byte, error) {
+	dir, err := os.MkdirTemp("", "beeftv-upscale-audio-test-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	sourceName, outputName := "source.mp4", "upscaled.mp4"
+	if NormalizedMediaMIMEType("", source) == "video/quicktime" {
+		sourceName = "source.mov"
+	}
+	if NormalizedMediaMIMEType("", output) == "video/quicktime" {
+		outputName = "upscaled.mov"
+	}
+	sourcePath, err := upscaleTempFile(dir, sourceName, source)
+	if err != nil {
+		return nil, err
+	}
+	outputPath, err := upscaleTempFile(dir, outputName, output)
+	if err != nil {
+		return nil, err
+	}
+	resultPath, cleanup, err := PreserveUpscaleAudioFile(ctx, sourcePath, outputPath)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	if resultPath == outputPath {
+		return output, nil
+	}
+	return os.ReadFile(resultPath)
+}
+
 func TestUpscalePreservesExistingAudioBytes(t *testing.T) {
 	data := upscaleClip(t, 64, 48, true)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	output, err := PreserveUpscaleAudio(ctx, data, data)
+	output, err := preserveUpscaleAudioForTest(ctx, data, data)
 	if err != nil || !bytes.Equal(data, output) {
 		t.Fatal("existing audio was unnecessarily rewritten", err)
 	}
@@ -353,7 +394,7 @@ func TestUpscaleShortAudioDoesNotTrimVideoOrChangeFPS(t *testing.T) {
 	}
 	source, _ := os.ReadFile(sourcePath)
 	output, _ := os.ReadFile(outputPath)
-	result, err := PreserveUpscaleAudio(context.Background(), source, output)
+	result, err := preserveUpscaleAudioForTest(context.Background(), source, output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +574,13 @@ type configurableBudget struct {
 	limit int64
 }
 
-func (b configurableBudget) GeneratedFileBytes(context.Context) (int64, error) { return b.limit, nil }
+func (b configurableBudget) GeneratedFileBytes(context.Context) (int64, error)  { return b.limit, nil }
+func (b configurableBudget) ResourceUploadBytes(context.Context) (int64, error) { return b.limit, nil }
+func (configurableBudget) CircuitOpen(context.Context, string) (bool, error)    { return false, nil }
+func (configurableBudget) AcquireChannelSlot(context.Context, string, string, time.Duration) (func(), int, error) {
+	return func() {}, 4, nil
+}
+func (configurableBudget) RecordChannelResult(context.Context, string, bool) error { return nil }
 
 func TestUpscaleEstimateUsesLocalMetadataWithoutCOSUpload(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
@@ -953,55 +1000,90 @@ func TestEstimateUpscaleClassifiesUpstreamMediaHTTPErrorAndPreservesRequestID(t 
 
 func TestLiveUpscaleCapabilitiesPropagatesUserIDToRuntime(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var capsPayload string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"supported_models":[{"id":"topaz-proteus","label":"Topaz Proteus","media_type":"video","mode":"precision"}],"max_video_seconds":300}`)
+		_, _ = io.WriteString(w, capsPayload)
 	}))
 	defer server.Close()
 	var seen CallMeta
 	ctx := WithCallMeta(context.Background(), CallMeta{UserID: "user-cap-1"})
-	_ = LiveUpscaleCapabilities(ctx, func() (string, string, string, string, error) {
+	lookup := func() (string, string, string, string, error) {
 		return "synthetic-key", server.URL, "", "", nil
-	}, func(ctx context.Context, meta CallMeta) context.Context {
+	}
+	bind := func(ctx context.Context, meta CallMeta) context.Context {
 		seen = meta
 		return WithRuntime(ctx, taskRuntime(func(r *Runtime) { r.Call = meta }))
-	})
+	}
+
+	// Legacy upstream without max_video_bytes advertises 200 MiB fallback so client fails fast before uploading >200 MiB.
+	capsPayload = `{"supported_models":[{"id":"topaz-proteus","label":"Topaz Proteus","media_type":"video","mode":"precision"}],"max_video_seconds":300}`
+	legacyCaps := LiveUpscaleCapabilities(ctx, lookup, bind)
 	if seen.UserID != "user-cap-1" || seen.RequestKind != "capabilities" {
 		t.Fatalf("capabilities lost user identity in CallMeta: %#v", seen)
+	}
+	if legacyCaps["maxVideoBytes"] != BeefTVSeedanceVideoMaxBytes {
+		t.Fatalf("legacy maxVideoBytes = %#v, want %d", legacyCaps["maxVideoBytes"], BeefTVSeedanceVideoMaxBytes)
+	}
+
+	// Upgraded upstream advertises 1 GiB max_video_bytes.
+	capsPayload = `{"supported_models":[{"id":"topaz-proteus","label":"Topaz Proteus","media_type":"video","mode":"precision"}],"max_video_seconds":300,"max_video_bytes":1073741824}`
+	newCaps := LiveUpscaleCapabilities(ctx, lookup, bind)
+	if newCaps["maxVideoBytes"] != BeefTVMediaToolVideoMaxBytes {
+		t.Fatalf("upgraded maxVideoBytes = %#v, want %d", newCaps["maxVideoBytes"], BeefTVMediaToolVideoMaxBytes)
+	}
+
+	// When capabilities endpoint is unavailable, safely fall back to 200 MiB rather than assuming 1 GiB.
+	unavailCaps := LiveUpscaleCapabilities(ctx, nil, bind)
+	if unavailCaps["maxVideoBytes"] != BeefTVSeedanceVideoMaxBytes {
+		t.Fatalf("unavailable maxVideoBytes = %#v, want safe fallback %d", unavailCaps["maxVideoBytes"], BeefTVSeedanceVideoMaxBytes)
 	}
 }
 
 func TestUpscaleCreateAndHydrateTypedErrorsAndCaseInsensitiveMIME(t *testing.T) {
-	// 1. Known oversized video on create path yields typed CategoryInputTooLarge instead of generic copy.
+	// 1. Known oversized video (>1 GiB) on create path yields typed CategoryInputTooLarge instead of generic copy.
 	oversizeRes := &failingFirstOpenImageResources{
-		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4", Size: (200 << 20) + 1, Width: 1920, Height: 1080, DurationMs: 10000},
+		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4", Size: BeefTVMediaToolVideoMaxBytes + 1, Width: 1920, Height: 1080, DurationMs: 10000},
 	}
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Call.UserID = "user-1"
 		r.Resources = oversizeRes
-		r.Limits = configurableBudget{limit: 999 << 20}
+		r.Limits = configurableBudget{limit: 2048 << 20}
 	})
 	input := Input{
 		Mode:            "video",
 		Config:          Config{BaseURL: "https://beeftv.app/v1", Model: "topaz-proteus"},
-		Upscale:         &UpscaleOptions{Factor: 2},
+		Upscale:         &UpscaleOptions{Factor: 2, MaxVideoBytes: BeefTVMediaToolVideoMaxBytes},
 		ReferenceVideos: []Media{{StorageKey: "resource:source"}},
 	}
 	_, err := prepareOwnedUpscaleSource(WithRuntime(context.Background(), runtime), input)
 	classified := ClassifyError(RequestPreparationError{Cause: err})
-	if classified.Category != CategoryInputTooLarge || !bytes.Contains([]byte(classified.UserMessage()), []byte("200MB")) {
+	if classified.Category != CategoryInputTooLarge || !bytes.Contains([]byte(classified.UserMessage()), []byte("1GB")) {
 		t.Fatalf("oversized create video lost typed size error: %#v", classified)
 	}
-	// Same for subtitle erase create path.
+	// Legacy/unverified server cap (MaxVideoBytes == 0 -> safe 200 MiB fallback) rejects >200 MiB with typed 200MB error.
+	legacyRes := &failingFirstOpenImageResources{
+		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4", Size: BeefTVSeedanceVideoMaxBytes + 1, Width: 1920, Height: 1080, DurationMs: 10000},
+	}
+	runtime.Resources = legacyRes
+	legacyInput := input
+	legacyInput.Upscale = &UpscaleOptions{Factor: 2}
+	_, err = prepareOwnedUpscaleSource(WithRuntime(context.Background(), runtime), legacyInput)
+	classified = ClassifyError(RequestPreparationError{Cause: err})
+	if classified.Category != CategoryInputTooLarge || !bytes.Contains([]byte(classified.UserMessage()), []byte("200MB")) {
+		t.Fatalf("legacy/unverified 200 MiB create video lost typed size error: %#v", classified)
+	}
+	// Same for subtitle erase create path (>1 GiB when server advertised 1 GiB).
+	runtime.Resources = oversizeRes
 	eraseInput := Input{
 		Mode:            "video",
 		Config:          Config{BaseURL: "https://beeftv.app/v1", Model: SubtitleEraseModelName},
-		SubtitleErase:   &SubtitleEraseOptions{EraseType: "subtitle", EraseMethod: "auto", SubtitleModel: "standard"},
+		SubtitleErase:   &SubtitleEraseOptions{EraseType: "subtitle", EraseMethod: "auto", SubtitleModel: "standard", MaxVideoBytes: BeefTVMediaToolVideoMaxBytes},
 		ReferenceVideos: []Media{{StorageKey: "resource:source"}},
 	}
 	_, eraseErr := prepareOwnedSubtitleEraseSource(WithRuntime(context.Background(), runtime), eraseInput)
 	eraseClassified := ClassifyError(RequestPreparationError{Cause: eraseErr})
-	if eraseClassified.Category != CategoryInputTooLarge || !bytes.Contains([]byte(eraseClassified.UserMessage()), []byte("200MB")) {
+	if eraseClassified.Category != CategoryInputTooLarge || !bytes.Contains([]byte(eraseClassified.UserMessage()), []byte("1GB")) {
 		t.Fatalf("oversized subtitle erase video lost typed size error: %#v", eraseClassified)
 	}
 
@@ -1032,5 +1114,546 @@ func TestUpscaleCreateAndHydrateTypedErrorsAndCaseInsensitiveMIME(t *testing.T) 
 	}
 	if _, err := prepareOwnedUpscaleSource(WithRuntime(context.Background(), runtime), imgInput); err != nil {
 		t.Fatalf("uppercase IMAGE/PNG rejected on full-byte preflight: %v", err)
+	}
+}
+
+type noopManagedMediaState struct{}
+
+func (noopManagedMediaState) Sent(context.Context) (bool, error) { return false, nil }
+func (noopManagedMediaState) Begin(*http.Request) (bool, error)  { return false, nil }
+
+type recordingVideoFileStore struct {
+	upscaleResources
+	savedDir  string
+	savedID   string
+	savedPath string
+	savedInfo ResourceInfo
+	calls     int
+}
+
+func (s *recordingVideoFileStore) PersistGeneratedVideoFile(userID, identity, mimeType, filePath string, width, height int, durationMs int64) (ResourceInfo, error) {
+	s.calls++
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return ResourceInfo{}, err
+	}
+	dest := filepath.Join(s.savedDir, "persisted-"+s.savedID+".mp4")
+	if err := os.WriteFile(dest, data, 0o600); err != nil {
+		return ResourceInfo{}, err
+	}
+	s.savedPath = dest
+	s.savedInfo = ResourceInfo{
+		UserID:     userID,
+		ID:         s.savedID,
+		Status:     "ready",
+		Kind:       "video",
+		MimeType:   mimeType,
+		Size:       int64(len(data)),
+		Width:      width,
+		Height:     height,
+		DurationMs: durationMs,
+	}
+	return s.savedInfo, nil
+}
+
+func TestManagedUpscaleAndSubtitleEraseSendMediaToolPurposeAndAllowOver200MiB(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	// Build a sparse 205 MiB local MP4 (valid 1s MP4 extended via Truncate) so
+	// ffprobe succeeds and UploadReference hashes & submits >200 MiB end-to-end.
+	validMP4 := upscaleClip(t, 64, 48, true)
+	bigPath := filepath.Join(t.TempDir(), "over200mb.mp4")
+	if err := os.WriteFile(bigPath, validMP4, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const over200Size = int64(205 << 20)
+	if err := os.Truncate(bigPath, over200Size); err != nil {
+		t.Fatal(err)
+	}
+
+	var seenMu sync.Mutex
+	var seenReqs []beeftv.UploadRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set(beeftv.MediaProtocolHeader, beeftv.MediaProtocolVersion)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"media_protocol": map[string]any{
+					"version":                 beeftv.MediaProtocolVersion,
+					"supported_media_types":   []string{"upscale", "video"},
+					"task_submit_url":         "/v1/media/tasks",
+					"task_query_url_template": "/v1/media/tasks/{task_ref}",
+					"uploads_url":             "/v1/media/uploads",
+				},
+				"data": []map[string]any{
+					{
+						"id":                         "topaz-proteus",
+						"media_capabilities_version": "v1",
+						"media_capabilities": map[string]any{
+							"upscale": map[string]any{
+								"operations":      []string{"upscale"},
+								"reference_kinds": []string{"video"},
+								"options":         []string{"upscale_factor", "H264_output"},
+								"max_outputs":     1,
+							},
+						},
+					},
+					{
+						"id":                         SubtitleEraseModelName,
+						"media_capabilities_version": "v1",
+						"media_capabilities": map[string]any{
+							"video": map[string]any{
+								"operations":      []string{"subtitle_erase"},
+								"reference_kinds": []string{"video"},
+								"max_outputs":     1,
+							},
+						},
+					},
+				},
+			})
+		case "/v1/media/uploads":
+			var req beeftv.UploadRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+				seenMu.Lock()
+				seenReqs = append(seenReqs, req)
+				seenMu.Unlock()
+			}
+			// Return a terminal sentinel after recording CreateUpload so the test
+			// proves preflight + UploadReference passed >200 MiB and sent purpose.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":"test_sentinel","message":"upload_reached"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	runtime := taskRuntime(func(r *Runtime) {
+		r.Endpoints.BeefTVVideoBaseURL = srv.URL
+		r.Call.UserID = "user-1"
+		r.ManagedMedia = noopManagedMediaState{}
+		r.Limits = configurableBudget{limit: 2048 << 20}
+		r.Resources = fileUpscaleResources{path: bigPath, kind: "video", size: over200Size, width: 64, height: 48, durationMs: 1000}
+	})
+	ctx := WithSubmissionKey(WithRuntime(context.Background(), runtime), "sub-over200-1")
+
+	// 1. Managed upscale with MaxVideoBytes=1 GiB passes >200 MiB to /v1/media/uploads with purpose="media_tool".
+	upscaleInput := Input{
+		Mode:            "video",
+		Config:          Config{BaseURL: srv.URL, APIKey: "synthetic", Model: "topaz-proteus", CredentialRef: beeftv.CredentialRef},
+		Upscale:         &UpscaleOptions{Factor: 2, MaxVideoBytes: BeefTVMediaToolVideoMaxBytes},
+		ReferenceVideos: []Media{{StorageKey: "resource:source"}},
+	}
+	upscaleClient := managedMediaClient(ctx, upscaleInput.Config)
+	_, err := runManagedUpscaleTask(ctx, upscaleClient, upscaleInput)
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("upload_reached")) {
+		t.Fatalf("managed upscale >200 MiB did not reach CreateUpload: err=%v", err)
+	}
+
+	// 2. Managed subtitle erase with MaxVideoBytes=1 GiB also passes >200 MiB with purpose="media_tool".
+	eraseInput := Input{
+		Mode:            "video",
+		Config:          Config{BaseURL: srv.URL, APIKey: "synthetic", Model: SubtitleEraseModelName, CredentialRef: beeftv.CredentialRef},
+		SubtitleErase:   &SubtitleEraseOptions{EraseType: "subtitle", EraseMethod: "auto", SubtitleModel: "standard", MaxVideoBytes: BeefTVMediaToolVideoMaxBytes},
+		ReferenceVideos: []Media{{StorageKey: "resource:source"}},
+	}
+	eraseClient := managedMediaClient(ctx, eraseInput.Config)
+	_, err = runManagedSubtitleEraseTask(ctx, eraseClient, eraseInput, "subtitle_erase")
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("upload_reached")) {
+		t.Fatalf("managed subtitle erase >200 MiB did not reach CreateUpload: err=%v", err)
+	}
+
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	if len(seenReqs) != 2 {
+		t.Fatalf("expected 2 CreateUpload requests, got %d", len(seenReqs))
+	}
+	for i, req := range seenReqs {
+		if req.Kind != "video" || req.Purpose != beeftv.UploadPurposeMediaTool || req.Bytes != over200Size {
+			t.Fatalf("request[%d] = %+v, want kind=video purpose=%q bytes=%d", i, req, beeftv.UploadPurposeMediaTool, over200Size)
+		}
+	}
+
+	// 3. SubtitleEraseCapabilities unavailable & ValidateSmartEraseRequestCapabilities unloaded both fall back safely to 200 MiB.
+	unavailEraseCaps := SubtitleEraseCapabilities(context.Background(), nil, nil)
+	if unavailEraseCaps["maxVideoBytes"] != BeefTVSeedanceVideoMaxBytes {
+		t.Fatalf("unavailable erase maxVideoBytes = %#v, want %d", unavailEraseCaps["maxVideoBytes"], BeefTVSeedanceVideoMaxBytes)
+	}
+	reqUnloaded := SubtitleEraseRequest{EraseType: "subtitle"}
+	if err := ValidateSmartEraseRequestCapabilities(&reqUnloaded, unavailEraseCaps); err != nil {
+		t.Fatalf("ValidateSmartEraseRequestCapabilities(unloaded) err=%v", err)
+	}
+	if reqUnloaded.MaxVideoBytes != BeefTVSeedanceVideoMaxBytes {
+		t.Fatalf("unloaded req.MaxVideoBytes = %d, want safe fallback %d", reqUnloaded.MaxVideoBytes, BeefTVSeedanceVideoMaxBytes)
+	}
+}
+
+func TestLegacyToolVideoResultPersistsToFileStoreWithoutBase64(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	sourceWithAudio := upscaleClip(t, 64, 48, true)
+	mutedOutput := upscaleClip(t, 64, 48, false)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/media-upscale/tasks/up_file_1":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"task_id": "up_file_1", "status": "completed", "model": "topaz-proteus", "media_type": "video"})
+		case "/v1/media-upscale/tasks/up_file_1/content":
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write(mutedOutput)
+		case "/v1/video-subtitle-erase/tasks/er_file_1":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"task_id": "er_file_1", "status": "completed", "model": SubtitleEraseModelName, "media_type": "video"})
+		case "/v1/video-subtitle-erase/tasks/er_file_1/content":
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write(mutedOutput)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	store := &recordingVideoFileStore{
+		upscaleResources: upscaleResources{data: sourceWithAudio, kind: "video"},
+		savedDir:         t.TempDir(),
+		savedID:          "res-up-1",
+	}
+	runtime := taskRuntime(func(r *Runtime) {
+		r.Endpoints.BeefTVVideoBaseURL = srv.URL
+		r.Call.UserID = "user-1"
+		r.Call.TaskID = "local-task-1"
+		r.Resources = store
+	})
+	ctx := WithRuntime(context.Background(), runtime)
+
+	upRes, status, err := QueryUpscaleResult(ctx, Input{
+		Mode:            "video",
+		Config:          Config{BaseURL: srv.URL, APIKey: "synthetic", Model: "topaz-proteus"},
+		Upscale:         &UpscaleOptions{Factor: 2},
+		ReferenceVideos: []Media{{StorageKey: "resource:source"}},
+	}, "up_file_1")
+	if err != nil || status != "completed" {
+		t.Fatalf("QueryUpscaleResult err=%v status=%q", err, status)
+	}
+	encodedUp, err := json.Marshal(upRes)
+	if err != nil || len(encodedUp) > 1024 || bytes.Contains(encodedUp, []byte("data:video/")) {
+		t.Fatalf("legacy upscale ResultJSON should be compact resource metadata without base64, got %d bytes: %s", len(encodedUp), encodedUp)
+	}
+	if store.calls != 1 {
+		t.Fatalf("expected 1 PersistGeneratedVideoFile call, got %d", store.calls)
+	}
+	facts, err := mediatools.ProbeLocal(context.Background(), store.savedPath)
+	if err != nil || !facts.HasVideo || !facts.HasAudio {
+		t.Fatalf("persisted upscale video missing restored audio: facts=%+v err=%v", facts, err)
+	}
+
+	store.savedID = "res-er-1"
+	erRes, status, err := QuerySubtitleEraseResult(ctx, Input{
+		Mode:            "video",
+		Config:          Config{BaseURL: srv.URL, APIKey: "synthetic", Model: SubtitleEraseModelName},
+		SubtitleErase:   &SubtitleEraseOptions{EraseType: "subtitle", EraseMethod: "auto", SubtitleModel: "standard"},
+		ReferenceVideos: []Media{{StorageKey: "resource:source"}},
+	}, "er_file_1")
+	if err != nil || status != "completed" {
+		t.Fatalf("QuerySubtitleEraseResult err=%v status=%q", err, status)
+	}
+	encodedEr, err := json.Marshal(erRes)
+	if err != nil || len(encodedEr) > 1024 || bytes.Contains(encodedEr, []byte("data:video/")) {
+		t.Fatalf("legacy subtitle-erase ResultJSON should be compact resource metadata without base64, got %d bytes: %s", len(encodedEr), encodedEr)
+	}
+	if store.calls != 2 {
+		t.Fatalf("expected 2 PersistGeneratedVideoFile calls, got %d", store.calls)
+	}
+}
+
+func TestSmartEraseCapabilitiesPropagationAndLegacyUploadPurpose(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+
+	// 1. Loaded smart-erase capabilities propagate 1 GiB, omitted->200 MiB, and unavailable->200 MiB cleanly.
+	for _, tc := range []struct {
+		name     string
+		status   int
+		payload  map[string]any
+		wantMax  int64
+		wantLoad bool
+	}{
+		{
+			name:   "1GiB advertised",
+			status: http.StatusOK,
+			payload: map[string]any{
+				"enabled":           true,
+				"available":         true,
+				"max_video_seconds": 600,
+				"max_video_bytes":   BeefTVMediaToolVideoMaxBytes,
+				"available_models":  []string{SubtitleEraseModelName},
+				"erase_types":       []string{"subtitle"},
+				"erase_methods":     []string{"auto"},
+				"subtitle_models":   []string{"standard"},
+			},
+			wantMax:  BeefTVMediaToolVideoMaxBytes,
+			wantLoad: true,
+		},
+		{
+			name:   "legacy omitted max_video_bytes falls back to 200MiB",
+			status: http.StatusOK,
+			payload: map[string]any{
+				"enabled":           true,
+				"available":         true,
+				"max_video_seconds": 600,
+				"available_models":  []string{SubtitleEraseModelName},
+				"erase_types":       []string{"subtitle"},
+				"erase_methods":     []string{"auto"},
+				"subtitle_models":   []string{"standard"},
+			},
+			wantMax:  BeefTVSeedanceVideoMaxBytes,
+			wantLoad: true,
+		},
+		{
+			name:     "server unavailable falls back to 200MiB",
+			status:   http.StatusServiceUnavailable,
+			wantMax:  BeefTVSeedanceVideoMaxBytes,
+			wantLoad: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/video-smart-erase/capabilities" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.status)
+					if tc.payload != nil {
+						_ = json.NewEncoder(w).Encode(tc.payload)
+					}
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			defer srv.Close()
+
+			lookup := func() (string, string, string, string, error) { return "synthetic", srv.URL, "newapi", "", nil }
+			caps := SubtitleEraseCapabilities(context.Background(), lookup, nil)
+			if gotLoaded, _ := caps["capabilitiesLoaded"].(bool); gotLoaded != tc.wantLoad {
+				t.Fatalf("capabilitiesLoaded = %v, want %v", gotLoaded, tc.wantLoad)
+			}
+			if gotMax, _ := caps["maxVideoBytes"].(int64); gotMax != tc.wantMax {
+				t.Fatalf("caps[maxVideoBytes] = %#v, want %d", caps["maxVideoBytes"], tc.wantMax)
+			}
+			req := SubtitleEraseRequest{EraseType: "subtitle", EraseMethod: "auto", SubtitleModel: "standard"}
+			if err := ValidateSmartEraseRequestCapabilities(&req, caps); err != nil {
+				t.Fatalf("ValidateSmartEraseRequestCapabilities err=%v", err)
+			}
+			if req.MaxVideoBytes != tc.wantMax {
+				t.Fatalf("mutated req.MaxVideoBytes = %d, want %d", req.MaxVideoBytes, tc.wantMax)
+			}
+		})
+	}
+
+	// 2. Legacy PrepareBeefTVVideoReferences sends purpose="media_tool" for tool videos
+	//    and omits purpose for ordinary generative reference videos.
+	var seenMu sync.Mutex
+	var seenReqs []beeftv.UploadRequest
+	uploadSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && (r.URL.Path == "/v1/video-references/uploads" || r.URL.Path == "/v1/media/uploads") {
+			var req beeftv.UploadRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			seenMu.Lock()
+			seenReqs = append(seenReqs, req)
+			seenMu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":"test_sentinel","message":"legacy_upload_reached"}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer uploadSrv.Close()
+
+	clip := upscaleClip(t, 64, 48, false)
+	clipPath := filepath.Join(t.TempDir(), "clip.mp4")
+	if err := os.WriteFile(clipPath, clip, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := taskRuntime(func(r *Runtime) {
+		r.Endpoints.BeefTVVideoBaseURL = uploadSrv.URL
+		r.Call.UserID = "user-1"
+		r.Limits = configurableBudget{limit: 2048 << 20}
+		r.Resources = fileUpscaleResources{path: clipPath, kind: "video", size: int64(len(clip)), width: 64, height: 48, durationMs: 1000}
+	})
+	ctx := WithRuntime(context.Background(), runtime)
+
+	toolInput := Input{
+		Mode:            "video",
+		Config:          Config{BaseURL: uploadSrv.URL, APIKey: "synthetic", Model: "topaz-proteus", CredentialRef: beeftv.CredentialRef},
+		Upscale:         &UpscaleOptions{Factor: 2, MaxVideoBytes: BeefTVMediaToolVideoMaxBytes},
+		ReferenceVideos: []Media{{StorageKey: "resource:source"}},
+	}
+	_ = PrepareBeefTVVideoReferences(ctx, toolInput.Config, &toolInput, nil)
+
+	ordinaryInput := Input{
+		Mode:            "video",
+		Config:          Config{BaseURL: uploadSrv.URL, APIKey: "synthetic", Model: "seedance-2.0", CredentialRef: beeftv.CredentialRef},
+		ReferenceVideos: []Media{{StorageKey: "resource:source"}},
+	}
+	_ = PrepareBeefTVVideoReferences(ctx, ordinaryInput.Config, &ordinaryInput, nil)
+
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	if len(seenReqs) != 2 {
+		t.Fatalf("expected 2 legacy UploadRequests, got %d", len(seenReqs))
+	}
+	if seenReqs[0].Purpose != beeftv.UploadPurposeMediaTool {
+		t.Fatalf("tool video legacy upload purpose = %q, want %q", seenReqs[0].Purpose, beeftv.UploadPurposeMediaTool)
+	}
+	if seenReqs[1].Purpose != "" {
+		t.Fatalf("ordinary video reference upload purpose = %q, want empty", seenReqs[1].Purpose)
+	}
+
+	// 3. NormalizeToolVideoLimit enforces the single 200 MiB default / 1 GiB clamp contract.
+	if got := NormalizeToolVideoLimit(0); got != BeefTVSeedanceVideoMaxBytes {
+		t.Fatalf("NormalizeToolVideoLimit(0) = %d, want %d", got, BeefTVSeedanceVideoMaxBytes)
+	}
+	if got := NormalizeToolVideoLimit(5 * BeefTVMediaToolVideoMaxBytes); got != BeefTVMediaToolVideoMaxBytes {
+		t.Fatalf("NormalizeToolVideoLimit(5GiB) = %d, want %d", got, BeefTVMediaToolVideoMaxBytes)
+	}
+}
+
+type stubVideoResultAdapter struct {
+	resultPath string
+}
+
+func (a stubVideoResultAdapter) Metadata() protocol.Metadata {
+	return protocol.Metadata{ID: "stub-video"}
+}
+func (a stubVideoResultAdapter) BuildCreate(context.Context, protocol.RequestContext) (protocol.RequestSpec, error) {
+	return protocol.RequestSpec{}, nil
+}
+func (a stubVideoResultAdapter) ParseCreate(context.Context, []byte) (protocol.CreateResult, error) {
+	return protocol.CreateResult{}, nil
+}
+func (a stubVideoResultAdapter) BuildPoll(context.Context, protocol.PollContext) (protocol.RequestSpec, error) {
+	return protocol.RequestSpec{}, nil
+}
+func (a stubVideoResultAdapter) ParsePoll(context.Context, protocol.PollContext, []byte) (protocol.PollResult, error) {
+	return protocol.PollResult{}, nil
+}
+func (a stubVideoResultAdapter) BuildCancel(context.Context, protocol.PollContext) (protocol.RequestSpec, error) {
+	return protocol.RequestSpec{}, nil
+}
+func (a stubVideoResultAdapter) ResultAvailable() bool { return true }
+func (a stubVideoResultAdapter) BuildResult(_ context.Context, _ protocol.PollContext) (protocol.RequestSpec, error) {
+	return protocol.RequestSpec{Method: http.MethodGet, Path: a.resultPath}, nil
+}
+
+type stubPersistVideoResources struct {
+	ResourcePort
+	persistErr error
+	savedPath  string
+	savedSize  int64
+}
+
+func (s *stubPersistVideoResources) PersistGeneratedVideoFile(_, _, mimeType, filePath string, width, height int, durationMs int64) (ResourceInfo, error) {
+	if s.persistErr != nil {
+		return ResourceInfo{}, s.persistErr
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return ResourceInfo{}, err
+	}
+	s.savedPath = filePath
+	s.savedSize = info.Size()
+	return ResourceInfo{
+		ID:         "res-streamed-video",
+		Kind:       "video",
+		MimeType:   mimeType,
+		Size:       info.Size(),
+		Width:      width,
+		Height:     height,
+		DurationMs: durationMs,
+	}, nil
+}
+
+func TestProtocolResultAdapterStreamsToFileAndPersistErrorIsNotDownloadError(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	clip := upscaleClip(t, 64, 48, false)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/result/vid-1":
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Header().Set("ETag", `"proto-res-1"`)
+			_, _ = w.Write(clip)
+		case "/v1/media-upscale/tasks/up-persist-err":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"task_id":"up-persist-err","status":"completed","model":"topaz-proteus","media_type":"video"}`)
+		case "/v1/media-upscale/tasks/up-persist-err/content":
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write(clip)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	// 1. Declarative ResultAdapter video streams directly to file and persists without DataURL.
+	okStore := &stubPersistVideoResources{}
+	rt := taskRuntime(func(r *Runtime) {
+		r.Call.UserID = "user-1"
+		r.Call.TaskID = "task-proto-1"
+		r.Resources = okStore
+		r.Limits = configurableBudget{limit: 2048 << 20}
+	})
+	out, err := FinishProtocolAdapterResult(
+		WithRuntime(context.Background(), rt),
+		Input{Mode: "video", Config: Config{BaseURL: srv.URL + "/v1", APIKey: "k", Model: "full-video"}},
+		stubVideoResultAdapter{resultPath: "/result/vid-1"},
+		protocol.GenerationRequest{Model: "full-video"},
+		"vid-1",
+		&protocol.Result{},
+		VideoPollPolicy{MaxDownloadTries: 1, Sleep: func(context.Context, time.Duration) error { return nil }},
+	)
+	if err != nil {
+		t.Fatalf("FinishProtocolAdapterResult failed: %v", err)
+	}
+	videoMap, _ := out["video"].(map[string]any)
+	if videoMap["storageKey"] != "resource:res-streamed-video" || videoMap["url"] != "/api/resources/res-streamed-video/file" {
+		t.Fatalf("expected resource-backed streamed video map, got %#v", videoMap)
+	}
+	if _, hasDataURL := videoMap["dataUrl"]; hasDataURL {
+		t.Fatalf("streamed ResultAdapter video must not include dataUrl: %#v", videoMap)
+	}
+	if okStore.savedSize != int64(len(clip)) {
+		t.Fatalf("savedSize = %d, want %d", okStore.savedSize, len(clip))
+	}
+
+	// 2. Local persistence failure returns VideoPersistError (never VideoDownloadError) and local_storage diagnostics.
+	failStore := &stubPersistVideoResources{persistErr: errors.New("no space left on device")}
+	failRT := taskRuntime(func(r *Runtime) {
+		r.Call.UserID = "user-1"
+		r.Call.TaskID = "task-upscale-persist-fail"
+		r.Endpoints.BeefTVVideoBaseURL = srv.URL
+		r.Resources = failStore
+		r.Limits = configurableBudget{limit: 2048 << 20}
+	})
+	_, status, err := QueryUpscaleResult(
+		WithRuntime(context.Background(), failRT),
+		Input{Mode: "video", Config: Config{BaseURL: srv.URL + "/v1", APIKey: "k", Model: "topaz-proteus"}},
+		"up-persist-err",
+	)
+	if status != "completed" || err == nil {
+		t.Fatalf("expected completed status + persist error, got status=%q err=%v", status, err)
+	}
+	var persistErr VideoPersistError
+	if !errors.As(err, &persistErr) {
+		t.Fatalf("expected VideoPersistError, got %T: %v", err, err)
+	}
+	var dlErr VideoDownloadError
+	if errors.As(err, &dlErr) {
+		t.Fatalf("local persistence error must not be wrapped in VideoDownloadError: %v", err)
+	}
+	if retry, _ := RetryableVideoPollError(context.Background(), err); retry {
+		t.Fatal("VideoPersistError must not spin RetryableVideoPollError")
+	}
+	task := model.Task{ID: "task-upscale-persist-fail", ProviderRequestID: "up-persist-err"}
+	CaptureTaskFailureDiagnostics(&task, err, "local_result")
+	if task.FailureDiagnostics == nil || task.FailureDiagnostics.Source != "local_result" || task.FailureDiagnostics.Stage != "保存视频结果" {
+		t.Fatalf("unexpected diagnostics for VideoPersistError: %+v", task.FailureDiagnostics)
 	}
 }

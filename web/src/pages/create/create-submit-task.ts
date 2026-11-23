@@ -154,6 +154,7 @@ interface ExecuteCreateSubmitParams {
     updateActive: (updater: (conversation: CreationConversation) => CreationConversation) => void;
     updateConversationMessage: (conversationId: string, id: string, updater: (item: CreationMessage) => CreationMessage) => Promise<void>;
     applyCanonicalConversation: (conversationId: string, document: CreationConversation) => void;
+    loadRuntime?: typeof loadCreationRuntime;
 }
 
 export async function executeCreateSubmit(params: ExecuteCreateSubmitParams) {
@@ -192,6 +193,7 @@ export async function executeCreateSubmit(params: ExecuteCreateSubmitParams) {
         updateActive,
         updateConversationMessage,
         applyCanonicalConversation,
+        loadRuntime = loadCreationRuntime,
     } = params;
 
     const releaseRetryLock = () => {
@@ -217,7 +219,7 @@ export async function executeCreateSubmit(params: ExecuteCreateSubmitParams) {
         declaredOrOmniVideoCapability(config, selectedModel),
     );
     const skillReferences = references.flatMap((reference) => (reference.skill ? [reference.skill] : []));
-    const runtime = await loadCreationRuntime();
+    const runtime = await loadRuntime();
     let skillExecution: Awaited<ReturnType<typeof runtime.skillRuntime.prepare>>;
     try {
         skillExecution = await runtime.skillRuntime.prepare({
@@ -392,7 +394,7 @@ export async function executeCreateSubmit(params: ExecuteCreateSubmitParams) {
                 onTaskUpdate: bindTask,
                 ...retryContext,
             }));
-            if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
+            if (!result.video?.dataUrl && !result.video?.url && !result.video?.storageKey) throw new Error("后端任务没有返回视频");
             const taskId = Array.from(boundTaskIds)[0];
             if (!taskId) throw new Error("生成任务缺少稳定任务标识");
             const task = completedCreationGenerationTask(runtime, { taskId, task: boundTasks.get(taskId), mode: "video", prompt: expandedPrompt, result, conversationId: activeConversation.id, messageId: assistantMessage.id });

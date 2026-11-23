@@ -6,6 +6,7 @@ import (
 	"image"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"infinite-canvas/backend/internal/mediatools"
@@ -55,8 +56,8 @@ func videoDeliveryLimitError(deliveryLimit int64) error {
 	}
 }
 
-func validateOwnedVideoSize(size, deliveryLimit int64) error {
-	if err := ValidateBeefTVSeedanceMediaSize("video", size); err != nil {
+func validateOwnedVideoSize(size, uploadLimit, deliveryLimit int64) error {
+	if err := ValidateBeefTVMediaToolSize("video", size, uploadLimit); err != nil {
 		return err
 	}
 	if size > deliveryLimit {
@@ -66,10 +67,11 @@ func validateOwnedVideoSize(size, deliveryLimit int64) error {
 }
 
 // preflightOwnedVideoDelivery checks readability, emptiness, and size limits
-// for an owned video resource without buffering the 200 MiB payload in RAM.
-func preflightOwnedVideoDelivery(ctx context.Context, userID string, media *Media, deliveryLimit int64) error {
+// for an owned video resource without buffering large payloads in RAM.
+func preflightOwnedVideoDelivery(ctx context.Context, userID string, media *Media, uploadLimit, deliveryLimit int64) error {
+	uploadLimit = NormalizeToolVideoLimit(uploadLimit)
 	if media.Bytes > 0 {
-		if err := validateOwnedVideoSize(media.Bytes, deliveryLimit); err != nil {
+		if err := validateOwnedVideoSize(media.Bytes, uploadLimit, deliveryLimit); err != nil {
 			return err
 		}
 	}
@@ -92,30 +94,38 @@ func preflightOwnedVideoDelivery(ctx context.Context, userID string, media *Medi
 		if !info.Mode().IsRegular() {
 			return PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地素材文件无法读取", Action: "请重新导入素材后重试"}
 		}
-		if err := validateOwnedVideoSize(info.Size(), deliveryLimit); err != nil {
+		if err := validateOwnedVideoSize(info.Size(), uploadLimit, deliveryLimit); err != nil {
 			return err
 		}
 		media.Bytes = info.Size()
 		return nil
 	}
 
-	limit := BeefTVSeedanceKindMaxBytes("video")
-	size, copyErr := io.Copy(io.Discard, io.LimitReader(rc, limit+1))
+	size, copyErr := io.Copy(io.Discard, io.LimitReader(rc, uploadLimit+1))
 	if copyErr != nil {
 		return localMediaOpenError(copyErr)
 	}
-	if err := validateOwnedVideoSize(size, deliveryLimit); err != nil {
+	if err := validateOwnedVideoSize(size, uploadLimit, deliveryLimit); err != nil {
 		return err
 	}
 	media.Bytes = size
 	return nil
 }
 
-// streamProbeOwnedVideo spools a non-local video stream to a temp file using
-// a bounded streaming copy (no full-file RAM buffer) and probes it with ffprobe.
+// streamProbeOwnedVideo spools a non-local video stream to a scratch file under
+// dataDir (via DownloadCache when wired, falling back to OS temp) using a
+// bounded streaming copy (no full-file RAM buffer) and probes it with ffprobe.
 func streamProbeOwnedVideo(ctx context.Context, rc io.ReadCloser, limit int64) (int64, mediatools.MediaMetadata, error) {
 	defer rc.Close()
-	dir, err := os.MkdirTemp("", "beeftv-upscale-probe-")
+	limit = NormalizeToolVideoLimit(limit)
+	scratchParent := ""
+	if runtime, ok := RuntimeFromContext(ctx); ok && runtime.DownloadCache != nil {
+		if partial := strings.TrimSpace(runtime.DownloadCache.PartialPath()); partial != "" {
+			scratchParent = filepath.Dir(partial)
+			_ = os.MkdirAll(scratchParent, 0o700)
+		}
+	}
+	dir, err := os.MkdirTemp(scratchParent, ".beeftv-probe-")
 	if err != nil {
 		return 0, mediatools.MediaMetadata{}, err
 	}
@@ -133,7 +143,7 @@ func streamProbeOwnedVideo(ctx context.Context, rc io.ReadCloser, limit int64) (
 	if closeErr != nil {
 		return 0, mediatools.MediaMetadata{}, closeErr
 	}
-	if err := ValidateBeefTVSeedanceMediaSize("video", size); err != nil {
+	if err := ValidateBeefTVMediaToolSize("video", size, limit); err != nil {
 		return size, mediatools.MediaMetadata{}, err
 	}
 	facts, err := mediatools.ProbeLocal(ctx, path)

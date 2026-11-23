@@ -71,7 +71,7 @@ func prepareOwnedSubtitleEraseSource(ctx context.Context, input Input) (Input, e
 	if err != nil {
 		return input, err
 	}
-	if err := preflightOwnedVideoDelivery(ctx, runtime.Call.UserID, &input.ReferenceVideos[0], deliveryLimit); err != nil {
+	if err := preflightOwnedVideoDelivery(ctx, runtime.Call.UserID, &input.ReferenceVideos[0], mediaToolVideoMaxBytes(ctx, &input), deliveryLimit); err != nil {
 		return input, err
 	}
 	return input, nil
@@ -83,7 +83,7 @@ func PrepareSubtitleErase(ctx context.Context, input Input) (Input, error) {
 		return input, err
 	}
 	runtime, _ := RuntimeFromContext(ctx)
-	if err := PrepareBeefTVVideoReferences(ctx, input.Config, &input, ownedSeedanceMediaReader(ctx, runtime.Call.UserID)); err != nil {
+	if err := PrepareBeefTVVideoReferences(ctx, input.Config, &input, ownedMediaReaderWithVideoLimit(ctx, runtime.Call.UserID, mediaToolVideoMaxBytes(ctx, &input))); err != nil {
 		return input, err
 	}
 	return input, nil
@@ -298,6 +298,8 @@ func runManagedSubtitleEraseTask(ctx context.Context, client *beeftv.MediaClient
 	}
 	ref := managedReference(input.ReferenceVideos[0], "source")
 	ref.Kind = "video"
+	ref.MaxBytes = mediaToolVideoMaxBytes(ctx, &input)
+	ref.Purpose = beeftv.UploadPurposeMediaTool
 	options := beeftv.SubtitleEraseBody(subtitleEraseInputFromPrepared(input))
 	delete(options, "model")
 	delete(options, "video_url")

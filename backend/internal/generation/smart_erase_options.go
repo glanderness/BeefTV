@@ -147,6 +147,7 @@ type SubtitleEraseOptions struct {
 	SubtitleEmbedID  *int64               `json:"subtitleEmbedId,omitempty"`
 	UseOriginalPos   *bool                `json:"useOriginalPos,omitempty"`
 	UseOriginalSize  *bool                `json:"useOriginalSize,omitempty"`
+	MaxVideoBytes    int64                `json:"maxVideoBytes,omitempty"`
 }
 
 type SubtitleEraseRequest struct {
@@ -170,6 +171,7 @@ type SubtitleEraseRequest struct {
 	ClientOperationID string               `json:"clientOperationId,omitempty"`
 	ProjectID         string               `json:"projectId,omitempty"`
 	NodeID            string               `json:"nodeId,omitempty"`
+	MaxVideoBytes     int64                `json:"-"`
 }
 
 func validateSubtitleEraseRegion(region *SubtitleEraseRegion, required bool) error {
@@ -251,6 +253,7 @@ func normalizeSmartEraseOptions(raw SubtitleEraseOptions) (SubtitleEraseOptions,
 			EraseMethod:    method,
 			WatermarkModel: wmModel,
 			Region:         region,
+			MaxVideoBytes:  raw.MaxVideoBytes,
 		}, nil
 
 	case "privacy":
@@ -286,6 +289,7 @@ func normalizeSmartEraseOptions(raw SubtitleEraseOptions) (SubtitleEraseOptions,
 			EraseType:      "privacy",
 			PrivacyModel:   privModel,
 			PrivacyTargets: targets,
+			MaxVideoBytes:  raw.MaxVideoBytes,
 		}, nil
 
 	default:
@@ -314,6 +318,7 @@ func normalizeSmartEraseOptions(raw SubtitleEraseOptions) (SubtitleEraseOptions,
 				EraseType:     eraseType,
 				EraseMethod:   "auto",
 				SubtitleModel: "mega",
+				MaxVideoBytes: raw.MaxVideoBytes,
 			}, nil
 		}
 		if err := validateSubtitleEraseRegion(raw.Region, m == "custom"); err != nil {
@@ -332,6 +337,7 @@ func normalizeSmartEraseOptions(raw SubtitleEraseOptions) (SubtitleEraseOptions,
 			EraseMethod:   m,
 			SubtitleModel: sm,
 			Region:        region,
+			MaxVideoBytes: raw.MaxVideoBytes,
 		}
 		if !ocr {
 			if strings.TrimSpace(raw.SubtitleLang) != "" || strings.TrimSpace(raw.SubtitleFormat) != "" || strings.TrimSpace(raw.TranslateDstLang) != "" || raw.SubtitleEmbedID != nil || raw.UseOriginalPos != nil || raw.UseOriginalSize != nil {
@@ -404,6 +410,7 @@ func requestToOptions(req SubtitleEraseRequest) SubtitleEraseOptions {
 		SubtitleEmbedID:  req.SubtitleEmbedID,
 		UseOriginalPos:   req.UseOriginalPos,
 		UseOriginalSize:  req.UseOriginalSize,
+		MaxVideoBytes:    req.MaxVideoBytes,
 	}
 }
 

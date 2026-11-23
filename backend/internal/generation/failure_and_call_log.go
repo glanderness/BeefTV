@@ -155,6 +155,10 @@ func ApplyAppFailureWrappers(err error, failure Failure) Failure {
 	if errors.As(err, &download) {
 		failure = WithDownloadFailure(failure, download.TaskID)
 	}
+	var persist VideoPersistError
+	if errors.As(err, &persist) {
+		failure.TaskID = firstNonEmpty(failure.TaskID, persist.TaskID)
+	}
 	var pending StatePendingError
 	if errors.As(err, &pending) {
 		failure.Category = CategorySubmissionUncertain
@@ -707,7 +711,10 @@ func CaptureTaskFailureDiagnostics(task *model.Task, err error, source string) {
 	var upload *ReferenceUploadError
 	var dns *outbound.DNSResolutionError
 	var download VideoDownloadError
+	var persist VideoPersistError
 	switch {
+	case errors.As(err, &persist):
+		d.Source, d.Stage, d.Summary = "local_result", "保存视频结果", persist.Error()
 	case errors.As(err, &upload):
 		d.Source, d.Stage, d.Summary = "reference_upload", upload.Meta.Label(), upload.Error()
 		d.FailedOperation, d.TransportPhase = "reference_"+upload.Meta.Stage, upload.TransportPhase

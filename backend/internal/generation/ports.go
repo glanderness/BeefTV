@@ -60,6 +60,14 @@ type ResourceMetadataPort interface {
 	EnsureMetadata(ctx context.Context, userID, resourceID string) (ResourceInfo, error)
 }
 
+// GeneratedVideoFileStore is optionally implemented by ResourcePort adapters to
+// persist a finalized local video file directly into workspace resources via
+// streaming file IO, keeping 1-2 GiB legacy/recovery tool outputs out of RAM
+// and ResultJSON base64 data URLs.
+type GeneratedVideoFileStore interface {
+	PersistGeneratedVideoFile(userID, identity, mimeType, filePath string, width, height int, durationMs int64) (ResourceInfo, error)
+}
+
 type LimitsPort interface {
 	GeneratedFileBytes(ctx context.Context) (int64, error)
 	ResourceUploadBytes(ctx context.Context) (int64, error)

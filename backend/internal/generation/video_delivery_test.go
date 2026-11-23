@@ -11,6 +11,17 @@ import (
 	"infinite-canvas/backend/internal/outbound"
 )
 
+func videoResultDownloader(config Config, rawURL, taskID string, renew ...videoResultURLResolver) func(context.Context) ([]byte, string, error) {
+	var resolver videoResultResolver
+	if len(renew) > 0 {
+		resolver = func(ctx context.Context) (VideoResultSource, error) {
+			freshURL, err := renew[0](ctx)
+			return videoURLSource(config, freshURL), err
+		}
+	}
+	return VideoResultDownloader(config, taskID, videoURLSource(config, rawURL), resolver)
+}
+
 func TestSeedanceDispatchUsesGatewayDeliveryFallback(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	for _, withURL := range []bool{true, false} {

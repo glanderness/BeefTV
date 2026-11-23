@@ -133,8 +133,8 @@ func TestRuntimePolicyDefaultsAndSelfUseModeValidate(t *testing.T) {
 	if err := validateRuntimePolicy(selfUse); err != nil {
 		t.Fatalf("self-use runtime policy error = %v", err)
 	}
-	if selfUse.Task.WorkerConcurrency != 999 || selfUse.Resource.ResourceUploadMB != 999 {
-		t.Fatalf("self-use maxima = worker %d, upload %d", selfUse.Task.WorkerConcurrency, selfUse.Resource.ResourceUploadMB)
+	if selfUse.Task.WorkerConcurrency != 999 || selfUse.Resource.ResourceUploadMB != 2048 || selfUse.Resource.GeneratedFileMB != 2048 || selfUse.Request.SystemRelayResponseMB != 999 {
+		t.Fatalf("self-use maxima = worker %d, upload %d, generated %d, relay %d", selfUse.Task.WorkerConcurrency, selfUse.Resource.ResourceUploadMB, selfUse.Resource.GeneratedFileMB, selfUse.Request.SystemRelayResponseMB)
 	}
 }
 
