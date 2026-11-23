@@ -9,11 +9,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"infinite-canvas/backend/internal/mediatools"
-	"infinite-canvas/backend/internal/outbound"
 	"io"
 	"net"
 	"net/http"
@@ -206,104 +204,6 @@ func skipStorageHeader(key string) bool {
 	return strings.HasPrefix(strings.ToLower(key), "x-canvas-")
 }
 
-type uploadProgressReader struct {
-	io.Reader
-	loaded, total int64
-	report        func(int64, int64)
-}
-
-func (r *uploadProgressReader) Read(p []byte) (int, error) {
-	n, err := r.Reader.Read(p)
-	r.loaded += int64(n)
-	if r.report != nil {
-		r.report(r.loaded, r.total)
-	}
-	return n, err
-}
-func (c *MediaClient) putStorage(ctx context.Context, link string, headers map[string]string, source io.Reader, size, offset, total int64, label string) (resultErr error) {
-	ctx = c.networkContext(ctx)
-	meta := UploadMetaFromContext(ctx)
-	if meta.Attempt == 0 {
-		meta.Attempt = 1
-	}
-	ctx = withUploadMeta(ctx, "put", meta.Attempt)
-	body := &uploadProgressReader{Reader: source, total: size, report: func(n, _ int64) {
-		if c.Progress != nil {
-			c.Progress(label, offset+n, total, "transferring")
-		}
-	}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, link, body)
-	if err != nil {
-		return err
-	}
-	req.ContentLength = size
-	req.GetBody = nil
-	for key, value := range headers {
-		if !skipStorageHeader(key) {
-			req.Header.Set(key, value)
-		}
-	}
-	client := *c.httpClient()
-	client.Jar = nil
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	trace := &outbound.TransportTrace{}
-	req = trace.Attach(req)
-	observation := UploadObservation{Request: req, StartedAt: time.Now(), Route: "direct"}
-	validating := true
-	if route := outbound.RequestNetworkRoute(req, client.Transport); route != "" {
-		observation.Route = route
-	}
-	defer func() {
-		observation.Dispatched, observation.Phase = trace.Result(resultErr)
-		if validating {
-			observation.Dispatched = false
-			observation.Phase = "dns"
-		}
-		if resultErr != nil {
-			resultErr = &UploadError{Meta: UploadMetaFromContext(ctx), Dispatched: observation.Dispatched, Phase: observation.Phase, Cause: resultErr}
-		}
-		observation.Err = resultErr
-		if c.StorageObserve != nil {
-			c.StorageObserve(observation)
-		}
-	}()
-	if err := c.validURLContext(req.Context(), link); err != nil {
-		return err
-	}
-	validating = false
-	resp, err := client.Do(req)
-	observation.Response = resp
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	errorBody, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
-	observation.ReceivedBytes = int64(len(errorBody))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			return ErrUploadRedirect
-		}
-		var failure struct {
-			Code      string `xml:"Code"`
-			RequestID string `xml:"RequestId"`
-		}
-		_ = xml.Unmarshal(errorBody, &failure)
-		if failure.RequestID == "" {
-			failure.RequestID = resp.Header.Get("X-Amz-Request-Id")
-		}
-		if failure.RequestID == "" {
-			failure.RequestID = resp.Header.Get("X-Cos-Request-Id")
-		}
-		if failure.Code == "" {
-			failure.Code = "storage_put_failed"
-		}
-		return &MediaHTTPError{StatusCode: resp.StatusCode, TaskError: MediaTaskError{Code: failure.Code, Message: fmt.Sprintf("素材直传未完成（HTTP %d）", resp.StatusCode)}, RequestID: failure.RequestID}
-	}
-	if readErr != nil {
-		return readErr
-	}
-	return nil
-}
 func (c *MediaClient) confirmUpload(ctx context.Context, ticket string) (UploadedMedia, error) {
 	var uploaded UploadedMedia
 	var err error
@@ -365,6 +265,9 @@ func (c *MediaClient) CompleteUpload(ctx context.Context, session UploadSession,
 	return c.CompleteUploadSource(ctx, session, bytes.NewReader(data), int64(len(data)), label)
 }
 
+// CompleteUploadSource uploads source to object storage and confirms the ticket.
+// When session.Multipart is non-nil, source must be safe for concurrent ReadAt
+// calls from up to multipartUploadConcurrency workers.
 func (c *MediaClient) CompleteUploadSource(ctx context.Context, session UploadSession, source io.ReaderAt, size int64, label string) (result UploadedMedia, resultErr error) {
 	defer func() {
 		if resultErr != nil && session.Multipart != nil && session.Ticket != "" {
@@ -383,30 +286,16 @@ func (c *MediaClient) CompleteUploadSource(ctx context.Context, session UploadSe
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		ctx := withUploadMeta(ctx, "put", attempt+1)
-		if c.Progress != nil {
-			c.Progress(label, 0, size, "resuming")
-		}
 		var putErr error
 		if session.Multipart == nil {
+			if c.Progress != nil {
+				c.Progress(label, 0, size, "resuming")
+			}
 			putErr = c.putStorage(ctx, session.UploadURL, session.RequiredHeaders, io.NewSectionReader(source, 0, size), size, 0, size, label)
 		} else {
-			var offset int64
-			for _, part := range session.Multipart.Parts {
-				end := offset + part.Bytes
-				if part.Received && c.Progress != nil {
-					c.Progress(label, end, size, "resuming")
-				}
-				if !part.Received {
-					putErr = c.putStorage(ctx, part.UploadURL, part.RequiredHeaders, io.NewSectionReader(source, offset, part.Bytes), part.Bytes, offset, size, label)
-					if putErr != nil {
-						break
-					}
-				}
-				offset = end
-			}
+			putErr = c.uploadMultipartParts(ctx, session.Multipart.Parts, source, size, label)
 		}
-		var storageFailure *MediaHTTPError
-		if putErr != nil && !retryUploadControl(putErr) && !(session.Multipart != nil && errors.As(putErr, &storageFailure) && storageFailure.StatusCode == 403) {
+		if putErr != nil && !(session.Multipart == nil && retryUploadControl(putErr)) && !(session.Multipart != nil && isResumableMultipartPutError(putErr)) {
 			return result, putErr
 		}
 		if putErr == nil {

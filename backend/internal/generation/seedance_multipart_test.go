@@ -26,20 +26,30 @@ func TestSeedanceMultipartRecoversLostAckPartialBodyAndCompletion(t *testing.T) 
 			hexDigest := hex.EncodeToString(digest[:])
 			var mu sync.Mutex
 			puts := map[int]int{}
+			ackedByResume := map[int]bool{}
+			putsAfterAcked := map[int]int{}
 			stored := map[int][]byte{}
+			lostAckTriggered, partialDropTriggered := false, false
 			creates, resumes, completes, aborts, generates, proxyCalls := 0, 0, 0, 0, 0, 0
 			storage := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				mu.Lock()
-				defer mu.Unlock()
-				if proxy {
-					proxyCalls++
-				}
 				if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("X-Api-Key") != "" {
 					t.Error("gateway credentials reached storage")
 				}
 				n, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/part/"))
+				mu.Lock()
+				if proxy {
+					proxyCalls++
+				}
+				if ackedByResume[n] {
+					putsAfterAcked[n]++
+				}
 				puts[n]++
-				if n == 2 && puts[n] == 1 {
+				triggerPartialDrop := n == 2 && !partialDropTriggered
+				if triggerPartialDrop {
+					partialDropTriggered = true
+				}
+				mu.Unlock()
+				if triggerPartialDrop {
 					_, _ = io.CopyN(io.Discard, r.Body, 128<<10)
 					conn, _, _ := w.(http.Hijacker).Hijack()
 					_ = conn.Close()
@@ -47,11 +57,21 @@ func TestSeedanceMultipartRecoversLostAckPartialBodyAndCompletion(t *testing.T) 
 				}
 				body, err := io.ReadAll(r.Body)
 				if err != nil {
-					t.Error(err)
+					// Sibling part PUTs are canceled in-flight when another part fails.
+					if r.Context().Err() != nil || errors.Is(err, io.ErrUnexpectedEOF) {
+						return
+					}
+					t.Errorf("unexpected storage read error for part %d: %v", n, err)
 					return
 				}
+				mu.Lock()
 				stored[n] = body
-				if n == 1 && puts[n] == 1 {
+				triggerLostAck := n == 1 && !lostAckTriggered
+				if triggerLostAck {
+					lostAckTriggered = true
+				}
+				mu.Unlock()
+				if triggerLostAck {
 					conn, _, _ := w.(http.Hijacker).Hijack()
 					_ = conn.Close()
 					return
@@ -87,7 +107,11 @@ func TestSeedanceMultipartRecoversLostAckPartialBodyAndCompletion(t *testing.T) 
 					plan := &BeefTVSeedanceMultipartPlan{PartBytes: 8 << 20}
 					for n, start := 1, 0; start < len(data); n, start = n+1, start+8<<20 {
 						size := min(8<<20, len(data)-start)
-						plan.Parts = append(plan.Parts, BeefTVSeedanceUploadPart{Number: n, Bytes: int64(size), Received: len(stored[n]) == size, UploadURL: fmt.Sprintf("%s/part/%d", storageURL, n), RequiredHeaders: map[string]string{"Authorization": "must-drop", "Cookie": "must-drop", "X-Api-Key": "must-drop"}})
+						received := len(stored[n]) == size
+						if received && strings.HasSuffix(r.URL.Path, "/resume") {
+							ackedByResume[n] = true
+						}
+						plan.Parts = append(plan.Parts, BeefTVSeedanceUploadPart{Number: n, Bytes: int64(size), Received: received, UploadURL: fmt.Sprintf("%s/part/%d", storageURL, n), RequiredHeaders: map[string]string{"Authorization": "must-drop", "Cookie": "must-drop", "X-Api-Key": "must-drop"}})
 					}
 					_ = json.NewEncoder(w).Encode(BeefTVSeedanceUploadSession{Ticket: "same-owned-upload", Multipart: plan})
 				case "/v1/media/uploads/complete":
@@ -118,11 +142,12 @@ func TestSeedanceMultipartRecoversLostAckPartialBodyAndCompletion(t *testing.T) 
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if creates != 1 || resumes != 2 || completes != 2 || aborts != 0 || generates != 0 || puts[1] != 1 || puts[2] != 2 || puts[3] != 1 {
-				t.Fatalf("counts create=%d resume=%d complete=%d abort=%d generate=%d puts=%v", creates, resumes, completes, aborts, generates, puts)
+			totalPuts := puts[1] + puts[2] + puts[3]
+			if creates != 1 || resumes < 1 || resumes > 2 || completes != 2 || aborts != 0 || generates != 0 || !lostAckTriggered || !partialDropTriggered || putsAfterAcked[1] != 0 || putsAfterAcked[2] != 0 || putsAfterAcked[3] != 0 || puts[1] < 1 || puts[1] > 2 || puts[2] < 2 || puts[2] > 3 || puts[3] < 1 || puts[3] > 2 {
+				t.Fatalf("counts create=%d resume=%d complete=%d abort=%d generate=%d lostAck=%t partialDrop=%t puts=%v afterAcked=%v", creates, resumes, completes, aborts, generates, lostAckTriggered, partialDropTriggered, puts, putsAfterAcked)
 			}
-			if proxy && proxyCalls != 4 {
-				t.Fatalf("expected all storage PUTs through proxy, got %d", proxyCalls)
+			if proxy && proxyCalls != totalPuts {
+				t.Fatalf("expected all %d storage PUTs through proxy, got %d", totalPuts, proxyCalls)
 			}
 			if input.ReferenceImages[0].URL != "https://example.com/completed.png" || input.ReferenceImages[0].DataURL != "" {
 				t.Fatal("reference not committed")
