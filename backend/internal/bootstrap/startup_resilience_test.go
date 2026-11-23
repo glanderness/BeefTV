@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -177,28 +179,31 @@ func TestStartupBootstrapNotBlockedByHeavyWorkspaceCleanup(t *testing.T) {
 	}
 
 	client := &http.Client{Timeout: 4 * time.Second}
-	probe := func(path string) time.Duration {
-		t.Helper()
+	probe := func(path string) (time.Duration, error) {
 		req, _ := http.NewRequest(http.MethodGet, rt.BaseURL()+path, nil)
 		req.Header.Set("X-Desktop-Token", rt.LaunchToken())
 		start := time.Now()
 		resp, err := client.Do(req)
 		dur := time.Since(start)
 		if err != nil {
-			t.Fatalf("GET %s failed after %v: %v", path, dur, err)
+			return dur, fmt.Errorf("GET %s failed after %v: %w", path, dur, err)
 		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("GET %s status = %d", path, resp.StatusCode)
+			return dur, fmt.Errorf("GET %s status = %d", path, resp.StatusCode)
 		}
-		return dur
+		return dur, nil
 	}
 
 	// Phase 1: Startup window must not stall bootstrap and must defer detached GC.
 	var maxStartupBoot time.Duration
 	for i := 0; i < 10; i++ {
-		if d := probe("/workspace/bootstrap"); d > maxStartupBoot {
+		d, err := probe("/workspace/bootstrap")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d > maxStartupBoot {
 			maxStartupBoot = d
 		}
 		time.Sleep(15 * time.Millisecond)
@@ -215,29 +220,121 @@ func TestStartupBootstrapNotBlockedByHeavyWorkspaceCleanup(t *testing.T) {
 	}
 
 	// Phase 2: Even while detached GC explicitly runs on the 40MB/20k-log workspace,
-	// /workspace/bootstrap stays lock-free and GC itself finishes promptly.
+	// /workspace/bootstrap, SQLite reads, AND storageMu-guarded writes must all
+	// run concurrently without starving, and GC itself must stay bounded.
+	gcStarted := make(chan struct{})
 	gcDone := make(chan time.Duration, 1)
 	go func() {
+		close(gcStarted)
 		gcStart := time.Now()
 		rt.service.ResourceService().CleanupDetachedResources()
 		gcDone <- time.Since(gcStart)
 	}()
+	<-gcStarted
 
-	var maxBootDuringGC, maxListDuringGC time.Duration
-	var gcDur time.Duration
-	for done := false; !done; {
-		select {
-		case gcDur = <-gcDone:
-			done = true
-		default:
-			if d := probe("/workspace/bootstrap"); d > maxBootDuringGC {
-				maxBootDuringGC = d
+	var (
+		bootProbes   atomic.Int64
+		listProbes   atomic.Int64
+		writeProbes  atomic.Int64
+		maxBootNs    atomic.Int64
+		maxListNs    atomic.Int64
+		maxWriteNs   atomic.Int64
+		stopProbing  atomic.Bool
+		probeErrMu   sync.Mutex
+		firstProbeEr error
+	)
+	recordMax := func(target *atomic.Int64, d time.Duration) {
+		ns := d.Nanoseconds()
+		for {
+			cur := target.Load()
+			if ns <= cur || target.CompareAndSwap(cur, ns) {
+				return
 			}
-			if d := probe("/canvas-projects?page=1&pageSize=1"); d > maxListDuringGC {
-				maxListDuringGC = d
-			}
-			time.Sleep(15 * time.Millisecond)
 		}
+	}
+	recordErr := func(err error) {
+		probeErrMu.Lock()
+		if firstProbeEr == nil {
+			firstProbeEr = err
+		}
+		probeErrMu.Unlock()
+	}
+	probeWrite := func(idx int64) (time.Duration, error) {
+		id := fmt.Sprintf("probe-canvas-%d", idx)
+		body := fmt.Sprintf(`{"project":{"id":"%s","title":"probe","revision":0,"nodes":[],"connections":[]}}`, id)
+		req, _ := http.NewRequest(http.MethodPut, rt.BaseURL()+"/canvas-projects/"+id, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Desktop-Token", rt.LaunchToken())
+		start := time.Now()
+		resp, err := client.Do(req)
+		dur := time.Since(start)
+		if err != nil {
+			return dur, fmt.Errorf("PUT /canvas-projects/%s failed after %v: %w", id, dur, err)
+		}
+		respBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			return dur, fmt.Errorf("PUT /canvas-projects/%s status = %d body=%s", id, resp.StatusCode, string(respBody))
+		}
+		return dur, nil
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for {
+			d, err := probe("/workspace/bootstrap")
+			if err != nil {
+				recordErr(err)
+				return
+			}
+			bootProbes.Add(1)
+			recordMax(&maxBootNs, d)
+			d, err = probe("/canvas-projects?page=1&pageSize=1")
+			if err != nil {
+				recordErr(err)
+				return
+			}
+			listProbes.Add(1)
+			recordMax(&maxListNs, d)
+			if stopProbing.Load() {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		var idx int64
+		for {
+			idx++
+			d, err := probeWrite(idx)
+			if err != nil {
+				recordErr(err)
+				return
+			}
+			writeProbes.Add(1)
+			recordMax(&maxWriteNs, d)
+			if stopProbing.Load() {
+				return
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+	}()
+
+	gcDur := <-gcDone
+	stopProbing.Store(true)
+	wg.Wait()
+
+	if firstProbeEr != nil {
+		t.Fatal(firstProbeEr)
+	}
+	maxBootDuringGC := time.Duration(maxBootNs.Load())
+	maxListDuringGC := time.Duration(maxListNs.Load())
+	maxWriteDuringGC := time.Duration(maxWriteNs.Load())
+	if bootProbes.Load() == 0 || listProbes.Load() == 0 || writeProbes.Load() == 0 {
+		t.Fatalf("concurrent probes did not execute: boot=%d list=%d write=%d", bootProbes.Load(), listProbes.Load(), writeProbes.Load())
 	}
 
 	var remainingCount int64
@@ -251,9 +348,13 @@ func TestStartupBootstrapNotBlockedByHeavyWorkspaceCleanup(t *testing.T) {
 		t.Fatalf("/workspace/bootstrap stalled during active GC: max=%v", maxBootDuringGC)
 	}
 	if maxListDuringGC > 1500*time.Millisecond {
-		t.Fatalf("/canvas-projects stalled during active GC: max=%v (gcDur=%v)", maxListDuringGC, gcDur)
+		t.Fatalf("/canvas-projects read stalled during active GC: max=%v (gcDur=%v)", maxListDuringGC, gcDur)
 	}
-	t.Logf("heavy workspace metrics: startupBoot=%v gcDur=%v bootDuringGC=%v listDuringGC=%v", maxStartupBoot, gcDur, maxBootDuringGC, maxListDuringGC)
+	if maxWriteDuringGC > 1500*time.Millisecond {
+		t.Fatalf("POST /canvas-projects (storageMu write) stalled during active GC: max=%v (gcDur=%v)", maxWriteDuringGC, gcDur)
+	}
+	t.Logf("heavy workspace metrics: startupBoot=%v gcDur=%v probes(boot=%d,list=%d,write=%d) bootDuringGC=%v listDuringGC=%v writeDuringGC=%v",
+		maxStartupBoot, gcDur, bootProbes.Load(), listProbes.Load(), writeProbes.Load(), maxBootDuringGC, maxListDuringGC, maxWriteDuringGC)
 }
 
 // TestRuntimeStartDoesNotBlockOnSlowAssistantHost verifies that an unready or
@@ -349,6 +450,20 @@ func TestRuntimeStartDoesNotBlockOnSlowAssistantHost(t *testing.T) {
 		t.Fatalf("GET /assistant/status took %v while host starting", statusElapsed)
 	}
 
+	// Host.Stop() must also cancel an in-flight slow StartContext promptly
+	// rather than waiting up to the 20s readiness timeout.
+	stopStart := time.Now()
+	if err := rt.assistantHost.Stop(); err != nil {
+		t.Fatalf("assistantHost.Stop failed: %v", err)
+	}
+	stopElapsed := time.Since(stopStart)
+	if stopElapsed > 3*time.Second {
+		t.Fatalf("assistantHost.Stop blocked for %v while canceling slow startup", stopElapsed)
+	}
+	if rt.assistantHost.Running() {
+		t.Fatal("assistant host still running after Stop")
+	}
+
 	closeStart := time.Now()
 	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -362,5 +477,5 @@ func TestRuntimeStartDoesNotBlockOnSlowAssistantHost(t *testing.T) {
 	if rt.assistantHost.Running() {
 		t.Fatal("assistant host still running after Runtime.Close")
 	}
-	t.Logf("slow assistant timings: start=%v status=%v close=%v", startElapsed, statusElapsed, closeElapsed)
+	t.Logf("slow assistant timings: start=%v status=%v stop=%v close=%v", startElapsed, statusElapsed, stopElapsed, closeElapsed)
 }

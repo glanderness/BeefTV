@@ -33,12 +33,15 @@ type Options struct {
 // Host 是一个助手宿主监督器实例。bootstrap 为每个运行时持有一个；
 // 路由通过 RuntimeDependencies 拿到同一实例，而不是进程级全局变量。
 type Host struct {
-	opts      Options
-	proc      *supervisor
-	lifecycle sync.Mutex
-	opsPipeMu sync.RWMutex
-	opsPipe   string
-	closed    bool
+	opts              Options
+	proc              *supervisor
+	lifecycle         sync.Mutex
+	startControlMu    sync.Mutex
+	startGen          uint64
+	activeStartCancel context.CancelFunc
+	opsPipeMu         sync.RWMutex
+	opsPipe           string
+	closed            bool
 }
 
 func New(opts Options) *Host {
@@ -159,7 +162,7 @@ func (h *Host) Start(opsURL, desktopToken string) error {
 	return h.StartContext(context.Background(), opsURL, desktopToken)
 }
 
-// StartContext 与 Start 相同，但允许调用方在退出或超时时提前取消子进程就绪等待。
+// StartContext 与 Start 相同，但允许调用方（以及 Stop/StopContext/Restart）提前取消子进程就绪等待。
 func (h *Host) StartContext(ctx context.Context, opsURL, desktopToken string) error {
 	if h == nil {
 		return nil
@@ -170,11 +173,17 @@ func (h *Host) StartContext(ctx context.Context, opsURL, desktopToken string) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	gen := h.currentStartGen()
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	startCtx, cleanupStart, ok := h.beginStartLocked(ctx, gen)
+	if !ok {
+		return context.Canceled
+	}
+	defer cleanupStart()
 	config, configured := h.EffectiveConfig()
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return nil
@@ -183,7 +192,44 @@ func (h *Host) StartContext(ctx context.Context, opsURL, desktopToken string) er
 	if reason != "" {
 		return nil
 	}
-	return h.startOwned(ctx, config, provider, opsURL, desktopToken)
+	return h.startOwned(startCtx, config, provider, opsURL, desktopToken)
+}
+
+func (h *Host) currentStartGen() uint64 {
+	h.startControlMu.Lock()
+	gen := h.startGen
+	h.startControlMu.Unlock()
+	return gen
+}
+
+func (h *Host) beginStartLocked(parent context.Context, expectedGen uint64) (context.Context, func(), bool) {
+	h.startControlMu.Lock()
+	if h.startGen != expectedGen {
+		h.startControlMu.Unlock()
+		return nil, nil, false
+	}
+	startCtx, cancel := context.WithCancel(parent)
+	h.activeStartCancel = cancel
+	h.startControlMu.Unlock()
+	return startCtx, func() {
+		h.startControlMu.Lock()
+		if h.startGen == expectedGen {
+			h.activeStartCancel = nil
+		}
+		h.startControlMu.Unlock()
+		cancel()
+	}, true
+}
+
+func (h *Host) cancelInFlightStart() {
+	h.startControlMu.Lock()
+	h.startGen++
+	cancel := h.activeStartCancel
+	h.activeStartCancel = nil
+	h.startControlMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // Launch 按已解析的供应商启动；已在跑则是 no-op。调用方负责先检查配置是否存在。
@@ -208,6 +254,7 @@ func (h *Host) Stop() error {
 	if h == nil {
 		return nil
 	}
+	h.cancelInFlightStart()
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
 	return h.proc.stop()
@@ -223,6 +270,7 @@ func (h *Host) StopContext(ctx context.Context) error {
 	if h == nil {
 		return nil
 	}
+	h.cancelInFlightStart()
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
 	h.closed = true
@@ -299,6 +347,7 @@ func (h *Host) Restart(provider assistant.Provider, opsURL, desktopToken string)
 	if h == nil {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
+	h.cancelInFlightStart()
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
 	config, configured := h.EffectiveConfig()

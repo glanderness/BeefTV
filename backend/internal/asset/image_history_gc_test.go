@@ -53,8 +53,8 @@ func TestCleanupDetachedUserResourcesProtectsImageHistoryOnlyAndAssetlessCanvasR
 		t.Fatal(err)
 	}
 
-	if err := svc.cleanupDetachedUserResourcesLocked("owner", []model.Resource{histOnly, nodeOnly, orphan}); err != nil {
-		t.Fatalf("cleanupDetachedUserResourcesLocked() error = %v", err)
+	if err := svc.CleanupDetachedUserResources("owner", []model.Resource{histOnly, nodeOnly, orphan}); err != nil {
+		t.Fatalf("CleanupDetachedUserResources() error = %v", err)
 	}
 
 	var remaining []model.Resource

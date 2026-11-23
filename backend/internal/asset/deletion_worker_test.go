@@ -341,9 +341,17 @@ func TestStartDeletionWorkerBacksOffOnPersistentClaimError(t *testing.T) {
 }
 
 func TestStartDeletionWorkerDefersDetachedCleanupPastStartup(t *testing.T) {
-	prevDelay := startupCleanupDelay
-	startupCleanupDelay = 160 * time.Millisecond
-	t.Cleanup(func() { startupCleanupDelay = prevDelay })
+	prevAfter := startupCleanupAfter
+	fireCleanup := make(chan time.Time, 1)
+	armed := make(chan time.Duration, 1)
+	startupCleanupAfter = func(delay time.Duration) (<-chan time.Time, func()) {
+		select {
+		case armed <- delay:
+		default:
+		}
+		return fireCleanup, func() {}
+	}
+	t.Cleanup(func() { startupCleanupAfter = prevAfter })
 
 	svc, repo, _ := newTestDomain(t)
 	if err := database.MigrateLocalSchema(repo.DB()); err != nil {
@@ -380,25 +388,29 @@ func TestStartDeletionWorkerDefersDetachedCleanupPastStartup(t *testing.T) {
 		<-done
 	}()
 
-	// Startup outbox drain runs immediately, while detached cleanup waits past startup.
-	deadline := time.Now().Add(time.Second)
-	for countingRepo.claims.Load() < 1 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
+	// Startup outbox drain runs immediately and arms the deferred cleanup timer.
+	select {
+	case delay := <-armed:
+		if delay != startupCleanupDelay {
+			t.Fatalf("armed startup cleanup delay = %v, want %v", delay, startupCleanupDelay)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup cleanup timer was not armed")
 	}
 	if countingRepo.claims.Load() < 1 {
-		t.Fatal("expected immediate startup drain claim")
+		t.Fatal("expected immediate startup drain claim before arming cleanup timer")
 	}
-	time.Sleep(40 * time.Millisecond)
 	var beforeDelay int64
 	if err := repo.DB().Model(&model.Resource{}).Where("id = ?", orphan.ID).Count(&beforeDelay).Error; err != nil {
 		t.Fatal(err)
 	}
 	if beforeDelay != 1 {
-		t.Fatalf("orphan resource count before startupCleanupDelay = %d, want 1 (cleanup ran too early)", beforeDelay)
+		t.Fatalf("orphan resource count before deferred cleanup trigger = %d, want 1", beforeDelay)
 	}
 
-	// Once startupCleanupDelay elapses, detached cleanup runs and removes the orphan.
-	deadline = time.Now().Add(2 * time.Second)
+	// Trigger the deferred cleanup and verify the orphan is removed.
+	fireCleanup <- time.Now()
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		var remaining int64
 		if err := repo.DB().Model(&model.Resource{}).Where("id = ?", orphan.ID).Count(&remaining).Error; err == nil && remaining == 0 {
@@ -406,5 +418,5 @@ func TestStartDeletionWorkerDefersDetachedCleanupPastStartup(t *testing.T) {
 		}
 		time.Sleep(15 * time.Millisecond)
 	}
-	t.Fatal("expected deferred detached resource cleanup to remove orphan after startupCleanupDelay")
+	t.Fatal("expected deferred detached resource cleanup to remove orphan after timer fires")
 }

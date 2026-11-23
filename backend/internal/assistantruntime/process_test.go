@@ -3,6 +3,7 @@ package assistantruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -596,5 +597,67 @@ func TestOwnedHealthJSONOmitsNonce(t *testing.T) {
 	}
 	if health.Instance == nonce {
 		t.Fatal("公开 instance 字段必须是证明而不是 nonce")
+	}
+}
+
+func TestStopCancelsInFlightAndQueuedStartContext(t *testing.T) {
+	host := fixtureHost(t, "sleep")
+	host.opts.ReadyTimeout = 10 * time.Second
+	host.opts.ResolveProvider = func() (assistant.Provider, string) { return fixtureProvider(), "" }
+
+	// 1. In-flight StartContext must be aborted promptly by Host.Stop().
+	startErrCh := make(chan error, 1)
+	go func() {
+		startErrCh <- host.StartContext(context.Background(), "http://127.0.0.1:18090/api", "")
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if host.State().Starting {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !host.State().Starting {
+		t.Fatal("expected Host.State().Starting while slow child boots")
+	}
+	stopBegin := time.Now()
+	if err := host.Stop(); err != nil {
+		t.Fatalf("Host.Stop failed: %v", err)
+	}
+	if elapsed := time.Since(stopBegin); elapsed > 2*time.Second {
+		t.Fatalf("Host.Stop took %v waiting on in-flight StartContext", elapsed)
+	}
+	select {
+	case err := <-startErrCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("in-flight StartContext error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight StartContext did not return after Host.Stop")
+	}
+	if host.Running() {
+		t.Fatal("host must not be running after Stop")
+	}
+
+	// 2. A queued StartContext waiting on lifecycle lock must not relaunch after Stop.
+	host.lifecycle.Lock()
+	queuedErrCh := make(chan error, 1)
+	go func() {
+		queuedErrCh <- host.StartContext(context.Background(), "http://127.0.0.1:18090/api", "")
+	}()
+	time.Sleep(25 * time.Millisecond)
+	host.cancelInFlightStart()
+	host.lifecycle.Unlock()
+
+	select {
+	case err := <-queuedErrCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("queued StartContext error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued StartContext did not abort after generation bump")
+	}
+	if host.Running() {
+		t.Fatal("queued StartContext must not launch child after Stop")
 	}
 }

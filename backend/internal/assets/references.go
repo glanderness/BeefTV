@@ -2,9 +2,30 @@ package assets
 
 import (
 	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 )
+
+// Single canonical syntax table for resource references inside JSON/raw
+// documents. Semantic walking, in-memory prefiltering, and repository SQL
+// filters all derive from these definitions.
+var (
+	referenceLocatorPrefixes = []string{"resource:", "/api/resources/"}
+	bareResourceIDFields     = []string{"resourceId", "resourceIds", "sampleResourceId", "referenceResourceId", "referenceResourceIds"}
+	bareResourceIDKeyTokens  = []string{"resourceId", "ResourceId"}
+	referenceEscapeMarkers   = []string{`\u`, `\/`}
+)
+
+// ReferencePrefilterTokens returns the canonical substring set that any
+// document containing a resource reference must match.
+func ReferencePrefilterTokens() []string {
+	tokens := make([]string, 0, len(referenceLocatorPrefixes)+len(bareResourceIDKeyTokens)+len(referenceEscapeMarkers))
+	tokens = append(tokens, referenceLocatorPrefixes...)
+	tokens = append(tokens, bareResourceIDKeyTokens...)
+	tokens = append(tokens, referenceEscapeMarkers...)
+	return tokens
+}
 
 func DocumentReferences(raw string, resourceIDs map[string]struct{}) bool {
 	return len(DocumentReferencedIDs(raw, resourceIDs)) > 0
@@ -19,6 +40,11 @@ func DocumentReferencedIDs(raw string, resourceIDs map[string]struct{}) map[stri
 	if !mayReferenceAnyResourceID(raw, resourceIDs) {
 		return matched
 	}
+	return documentReferencedIDsExact(raw, resourceIDs)
+}
+
+func documentReferencedIDsExact(raw string, resourceIDs map[string]struct{}) map[string]struct{} {
+	matched := map[string]struct{}{}
 	found := map[string]struct{}{}
 	var value any
 	if err := json.Unmarshal([]byte(raw), &value); err == nil {
@@ -134,12 +160,7 @@ func walkReferenceDocument(value any, parentKey string, resourceIDs map[string]s
 }
 
 func isBareResourceIDField(field string) bool {
-	switch field {
-	case "resourceId", "resourceIds", "sampleResourceId", "referenceResourceId", "referenceResourceIds":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(bareResourceIDFields, field)
 }
 
 func isResourceLocatorField(field string) bool {
@@ -151,59 +172,27 @@ func isResourceLocatorField(field string) bool {
 	}
 }
 
-// DocumentContainsLocator reports whether raw contains `"resource:<id>\""` or
-// `"/api/resources/<id>/"` for any id in resourceIDs in a single linear pass.
-func DocumentContainsLocator(raw string, resourceIDs map[string]struct{}) bool {
-	if raw == "" || len(resourceIDs) == 0 {
-		return false
-	}
-	maxLen := 0
-	for id := range resourceIDs {
-		if strings.IndexByte(id, '"') >= 0 || strings.IndexByte(id, '/') >= 0 {
-			if strings.Contains(raw, "resource:"+id+`"`) || strings.Contains(raw, "/api/resources/"+id+"/") {
-				return true
-			}
-		}
-		if len(id) > maxLen {
-			maxLen = len(id)
+// mayReferenceAnyResourceID is a zero-allocation conservative prefilter for
+// DocumentReferencedIDs derived from the canonical syntax tables above.
+// Returning false guarantees documentReferencedIDsExact would find no match;
+// returning true falls through to exact JSON parsing.
+func mayReferenceAnyResourceID(raw string, resourceIDs map[string]struct{}) bool {
+	for _, marker := range referenceEscapeMarkers {
+		if strings.Contains(raw, marker) {
+			return true
 		}
 	}
-	if maxLen == 0 {
-		return false
+	for _, prefix := range referenceLocatorPrefixes {
+		if scanLocatorCandidates(raw, prefix, resourceIDs) {
+			return true
+		}
 	}
-	return containsDelimitedID(raw, "resource:", '"', maxLen, resourceIDs) ||
-		containsDelimitedID(raw, "/api/resources/", '/', maxLen, resourceIDs)
-}
-
-func containsDelimitedID(raw, prefix string, suffix byte, maxLen int, resourceIDs map[string]struct{}) bool {
-	for offset := 0; offset < len(raw); {
-		index := strings.Index(raw[offset:], prefix)
-		if index < 0 {
-			return false
+	for _, keyToken := range bareResourceIDKeyTokens {
+		if scanBareIDKeyCandidates(raw, keyToken, resourceIDs) {
+			return true
 		}
-		start := offset + index + len(prefix)
-		endLimit := min(len(raw), start+maxLen+1)
-		if end := strings.IndexByte(raw[start:endLimit], suffix); end > 0 {
-			if _, exists := resourceIDs[raw[start:start+end]]; exists {
-				return true
-			}
-		}
-		offset = start
 	}
 	return false
-}
-
-// mayReferenceAnyResourceID is a zero-allocation conservative prefilter for
-// DocumentReferencedIDs. Returning false guarantees DocumentReferencedIDs would
-// find no match; returning true falls through to exact JSON parsing.
-func mayReferenceAnyResourceID(raw string, resourceIDs map[string]struct{}) bool {
-	if strings.Contains(raw, `\u`) || strings.Contains(raw, `\/`) {
-		return true
-	}
-	return scanLocatorCandidates(raw, "resource:", resourceIDs) ||
-		scanLocatorCandidates(raw, "/api/resources/", resourceIDs) ||
-		scanBareIDKeyCandidates(raw, "resourceId", resourceIDs) ||
-		scanBareIDKeyCandidates(raw, "ResourceId", resourceIDs)
 }
 
 func isValidIDByte(b byte) bool {

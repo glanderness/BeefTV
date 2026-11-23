@@ -28,9 +28,20 @@ type ResourceDirectReference struct {
 	ResourceID string
 }
 
+// SQLiteSnapshotWatermark records the database change counters observed before
+// a read-only reference snapshot on a single-connection SQLite database. If the
+// counters still match inside BEGIN IMMEDIATE, no writes occurred anywhere in
+// SQLite since the snapshot began.
+type SQLiteSnapshotWatermark struct {
+	Valid        bool
+	DataVersion  int64
+	TotalChanges int64
+}
+
 type ResourceReferenceSnapshot struct {
 	Documents []ResourceReferenceDocument
 	Direct    []ResourceDirectReference
+	Watermark SQLiteSnapshotWatermark
 }
 
 func (r *Repository) AssetResourceRecords(assetID string) ([]model.AssetVersion, []model.AssetRepresentation, error) {
@@ -87,6 +98,11 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 	if len(resourceIDs) == 0 {
 		return snapshot, nil
 	}
+	snapshot.Watermark = r.captureSQLiteWatermark(r.db)
+	candidateSet := make(map[string]struct{}, len(resourceIDs))
+	for _, resourceID := range resourceIDs {
+		candidateSet[resourceID] = struct{}{}
+	}
 	history, err := r.CanvasHistoryResourceReferences(resourceIDs)
 	if err != nil {
 		return snapshot, err
@@ -107,46 +123,82 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 		}
 	}
 
-	var assets []model.Asset
-	assetQuery := r.db.Where("user_id = ? AND id <> ?", userID, excludingAssetID)
-	if err := assetQuery.Find(&assets).Error; err != nil {
+	var assetRows []model.Asset
+	assetQuery := applySQLiteReferenceFilter(
+		r.db.Select("id", "title", "payload_json").Where("user_id = ? AND id <> ? AND payload_json <> ''", userID, excludingAssetID),
+		"payload_json",
+	)
+	if err := assetQuery.Find(&assetRows).Error; err != nil {
 		return snapshot, err
 	}
-	for _, asset := range assets {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "素材", ID: asset.ID, Title: asset.Title, PrimaryJSON: asset.PayloadJSON})
+	for _, asset := range assetRows {
+		if assets.DocumentReferences(asset.PayloadJSON, candidateSet) {
+			snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "素材", ID: asset.ID, Title: asset.Title, PrimaryJSON: asset.PayloadJSON})
+		}
 	}
 
-	var canvases []model.CanvasProject
-	if err := r.db.Where("user_id = ?", userID).Find(&canvases).Error; err != nil {
+	// Scan canvas_projects in small ID-ordered chunks and match in Go (SIMD) so
+	// large multi-megabyte canvases yield SQLite's single connection every ~5ms
+	// and never retain unmatched canvas payloads in memory.
+	var canvasIDs []string
+	if err := r.db.Model(&model.CanvasProject{}).Where("user_id = ?", userID).Order("id ASC").Pluck("id", &canvasIDs).Error; err != nil {
 		return snapshot, err
 	}
-	for _, canvas := range canvases {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "画布", ID: canvas.ID, Title: canvas.Title, PrimaryJSON: canvas.PayloadJSON})
+	const canvasChunkSize = 2
+	for start := 0; start < len(canvasIDs); start += canvasChunkSize {
+		end := min(start+canvasChunkSize, len(canvasIDs))
+		var canvases []model.CanvasProject
+		if err := r.db.Select("id", "title", "payload_json").Where("user_id = ? AND id IN ? AND payload_json <> ''", userID, canvasIDs[start:end]).Find(&canvases).Error; err != nil {
+			return snapshot, err
+		}
+		for _, canvas := range canvases {
+			if assets.DocumentReferences(canvas.PayloadJSON, candidateSet) {
+				snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "画布", ID: canvas.ID, Title: canvas.Title, PrimaryJSON: canvas.PayloadJSON})
+			}
+		}
 	}
 
 	var tasks []model.Task
-	if err := r.db.Select("id", "prompt", "status", "input_json", "result_json").Where("user_id = ?", userID).Find(&tasks).Error; err != nil {
+	taskQuery := applySQLiteReferenceFilter(
+		r.db.Select("id", "prompt", "status", "input_json", "result_json").Where("user_id = ? AND (input_json <> '' OR result_json <> '')", userID),
+		"input_json", "result_json",
+	)
+	if err := taskQuery.Find(&tasks).Error; err != nil {
 		return snapshot, err
 	}
 	taskStatuses := make(map[string]model.TaskStatus, len(tasks))
 	for _, task := range tasks {
 		taskStatuses[task.ID] = task.Status
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "任务", ID: task.ID, Title: task.Prompt, PrimaryJSON: task.InputJSON, SecondaryJSON: task.ResultJSON, TaskStatus: task.Status})
+		if assets.DocumentReferences(task.InputJSON, candidateSet) || assets.DocumentReferences(task.ResultJSON, candidateSet) {
+			snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "任务", ID: task.ID, Title: task.Prompt, PrimaryJSON: task.InputJSON, SecondaryJSON: task.ResultJSON, TaskStatus: task.Status})
+		}
 	}
 
 	var runs []model.CreationRun
-	if err := r.db.Where("user_id = ?", userID).Find(&runs).Error; err != nil {
+	runQuery := applySQLiteReferenceFilter(
+		r.db.Select("id", "state_json", "approved_operations_json").Where("user_id = ? AND (state_json <> '' OR approved_operations_json <> '')", userID),
+		"state_json", "approved_operations_json",
+	)
+	if err := runQuery.Find(&runs).Error; err != nil {
 		return snapshot, err
 	}
 	for _, run := range runs {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "创作会话", ID: run.ID, Title: "智能创作", PrimaryJSON: run.StateJSON, SecondaryJSON: run.ApprovedOperationsJSON})
+		if assets.DocumentReferences(run.StateJSON, candidateSet) || assets.DocumentReferences(run.ApprovedOperationsJSON, candidateSet) {
+			snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "创作会话", ID: run.ID, Title: "智能创作", PrimaryJSON: run.StateJSON, SecondaryJSON: run.ApprovedOperationsJSON})
+		}
 	}
 	var submissions []model.CreationSubmission
-	if err := r.db.Where("user_id = ? AND revoked_at IS NULL", userID).Find(&submissions).Error; err != nil {
+	submissionQuery := applySQLiteReferenceFilter(
+		r.db.Select("id", "item_key", "request_json").Where("user_id = ? AND revoked_at IS NULL AND request_json <> ''", userID),
+		"request_json",
+	)
+	if err := submissionQuery.Find(&submissions).Error; err != nil {
 		return snapshot, err
 	}
 	for _, submission := range submissions {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "创作执行项", ID: submission.ID, Title: submission.ItemKey, PrimaryJSON: submission.RequestJSON})
+		if assets.DocumentReferences(submission.RequestJSON, candidateSet) {
+			snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "创作执行项", ID: submission.ID, Title: submission.ItemKey, PrimaryJSON: submission.RequestJSON})
+		}
 	}
 
 	var taskLogs []model.TaskLog
@@ -157,10 +209,12 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 	if err := taskLogQuery.Find(&taskLogs).Error; err != nil {
 		return snapshot, err
 	}
+	var matchedLogs []model.TaskLog
 	for _, taskLog := range taskLogs {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "任务日志", ID: taskLog.ID, Title: taskLog.Message, PrimaryJSON: taskLog.Payload, TaskStatus: taskStatuses[taskLog.TaskID]})
+		if assets.DocumentReferences(taskLog.Payload, candidateSet) {
+			matchedLogs = append(matchedLogs, taskLog)
+		}
 	}
-
 	var results []model.Result
 	resultQuery := applySQLiteReferenceFilter(
 		r.db.Select("id", "task_id", "kind", "url", "payload").Where("user_id = ? AND (url <> '' OR payload <> '')", userID),
@@ -169,27 +223,57 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 	if err := resultQuery.Find(&results).Error; err != nil {
 		return snapshot, err
 	}
+	var matchedResults []model.Result
 	for _, result := range results {
+		if assets.DocumentReferences(result.URL, candidateSet) || assets.DocumentReferences(result.Payload, candidateSet) {
+			matchedResults = append(matchedResults, result)
+		}
+	}
+	if err := populateMissingTaskStatuses(r.db, userID, taskStatuses, matchedLogs, matchedResults); err != nil {
+		return snapshot, err
+	}
+	for _, taskLog := range matchedLogs {
+		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "任务日志", ID: taskLog.ID, Title: taskLog.Message, PrimaryJSON: taskLog.Payload, TaskStatus: taskStatuses[taskLog.TaskID]})
+	}
+	for _, result := range matchedResults {
 		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "任务结果", ID: result.ID, Title: result.Kind, PrimaryJSON: result.URL, SecondaryJSON: result.Payload, TaskStatus: taskStatuses[result.TaskID]})
 	}
 
-	var projects []model.Project
-	if err := r.db.Where("user_id = ?", userID).Find(&projects).Error; err != nil {
+	var coverProjects []model.Project
+	if err := r.db.Select("id", "name", "cover_resource_id").Where("user_id = ? AND cover_resource_id IN ?", userID, resourceIDs).Find(&coverProjects).Error; err != nil {
 		return snapshot, err
 	}
-	for _, project := range projects {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "项目", ID: project.ID, Title: project.Name, PrimaryJSON: project.StyleProfileJSON})
+	for _, project := range coverProjects {
 		if project.CoverResourceID != "" && slices.Contains(resourceIDs, project.CoverResourceID) {
 			snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "项目主图", ID: project.ID, Title: project.Name, ResourceID: project.CoverResourceID})
 		}
 	}
+	var projects []model.Project
+	projectStyleQuery := applySQLiteReferenceFilter(
+		r.db.Select("id", "name", "style_profile_json").Where("user_id = ? AND style_profile_json <> ''", userID),
+		"style_profile_json",
+	)
+	if err := projectStyleQuery.Find(&projects).Error; err != nil {
+		return snapshot, err
+	}
+	for _, project := range projects {
+		if assets.DocumentReferences(project.StyleProfileJSON, candidateSet) {
+			snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "项目", ID: project.ID, Title: project.Name, PrimaryJSON: project.StyleProfileJSON})
+		}
+	}
 
 	var styles []model.StyleProfile
-	if err := r.db.Where("user_id = ?", userID).Find(&styles).Error; err != nil {
+	styleQuery := applySQLiteReferenceFilter(
+		r.db.Select("id", "name", "cover_url", "profile_json").Where("user_id = ? AND (cover_url <> '' OR profile_json <> '')", userID),
+		"cover_url", "profile_json",
+	)
+	if err := styleQuery.Find(&styles).Error; err != nil {
 		return snapshot, err
 	}
 	for _, style := range styles {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "风格", ID: style.ID, Title: style.Name, PrimaryJSON: style.CoverURL, SecondaryJSON: style.ProfileJSON})
+		if assets.DocumentReferences(style.CoverURL, candidateSet) || assets.DocumentReferences(style.ProfileJSON, candidateSet) {
+			snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "风格", ID: style.ID, Title: style.Name, PrimaryJSON: style.CoverURL, SecondaryJSON: style.ProfileJSON})
+		}
 	}
 
 	type joinedDocument struct {
@@ -199,53 +283,73 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 		SecondaryJSON string
 	}
 	var versions []joinedDocument
-	versionQuery := r.db.Table("asset_versions").
-		Select("asset_versions.id, assets.title, asset_versions.definition_json AS primary_json").
-		Joins("JOIN assets ON assets.id = asset_versions.asset_id").
-		Where("assets.user_id = ? AND assets.id <> ?", userID, excludingAssetID)
+	versionQuery := applySQLiteReferenceFilter(
+		r.db.Table("asset_versions").
+			Select("asset_versions.id, assets.title, asset_versions.definition_json AS primary_json").
+			Joins("JOIN assets ON assets.id = asset_versions.asset_id").
+			Where("assets.user_id = ? AND assets.id <> ? AND asset_versions.definition_json <> ''", userID, excludingAssetID),
+		"asset_versions.definition_json",
+	)
 	if err := versionQuery.Scan(&versions).Error; err != nil {
 		return snapshot, err
 	}
 	for _, version := range versions {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "素材", ID: version.ID, Title: version.Title, PrimaryJSON: version.PrimaryJSON})
+		if assets.DocumentReferences(version.PrimaryJSON, candidateSet) {
+			snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "素材", ID: version.ID, Title: version.Title, PrimaryJSON: version.PrimaryJSON})
+		}
 	}
 
 	var candidates []joinedDocument
-	candidateQuery := r.db.Table("project_asset_candidates").
-		Select("project_asset_candidates.id, projects.name AS title, project_asset_candidates.details_json AS primary_json").
-		Joins("JOIN projects ON projects.id = project_asset_candidates.project_id").
-		Where("projects.user_id = ?", userID)
+	candidateQuery := applySQLiteReferenceFilter(
+		r.db.Table("project_asset_candidates").
+			Select("project_asset_candidates.id, projects.name AS title, project_asset_candidates.details_json AS primary_json").
+			Joins("JOIN projects ON projects.id = project_asset_candidates.project_id").
+			Where("projects.user_id = ? AND project_asset_candidates.details_json <> ''", userID),
+		"project_asset_candidates.details_json",
+	)
 	if err := candidateQuery.Scan(&candidates).Error; err != nil {
 		return snapshot, err
 	}
 	for _, candidate := range candidates {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "项目", ID: candidate.ID, Title: candidate.Title, PrimaryJSON: candidate.PrimaryJSON})
+		if assets.DocumentReferences(candidate.PrimaryJSON, candidateSet) {
+			snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "项目", ID: candidate.ID, Title: candidate.Title, PrimaryJSON: candidate.PrimaryJSON})
+		}
 	}
 
 	var steps []joinedDocument
-	stepQuery := r.db.Table("workflow_step_instances").
-		Select("workflow_step_instances.id, workflow_step_instances.name AS title, workflow_step_instances.input_json AS primary_json, workflow_step_instances.output_json AS secondary_json").
-		Joins("JOIN workflow_instances ON workflow_instances.id = workflow_step_instances.workflow_instance_id").
-		Joins("JOIN projects ON projects.id = workflow_instances.project_id").
-		Where("projects.user_id = ?", userID)
+	stepQuery := applySQLiteReferenceFilter(
+		r.db.Table("workflow_step_instances").
+			Select("workflow_step_instances.id, workflow_step_instances.name AS title, workflow_step_instances.input_json AS primary_json, workflow_step_instances.output_json AS secondary_json").
+			Joins("JOIN workflow_instances ON workflow_instances.id = workflow_step_instances.workflow_instance_id").
+			Joins("JOIN projects ON projects.id = workflow_instances.project_id").
+			Where("projects.user_id = ? AND (workflow_step_instances.input_json <> '' OR workflow_step_instances.output_json <> '')", userID),
+		"workflow_step_instances.input_json", "workflow_step_instances.output_json",
+	)
 	if err := stepQuery.Scan(&steps).Error; err != nil {
 		return snapshot, err
 	}
 	for _, step := range steps {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "工作流", ID: step.ID, Title: step.Title, PrimaryJSON: step.PrimaryJSON, SecondaryJSON: step.SecondaryJSON})
+		if assets.DocumentReferences(step.PrimaryJSON, candidateSet) || assets.DocumentReferences(step.SecondaryJSON, candidateSet) {
+			snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "工作流", ID: step.ID, Title: step.Title, PrimaryJSON: step.PrimaryJSON, SecondaryJSON: step.SecondaryJSON})
+		}
 	}
 
 	var shotArtifacts []joinedDocument
-	artifactDocumentQuery := r.db.Table("shot_artifacts").
-		Select("shot_artifacts.id, shots.title, shot_artifacts.metadata_json AS primary_json").
-		Joins("JOIN shots ON shots.id = shot_artifacts.shot_id").
-		Joins("JOIN projects ON projects.id = shots.project_id").
-		Where("projects.user_id = ?", userID)
+	artifactDocumentQuery := applySQLiteReferenceFilter(
+		r.db.Table("shot_artifacts").
+			Select("shot_artifacts.id, shots.title, shot_artifacts.metadata_json AS primary_json").
+			Joins("JOIN shots ON shots.id = shot_artifacts.shot_id").
+			Joins("JOIN projects ON projects.id = shots.project_id").
+			Where("projects.user_id = ? AND shot_artifacts.metadata_json <> ''", userID),
+		"shot_artifacts.metadata_json",
+	)
 	if err := artifactDocumentQuery.Scan(&shotArtifacts).Error; err != nil {
 		return snapshot, err
 	}
 	for _, artifact := range shotArtifacts {
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "镜头产物", ID: artifact.ID, Title: artifact.Title, PrimaryJSON: artifact.PrimaryJSON})
+		if assets.DocumentReferences(artifact.PrimaryJSON, candidateSet) {
+			snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "镜头产物", ID: artifact.ID, Title: artifact.Title, PrimaryJSON: artifact.PrimaryJSON})
+		}
 	}
 
 	type joinedRepresentation struct {
@@ -424,11 +528,14 @@ func guardAssetDeletionReferences(tx *gorm.DB, userID string, assetID string, re
 		return nil
 	}
 	var assetDocuments []string
-	if err := tx.Model(&model.Asset{}).Where("user_id = ? AND id <> ?", userID, assetID).Pluck("payload_json", &assetDocuments).Error; err != nil {
+	if err := applySQLiteReferenceFilter(
+		tx.Model(&model.Asset{}).Where("user_id = ? AND id <> ? AND payload_json <> ''", userID, assetID),
+		"payload_json",
+	).Pluck("payload_json", &assetDocuments).Error; err != nil {
 		return err
 	}
 	var canvasDocuments []string
-	if err := tx.Model(&model.CanvasProject{}).Where("user_id = ?", userID).Pluck("payload_json", &canvasDocuments).Error; err != nil {
+	if err := tx.Model(&model.CanvasProject{}).Where("user_id = ? AND payload_json <> ''", userID).Pluck("payload_json", &canvasDocuments).Error; err != nil {
 		return err
 	}
 	documents := append(assetDocuments, canvasDocuments...)
@@ -437,7 +544,7 @@ func guardAssetDeletionReferences(tx *gorm.DB, userID string, assetID string, re
 		idSet[resourceID] = struct{}{}
 	}
 	for _, document := range documents {
-		if assets.DocumentContainsLocator(document, idSet) {
+		if assets.DocumentReferences(document, idSet) {
 			return ErrResourceCleanupStillReferenced
 		}
 	}
@@ -527,10 +634,10 @@ func guardTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []strin
 		owned[resourceID] = struct{}{}
 	}
 	var tasks []model.Task
-	taskQuery := tx.Select("id", "status", "input_json", "result_json").Where("user_id = ?", userID)
-	if !skipCompletedOutput {
-		taskQuery = applySQLiteReferenceFilter(taskQuery.Where("input_json <> '' OR result_json <> ''"), "input_json", "result_json")
-	}
+	taskQuery := applySQLiteReferenceFilter(
+		tx.Select("id", "status", "input_json", "result_json").Where("user_id = ? AND (input_json <> '' OR result_json <> '')", userID),
+		"input_json", "result_json",
+	)
 	if err := taskQuery.Find(&tasks).Error; err != nil {
 		return err
 	}
@@ -549,7 +656,7 @@ func guardTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []strin
 				secondary = ""
 			}
 		}
-		if len(assets.DocumentReferencedIDs(primary, owned)) > 0 || len(assets.DocumentReferencedIDs(secondary, owned)) > 0 {
+		if assets.DocumentReferences(primary, owned) || assets.DocumentReferences(secondary, owned) {
 			return ErrResourceCleanupStillReferenced
 		}
 	}
@@ -561,17 +668,6 @@ func guardTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []strin
 	if err := logQuery.Find(&logs).Error; err != nil {
 		return err
 	}
-	for _, log := range logs {
-		if skipCompletedOutput {
-			switch statuses[log.TaskID] {
-			case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
-				continue
-			}
-		}
-		if len(assets.DocumentReferencedIDs(log.Payload, owned)) > 0 {
-			return ErrResourceCleanupStillReferenced
-		}
-	}
 	var results []model.Result
 	resultQuery := applySQLiteReferenceFilter(
 		tx.Select("id", "task_id", "url", "payload").Where("user_id = ? AND (url <> '' OR payload <> '')", userID),
@@ -580,36 +676,139 @@ func guardTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []strin
 	if err := resultQuery.Find(&results).Error; err != nil {
 		return err
 	}
-	for _, result := range results {
-		if skipCompletedOutput {
-			switch statuses[result.TaskID] {
-			case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
-				continue
-			}
+	var matchedLogs []model.TaskLog
+	for _, log := range logs {
+		if assets.DocumentReferences(log.Payload, owned) {
+			matchedLogs = append(matchedLogs, log)
 		}
-		if len(assets.DocumentReferencedIDs(result.URL, owned)) > 0 || len(assets.DocumentReferencedIDs(result.Payload, owned)) > 0 {
+	}
+	var matchedResults []model.Result
+	for _, result := range results {
+		if assets.DocumentReferences(result.URL, owned) || assets.DocumentReferences(result.Payload, owned) {
+			matchedResults = append(matchedResults, result)
+		}
+	}
+	if !skipCompletedOutput {
+		if len(matchedLogs) > 0 || len(matchedResults) > 0 {
+			return ErrResourceCleanupStillReferenced
+		}
+		return nil
+	}
+	if err := populateMissingTaskStatuses(tx, userID, statuses, matchedLogs, matchedResults); err != nil {
+		return err
+	}
+	for _, log := range matchedLogs {
+		switch statuses[log.TaskID] {
+		case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
+			continue
+		default:
+			return ErrResourceCleanupStillReferenced
+		}
+	}
+	for _, result := range matchedResults {
+		switch statuses[result.TaskID] {
+		case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
+			continue
+		default:
 			return ErrResourceCleanupStillReferenced
 		}
 	}
 	return nil
 }
 
+func populateMissingTaskStatuses(db *gorm.DB, userID string, statuses map[string]model.TaskStatus, logs []model.TaskLog, results []model.Result) error {
+	missing := make([]string, 0)
+	seen := map[string]struct{}{}
+	collect := func(taskID string) {
+		if taskID == "" {
+			return
+		}
+		if _, ok := statuses[taskID]; ok {
+			return
+		}
+		if _, dup := seen[taskID]; dup {
+			return
+		}
+		seen[taskID] = struct{}{}
+		missing = append(missing, taskID)
+	}
+	for _, log := range logs {
+		collect(log.TaskID)
+	}
+	for _, result := range results {
+		collect(result.TaskID)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	var rows []model.Task
+	if err := db.Select("id", "status").Where("user_id = ? AND id IN ?", userID, missing).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		statuses[row.ID] = row.Status
+	}
+	return nil
+}
+
+// applySQLiteReferenceFilter narrows SQLite document rows using the single
+// canonical prefilter token table in package assets.
 func applySQLiteReferenceFilter(query *gorm.DB, columns ...string) *gorm.DB {
 	if query == nil || query.Dialector == nil || query.Dialector.Name() != "sqlite" || len(columns) == 0 {
 		return query
 	}
-	parts := make([]string, 0, len(columns))
-	for _, column := range columns {
-		parts = append(parts,
-			"(instr("+column+", 'resource:') > 0 OR "+
-				"instr("+column+", '/api/resources/') > 0 OR "+
-				"instr("+column+", 'resourceId') > 0 OR "+
-				"instr("+column+", 'ResourceId') > 0 OR "+
-				"instr("+column+", '\\u') > 0 OR "+
-				"instr("+column+", '\\/') > 0)",
-		)
+	tokens := assets.ReferencePrefilterTokens()
+	if len(tokens) == 0 {
+		return query
 	}
-	return query.Where(strings.Join(parts, " OR "))
+	clauses := make([]string, 0, len(columns)*len(tokens))
+	args := make([]any, 0, len(columns)*len(tokens))
+	for _, column := range columns {
+		for _, token := range tokens {
+			clauses = append(clauses, "instr("+column+", ?) > 0")
+			args = append(args, token)
+		}
+	}
+	return query.Where("("+strings.Join(clauses, " OR ")+")", args...)
+}
+
+func (r *Repository) captureSQLiteWatermark(db *gorm.DB) SQLiteSnapshotWatermark {
+	if r == nil || !r.SingleProcess() || db == nil || db.Dialector == nil || db.Dialector.Name() != "sqlite" || r.HoldsTransaction() {
+		return SQLiteSnapshotWatermark{}
+	}
+	sqlDB, err := db.DB()
+	if err != nil || sqlDB.Stats().MaxOpenConnections != 1 {
+		return SQLiteSnapshotWatermark{}
+	}
+	return readSQLiteWatermark(db)
+}
+
+func (r *Repository) watermarkMatchesTx(tx *gorm.DB, expected SQLiteSnapshotWatermark) bool {
+	if !expected.Valid || r == nil || !r.SingleProcess() || tx == nil || tx.Dialector == nil || tx.Dialector.Name() != "sqlite" {
+		return false
+	}
+	sqlDB, err := r.db.DB()
+	if err != nil || sqlDB.Stats().MaxOpenConnections != 1 {
+		return false
+	}
+	current := readSQLiteWatermark(tx)
+	return current.Valid && current.DataVersion == expected.DataVersion && current.TotalChanges == expected.TotalChanges
+}
+
+func readSQLiteWatermark(db *gorm.DB) SQLiteSnapshotWatermark {
+	var dataVersion int64
+	if err := db.Raw("PRAGMA data_version").Scan(&dataVersion).Error; err != nil || dataVersion <= 0 {
+		return SQLiteSnapshotWatermark{}
+	}
+	var totalChanges int64
+	if err := db.Raw("SELECT total_changes()").Scan(&totalChanges).Error; err != nil || totalChanges <= 0 {
+		return SQLiteSnapshotWatermark{}
+	}
+	return SQLiteSnapshotWatermark{
+		Valid:        true,
+		DataVersion:  dataVersion,
+		TotalChanges: totalChanges,
+	}
 }
 
 func withImmediateTransaction(db *gorm.DB, fn func(*gorm.DB) error) error {

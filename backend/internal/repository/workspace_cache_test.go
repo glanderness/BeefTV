@@ -121,11 +121,14 @@ func TestSQLiteReferenceFilterPreservesEscapedTaskLogAndResultReferences(t *test
 	now := time.Now().Add(-48 * time.Hour)
 	resUnicode := model.Resource{ID: "res-unicode", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/1.png", CreatedAt: now, UpdatedAt: now}
 	resSlash := model.Resource{ID: "res-slash", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/2.png", CreatedAt: now, UpdatedAt: now}
-	if err := db.Create(&resUnicode).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&resSlash).Error; err != nil {
-		t.Fatal(err)
+	resWhitespace := model.Resource{ID: "res-space", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/3.png", CreatedAt: now, UpdatedAt: now}
+	resBare := model.Resource{ID: "res-bare", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/4.png", CreatedAt: now, UpdatedAt: now}
+	resNoSlash := model.Resource{ID: "res-noslash", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/5.png", CreatedAt: now, UpdatedAt: now}
+	resCreationRun := model.Resource{ID: "res-run", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/6.png", CreatedAt: now, UpdatedAt: now}
+	for _, res := range []model.Resource{resUnicode, resSlash, resWhitespace, resBare, resNoSlash, resCreationRun} {
+		if err := db.Create(&res).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := db.Create(&model.Task{ID: "t1", UserID: "u1", Type: "image", Status: model.TaskStatusSucceeded, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 		t.Fatal(err)
@@ -136,18 +139,137 @@ func TestSQLiteReferenceFilterPreservesEscapedTaskLogAndResultReferences(t *test
 	if err := db.Create(&model.Result{ID: "r1", UserID: "u1", TaskID: "t1", Kind: "image", Payload: `{"url":"\/api\/resources\/res-slash\/file"}`, CreatedAt: now}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Create(&model.Asset{ID: "a-space", UserID: "u1", Title: "space", PayloadJSON: `{"storageKey":"  resource:  res-space  "}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Asset{ID: "a-bare", UserID: "u1", Title: "bare", PayloadJSON: `{"referenceResourceIds":["other","res-bare"]}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CanvasProject{ID: "c-noslash", UserID: "u1", Title: "noslash", PayloadJSON: `{"nodes":[{"url":"/api/resources/res-noslash"}]}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreationRun{ID: "run-1", UserID: "u1", StateJSON: `{"storageKey":"resource:res-run"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
 
-	if err := repo.DeleteDetachedResources([]model.Resource{resUnicode}, nil); err != ErrResourceCleanupStillReferenced {
-		t.Fatalf("unicode-escaped task_log reference error = %v, want ErrResourceCleanupStillReferenced", err)
+	for _, tc := range []struct {
+		name string
+		res  model.Resource
+	}{
+		{"unicode-escaped task_log", resUnicode},
+		{"slash-escaped result", resSlash},
+		{"whitespace-padded asset locator", resWhitespace},
+		{"bare referenceResourceIds asset", resBare},
+		{"no-trailing-slash canvas url", resNoSlash},
+		{"creation_run state_json", resCreationRun},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := repo.DeleteDetachedResources([]model.Resource{tc.res}, nil); err != ErrResourceCleanupStillReferenced {
+				t.Fatalf("DeleteDetachedResources(%s) = %v, want ErrResourceCleanupStillReferenced", tc.name, err)
+			}
+		})
 	}
-	if err := repo.DeleteDetachedResources([]model.Resource{resSlash}, nil); err != ErrResourceCleanupStillReferenced {
-		t.Fatalf("slash-escaped result reference error = %v, want ErrResourceCleanupStillReferenced", err)
-	}
-	snapshot, err := repo.ResourceReferenceSnapshot("u1", "", []string{resUnicode.ID, resSlash.ID})
+	snapshot, err := repo.ResourceReferenceSnapshot("u1", "", []string{resUnicode.ID, resSlash.ID, resWhitespace.ID, resBare.ID, resNoSlash.ID, resCreationRun.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Documents) < 2 {
-		t.Fatalf("expected snapshot to include escaped task_log and result documents, got %d", len(snapshot.Documents))
+	if len(snapshot.Documents) < 6 {
+		t.Fatalf("expected snapshot to include all 6 semantic reference documents, got %d", len(snapshot.Documents))
+	}
+}
+
+func TestDeleteDetachedResourcesWatermarkInvalidatesOnConcurrentWrite(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "wm.db")+"?_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	if err := db.AutoMigrate(
+		&model.Resource{},
+		&model.Asset{},
+		&model.AssetVersion{},
+		&model.AssetRepresentation{},
+		&model.CanvasProject{},
+		&model.CanvasSnapshot{},
+		&model.CanvasSnapshotResource{},
+		&model.CanvasWorkflowResource{},
+		&model.CanvasDrawing{},
+		&model.CanvasLibraryFolder{},
+		&model.Project{},
+		&model.ProjectAssetCandidate{},
+		&model.AgentOpRecord{},
+		&model.StyleProfile{},
+		&model.VoiceProfile{},
+		&model.Shot{},
+		&model.ShotArtifact{},
+		&model.WorkflowInstance{},
+		&model.WorkflowStepInstance{},
+		&model.CreationRun{},
+		&model.CreationSubmission{},
+		&model.Task{},
+		&model.TaskLog{},
+		&model.Result{},
+		&model.ArkPrivateAssetBinding{},
+		&model.ResourceDeletionJob{},
+		&model.UserUploadReservation{},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := New(db)
+	repo.SetSingleProcess(true)
+	now := time.Now().Add(-48 * time.Hour)
+	resA := model.Resource{ID: "res-wm-a", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/a.png", CreatedAt: now, UpdatedAt: now}
+	resB := model.Resource{ID: "res-wm-b", UserID: "u1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "u1/b.png", CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&resA).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&resB).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Snapshot before any canvas references resA or resB: watermark must be valid.
+	snap1, err := repo.ResourceReferenceSnapshot("u1", "", []string{resA.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snap1.Watermark.Valid {
+		t.Fatalf("expected valid SQLite snapshot watermark, got %+v", snap1.Watermark)
+	}
+
+	// Simulate a concurrent write attaching resA AFTER the snapshot was taken.
+	if err := db.Create(&model.CanvasProject{
+		ID: "canvas-race", UserID: "u1", Title: "race",
+		PayloadJSON: `{"nodes":[{"storageKey":"resource:res-wm-a"}]}`,
+		CreatedAt:   now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Passing the stale watermark MUST detect the write and refuse to delete resA.
+	if err := repo.DeleteDetachedResources([]model.Resource{resA}, nil, snap1.Watermark); err != ErrResourceCleanupStillReferenced {
+		t.Fatalf("DeleteDetachedResources with stale watermark = %v, want ErrResourceCleanupStillReferenced", err)
+	}
+
+	// Now take a fresh snapshot for resB with no intervening writes; watermark
+	// matches inside BEGIN IMMEDIATE and resB is cleanly deleted.
+	snap2, err := repo.ResourceReferenceSnapshot("u1", "", []string{resB.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteDetachedResources([]model.Resource{resB}, nil, snap2.Watermark); err != nil {
+		t.Fatalf("DeleteDetachedResources with fresh watermark failed: %v", err)
+	}
+	var countA, countB int64
+	_ = db.Model(&model.Resource{}).Where("id = ?", resA.ID).Count(&countA).Error
+	_ = db.Model(&model.Resource{}).Where("id = ?", resB.ID).Count(&countB).Error
+	if countA != 1 || countB != 0 {
+		t.Fatalf("resource counts after watermark tests: resA=%d resB=%d, want 1 and 0", countA, countB)
 	}
 }

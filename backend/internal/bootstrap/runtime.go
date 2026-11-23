@@ -43,33 +43,33 @@ import (
 )
 
 type Runtime struct {
-	workspaceLock    *os.File
-	cfg              Config
-	db               *gorm.DB
-	repo             *repository.Repository
-	service          *app.Service
-	localApp         *localapp.App
-	handler          http.Handler
-	status           *systemStatus
-	launchToken      string
-	uiBootstrapToken string
+	workspaceLock        *os.File
+	cfg                  Config
+	db                   *gorm.DB
+	repo                 *repository.Repository
+	service              *app.Service
+	localApp             *localapp.App
+	handler              http.Handler
+	status               *systemStatus
+	launchToken          string
+	uiBootstrapToken     string
 	beefTV               *beeftv.Service
 	assistantHost        *assistantruntime.Host
 	assistantStartMu     sync.Mutex
 	assistantStartCancel context.CancelFunc
 	assistantStartDone   chan struct{}
 	listener             net.Listener
-	pipeMu           sync.Mutex
-	pipeListener     net.Listener
-	pipePath         string
-	httpServer       *http.Server
-	serveErr            chan error
-	started           atomic.Bool
-	closed            atomic.Bool
-	safeModeRequested atomic.Bool
-	closeOnce         sync.Once
-	backgroundDone      chan struct{}
-	closeErr            error
+	pipeMu               sync.Mutex
+	pipeListener         net.Listener
+	pipePath             string
+	httpServer           *http.Server
+	serveErr             chan error
+	started              atomic.Bool
+	closed               atomic.Bool
+	safeModeRequested    atomic.Bool
+	closeOnce            sync.Once
+	backgroundDone       chan struct{}
+	closeErr             error
 }
 
 func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {

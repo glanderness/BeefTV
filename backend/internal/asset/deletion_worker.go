@@ -17,6 +17,10 @@ const detachedReadyResourceRetention = 24 * time.Hour
 
 var deletionRetryBase = 15 * time.Second
 var startupCleanupDelay = 2 * time.Minute
+var startupCleanupAfter = func(delay time.Duration) (<-chan time.Time, func()) {
+	timer := time.NewTimer(delay)
+	return timer.C, func() { timer.Stop() }
+}
 
 func (s *Service) signalDeletionWorker() {
 	if s == nil || s.deletionWake == nil {
@@ -97,12 +101,11 @@ func (s *Service) StartDeletionWorker(ctx context.Context, loop func(func(contex
 		runDrain()
 		// Defer full-workspace archive/orphan scans past startup so the single
 		// SQLite connection stays free for initial UI bootstrap and workspace loads.
-		var startupCleanupTimer *time.Timer
 		var startupCleanupC <-chan time.Time
 		if startupCleanupDelay > 0 {
-			startupCleanupTimer = time.NewTimer(startupCleanupDelay)
-			defer startupCleanupTimer.Stop()
-			startupCleanupC = startupCleanupTimer.C
+			var stopStartupCleanup func()
+			startupCleanupC, stopStartupCleanup = startupCleanupAfter(startupCleanupDelay)
+			defer stopStartupCleanup()
 		} else {
 			s.CleanupExpiredArchivedAssets()
 			s.CleanupDetachedResources()
@@ -157,19 +160,15 @@ func (s *Service) CleanupDetachedResources() {
 }
 
 func (s *Service) CleanupDetachedUserResources(userID string, candidates []model.Resource) error {
-	run := func() error {
-		return s.cleanupDetachedUserResourcesLocked(userID, candidates)
-	}
-	if s != nil && s.lifecycle != nil {
-		return s.lifecycle.WithStorageLock(run)
-	}
-	return run()
-}
-
-func (s *Service) cleanupDetachedUserResourcesLocked(userID string, candidates []model.Resource) error {
 	if s == nil || s.repo == nil {
 		return ResourceMissing()
 	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	// Run the read-only chunked snapshot scan outside storageMu so canvas saves
+	// and asset writes are never blocked. DeleteDetachedResources verifies the
+	// snapshot watermark (or performs a full atomic re-check) under BEGIN IMMEDIATE.
 	resourceIDs := make([]string, 0, len(candidates))
 	candidateSet := make(map[string]struct{}, len(candidates))
 	for _, resource := range candidates {
@@ -208,27 +207,57 @@ func (s *Service) cleanupDetachedUserResourcesLocked(userID string, candidates [
 	if len(detached) == 0 {
 		return nil
 	}
-	detachedIDs := make([]string, 0, len(detached))
-	for _, resource := range detached {
-		detachedIDs = append(detachedIDs, resource.ID)
+	var deletionJobs []model.ResourceDeletionJob
+	commit := func() error {
+		if s.lifecycle != nil {
+			detachedIDs := make([]string, 0, len(detached))
+			for _, resource := range detached {
+				detachedIDs = append(detachedIDs, resource.ID)
+			}
+			appearanceRefs := s.lifecycle.AppearanceReferencedIDs(detachedIDs)
+			if len(appearanceRefs) > 0 {
+				filtered := make([]model.Resource, 0, len(detached))
+				for _, resource := range detached {
+					if _, exists := appearanceRefs[resource.ID]; !exists {
+						filtered = append(filtered, resource)
+					}
+				}
+				detached = filtered
+			}
+		}
+		if len(detached) == 0 {
+			return nil
+		}
+		detachedIDs := make([]string, 0, len(detached))
+		for _, resource := range detached {
+			detachedIDs = append(detachedIDs, resource.ID)
+		}
+		physicalObjects := map[string]*model.Resource{}
+		for index := range detached {
+			resource := &detached[index]
+			if strings.TrimSpace(resource.ObjectKey) == "" {
+				continue
+			}
+			sharedCount, countErr := s.repo.ResourceStorageReferenceCount(resource, detachedIDs)
+			if countErr != nil {
+				return countErr
+			}
+			if sharedCount == 0 {
+				physicalObjects[StorageIdentity(resource)] = resource
+			}
+		}
+		deletionJobs = DeletionJobs(userID, physicalObjects)
+		return s.repo.DeleteDetachedResources(detached, deletionJobs, snapshot.Watermark)
 	}
-	physicalObjects := map[string]*model.Resource{}
-	for index := range detached {
-		resource := &detached[index]
-		if strings.TrimSpace(resource.ObjectKey) == "" {
-			continue
+	if s.lifecycle != nil {
+		if err := s.lifecycle.WithStorageLock(commit); err != nil {
+			return err
 		}
-		sharedCount, countErr := s.repo.ResourceStorageReferenceCount(resource, detachedIDs)
-		if countErr != nil {
-			return countErr
-		}
-		if sharedCount == 0 {
-			physicalObjects[StorageIdentity(resource)] = resource
-		}
-	}
-	deletionJobs := DeletionJobs(userID, physicalObjects)
-	if err := s.repo.DeleteDetachedResources(detached, deletionJobs); err != nil {
+	} else if err := commit(); err != nil {
 		return err
+	}
+	if len(detached) == 0 {
+		return nil
 	}
 	log.Printf("detached resource cleanup: removed %d resource rows for user %s", len(detached), userID)
 	if len(deletionJobs) > 0 {
