@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"infinite-canvas/backend/internal/canvas/capability"
 	"infinite-canvas/backend/internal/kernel"
 )
 
@@ -17,6 +18,9 @@ func connectFixture(t *testing.T) (*Service, string, int64) {
 		"nodes":[
 			{"id":"txt","type":"text","title":"文本","metadata":{"content":"正文"}},
 			{"id":"img","type":"image","title":"图片","metadata":{"prompt":"p","composerContent":"p"}},
+			{"id":"vid","type":"video","title":"视频","metadata":{"prompt":"p","composerContent":"p"}},
+			{"id":"up","type":"upscale","title":"超分","metadata":{"status":"idle"}},
+			{"id":"aud-ref","type":"audio","title":"参考音频","metadata":{"content":"/api/resources/a1/file","storageKey":"resource:a1"}},
 			{"id":"aud","type":"audio","title":"音频","metadata":{"prompt":"p","composerContent":"p"}}
 		],"connections":[]}`))
 	if err != nil {
@@ -46,30 +50,54 @@ func TestConnectUserCanvasNodesEnforcesReferenceDirection(t *testing.T) {
 		t.Fatalf("image -> text 应被拒绝，实际 %v", err)
 	}
 
-	// image -> audio 非法：音频只接受文本输入。
-	if _, err = svc.ConnectUserCanvasNodesAtRevision("owner", canvasID, "img", "aud", summary.Revision); err == nil {
-		t.Fatal("image -> audio 应被拒绝")
+	// audio -> audio 与 image -> audio 合法：全能音频支持参考音频克隆与看图生音。
+	summary, err = svc.ConnectUserCanvasNodesAtRevision("owner", canvasID, "aud-ref", "aud", summary.Revision)
+	if err != nil {
+		t.Fatalf("audio -> audio 应被接受，实际 %v", err)
+	}
+	summary, err = svc.ConnectUserCanvasNodesAtRevision("owner", canvasID, "img", "aud", summary.Revision)
+	if err != nil {
+		t.Fatalf("image -> audio 应被接受，实际 %v", err)
+	}
+
+	// video -> audio 与 upscale -> audio 非法：音频不接受视频或超分节点直接输入。
+	if _, err = svc.ConnectUserCanvasNodesAtRevision("owner", canvasID, "vid", "aud", summary.Revision); err == nil {
+		t.Fatal("video -> audio 应被拒绝")
+	}
+	if _, err = svc.ConnectUserCanvasNodesAtRevision("owner", canvasID, "up", "aud", summary.Revision); err == nil {
+		t.Fatal("upscale -> audio 应被拒绝")
 	}
 }
 
-// 目标类型声明的输入上限必须生效（音频只允许一个输入）。
+// 目标类型声明的输入上限必须生效。
 func TestConnectUserCanvasNodesEnforcesInputCapacity(t *testing.T) {
+	capped, err := capability.NewRegistry([]capability.Descriptor{
+		{Type: "text", Version: "1", Label: "文本", DefaultWidth: 340, DefaultHeight: 240, InputKind: "text", Connection: capability.ConnectionPolicy{CanSource: true}},
+		{Type: "capped-target", Version: "1", Label: "单输入目标", DefaultWidth: 340, DefaultHeight: 120, InputKind: "text", Connection: capability.ConnectionPolicy{CanTarget: true, MaxInputCount: 1, AcceptedInputKinds: []string{"text"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := canvasCapabilityRegistry
+	canvasCapabilityRegistry = capped
+	t.Cleanup(func() { canvasCapabilityRegistry = original })
+
 	svc := newCanvasHistoryTestService(t)
 	created, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{
 		"id":"canvas-capacity","revision":0,"title":"输入上限",
 		"nodes":[
 			{"id":"t1","type":"text","title":"文本1","metadata":{"content":"a"}},
 			{"id":"t2","type":"text","title":"文本2","metadata":{"content":"b"}},
-			{"id":"aud","type":"audio","title":"音频","metadata":{"prompt":"p","composerContent":"p"}}
+			{"id":"target","type":"capped-target","title":"目标","metadata":{"prompt":"p"}}
 		],"connections":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := svc.ConnectUserCanvasNodesAtRevision("owner", "canvas-capacity", "t1", "aud", created.Revision)
+	first, err := svc.ConnectUserCanvasNodesAtRevision("owner", "canvas-capacity", "t1", "target", created.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.ConnectUserCanvasNodesAtRevision("owner", "canvas-capacity", "t2", "aud", first.Revision)
+	_, err = svc.ConnectUserCanvasNodesAtRevision("owner", "canvas-capacity", "t2", "target", first.Revision)
 	var appError *kernel.AppError
 	if !errors.As(err, &appError) || appError.Status != http.StatusBadRequest {
 		t.Fatalf("第二个输入应被输入上限拒绝，实际 %v", err)

@@ -966,3 +966,182 @@ func TestEnsureAsyncReturnsTrueWhenAnotherAsyncLaunchIsAlreadyRegistered(t *test
 		t.Fatalf("EnsureAsync while another async launch active = (%v, %v), want (true, nil)", launched, err)
 	}
 }
+
+func TestEnsureAsyncFastReturnsStartingBeforeFailureCooldown(t *testing.T) {
+	dir := t.TempDir()
+	raw, _ := json.Marshal(HostConfig{Model: "fixture-model", HostCommand: "/bin/echo"})
+	if err := os.WriteFile(filepath.Join(dir, hostConfigFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := fixtureProvider()
+	host := New(Options{
+		DataDir: dir,
+		ResolveProvider: func() (assistant.Provider, string) {
+			return provider, ""
+		},
+	})
+	host.proc.mu.Lock()
+	host.proc.starting = true
+	host.proc.lastErr = errors.New("stale start failure")
+	host.proc.failedFingerprint = provider.Fingerprint()
+	host.proc.failedAt = time.Now()
+	host.proc.mu.Unlock()
+
+	launched, err := host.EnsureAsync(provider, "http://127.0.0.1:18090/api", "")
+	if err != nil || !launched {
+		t.Fatalf("EnsureAsync while Starting during cooldown = (%v, %v), want (true, nil)", launched, err)
+	}
+}
+
+func TestUnexpectedHostExitRecordsLastErrorWithoutCooldown(t *testing.T) {
+	dir := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(HostConfig{Model: "fixture-model", HostCommand: exe})
+	if err := os.WriteFile(filepath.Join(dir, hostConfigFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := fixtureProvider()
+	host := New(Options{
+		DataDir:      dir,
+		ReadyTimeout: 5 * time.Second,
+		HostToken:    func() string { return "tok" },
+		ResolveProvider: func() (assistant.Provider, string) {
+			return provider, ""
+		},
+		Environ: func() []string {
+			return append(os.Environ(), fixtureEnv+"=http")
+		},
+	})
+	t.Cleanup(func() { _ = host.Stop() })
+
+	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatalf("Launch failed: %v", err)
+	}
+	pid := host.PID()
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && host.Running() {
+		time.Sleep(15 * time.Millisecond)
+	}
+	state := host.State()
+	if state.Running {
+		t.Fatal("host still reported running after kill")
+	}
+	if state.LastError == nil {
+		t.Fatal("expected unexpected crash to record State.LastError")
+	}
+	if !state.FailedAt.IsZero() {
+		t.Fatalf("unexpected post-ready crash should not enter startup cooldown: FailedAt=%v", state.FailedAt)
+	}
+	launched, err := host.EnsureAsync(provider, "http://127.0.0.1:18090/api", "")
+	if err != nil || !launched {
+		t.Fatalf("EnsureAsync after unexpected crash = (%v, %v), want (true, nil)", launched, err)
+	}
+}
+
+func TestIntentionalStopAndRestartLeavesLastErrorClear(t *testing.T) {
+	dir := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(HostConfig{Model: "fixture-model", HostCommand: exe})
+	if err := os.WriteFile(filepath.Join(dir, hostConfigFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := fixtureProvider()
+	host := New(Options{
+		DataDir:      dir,
+		ReadyTimeout: 5 * time.Second,
+		HostToken:    func() string { return "tok" },
+		ResolveProvider: func() (assistant.Provider, string) {
+			return provider, ""
+		},
+		Environ: func() []string {
+			return append(os.Environ(), fixtureEnv+"=http")
+		},
+	})
+	t.Cleanup(func() { _ = host.Stop() })
+
+	for i := 0; i < 2; i++ {
+		if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+			t.Fatalf("Launch #%d failed: %v", i+1, err)
+		}
+		if err := host.Stop(); err != nil {
+			t.Fatalf("Stop #%d failed: %v", i+1, err)
+		}
+		state := host.State()
+		if state.Running || state.LastError != nil {
+			t.Fatalf("intentional Stop #%d left unexpected state: running=%v lastErr=%v", i+1, state.Running, state.LastError)
+		}
+	}
+}
+
+func TestStopClearsPriorCrashErrorAndLateExitOfStoppedChildDoesNotCorruptNewActive(t *testing.T) {
+	dir := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(HostConfig{Model: "fixture-model", HostCommand: exe})
+	if err := os.WriteFile(filepath.Join(dir, hostConfigFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := fixtureProvider()
+	host := New(Options{
+		DataDir:      dir,
+		ReadyTimeout: 5 * time.Second,
+		HostToken:    func() string { return "tok" },
+		ResolveProvider: func() (assistant.Provider, string) {
+			return provider, ""
+		},
+		Environ: func() []string {
+			return append(os.Environ(), fixtureEnv+"=http")
+		},
+	})
+	t.Cleanup(func() { _ = host.Stop() })
+
+	// 1) Even if a process crashes right before Host.Stop() runs, Stop clears LastError.
+	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatalf("Launch #1 failed: %v", err)
+	}
+	if proc, err := os.FindProcess(host.PID()); err == nil {
+		_ = proc.Kill()
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && host.Running() {
+		time.Sleep(15 * time.Millisecond)
+	}
+	if host.State().LastError == nil {
+		t.Fatal("expected crash before Stop to record LastError")
+	}
+	if err := host.Stop(); err != nil {
+		t.Fatalf("Stop after crash failed: %v", err)
+	}
+	if got := host.State().LastError; got != nil {
+		t.Fatalf("Host.Stop did not clear prior crash LastError: %v", got)
+	}
+
+	// 2) Launch a fresh process; invoke the real finishChildExit bookkeeping for a stale
+	//    child (both stopping and non-stopping) and confirm the active child remains healthy
+	//    and State.LastError stays nil (fails if s.active == owned guard is removed).
+	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatalf("Launch #2 failed: %v", err)
+	}
+	newPID := host.PID()
+	stale := &childProcess{done: make(chan struct{}), ready: true}
+	host.proc.finishChildExit(stale, errors.New("late exit after timeout"))
+	close(stale.done)
+	if !host.Running() || host.PID() != newPID || host.State().LastError != nil {
+		t.Fatalf("stale child finishChildExit corrupted active state: running=%v pid=%d want=%d lastErr=%v", host.Running(), host.PID(), newPID, host.State().LastError)
+	}
+}

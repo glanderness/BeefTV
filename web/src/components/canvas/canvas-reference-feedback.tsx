@@ -21,7 +21,8 @@ export function useCanvasReferenceCheck(nodeId: string, prompt: string, referenc
         queryKey: ["canvas-explicit-reference-check", missingIds],
         enabled: missingIds.length > 0,
         retry: false,
-        staleTime: 5000,
+        staleTime: 60_000,
+        refetchOnWindowFocus: false,
         queryFn: async () => {
             const unavailable: string[] = [];
             let remaining = missingIds;

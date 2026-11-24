@@ -1,5 +1,6 @@
 import { isBeefTVEndpoint } from "@/lib/beeftv-video-contracts";
 import { channelForId } from "@/lib/channel-identity";
+import { sanitizeMediaCapabilities, type MediaCapability } from "@/lib/media-capabilities";
 import { defaultImageCapabilityConfig, hasUserModelCapability, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, videoReferencesForOperation, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { normalizeVideoBoolean } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
@@ -64,6 +65,34 @@ export function hasDeclaredModelCapability(config: AiConfig, model: string, capa
     if (!profile?.capabilityConfig?.[capability]) return false;
     const version = capability === "image" ? profile.imageCapabilitiesVersion : profile.videoCapabilitiesVersion;
     return Boolean(version?.trim()) || channel.scope === "system" || hasUserModelCapability(profile);
+}
+
+function declaredAudioMediaCapability(config: AiConfig, model: string): MediaCapability | undefined {
+    if (!config?.channels?.length) return undefined;
+    const channel = resolveModelChannel(config, model);
+    const profile = channelModelProfile(channel, modelOptionName(model));
+    if (!profile?.mediaCapabilitiesVersion?.trim()) return undefined;
+    return sanitizeMediaCapabilities(profile.mediaCapabilities)?.audio;
+}
+
+export function audioModelsSupportReferenceKind(config: AiConfig, kind: "image" | "audio"): boolean {
+    const options = selectableModelsByCapability(config, "audio");
+    if (!options.length) return true;
+    const probe: ModelInputSummary = {
+        textCount: 0,
+        imageCount: kind === "image" ? 1 : 0,
+        videoCount: 0,
+        audioCount: kind === "audio" ? 1 : 0,
+        characterCount: 0,
+    };
+    return options.some((model) => !modelCompatibilityError(config, model, { capability: "audio", input: probe }));
+}
+
+export function audioSubmissionCompatibilityError(config: AiConfig, model: string, input: ModelInputSummary): string {
+    const error = modelCompatibilityError(config, model, { capability: "audio", input });
+    if (!error) return "";
+    const lead = error.startsWith("音频模型") || error.startsWith("角色配音") ? error : `当前音频模型${error}`;
+    return `${lead}。请切换兼容模型或调整已连接的参考素材。`;
 }
 
 export interface ModelCompatibilityIssue {
@@ -142,10 +171,13 @@ export function modelCompatibilityIssue(config: AiConfig, model: string, require
         return input.audioCount > 0 ? { reason: "文本模型不支持参考音频", shortReason: "不支持参考音频" } : null;
     }
 
+    if (input.videoCount > 0) return { reason: "音频模型不支持参考视频", shortReason: "不支持参考视频" };
     if (input.characterCount > 1) return { reason: "角色配音一次只能引用一个角色卡", shortReason: "最多支持 1 个角色卡" };
-    return input.imageCount > 0 || input.videoCount > 0 || input.audioCount > 0
-        ? { reason: "音频模型只接受文本或单个角色卡输入", shortReason: "仅支持文本或单个角色卡" }
-        : null;
+    const audioCapability = declaredAudioMediaCapability(config, model);
+    if (!audioCapability) return null;
+    if (input.imageCount > 0 && !audioCapability.referenceKinds.includes("image")) return { reason: "不支持参考图片", shortReason: "不支持参考图片" };
+    if (input.audioCount > 0 && !audioCapability.referenceKinds.includes("audio")) return { reason: "不支持参考音频", shortReason: "不支持参考音频" };
+    return null;
 }
 
 export function modelCompatibilityError(config: AiConfig, model: string, requirements?: ModelRequirements) {

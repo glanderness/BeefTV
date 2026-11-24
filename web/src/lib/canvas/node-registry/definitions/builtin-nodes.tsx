@@ -95,7 +95,7 @@ const BUILTIN_NODE_TRAITS = {
         icon: <Music2 />,
         minSize: DEFAULT_MIN_SIZE,
         showInCreateMenu: true,
-        resourceKind: (node: CanvasNodeData) => (node.metadata?.content ? "audio" : null),
+        resourceKind: (node: CanvasNodeData) => (node.metadata?.content || node.metadata?.storageKey ? "audio" : null),
         generationMode: (node: CanvasNodeData) => canOpenCanvasNodePromptPanel(node) ? "audio" : null,
         showInputConnection: (node: CanvasNodeData) => canOpenCanvasNodePromptPanel(node),
         inputKind: "audio",

@@ -11,18 +11,26 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isCorruptSessionArtifactError, isDurableSessionId, publicDurableTurn, TRANSIENT_UNRESUMABLE_REASONS } from './durable-session-owner.mjs';
 import { createDurableTurnProjection } from './durable-turn-projection.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
-import { parseHostBaseUrlEnv, providerRegistration, providerUnavailableReason, resolveHostModelRequestUrl,
+import { parseHostBaseUrlEnv, providerRegistration, providerUnavailableReason,
   turnContextPrefix, unflushedSessionHistory, toolCallCapabilityContext } from './canvas-turn.mjs';
-import { budgetError, spendModelRequest } from './request-budget.mjs';
 import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
 import { createLegacyHistory } from './session-owner.mjs';
-import { adaptMediaRequest, attachmentContent, trustedMediaSources, mediaCapabilityContext } from './media-content.mjs';
-import {nativeSourceKey} from './native-history.mjs';
+import { attachmentContent, mediaCapabilityContext } from './media-content.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
-import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
-import { classifyModelFetchError, classifyModelHttpStatus, createDispatchDiagnostics } from './dispatch-diagnostics.mjs';
+import { createDispatchDiagnostics } from './dispatch-diagnostics.mjs';
 import { createPluginPackageController } from './plugin-packages.mjs';
+import { installModelFetchProxy } from './model-fetch-proxy.mjs';
+import { handleEventsRoute } from './events-route.mjs';
+import {
+  authorized as checkAuthorized,
+  instanceOK as checkInstanceOK,
+  instanceProof as computeInstanceProof,
+  readJsonBody,
+  respond,
+  respondStoreError as writeStoreError,
+  sendLine,
+} from './http-utils.mjs';
 
 // SDK imports install npm undici's direct dispatcher. Restore Node's public env
 // proxy support after imports, before any SDK/ops request or fetch wrapper runs.
@@ -54,7 +62,6 @@ const CONTEXT_WINDOW = Number(process.env.BEEFTV_AGENT_CONTEXT_WINDOW || 200000)
 const MAX_REQUESTS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_REQUESTS_PER_TURN || 40);
 const MAX_TOOL_STEPS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN || 40);
 const LIFETIME_REQUEST_BUDGET = Number(process.env.BEEFTV_AGENT_TOTAL_REQUEST_BUDGET || 0);
-const MAX_BODY_BYTES = 64 * 1024;
 const READ_ONLY_MODE = process.env.BEEFTV_AGENT_READ_ONLY === '1';
 const PROVIDER_ID = 'beeftv';
 
@@ -94,11 +101,9 @@ async function initializeModel() {
   }
 }
 
-const outbound = [];
 const ledgerPath = path.join(DATA_DIR, 'agent-requests.jsonl');
 const dispatchDiagnostics = createDispatchDiagnostics(ledgerPath, RUN_ID);
 const outcomeDiagnostics = createDispatchDiagnostics(path.join(DATA_DIR, 'agent-model-outcomes.jsonl'), RUN_ID);
-let dispatched = 0;
 
 const lifetimeBudgetPath = path.join(DATA_DIR, 'agent-request-budget.json');
 const lifetimeBudget = createDurableRequestBudget({ limit: LIFETIME_REQUEST_BUDGET, file: lifetimeBudgetPath });
@@ -106,86 +111,18 @@ const lifetimeBudget = createDurableRequestBudget({ limit: LIFETIME_REQUEST_BUDG
 const turnBudgetContext = new AsyncLocalStorage();
 const nativePartStore = createNativePartStore({directory:path.join(DATA_DIR,'native-parts')});
 
-const BASE_ORIGIN = BASE_URL ? new URL(BASE_URL).origin : '';
-const realFetch = globalThis.fetch;
-globalThis.fetch = async (input, options = {}) => {
-  const raw = typeof input === 'string' ? input : input.url;
-  const resolvedRaw = resolveHostModelRequestUrl(raw, { baseUrl: BASE_URL, isRaw: IS_RAW_BASE_URL, api: MODEL_API });
-  if (resolvedRaw !== raw) {
-    input = typeof input === 'string' ? resolvedRaw : new Request(resolvedRaw, input);
-  }
-  let parsed = null;
-  try { parsed = new URL(resolvedRaw); } catch { parsed = null; }
-  const isModelCall = !!BASE_ORIGIN && parsed && parsed.origin === BASE_ORIGIN;
-  if (isModelCall) {
-    // Transform at the real dispatch boundary; extension errors are caught by pi.
-    const budget = turnBudgetContext.getStore();
-    let historicalKind='素材';
-    try {
-    if (options.body) {
-      const payload = JSON.parse(options.body);
-      const mediaOptions = {api:MODEL_API,modelId:MODEL_ID,nativePartStore,unpinnedSignatures:budget?.unpinnedSignatures};
-      for (const source of trustedMediaSources(payload,mediaOptions)) {
-        historicalKind=source.mediaKind;
-        if (!budget?.turnId || !budget.canvasId) throw new Error('media_authorization_missing');
-        let actual;
-        if(budget.sessionId) {
-          const pinned=budget.nativeHistory?.origins.get(`${source.toolCallId}:${nativeSourceKey(source)}`);
-          if(!pinned || (source.originTurnId && source.originTurnId!==pinned.originTurnId)) throw new Error('native_history_requires_reference');
-          const {toolCallId,originTurnId,...nativeSource}=source;
-          await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(pinned.originTurnId)}/bind-session`,{sessionId:budget.sessionId,historical:pinned.historical,currentTurnId:budget.turnId,source:nativeSource});
-          actual=await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(budget.turnId)}/native-rehydrate`,{sessionId:budget.sessionId,originTurnId:pinned.originTurnId,source:nativeSource});
-        } else {
-          actual=(await ops.opsRequest('POST','/ops/media.overview',{params:{canvasId:source.canvasId,
-            ...(source.nodeId ? {nodeId:source.nodeId}:{assetId:source.assetId}),resourceId:source.resourceId}},undefined,budget.turnId)).result;
-        }
-        if (actual.source.version !== source.version) throw new Error('media_content_changed');
-      }
-      options = {...options,body:JSON.stringify(adaptMediaRequest(payload,mediaOptions))};
-    }
-    } catch(error) {
-      const failure={reason:error.reason || 'native_history_unavailable',message:`历史${historicalKind}已不可用，请在新对话重新添加这份素材后再试。`};
-      if(budget) budget.failure=failure;
-      return new Response(JSON.stringify({error:{message:failure.message,type:'invalid_request_error',code:failure.reason}}),{status:400,headers:{'Content-Type':'application/json'}});
-    }
-    if (budget?.generation?.aborted || options.signal?.aborted) {
-      throw Object.assign(new Error('aborted'),{name:'AbortError'});
-    }
-    if (budget?.generation && !budget.generation.durable) budget.generation.modelEpoch = budget.generation.intentEpoch;
-    const turn = spendModelRequest(budget);
-    if (!turn.allowed) {
-      if (budget) budget.failure = turn;
-      throw budgetError(turn);
-    }
-    const lifetime = lifetimeBudget.reserve();
-    if (!lifetime.allowed) {
-      if (budget) { budget.requests -= 1; budget.failure = lifetime; }
-      throw budgetError(lifetime);
-    }
-    dispatched += 1;
-    let bodyModel = null;
-    try { bodyModel = JSON.parse(options.body || '{}').model || null; } catch { /* 非 JSON body */ }
-    const entry = { at: new Date().toISOString(), dispatchIndex: dispatched, origin: parsed.origin, path: parsed.pathname, model: bodyModel,
-      turnId: budget?.turnId, canvasId: budget?.canvasId, sessionId: budget?.sessionId, requestId: budget?.requestId };
-    outbound.push(entry);
-    if (outbound.length > 200) outbound.shift();
-    dispatchDiagnostics.record(entry);
-    const startedAt = Date.now();
-    return await fetchModelWithProgressIdle(input, options, {
-      fetch: realFetch,
-      onSettled: ({ ok, httpStatus, error }) => {
-        outcomeDiagnostics.record({
-          ...entry,
-          status: ok ? 'ok' : 'error',
-          ...(httpStatus ? { httpStatus } : {}),
-          reason: error ? classifyModelFetchError(error) : classifyModelHttpStatus(httpStatus),
-          durationMs: Date.now() - startedAt,
-        });
-      },
-    });
-  }
-  return realFetch(input, options);
-};
+const { outbound, getDispatched } = installModelFetchProxy({
+  baseUrl: BASE_URL,
+  isRawBaseUrl: IS_RAW_BASE_URL,
+  modelApi: MODEL_API,
+  modelId: MODEL_ID,
+  turnBudgetContext,
+  nativePartStore,
+  lifetimeBudget,
+  dispatchDiagnostics,
+  outcomeDiagnostics,
+  getOps: () => ops,
+});
 
 const ops = createOperationBridge({
   opsUrl: OPS_URL,
@@ -330,99 +267,15 @@ async function waitForDurableProjection(entry) {
   } finally { clearTimeout(timer); }
 }
 
-function sendLine(res, payload) { res.write(JSON.stringify(payload) + '\n'); }
-
-function instanceProof() {
-  if (!INSTANCE_NONCE) return '';
-  return crypto.createHash('sha256').update(INSTANCE_NONCE).digest('hex').slice(0, 16);
-}
-
-function timingSafeMatch(got, expected) {
-  const a = Buffer.from(String(got ?? ''));
-  const b = Buffer.from(String(expected ?? ''));
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
-}
-
-function instanceOK(req) {
-  if (!INSTANCE_NONCE) return true;
-  return timingSafeMatch(req.headers['x-beeftv-instance-nonce'] || '', INSTANCE_NONCE);
-}
-
-function authorized(req) {
-  if (!instanceOK(req)) return { ok: false, reason: 'instance_mismatch' };
-  if (!timingSafeMatch(req.headers['x-beeftv-agent-token'] || '', HOST_TOKEN)) return { ok: false, reason: 'unauthorized' };
-  const origin = String(req.headers.origin || '');
-  if (ALLOWED_ORIGIN && origin && origin !== ALLOWED_ORIGIN) return { ok: false, reason: 'origin_rejected' };
-  const host = String(req.headers.host || '');
-  const hostAllowed = /^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host)
-    || (Boolean(LISTEN_PIPE) && /^pipe-[0-9a-f]{16}\.invalid$/.test(host));
-  if (!hostAllowed) return { ok: false, reason: 'host_rejected' };
-  return { ok: true };
-}
-
-async function readBody(req) {
-  let size = 0; const chunks = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY_BYTES) { const error = new Error('body too large'); error.tooLarge = true; throw error; }
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString('utf8');
-}
-
-async function readJsonBody(req) {
-  const raw = await readBody(req);
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw Object.assign(new Error('invalid_request'), { reason: 'invalid_request' });
-    }
-    return parsed;
-  } catch (error) {
-    if (error?.reason === 'invalid_request') throw error;
-    throw Object.assign(new Error('invalid_request'), { reason: 'invalid_request' });
-  }
-}
-
-function respond(res, status, payload) {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(payload));
-}
-
-function respondStoreError(res, error) {
-  if (error?.reason === 'invalid_request') {
-    respond(res, 400, { code: 400, reason: 'invalid_request' });
-    return true;
-  }
-  if (['skill_context_revision_conflict','skill_context_request_conflict','skill_scope_reset_pending','skill_context_changed','session_not_running','supplement_preparation_pending','submission_request_conflict'].includes(error?.reason)) {
-    respond(res,409,{code:409,reason:error.reason});return true;
-  }
-  if (['invalid_skill_context_action','invalid_skill_context_request','invalid_skill_selection'].includes(error?.reason)) {
-    respond(res,400,{code:400,reason:error.reason});return true;
-  }
-  if (error?.reason === 'session_busy') { respond(res, 409, { code: 409, reason: 'session_busy' }); return true; }
-  if (error?.reason === 'session_not_current') { respond(res, 409, { code: 409, reason: 'session_not_current' }); return true; }
-  if (error?.reason === 'session_not_found') { respond(res, 404, { code: 404, reason: 'session_not_found' }); return true; }
-  if (error?.reason === 'session_pointer_failed') {
-    respond(res, 500, { code: 500, reason: 'session_pointer_failed', message: String(error.message || error) });
-    return true;
-  }
-  if (error?.reason === 'session_pointer_unavailable') {
-    respond(res, 503, { code: 503, reason: 'session_pointer_unavailable' });
-    return true;
-  }
-  if (error?.reason === 'session_store_closed') {
-    respond(res, 503, { code: 503, reason: 'session_store_closed' });
-    return true;
-  }
-  if (isCorruptSessionArtifactError(error)) {
-    respond(res, 409, { code: 409, reason: error.reason || 'corrupt_session_manifest' });
-    return true;
-  }
-  return false;
-}
+const instanceProof = () => computeInstanceProof(INSTANCE_NONCE);
+const instanceOK = (req) => checkInstanceOK(req, INSTANCE_NONCE);
+const authorized = (req) => checkAuthorized(req, {
+  instanceNonce: INSTANCE_NONCE,
+  hostToken: HOST_TOKEN,
+  allowedOrigin: ALLOWED_ORIGIN,
+  listenPipe: LISTEN_PIPE,
+});
+const respondStoreError = (res, error) => writeStoreError(res, error, isCorruptSessionArtifactError);
 
 function anySessionBusy() {
   for (const entry of durable.sessions.values()) if (durable.isEntryBusy(entry)) return true;
@@ -444,7 +297,7 @@ const server = http.createServer(async (req, res) => {
       sessions: durable.sessions.size, busy: anySessionBusy(), model: MODEL?.id || MODEL_ID, api: MODEL_API,
       baseUrl: MODEL?.baseUrl || BASE_URL, persistence: persistenceSummary, runId: RUN_ID,
       instance: proof || undefined,
-      requests: { dispatched, perTurnRequests: MAX_REQUESTS_PER_TURN, perTurnToolSteps: MAX_TOOL_STEPS_PER_TURN,
+      requests: { dispatched: getDispatched(), perTurnRequests: MAX_REQUESTS_PER_TURN, perTurnToolSteps: MAX_TOOL_STEPS_PER_TURN,
         lifetimeBudget: lifetimeBudget.limit, lifetimeUsed: lifetimeBudget.used },
       operations: ops.descriptors.size, readOnly: READ_ONLY_MODE, lastOutbound: outbound.at(-1) || null });
     return;
@@ -755,82 +608,17 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (req.method === 'POST' && url.pathname === '/events') {
-      const body = await readJsonBody(req);
-      const canvasId = String(body.canvasId || '').trim();
-      const message = String(body.message || '').trim();
-      const cleanKind = String(body.kind || 'event').replace(/[^a-z0-9_-]/gi, '_');
-      const maxEventMessageLen = cleanKind === 'skill_script_completed' ? 48000 : 8000;
-      if (!canvasId || !message || message.length > maxEventMessageLen) {
-        respond(res, 400, { code: 400, reason: 'invalid_request' }); return;
-      }
-      const requestedSessionId = String(body.sessionId || '').trim();
-      const currentSessionId = currentId(canvasId);
-      if (
-        (cleanKind === 'task_completed' || cleanKind === 'skill_script_completed') &&
-        !providerReason &&
-        !READ_ONLY_MODE &&
-        currentSessionId &&
-        isDurableSessionId(currentSessionId) &&
-        (!requestedSessionId || requestedSessionId === currentSessionId)
-      ) {
-        const entry = await durable.ensureCurrentSession(canvasId, currentSessionId).catch(() => null);
-        const wakeBusy = entry ? (await durable.busyState(canvasId)).busy : true;
-        if (entry && !wakeBusy) {
-          const requestId = String(body.requestId || crypto.randomUUID()).trim();
-          const rawTurnId = String(body.turnId || '').trim().toLowerCase();
-          const turnId = /^[0-9a-f]{8,64}$/.test(rawTurnId)
-            ? rawTurnId
-            : crypto.createHash('sha256').update(`wake:${canvasId}:${requestId}`).digest('hex').slice(0, 24);
-          let openedTurn = false;
-          try {
-            await ops.opsRequest('POST', '/assistant/runtime/turns', {
-              turnId,
-              canvasId,
-              permissionMode: 'canvas',
-              sessionId: entry.sessionId,
-            });
-            openedTurn = true;
-            const wakeText = `<canvas_event kind="${cleanKind}">\n${message}\n</canvas_event>`;
-            const content = [{
-              type: 'text',
-              text: `${turnContextPrefix({ canvasId })}\n${mediaCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${toolCallCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${wakeText}`,
-            }];
-            const submission = await durable.submit(entry, {
-              turnId,
-              requestId: `event:${requestId}`,
-              content,
-              userText: String(body.userText || message).trim() || message,
-              revisionBefore: Number(body.revisionBefore || 0),
-              permissionMode: 'canvas',
-            }, {
-              onSubmitted: (sub) => { followDurable(entry, sub); },
-            });
-            if (submission) {
-              respond(res, 202, {
-                accepted: true,
-                woken: true,
-                sessionId: entry.sessionId,
-                turnId,
-                requestId: `event:${requestId}`,
-              });
-              return;
-            }
-            await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}).catch(() => null);
-          } catch {
-            if (openedTurn) {
-              await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}).catch(() => null);
-            }
-          }
-        }
-      }
-      const result = await durable.recordEvent(canvasId, {
-        sessionId: requestedSessionId,
-        requestId: body.requestId,
-        kind: body.kind || 'event',
-        message,
-        data: body.data && typeof body.data === 'object' ? body.data : {},
+      await handleEventsRoute(req, res, {
+        durable,
+        ops,
+        currentId,
+        followDurable,
+        getProviderReason: () => providerReason,
+        readOnlyMode: READ_ONLY_MODE,
+        modelApi: MODEL_API,
+        modelId: MODEL_ID,
       });
-      respond(res, 202, result); return;
+      return;
     }
     if (req.method === 'POST' && url.pathname === '/chat') {
       const body = await readJsonBody(req);

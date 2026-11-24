@@ -62,7 +62,7 @@ do not resolve the separate question of combination compatibility.
 
 The direct dependencies declared in `agent-host/package.json` are
 `@earendil-works/pi-coding-agent`, `@earendil-works/pi-durable`,
-`@earendil-works/pi-ai`, and `@earendil-works/chord`, pinned to 1.5.0. Their
+`@earendil-works/pi-ai`, and `@earendil-works/chord`, pinned to 1.6.0. Their
 package metadata declares MIT. Retain
 their original notices and the licenses of their transitive dependencies
 when distributing that runtime. The frontend dependency-name audit does not

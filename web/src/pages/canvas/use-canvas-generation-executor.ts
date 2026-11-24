@@ -17,7 +17,7 @@ import { buildTextRewritePrompt } from "@/lib/prompts";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { navigateToSettings } from "@/lib/settings-navigation";
-import { modelGroupReferenceLimits, modelRequestOptions, type ModelRequirements } from "@/lib/model-selection";
+import { audioSubmissionCompatibilityError, modelGroupReferenceLimits, modelRequestOptions, type ModelRequirements } from "@/lib/model-selection";
 import { referencedAssetIdsInPrompt } from "@/lib/canvas/canvas-resource-references";
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
@@ -323,6 +323,10 @@ export function useCanvasGenerationExecutor({
                             }
                             generationConfig = buildConfirmedGenerationConfig(inputConfig, sourceNode, mode, hydratedRequirements, options?.confirmedModelKey);
                             selectedModel = generationConfig.model;
+                            if (mode === "audio" && hydratedRequirements.input) {
+                                const compatibilityError = audioSubmissionCompatibilityError(inputConfig, generationConfig.model, hydratedRequirements.input);
+                                if (compatibilityError) throw new Error(compatibilityError);
+                            }
                         } catch (error) {
                             reportError(error);
                             return;

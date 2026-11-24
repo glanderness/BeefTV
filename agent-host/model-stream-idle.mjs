@@ -215,6 +215,7 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
   };
   const onAbort = () => terminate(caller.reason || new DOMException('Aborted', 'AbortError'));
   const arm = () => {
+    if (finished) return;
     clearTimeout(timer);
     timer = setTimeout(() => terminate(new Error(`Model stream idle timeout: no text or tool progress for ${timeoutMs} ms`)), timeoutMs);
     timer.unref?.();

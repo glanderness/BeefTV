@@ -19,14 +19,11 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 	if err := tx.First(&source, "turn_id = ? AND user_id = ?", receipt.SourceTurnID, receipt.UserID).Error; err != nil {
 		return false, err
 	}
-	if source.GenerationAuthorizationJSON == "" {
-		return true, nil
-	}
-	var plan operations.GenerationAuthorization
-	if err := json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &plan); err != nil {
+	plan, _, err := operations.LookupConfirmedOrderPlanInTx(tx, receipt.UserID, receipt.CanvasID, receipt.SourceTurnID, receipt.ProposalID, source.GenerationAuthorizationJSON)
+	if err != nil {
 		return false, err
 	}
-	if plan.SourceTurnID == "" {
+	if plan == nil || plan.SourceTurnID == "" {
 		return true, nil
 	}
 	if source.Undone || source.ContinuationInvalidated || plan.SourceTurnID != source.TurnID || plan.ProposalID != receipt.ProposalID {
@@ -63,7 +60,7 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 	failed, running, targetChanged, changed := false, false, false, false
 	for _, target := range plan.Targets {
 		planned[target.NodeID] = true
-		key := productionTaskKey(plan, target.NodeID)
+		key := productionTaskKey(*plan, target.NodeID)
 		task, err := domain.repo.TaskByClientOperation(receipt.UserID, key)
 		if err != nil {
 			return false, err
@@ -156,7 +153,7 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 	if len(ready) == 0 {
 		return false, nil
 	}
-	_, err = domain.admitProductionTargets(receipt.UserID, receipt.CanvasID, plan, ready)
+	_, err = domain.admitProductionTargets(receipt.UserID, receipt.CanvasID, *plan, ready)
 	return false, err
 }
 

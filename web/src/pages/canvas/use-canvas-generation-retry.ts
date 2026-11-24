@@ -25,7 +25,7 @@ import {
     shouldConfirmUnchangedModerationRetry,
 } from "@/lib/generation-failure-ux";
 import { isRegenerateAllowed, isRegenerateBlocked, isTaskOutcomeSubmissionUncertain, isTaskOutcomeWorking, nodeRequiresFreshSubmission, nodeRequiresRegenerateConfirmation, readNodeTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
-import { defaultImageParamsForModel, normalizeMaskEditQuality, normalizeMaskEditSize } from "@/lib/model-selection";
+import { audioSubmissionCompatibilityError, defaultImageParamsForModel, normalizeMaskEditQuality, normalizeMaskEditSize } from "@/lib/model-selection";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
@@ -415,6 +415,25 @@ export function useCanvasGenerationRetry({
                     return;
                 }
             }
+            if (retryMode === "audio" && context) {
+                const hydratedAudioInput = {
+                    textCount: context.textCount,
+                    imageCount: context.imageCount,
+                    videoCount: context.videoCount,
+                    audioCount: context.audioCount,
+                    characterCount: 0,
+                };
+                generationConfig = {
+                    ...buildGenerationConfig(effectiveConfig, generationSourceNode, "audio", { capability: "audio", input: hydratedAudioInput }),
+                    count: "1",
+                };
+                const compatibilityError = audioSubmissionCompatibilityError(effectiveConfig, generationConfig.model, hydratedAudioInput);
+                if (compatibilityError) {
+                    message?.error?.(compatibilityError);
+                    surfaceRetryFailure(node.id, compatibilityError, setNodes);
+                    return;
+                }
+            }
             if (retryMode === "audio" && context?.characterReferences.length) {
                 if (context.characterReferences.length !== 1) {
                     const reason = "角色配音一次只能引用一个角色卡";
@@ -431,7 +450,7 @@ export function useCanvasGenerationRetry({
                     return;
                 }
                 if (voice) {
-                    generationConfig = { ...generationConfig, audioVoice: voice.voiceKey, audioInstructions: [voice.instructions, generationConfig.audioInstructions].filter(Boolean).join("；") };
+                    generationConfig = { ...generationConfig, audioVoice: voice.voiceKey || generationConfig.audioVoice, audioInstructions: [voice.instructions, generationConfig.audioInstructions].filter(Boolean).join("；") };
                 }
             }
             const useReferenceImages = !isStructuredMaskEditRetry && (Boolean(context?.referenceImages.length) || (useStoredSource && savedImageMetadata?.generationType === "edit"));
