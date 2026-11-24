@@ -46,13 +46,10 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 			return err
 		}
 		expectedTargets := input.Targets
-		if len(expectedTargets) == 0 && source.GenerationAuthorizationJSON != "" {
-			var existing operations.GenerationAuthorization
-			if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &existing) == nil {
-				if existing.ProposalID != "" && existing.ProposalID != input.ProposalID {
-					return operations.Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
-				}
-				expectedTargets = existing.Targets
+		if len(expectedTargets) == 0 {
+			expectedTargets, err = operations.ResolveAssistantProposalTargetsInTx(tx, userID, input.CanvasID, turnID, input.ProposalID, source.GenerationAuthorizationJSON)
+			if err != nil {
+				return err
 			}
 		}
 		ids := input.NodeIDs
@@ -74,13 +71,10 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 			return operations.PreconditionFailed("production_revoked", "这次制作授权已停止，请重新确认", nil)
 		}
 		plan := operations.GenerationAuthorization{SourceTurnID: turnID, ProposalID: input.ProposalID, Targets: current}
-		encoded, _ := json.Marshal(plan)
-		if source.GenerationAuthorizationJSON != "" && source.GenerationAuthorizationJSON != string(encoded) {
-			var existing operations.GenerationAuthorization
-			if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &existing) != nil || (existing.SourceTurnID != "" && !existing.SamePlan(plan)) {
-				return operations.Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
-			}
+		if err = operations.ValidateTurnAuthorizationConflict(turnID, source.GenerationAuthorizationJSON, plan); err != nil {
+			return err
 		}
+		encoded, _ := json.Marshal(plan)
 		if err = tx.Model(&source).Update("generation_authorization_json", string(encoded)).Error; err != nil {
 			return err
 		}

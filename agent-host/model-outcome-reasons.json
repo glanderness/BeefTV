@@ -1,0 +1,23 @@
+[
+  "http_200",
+  "http_400",
+  "http_401",
+  "http_402",
+  "http_403",
+  "http_404",
+  "http_408",
+  "http_413",
+  "http_422",
+  "http_429",
+  "http_4xx",
+  "http_500",
+  "http_502",
+  "http_503",
+  "http_504",
+  "http_5xx",
+  "stream_idle_timeout",
+  "network_eof",
+  "network_error",
+  "aborted",
+  "model_error"
+]

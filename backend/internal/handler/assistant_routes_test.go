@@ -625,6 +625,34 @@ func TestAssistantStatusAndProxyIgnoreForeignHostURL(t *testing.T) {
 	}
 }
 
+func TestProductionConfirmationAllowsBodiesOver64KBUpTo1MB(t *testing.T) {
+	env := newAssistantTestEnv(t, nil)
+	largePrompt := strings.Repeat("电影级镜头描述细节光影", 4000) // ~120 KB UTF-8 (>64 KiB, <1 MiB)
+	body, err := json.Marshal(map[string]any{
+		"canvasId":   env.canvasID,
+		"kind":       "image",
+		"nodeIds":    []string{"missing-node"},
+		"targets":    []map[string]any{{"nodeId": "missing-node", "kind": "image", "prompt": largePrompt}},
+		"continuePlan": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) <= agentProxyMaxBody {
+		t.Fatalf("fixture payload must exceed 64 KiB, got %d", len(body))
+	}
+	resp := env.call(t, http.MethodPost, "/assistant/turns/112233445566778899aabbcc/proposals/gp-large-plan/production", string(body))
+	if resp.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("超过 64 KiB 但小于 1 MiB 的整片确认请求不得报 413: %d %s", resp.Code, resp.Body.String())
+	}
+
+	oversized := `{"canvasId":"` + env.canvasID + `","kind":"image","note":"` + strings.Repeat("a", agentProductionConfirmMaxBody+64) + `"}`
+	tooBig := env.call(t, http.MethodPost, "/assistant/turns/112233445566778899aabbcc/proposals/gp-too-big/production", oversized)
+	if tooBig.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超过 1 MiB 的整片确认请求应报 413，得到 %d %s", tooBig.Code, tooBig.Body.String())
+	}
+}
+
 func canvasNodeIDs(t *testing.T, service *app.Service, userID, canvasID string) []string {
 	t.Helper()
 	raw, err := service.UserCanvasProject(userID, canvasID)

@@ -523,6 +523,9 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 		if slices.Contains(schema.Required, "expectedVersion") != (descriptor.ID != "media.overview") {
 			t.Fatalf("%s discovery does not match the required media version", descriptor.ID)
 		}
+		if _, hasExpectedVersion := schema.Properties["expectedVersion"]; hasExpectedVersion != (descriptor.ID != "media.overview") {
+			t.Fatalf("%s properties expectedVersion=%v, want %v", descriptor.ID, hasExpectedVersion, descriptor.ID != "media.overview")
+		}
 		if descriptor.ID == "media.review" {
 			if !slices.Contains(schema.Required, "question") || descriptor.Replay != "unsafe" {
 				t.Fatal("review must require a question and avoid replaying external charges")
@@ -555,5 +558,24 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 	}
 	if len(seen) != 4 {
 		t.Fatal("incomplete media discovery")
+	}
+}
+
+func TestMediaOverviewIgnoresStaleExpectedVersion(t *testing.T) {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 16, 16))); err != nil {
+		t.Fatal(err)
+	}
+	d := &mediaDomain{owner: "owner", data: encoded.Bytes(), mimeType: "image/png"}
+	overview, err := mediaTestCall(t, d, "media.overview", mediaArgs{
+		CanvasID:        "canvas",
+		NodeID:          "node",
+		ExpectedVersion: "stale-or-guessed-version-token",
+	})
+	if err != nil {
+		t.Fatalf("media.overview should ignore guessed expectedVersion instead of failing with stale_media_version: %v", err)
+	}
+	if overview.Source.Version == "" {
+		t.Fatal("media.overview must return current version")
 	}
 }

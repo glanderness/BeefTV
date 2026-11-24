@@ -26,6 +26,8 @@ export function assistantStatusNotice(reason: string | undefined): AssistantStat
             return { text: "BeefTV 还没连接好", actionLabel: "去连接", action: "model-settings" };
         case "host_starting":
             return { text: "助手正在启动…", starting: true };
+        case "host_busy":
+            return { text: "配置已更新，当前任务完成后会自动切换", starting: true };
         case "host_start_failed":
         case "host_unreachable":
             return { text: "助手没有启动成功", actionLabel: "重试", action: "retry" };

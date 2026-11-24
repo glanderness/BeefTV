@@ -44,6 +44,8 @@ type Host struct {
 	opsPipeMu          sync.RWMutex
 	opsPipe            string
 	closed             bool
+	stoppingCount      int
+	asyncDone          chan struct{}
 }
 
 func New(opts Options) *Host {
@@ -83,16 +85,77 @@ func (h *Host) isClosed() bool {
 	return closed
 }
 
-func (h *Host) markClosedAndCancelStart() {
+func (h *Host) markClosedAndCancelStart() chan struct{} {
 	h.startControlMu.Lock()
 	h.closed = true
 	h.startGen++
 	cancel := h.activeStartCancel
 	h.activeStartCancel = nil
+	done := h.asyncDone
 	h.startControlMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+	return done
+}
+
+func (h *Host) isAsyncStarting() bool {
+	h.startControlMu.Lock()
+	starting := h.asyncDone != nil
+	h.startControlMu.Unlock()
+	return starting
+}
+
+type asyncLaunchOutcome int
+
+const (
+	asyncLaunchAdmitted asyncLaunchOutcome = iota
+	asyncLaunchAlreadyActive
+	asyncLaunchStopping
+	asyncLaunchClosed
+)
+
+func (h *Host) tryBeginAsyncLaunch(cancelExisting bool) (gen uint64, done chan struct{}, outcome asyncLaunchOutcome) {
+	h.startControlMu.Lock()
+	if h.closed {
+		h.startControlMu.Unlock()
+		return 0, nil, asyncLaunchClosed
+	}
+	if h.stoppingCount > 0 {
+		h.startControlMu.Unlock()
+		return 0, nil, asyncLaunchStopping
+	}
+	if h.asyncDone != nil || (!cancelExisting && h.proc.state().Starting) {
+		h.startControlMu.Unlock()
+		return 0, nil, asyncLaunchAlreadyActive
+	}
+	var cancel context.CancelFunc
+	if cancelExisting {
+		h.startGen++
+		cancel = h.activeStartCancel
+		h.activeStartCancel = nil
+	}
+	gen = h.startGen
+	done = make(chan struct{})
+	h.asyncDone = done
+	hook := h.onStartGenCaptured
+	h.startControlMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if hook != nil {
+		hook()
+	}
+	return gen, done, asyncLaunchAdmitted
+}
+
+func (h *Host) finishAsyncLaunch(done chan struct{}) {
+	h.startControlMu.Lock()
+	if h.asyncDone == done {
+		h.asyncDone = nil
+	}
+	h.startControlMu.Unlock()
+	close(done)
 }
 
 func OptionsFromService(svc ProviderService) Options {
@@ -142,7 +205,11 @@ func (h *Host) State() State {
 	if h == nil {
 		return State{}
 	}
-	return h.proc.state()
+	st := h.proc.state()
+	if !st.Starting && h.isAsyncStarting() {
+		st.Starting = true
+	}
+	return st
 }
 
 func (h *Host) Running() bool {
@@ -257,7 +324,7 @@ func (h *Host) captureStartGen() uint64 {
 
 func (h *Host) beginStartLocked(parent context.Context, expectedGen uint64) (context.Context, func(), bool) {
 	h.startControlMu.Lock()
-	if h.closed || h.startGen != expectedGen {
+	if h.closed || h.stoppingCount > 0 || h.startGen != expectedGen {
 		h.startControlMu.Unlock()
 		return nil, nil, false
 	}
@@ -318,9 +385,27 @@ func (h *Host) Stop() error {
 	if h == nil {
 		return nil
 	}
-	h.cancelInFlightStart()
+	h.startControlMu.Lock()
+	h.stoppingCount++
+	h.startGen++
+	cancel := h.activeStartCancel
+	h.activeStartCancel = nil
+	done := h.asyncDone
+	h.startControlMu.Unlock()
+	defer func() {
+		h.startControlMu.Lock()
+		h.stoppingCount--
+		h.startControlMu.Unlock()
+	}()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
 	_ = h.lockLifecycle(context.Background())
 	defer h.unlockLifecycle()
+	h.proc.clearFailure()
 	return h.proc.stop()
 }
 
@@ -336,7 +421,13 @@ func (h *Host) StopContext(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	h.markClosedAndCancelStart()
+	done := h.markClosedAndCancelStart()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
+	}
 	if err := h.lockLifecycle(ctx); err != nil {
 		// Force-kill any stubborn child that hasn't exited yet without waiting
 		// indefinitely for lifecycle handoff.
@@ -366,10 +457,14 @@ func (h *Host) Ensure(provider assistant.Provider, opsURL, desktopToken string, 
 	if h.isClosed() {
 		return false, invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
 	}
-	if h.proc.state().Starting {
+	if h.State().Starting {
 		return true, nil
 	}
 	gen := h.captureStartGen()
+	return h.ensureStart(gen, provider, opsURL, desktopToken, idle)
+}
+
+func (h *Host) ensureStart(gen uint64, provider assistant.Provider, opsURL, desktopToken string, idle bool) (launched bool, err error) {
 	if err := h.lockLifecycle(context.Background()); err != nil {
 		return false, err
 	}
@@ -421,13 +516,84 @@ func (h *Host) startOwned(ctx context.Context, config HostConfig, provider assis
 	}, h.hostToken())
 }
 
+const asyncStartFailureCooldown = 15 * time.Second
+
+// EnsureAsync 在后台异步拉起未运行的宿主，不阻塞 /assistant/status HTTP 轮询。
+// 缺少启动命令或同一配置刚失败过（冷却期内）时立即返回错误，避免状态轮询无限重试。
+func (h *Host) EnsureAsync(provider assistant.Provider, opsURL, desktopToken string) (launched bool, err error) {
+	if h == nil {
+		return false, invalidArg("host_command_missing", "未配置宿主启动命令")
+	}
+	if h.isClosed() {
+		return false, invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+	}
+	config, configured := h.EffectiveConfig()
+	if !configured || strings.TrimSpace(config.HostCommand) == "" {
+		return false, invalidArg("host_command_missing", "未配置宿主启动命令")
+	}
+	state := h.proc.state()
+	if state.Running {
+		return false, nil
+	}
+	if state.LastError != nil && state.FailedFingerprint == provider.Fingerprint() && time.Since(state.FailedAt) < asyncStartFailureCooldown {
+		return false, state.LastError
+	}
+	gen, done, outcome := h.tryBeginAsyncLaunch(false)
+	switch outcome {
+	case asyncLaunchClosed:
+		return false, invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+	case asyncLaunchAlreadyActive:
+		return true, nil
+	case asyncLaunchStopping:
+		return false, nil
+	}
+	go func() {
+		defer h.finishAsyncLaunch(done)
+		_, _ = h.ensureStart(gen, provider, opsURL, desktopToken, true)
+	}()
+	return true, nil
+}
+
+// RestartAsync 在后台异步重启宿主到新供应商配置，避免 /assistant/status 同步阻塞超过前端超时。
+// 在真正停旧进程前会于 lifecycle 锁内复检 busy，避免打断探测之后刚刚开始的新回合。
+func (h *Host) RestartAsync(provider assistant.Provider, opsURL, desktopToken string) error {
+	if h == nil {
+		return invalidArg("host_command_missing", "未配置宿主启动命令")
+	}
+	if h.isClosed() {
+		return invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+	}
+	config, configured := h.EffectiveConfig()
+	if !configured || strings.TrimSpace(config.HostCommand) == "" {
+		return invalidArg("host_command_missing", "未配置宿主启动命令")
+	}
+	gen, done, outcome := h.tryBeginAsyncLaunch(true)
+	if outcome == asyncLaunchClosed {
+		return invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+	}
+	if outcome != asyncLaunchAdmitted {
+		return nil
+	}
+	h.proc.clearFailure()
+	go func() {
+		defer h.finishAsyncLaunch(done)
+		_ = h.restartWithGen(gen, provider, opsURL, desktopToken, true)
+	}()
+	return nil
+}
+
 // Restart 是「重试」按钮的真实动作：停掉旧进程再按当前配置启动。
 func (h *Host) Restart(provider assistant.Provider, opsURL, desktopToken string) error {
 	if h == nil {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
+	h.proc.clearFailure()
 	h.cancelInFlightStart()
 	gen := h.captureStartGen()
+	return h.restartWithGen(gen, provider, opsURL, desktopToken, false)
+}
+
+func (h *Host) restartWithGen(gen uint64, provider assistant.Provider, opsURL, desktopToken string, skipIfBusy bool) error {
 	if err := h.lockLifecycle(context.Background()); err != nil {
 		return err
 	}
@@ -443,6 +609,11 @@ func (h *Host) Restart(provider assistant.Provider, opsURL, desktopToken string)
 	config, configured := h.EffectiveConfig()
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
+	}
+	if skipIfBusy && h.proc.running() {
+		if health := h.Probe(startCtx); health.OK && health.Busy {
+			return nil
+		}
 	}
 	if err := h.proc.stop(); err != nil {
 		return err

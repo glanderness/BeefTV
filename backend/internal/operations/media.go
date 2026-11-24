@@ -122,8 +122,10 @@ func registerMediaOps(r *Registry) {
 	for _, id := range []string{"media.overview", "media.inspect", "media.check"} {
 		operation := id
 		required := `["canvasId"]`
+		versionProp := ""
 		if operation != "media.overview" {
 			required = `["canvasId","expectedVersion"]`
+			versionProp = `,"expectedVersion":{"type":"string","minLength":1}`
 		}
 		properties := ""
 		if operation == "media.overview" {
@@ -132,7 +134,7 @@ func registerMediaOps(r *Registry) {
 			properties = `,"imageCrop":` + mediaImageCropSchema
 		}
 		r.Register(Op{AssistantCanvas: true, ID: operation, Summary: summaries[operation], ReadOnly: true, Scope: ScopeCanvas,
-			Params:  json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string"},"expectedVersion":{"type":"string","minLength":1},"startMs":{"type":"integer"},"endMs":{"type":"integer"},"mode":{"type":"string","description":"frames静态截图（不能判断连续运动或声音）；video连续；audio声音","enum":["frames","video","audio"]}%s},"required":%s}`, properties, required)),
+			Params:  json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string"}%s,"startMs":{"type":"integer"},"endMs":{"type":"integer"},"mode":{"type":"string","description":"frames静态截图（不能判断连续运动或声音）；video连续；audio声音","enum":["frames","video","audio"]}%s},"required":%s}`, versionProp, properties, required)),
 			Handler: func(ctx *Context, raw json.RawMessage) (any, error) { return runMedia(ctx, operation, raw) }})
 	}
 }
@@ -346,7 +348,7 @@ func runMedia(opCtx *Context, operation string, raw json.RawMessage) (any, error
 	if operation != "media.overview" && args.ExpectedVersion == "" {
 		return nil, InvalidArg("media_version_required", "先读取 overview，再提供 expectedVersion")
 	}
-	if args.ExpectedVersion != "" && args.ExpectedVersion != version {
+	if operation != "media.overview" && args.ExpectedVersion != "" && args.ExpectedVersion != version {
 		return nil, Conflict("stale_media_version", "素材内容已变化，请重新读取 overview", map[string]any{"currentVersion": version})
 	}
 	facts, err := probeMediaFacts(ctx, input, isImage)

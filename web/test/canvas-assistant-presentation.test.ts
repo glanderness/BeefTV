@@ -46,6 +46,13 @@ describe("助手不可用原因映射成一句用户语加一个出路", () => {
         expect(notice.starting).toBe(true);
     });
 
+    test("配置更新但助手正忙时不给强杀重启按钮，并更快复查自动切换", () => {
+        const notice = assistantStatusNotice("host_busy");
+        expect(notice.text).toBe("配置已更新，当前任务完成后会自动切换");
+        expect(notice.action).toBeUndefined();
+        expect(notice.starting).toBe(true);
+    });
+
     test("启动失败和连不上都给重试", () => {
         for (const reason of ["host_start_failed", "host_unreachable"]) {
             const notice = assistantStatusNotice(reason);
