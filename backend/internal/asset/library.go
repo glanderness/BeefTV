@@ -123,7 +123,7 @@ func (l *Library) UserAssetsPage(userID string, page int, pageSize int, filter U
 		// Project-scoped callers must not receive whole-library facets or labels.
 		return UserAssetPage{Assets: clientPayloads(assets), Page: page, PageSize: pageSize, Total: total, HasMore: int64(page*pageSize) < total}, nil
 	}
-	kindRows, categoryRows, folderRows, err := l.repo.UserAssetFacets(userID, filter.Status, filter.Personal)
+	kindRows, categoryRows, folderRows, err := l.repo.UserAssetFacetsForFilter(userID, repoFilter)
 	if err != nil {
 		return UserAssetPage{}, err
 	}

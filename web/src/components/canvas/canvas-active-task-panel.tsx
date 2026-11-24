@@ -212,7 +212,7 @@ function ActiveTaskCard({
                                 {generationTaskStageLabel(task)}
                             </span>
                         </div>
-                        {onCancelTask && (task.status === "queued" || task.status === "running") ? (
+                        {onCancelTask && (task.status === "queued" || task.status === "running" || task.status === "succeeded") ? (
                             <button
                                 type="button"
                                 className="mt-3 inline-flex h-7 items-center gap-1 rounded-[var(--r-sm)] px-2 text-[var(--fs-tiny)] font-medium transition-colors"
@@ -224,7 +224,7 @@ function ActiveTaskCard({
                                 onMouseDown={(event) => event.stopPropagation()}
                             >
                                 <XCircle className="size-3" />
-                                取消任务
+                                {task.status === "succeeded" ? "停止取回" : "取消任务"}
                             </button>
                         ) : null}
                     </motion.div>

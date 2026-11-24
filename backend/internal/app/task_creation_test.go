@@ -170,8 +170,8 @@ func TestResolveTaskModelSelectionStillRequiresLogicalModelWithoutExplicitSystem
 		"mode":   "video",
 		"config": map[string]any{"model": "agnes-video-2.5"},
 	}, "", "canvas_video", "", true)
-	if err == nil || !strings.Contains(err.Error(), "logicalModelId") {
-		t.Fatalf("resolveTaskModelSelection() error = %v, want logicalModelId validation", err)
+	if err == nil || !strings.Contains(err.Error(), "未选择可用模型") || strings.Contains(err.Error(), "logicalModelId") {
+		t.Fatalf("resolveTaskModelSelection() error = %v, want user-facing model selection validation without logicalModelId", err)
 	}
 	var modelErr *ModelError
 	if !errors.As(err, &modelErr) || modelErr.ErrorCode != ErrCodeInvalidModelSelection {

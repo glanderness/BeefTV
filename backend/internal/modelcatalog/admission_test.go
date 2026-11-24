@@ -54,7 +54,10 @@ func TestSelectTaskModelRequiresLogicalModelWithoutExplicitChannel(t *testing.T)
 		Type:            "canvas_video",
 		FrontendEnabled: true,
 	}, TaskSelectLookup{})
-	assertModelError(t, err, ErrCodeInvalidModelSelection, "logicalModelId")
+	assertModelError(t, err, ErrCodeInvalidModelSelection, "未选择可用模型")
+	if strings.Contains(err.Error(), "logicalModelId") {
+		t.Fatalf("user-facing model selection error must not leak logicalModelId: %v", err)
+	}
 }
 
 func TestSelectTaskModelAllowsCustomChannelWhenFrontendEnabled(t *testing.T) {

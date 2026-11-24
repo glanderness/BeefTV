@@ -319,6 +319,7 @@ export function useCreatePageController() {
                 id: asset.id,
                 title: asset.title,
                 category: asset.category || "other",
+                folderId: asset.folderId,
                 kindLabel: asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "图片",
                 asset,
                 searchText: (asset.tags || []).join(" "),

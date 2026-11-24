@@ -55,8 +55,13 @@ func (r *Repository) UserAssetsPage(userID string, page int, pageSize int, filte
 
 func (r *Repository) UserAssetFacets(userID string, status string, personal ...bool) ([]UserAssetFacetRow, []UserAssetFacetRow, []UserAssetFacetRow, error) {
 	personalOnly := len(personal) > 0 && personal[0]
+	return r.UserAssetFacetsForFilter(userID, UserAssetPageFilter{Status: status, Personal: personalOnly})
+}
+
+func (r *Repository) UserAssetFacetsForFilter(userID string, filter UserAssetPageFilter) ([]UserAssetFacetRow, []UserAssetFacetRow, []UserAssetFacetRow, error) {
+	baseScope := UserAssetPageFilter{Status: filter.Status, Personal: filter.Personal}
 	base := func() *gorm.DB {
-		return userAssetFilteredQuery(r.db.Model(&model.Asset{}).Where("user_id = ? AND kind <> ?", userID, "entity"), UserAssetPageFilter{Status: status, Personal: personalOnly}, false)
+		return userAssetFilteredQuery(r.db.Model(&model.Asset{}).Where("user_id = ? AND kind <> ?", userID, "entity"), baseScope, false)
 	}
 	var kindRows []UserAssetFacetRow
 	if err := base().Select("kind AS key, COUNT(*) AS count").Group("kind").Scan(&kindRows).Error; err != nil {
@@ -66,8 +71,21 @@ func (r *Repository) UserAssetFacets(userID string, status string, personal ...b
 	if err := base().Select("category AS key, COUNT(*) AS count").Group("category").Scan(&categoryRows).Error; err != nil {
 		return nil, nil, nil, err
 	}
+	// folderCounts 跟随媒体类型/分类/搜索词收窄，但刻意不按 folderId/uncategorized 过滤，
+	// 让选定单个文件夹时其余文件夹计数保持可见且与当前筛选口径一致。
+	folderScope := UserAssetPageFilter{
+		Status:   filter.Status,
+		Personal: filter.Personal,
+		Kind:     filter.Kind,
+		Category: filter.Category,
+		Query:    filter.Query,
+	}
 	var folderRows []UserAssetFacetRow
-	if err := base().Select("folder_id AS key, COUNT(*) AS count").Group("folder_id").Scan(&folderRows).Error; err != nil {
+	if err := userAssetFilteredQuery(
+		r.db.Model(&model.Asset{}).Where("user_id = ? AND kind <> ?", userID, "entity"),
+		folderScope,
+		true,
+	).Select("folder_id AS key, COUNT(*) AS count").Group("folder_id").Scan(&folderRows).Error; err != nil {
 		return nil, nil, nil, err
 	}
 	return kindRows, categoryRows, folderRows, nil

@@ -168,6 +168,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
             id: asset.id,
             title: asset.title,
             category: normalizeAssetCategory(asset.category, defaultAssetCategoryForKind(asset.kind)),
+            folderId: asset.folderId,
             kindLabel: mediaLabel(asset.kind),
             asset,
             description: asset.note,
@@ -180,6 +181,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
             id: asset.id,
             title: asset.title,
             category: normalizeAssetCategory(asset.category, defaultAssetCategoryForKind(asset.kind)),
+            folderId: asset.folderId,
             kindLabel: "图片",
             asset,
             searchText: (asset.tags || []).join(" "),
@@ -206,7 +208,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
             if (asset.kind !== "audio") return [];
             const resourceId = resourceIdFromStorageKey(asset.data.storageKey);
             if (!resourceId) return [];
-            return [{ id: asset.id, title: asset.title, category: "audio", kindLabel: `${characterVoiceFormatName(asset.data.mimeType)} 音频`, asset, description: asset.note || "素材库音频", searchText: (asset.tags || []).join(" ") }];
+            return [{ id: asset.id, title: asset.title, category: "audio", folderId: asset.folderId, kindLabel: `${characterVoiceFormatName(asset.data.mimeType)} 音频`, asset, description: asset.note || "素材库音频", searchText: (asset.tags || []).join(" ") }];
         });
         const projectItems = assets.flatMap((asset) => {
             if (asset.mediaType !== "audio") return [];

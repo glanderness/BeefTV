@@ -3,7 +3,7 @@ import type { ComponentProps } from "react";
 import { isVideoProvider, MediaPlayer, MediaProvider, type MediaPlayerInstance } from "@vidstack/react";
 import { DefaultVideoLayout, defaultLayoutIcons, type DefaultLayoutTranslations } from "@vidstack/react/player/layouts/default";
 import { useVideoAudioTrack } from "@/hooks/use-video-audio-track";
-import { isUndecodableVideoTrack, normalizeVideoPlayerMimeType } from "@/lib/video-player-policy";
+import { isUndecodableVideoTrack, isVideoSpaceShortcutIgnoredTarget, normalizeVideoPlayerMimeType } from "@/lib/video-player-policy";
 import "@vidstack/react/player/styles/base.css";
 import "@vidstack/react/player/styles/default/theme.css";
 import "@vidstack/react/player/styles/default/layouts/video.css";
@@ -20,6 +20,8 @@ type VideoPlayerProps = {
     preload?: MediaPlayerProps["preload"];
     autoPlay?: boolean;
     compactControls?: boolean;
+    /** 弹窗等独立预览场景启用空格键播放/暂停快捷键（避开输入框与聚焦控件）。 */
+    enableSpaceToggle?: boolean;
     /** Explicitly marks videos known to have an audio track (or not). */
     hasAudio?: boolean;
     onCanPlay?: MediaPlayerProps["onCanPlay"];
@@ -84,6 +86,7 @@ export function VideoPlayer({
     preload = "metadata",
     autoPlay = false,
     compactControls = false,
+    enableSpaceToggle = false,
     hasAudio,
     onCanPlay,
     onPlay,
@@ -133,6 +136,28 @@ export function VideoPlayer({
             volumeSlider.setAttribute("aria-disabled", String(noAudio));
         }
     }, [noAudio]);
+
+    useEffect(() => {
+        if (!enableSpaceToggle) return;
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
+            if (event.key !== " " && event.code !== "Space") return;
+            if (isVideoSpaceShortcutIgnoredTarget(event.target)) return;
+            const instance = mediaPlayerRef.current;
+            if (!instance || decodeFailureReportedRef.current) return;
+            event.preventDefault();
+            const provider = instance.provider;
+            const media = isVideoProvider(provider) ? (provider.media as HTMLVideoElement) : undefined;
+            const paused = media ? media.paused || media.ended : instance.paused;
+            if (paused) {
+                void instance.play().catch(() => undefined);
+            } else {
+                void instance.pause().catch(() => undefined);
+            }
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [enableSpaceToggle]);
 
     const stopCanvasControlInteraction = (event: { target: EventTarget | null; nativeEvent?: Event; stopPropagation: () => void; preventDefault?: () => void }) => {
         if (!isPlayerControlEvent(event)) return;

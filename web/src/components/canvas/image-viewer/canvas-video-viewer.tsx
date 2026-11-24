@@ -103,7 +103,7 @@ export function CanvasVideoViewer({ node, onClose, onOpenNodeInfo }: Props) {
                     <Suspense fallback={loading}>
                         <div className="media-viewer-video-frame" style={{ aspectRatio: ratio, width: `min(100cqw, ${ratio * 100}cqh)` }}>
                             <VideoPlayer key={playback.url} src={playback.url} mimeType={playback.compatible ? "video/mp4" : metadata?.mimeType}
-                                title={title} className="absolute inset-0 size-full bg-black" hasAudio={metadata?.hasAudio}
+                                title={title} className="absolute inset-0 size-full bg-black" hasAudio={metadata?.hasAudio} enableSpaceToggle
                                 onVideoMetadata={({ videoWidth, videoHeight, duration }) => {
                                     setMetrics({ width: videoWidth, height: videoHeight, durationMs: Number.isFinite(duration) ? duration * 1000 : 0 });
                                 }}

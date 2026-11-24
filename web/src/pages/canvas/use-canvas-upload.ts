@@ -13,6 +13,7 @@ import {
     createFileUploadAttemptId,
     createFileUploadPlaceholder,
     restoreFailedUploadNode,
+    uploadNodeTitle,
     uploadNodeType,
     uploadPercent,
 } from "@/lib/canvas/canvas-file-upload";
@@ -504,7 +505,7 @@ export function useCanvasUpload({
                     const media: TimelineDirectMedia = {
                         id: `audio-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                         kind: "audio",
-                        title: file.name,
+                        title: uploadNodeTitle(file.name),
                         storageKey: audio.storageKey,
                         url: audio.url,
                         durationMs: audio.durationMs,
@@ -520,7 +521,7 @@ export function useCanvasUpload({
                     const media: TimelineDirectMedia = {
                         id: `video-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                         kind: "video",
-                        title: file.name,
+                        title: uploadNodeTitle(file.name),
                         storageKey: video.storageKey,
                         url: video.url,
                         width: video.width,
