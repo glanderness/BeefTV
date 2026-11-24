@@ -9,7 +9,7 @@ import (
 )
 
 func MediaHydrationPolicyFor(ctx context.Context, input Input) MediaHydrationPolicy {
-	if managedConnection(input.Config) && (input.Mode == "image" || input.Mode == "video") {
+	if managedConnection(input.Config) && (input.Mode == "image" || input.Mode == "video" || input.Mode == "audio") {
 		return MediaHydrationPolicy{KeepLocal: true}
 	}
 	if input.Mode == "video" && IsBeefTVVideoConfig(ctx, input.Config) {
