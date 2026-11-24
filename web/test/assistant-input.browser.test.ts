@@ -454,53 +454,58 @@ test("status polling does not pile up initial history reads and reloads paused t
     holdHistory = () => initialHistoryGate;
 
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
-    await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
+    try {
+        await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
 
-    // 1. Wait for at least two 2s transient /assistant/status polls while initial /assistant/history is still in flight.
-    const pollDeadline = Date.now() + 8000;
-    while (statusCalls < 2 && Date.now() < pollDeadline) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    expect(statusCalls).toBeGreaterThanOrEqual(2);
-    expect(historyCalls).toBe(1);
-
-    // 2. Flip /assistant/status to available WHILE initial /assistant/history (#1) is STILL in flight!
-    const statusCallsBeforeAvailable = statusCalls;
-    statusPayload = { available: true, model: { channelId: "ch-1", channelName: "Local", id: "restored-model", name: "Restored" } };
-    const availableDeadline = Date.now() + 6000;
-    while (statusCalls <= statusCallsBeforeAvailable && Date.now() < availableDeadline) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    // Give the browser a moment to apply setStatus({ available: true }) while history #1 is still held:
-    // historyLoading lock must keep historyCalls === 1 during flight, NOT drop a concurrent duplicate.
-    await new Promise(resolve => setTimeout(resolve, 150));
-    expect(historyCalls).toBe(1);
-
-    // 3. Now let history #1 finish with pausedTurnReason="model_unavailable_for_resume", and prepare history #2 with the resumed reply:
-    // settling history #1 must immediately detect that status recovered mid-flight and trigger history #2!
-    holdHistory = async () => {
-        if (historyCalls >= 2) {
-            pausedTurnReason = undefined;
-            turns.splice(0, turns.length, {
-                turnId: "paused-1",
-                userText: "继续分镜脚本",
-                selectedNodeIds: [],
-                reply: "模型恢复后已完成续跑。",
-                attachments: [],
-                skills: [],
-                toolCalls: [],
-                proposals: [],
-                change: null,
-                error: null,
-                cancelled: false,
-                createdAt: "2026-10-08",
-            });
+        // 1. Wait for initial /assistant/history (#1) and at least two transient /assistant/status polls while #1 is held in flight.
+        const pollDeadline = Date.now() + 8000;
+        while ((statusCalls < 2 || historyCalls < 1) && Date.now() < pollDeadline) {
+            await new Promise(resolve => setTimeout(resolve, 100));
         }
-    };
-    releaseInitialHistory();
-    await page.getByText("模型恢复后已完成续跑。", { exact: true }).waitFor({ timeout: 6000 });
-    expect(historyCalls).toBe(2);
-    await page.close();
+        await new Promise(resolve => setTimeout(resolve, 250));
+        expect(statusCalls).toBeGreaterThanOrEqual(2);
+        expect(historyCalls).toBe(1);
+
+        // 2. Flip /assistant/status to available WHILE initial /assistant/history (#1) is STILL in flight!
+        const statusCallsBeforeAvailable = statusCalls;
+        statusPayload = { available: true, model: { channelId: "ch-1", channelName: "Local", id: "restored-model", name: "Restored" } };
+        const availableDeadline = Date.now() + 6000;
+        while (statusCalls <= statusCallsBeforeAvailable && Date.now() < availableDeadline) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        // Give the browser a moment to apply setStatus({ available: true }) while history #1 is still held:
+        // historyLoading lock must keep historyCalls === 1 during flight, NOT drop a concurrent duplicate.
+        await new Promise(resolve => setTimeout(resolve, 150));
+        expect(historyCalls).toBe(1);
+
+        // 3. Now let history #1 finish with pausedTurnReason="model_unavailable_for_resume", and prepare history #2 with the resumed reply:
+        // settling history #1 must immediately detect that status recovered mid-flight and trigger history #2!
+        holdHistory = async () => {
+            if (historyCalls >= 2) {
+                pausedTurnReason = undefined;
+                turns.splice(0, turns.length, {
+                    turnId: "paused-1",
+                    userText: "继续分镜脚本",
+                    selectedNodeIds: [],
+                    reply: "模型恢复后已完成续跑。",
+                    attachments: [],
+                    skills: [],
+                    toolCalls: [],
+                    proposals: [],
+                    change: null,
+                    error: null,
+                    cancelled: false,
+                    createdAt: "2026-10-08",
+                });
+            }
+        };
+        releaseInitialHistory();
+        await page.getByText("模型恢复后已完成续跑。", { exact: true }).waitFor({ timeout: 6000 });
+        expect(historyCalls).toBe(2);
+    } finally {
+        releaseInitialHistory();
+        await page.close();
+    }
 }, 20000);
 
 test("cold-start 503 hides false failure banner until ready and deleting non-current session never wedges polling", async () => {
