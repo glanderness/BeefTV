@@ -577,6 +577,35 @@ func TestUserAssetsPageFiltersPersonalBeforePaginationAndScopesSearch(t *testing
 	if err != nil || generatedTotal != 41 {
 		t.Fatalf("generatedTotal = %d err %v; want 41 (37 uncollected + 4 promoted media)", generatedTotal, err)
 	}
+
+	// folderCounts 随 kind/query 收窄，同时在指定 folderId 时保持全量文件夹对比计数。
+	folderFilter := "folder-1"
+	_, _, audioFolderRows, err := repo.UserAssetFacetsForFilter("user-1", UserAssetPageFilter{
+		Status:   "active",
+		Personal: true,
+		Kind:     "audio",
+		FolderID: &folderFilter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audioFolders := facetCountMap(audioFolderRows)
+	if audioFolders["folder-1"] != 0 || audioFolders[""] != kinds["audio"] {
+		t.Fatalf("audio-scoped folder facets = %#v; want folder-1=0 and uncategorized=%d", audioFolders, kinds["audio"])
+	}
+	_, _, imageFolderRows, err := repo.UserAssetFacetsForFilter("user-1", UserAssetPageFilter{
+		Status:   "active",
+		Personal: true,
+		Kind:     "image",
+		FolderID: &folderFilter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageFolders := facetCountMap(imageFolderRows)
+	if imageFolders["folder-1"] != 1 || imageFolders[""] != kinds["image"]-1 {
+		t.Fatalf("image-scoped folder facets = %#v; want folder-1=1 and uncategorized=%d", imageFolders, kinds["image"]-1)
+	}
 }
 
 func assetIDs(assets []model.Asset) string {

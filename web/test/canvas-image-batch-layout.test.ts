@@ -93,10 +93,13 @@ test("reopening keeps the saved size and position of media nodes that already ha
 });
 
 test("reopening still gives empty media placeholders the minimum stage size", () => {
-    const empty: CanvasNodeData = { id: "video-empty", type: CanvasNodeType.Video, title: "视频", position: { x: 0, y: 0 }, width: 270, height: 480, metadata: {} };
-    const [reopened] = resetInterruptedGeneration([empty]);
-    expect(reopened!.width).toBeGreaterThanOrEqual(420);
-    expect(reopened!.height).toBeGreaterThanOrEqual(236);
+    const emptyLandscape: CanvasNodeData = { id: "video-empty-landscape", type: CanvasNodeType.Video, title: "横屏视频", position: { x: 0, y: 0 }, width: 270, height: 152, metadata: {} };
+    const emptyPortrait: CanvasNodeData = { id: "video-empty-portrait", type: CanvasNodeType.Video, title: "竖屏视频", position: { x: 0, y: 0 }, width: 118, height: 210, metadata: {} };
+    const [reopenedLandscape, reopenedPortrait] = resetInterruptedGeneration([emptyLandscape, emptyPortrait]);
+    expect(reopenedLandscape!.width).toBeGreaterThanOrEqual(420);
+    expect(reopenedLandscape!.height).toBeGreaterThanOrEqual(236);
+    expect(reopenedPortrait!.width).toBeGreaterThanOrEqual(236);
+    expect(reopenedPortrait!.height).toBeGreaterThanOrEqual(420);
 });
 
 test("reopening keeps finished media that only stores a resource key", () => {
@@ -105,10 +108,13 @@ test("reopening keeps finished media that only stores a resource key", () => {
 });
 
 test("reopening still sizes a node that is regenerating over its old result", () => {
-    const regenerating: CanvasNodeData = { id: "video-regen", type: CanvasNodeType.Video, title: "镜 2", position: { x: 0, y: 0 }, width: 270, height: 480, metadata: { content: "old.mp4", status: "loading" } };
-    const [reopened] = resetInterruptedGeneration([regenerating]);
-    expect(reopened!.width).toBeGreaterThanOrEqual(420);
-    expect(reopened!.height).toBeGreaterThanOrEqual(236);
+    const regeneratingLandscape: CanvasNodeData = { id: "video-regen-landscape", type: CanvasNodeType.Video, title: "镜 2", position: { x: 0, y: 0 }, width: 270, height: 152, metadata: { content: "old.mp4", status: "loading" } };
+    const regeneratingPortrait: CanvasNodeData = { id: "video-regen-portrait", type: CanvasNodeType.Video, title: "镜 3", position: { x: 0, y: 0 }, width: 118, height: 210, metadata: { content: "old-v.mp4", status: "loading" } };
+    const [reopenedLandscape, reopenedPortrait] = resetInterruptedGeneration([regeneratingLandscape, regeneratingPortrait]);
+    expect(reopenedLandscape!.width).toBeGreaterThanOrEqual(420);
+    expect(reopenedLandscape!.height).toBeGreaterThanOrEqual(236);
+    expect(reopenedPortrait!.width).toBeGreaterThanOrEqual(236);
+    expect(reopenedPortrait!.height).toBeGreaterThanOrEqual(420);
 });
 
 test("reopening repairs a damaged zero-sized result instead of blowing it up", () => {

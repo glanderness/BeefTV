@@ -51,7 +51,7 @@ export function createFileUploadAttemptId(): string {
     return `upload-attempt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function uploadNodeTitle(fileName: string): string {
+export function uploadNodeTitle(fileName: string): string {
     const extensionStart = fileName.lastIndexOf(".");
     if (extensionStart <= 0 || extensionStart >= fileName.length - 1) return fileName;
     const extension = fileName.slice(extensionStart + 1);

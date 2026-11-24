@@ -169,7 +169,8 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
         progress.done(result.skippedFiles?.length ? `画布已导入，跳过 ${result.skippedFiles.length} 个缺失媒体` : "画布与媒体已恢复并保存");
         return result;
     } catch (error) {
-        progress.fail("画布导入未完成，请查看错误后重试");
+        const detail = error instanceof Error ? error.message.trim() : "";
+        progress.fail(detail ? `画布导入未完成：${detail}` : "画布导入未完成，请查看错误后重试");
         throw error;
     }
 }
@@ -381,7 +382,11 @@ async function restoreArchiveMedia(
                 onProgress?.(completed);
             } catch (error) {
                 halt = true;
-                firstError ??= error;
+                const fileName = fileItem.path.split("/").pop() || fileItem.path || fileItem.storageKey;
+                const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "";
+                firstError ??= detail && detail.includes(fileName)
+                    ? error
+                    : new Error(detail ? `文件「${fileName}」恢复失败：${detail}` : `文件「${fileName}」恢复失败`);
             }
         }
     });

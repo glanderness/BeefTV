@@ -47,10 +47,10 @@ func SelectTaskModel(req TaskSelectRequest, lookup TaskSelectLookup) (TaskSelect
 	customChannelTask := TaskInputUsesCustomChannel(input)
 	if req.FrontendEnabled && !TaskInputUsesSystemChannel(input) && !customChannelTask {
 		if strings.TrimSpace(req.LogicalModelID) == "" {
-			return TaskSelectResult{}, InvalidModelSelection("前台模型模式下必须指定 logicalModelId")
+			return TaskSelectResult{}, InvalidModelSelection("未选择可用模型，请重新选择模型后再试")
 		}
 		if lookup.ResolveLogical == nil {
-			return TaskSelectResult{}, InvalidModelSelection("前台模型模式下必须指定 logicalModelId")
+			return TaskSelectResult{}, InvalidModelSelection("未选择可用模型，请重新选择模型后再试")
 		}
 		intent := ModelRequestIntentFromTaskInput(input, req.Type, req.Operation)
 		routed, err := lookup.ResolveLogical(req.LogicalModelID, intent)

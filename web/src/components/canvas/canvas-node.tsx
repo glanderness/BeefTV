@@ -11,6 +11,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasConnectionTilt } from "@/lib/canvas/canvas-connection-tilt";
 import { usesCanvasCustomNodeContent } from "@/lib/canvas/canvas-node-content-policy";
+import { mediaNodeMinSizeForRatio } from "@/lib/canvas/canvas-node-size";
 import { storyboardMinNodeHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
@@ -234,7 +235,8 @@ export const CanvasNode = React.memo(function CanvasNode({
 
             const dx = (event.clientX - resizeRef.current.startX) / scale;
             const dy = (event.clientY - resizeRef.current.startY) / scale;
-            const minSize = getNodeMinSize(data.type);
+            const isMediaResize = data.type === CanvasNodeType.Image || data.type === CanvasNodeType.Video;
+            const minSize = isMediaResize ? mediaNodeMinSizeForRatio(resizeRef.current.ratio) : getNodeMinSize(data.type);
             const minWidth = minSize.width;
             // 分镜脚本的高度由表格内容动态撑开，覆盖注册表里的静态下限。
             const minHeight = scriptMinHeight || minSize.height;

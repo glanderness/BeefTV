@@ -9,6 +9,17 @@ const MEDIA_NODE_FIT_MAX_SIZE = { width: 720, height: 520 } as const;
 const DAMAGED_MEDIA_EDGE = 24;
 
 /**
+ * 按媒体宽高比返回最小尺寸（横图/横视频 420×236，竖图/竖视频对等短边 236×420），
+ * 避免 9:16 等竖版媒体被横向最小宽度 420 锁死在约 747px 的过高尺寸。
+ */
+export function mediaNodeMinSizeForRatio(aspectRatio?: number): { width: number; height: number } {
+    if (typeof aspectRatio === "number" && Number.isFinite(aspectRatio) && aspectRatio > 0 && aspectRatio < 1) {
+        return { width: MEDIA_NODE_MIN_SIZE.height, height: MEDIA_NODE_MIN_SIZE.width };
+    }
+    return MEDIA_NODE_MIN_SIZE;
+}
+
+/**
  * 已有成品、不在生成中、尺寸正常的媒体节点按保存的尺寸和位置显示。
  * 打开画布或图片解码时再按最小尺寸放大，卡片会跳一下、压住旁边的节点，还会多写一次文档。
  */
@@ -22,12 +33,15 @@ function isDamagedMediaSize(width: number, height: number) {
     return !(Number.isFinite(width) && Number.isFinite(height) && width >= DAMAGED_MEDIA_EDGE && height >= DAMAGED_MEDIA_EDGE);
 }
 
-export function fitNodeSize(width: number, height: number, maxWidth: number = MEDIA_NODE_FIT_MAX_SIZE.width, maxHeight: number = MEDIA_NODE_FIT_MAX_SIZE.height, minWidth: number = MEDIA_NODE_MIN_SIZE.width, minHeight: number = MEDIA_NODE_MIN_SIZE.height) {
+export function fitNodeSize(width: number, height: number, maxWidth: number = MEDIA_NODE_FIT_MAX_SIZE.width, maxHeight: number = MEDIA_NODE_FIT_MAX_SIZE.height, minWidth?: number, minHeight?: number) {
     const w = Math.max(1, width);
     const h = Math.max(1, height);
+    const defaultMin = mediaNodeMinSizeForRatio(w / h);
+    const effectiveMinWidth = minWidth ?? defaultMin.width;
+    const effectiveMinHeight = minHeight ?? defaultMin.height;
     // 媒体节点既要保留原始比例，也要给生成状态、操作按钮留下稳定的可读空间。
     const preferredScale = Math.min(1, maxWidth / w, maxHeight / h);
-    const minimumScale = Math.max(minWidth / w, minHeight / h);
+    const minimumScale = Math.max(effectiveMinWidth / w, effectiveMinHeight / h);
     const scale = Math.max(preferredScale, minimumScale);
     return { width: w * scale, height: h * scale };
 }
@@ -43,11 +57,14 @@ export function fitImageNodeToDecodedSize(node: CanvasNodeData, naturalWidth: nu
         ? fitNodeSize(naturalWidth, naturalHeight, node.width, node.height)
         : fitNodeSize(naturalWidth, naturalHeight);
     // 保存的尺寸已经是原图比例、也没超出上限时只补记原图尺寸：比例照常校正，
-    // 但不再把已有成品的小图放大到最小尺寸（与 ensureMediaNodeMinimumSize 同一规则）。
+    // 但不再把已有成品的小图放大，也不静默缩小历史竖图（旧最小宽 420 产生的约 420×747 节点）。
     const naturalRatio = naturalWidth / naturalHeight;
+    const savedMaxHeight = naturalRatio < 1
+        ? Math.max(MEDIA_NODE_FIT_MAX_SIZE.height, MEDIA_NODE_MIN_SIZE.width / naturalRatio) + 1
+        : MEDIA_NODE_FIT_MAX_SIZE.height;
     const keepsSavedSize = !isBatch && keepsSavedMediaGeometry(node)
         && Math.abs(node.width / node.height - naturalRatio) <= naturalRatio * 0.01
-        && node.width <= MEDIA_NODE_FIT_MAX_SIZE.width && node.height <= MEDIA_NODE_FIT_MAX_SIZE.height;
+        && node.width <= MEDIA_NODE_FIT_MAX_SIZE.width && node.height <= savedMaxHeight;
     const needsResize = !keepGeometry && !keepsSavedSize && (Math.abs(size.width - node.width) >= 1 || Math.abs(size.height - node.height) >= 1);
     if (!needsMetadata && !needsResize) return node;
     return { ...node, ...(needsResize ? size : {}), metadata: needsMetadata ? { ...metadata, naturalWidth, naturalHeight } : metadata };
@@ -141,8 +158,9 @@ export function ensureMediaNodeMinimumSize(node: CanvasNodeData) {
                 height = repaired.height;
             }
         }
-        if (width < MEDIA_NODE_MIN_SIZE.width || height < MEDIA_NODE_MIN_SIZE.height) {
-            const scale = Math.max(1, MEDIA_NODE_MIN_SIZE.width / Math.max(1, width), MEDIA_NODE_MIN_SIZE.height / Math.max(1, height));
+        const minSize = mediaNodeMinSizeForRatio(width / Math.max(1, height));
+        if (width < minSize.width || height < minSize.height) {
+            const scale = Math.max(1, minSize.width / Math.max(1, width), minSize.height / Math.max(1, height));
             width *= scale;
             height *= scale;
         }

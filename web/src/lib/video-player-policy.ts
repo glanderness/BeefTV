@@ -56,3 +56,10 @@ export function isUndecodableVideoTrack(
 ): boolean {
     return Boolean(video && Number(video.readyState) >= 1 && !hasVideoTrackDimensions(video));
 }
+
+export function isVideoSpaceShortcutIgnoredTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) return false;
+    return Boolean(
+        target.closest("input, textarea, select, [contenteditable='true'], button, a[href], [role='button'], [role='menuitem'], [role='slider']"),
+    );
+}

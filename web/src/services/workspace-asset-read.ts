@@ -206,6 +206,7 @@ function loadBrowserLocalAssetPage(options: WorkspaceAssetLibraryPageOptions): W
     const filtered = catalog.filter((asset) => matchesLibraryFilters(asset, options, query));
     const start = Math.max(0, options.page - 1) * options.pageSize;
     const scoped = catalog.filter((asset) => isStatusScopedLibraryAsset(asset, options.status, options.personal));
+    const folderScoped = catalog.filter((asset) => matchesFolderFacetScope(asset, options, query));
     const activeAll = catalog.filter(isActiveLibraryAsset);
     const active = options.personal ? activeAll.filter(isWorkspacePersonalLibraryAsset) : activeAll;
     const generated = activeAll.filter(isWorkspaceGeneratedHistoryAsset);
@@ -215,7 +216,7 @@ function loadBrowserLocalAssetPage(options: WorkspaceAssetLibraryPageOptions): W
         assets: filtered.slice(start, start + options.pageSize),
         kindCounts: countMap(scoped, (asset) => asset.kind),
         categoryCounts: countMap(scoped, (asset) => asset.category || "other"),
-        folderCounts: countMap(scoped, (asset) => asset.folderId || ""),
+        folderCounts: countMap(folderScoped, (asset) => asset.folderId || ""),
         favoriteTotal: active.filter((asset) => asset.metadata?.favorite === true).length,
         recentTotal: active.filter(isRecentAsset).length,
         projectCounts: countMap(active, workspaceAssetProjectLabel),
@@ -289,7 +290,7 @@ async function overlayAssetDrafts(page: WorkspaceAssetLibraryPage, options: Work
         generatedTotal += matchDelta(after, before, isActiveGeneratedHistoryAsset);
         applyFacetDelta(kindCounts, facetKindKey(before, options.status, options.personal), facetKindKey(after, options.status, options.personal));
         applyFacetDelta(categoryCounts, facetCategoryKey(before, options.status, options.personal), facetCategoryKey(after, options.status, options.personal));
-        applyFacetDelta(folderCounts, facetFolderKey(before, options.status, options.personal), facetFolderKey(after, options.status, options.personal));
+        applyFacetDelta(folderCounts, facetFolderKey(before, options, query), facetFolderKey(after, options, query));
         applyFacetDelta(generatedKindCounts, generatedKindKey(before), generatedKindKey(after));
         const beforeLabel = before && isActiveFacetScopedAsset(before, options.personal) ? workspaceAssetProjectLabel(before) : undefined;
         const afterLabel = after && isActiveFacetScopedAsset(after, options.personal) ? workspaceAssetProjectLabel(after) : undefined;
@@ -436,8 +437,16 @@ function facetCategoryKey(asset: Asset | undefined, status?: string, personal?: 
     return asset && isStatusScopedLibraryAsset(asset, status, personal) ? asset.category || "other" : undefined;
 }
 
-function facetFolderKey(asset: Asset | undefined, status?: string, personal?: boolean) {
-    return asset && isStatusScopedLibraryAsset(asset, status, personal) ? asset.folderId || "" : undefined;
+function matchesFolderFacetScope(asset: Asset, options: WorkspaceAssetLibraryPageOptions, query: string) {
+    return matchesLibraryFilters(
+        asset,
+        { page: options.page, pageSize: options.pageSize, status: options.status, personal: options.personal, kind: options.kind, category: options.category, query: options.query },
+        query,
+    );
+}
+
+function facetFolderKey(asset: Asset | undefined, options: WorkspaceAssetLibraryPageOptions, query: string) {
+    return asset && matchesFolderFacetScope(asset, options, query) ? asset.folderId || "" : undefined;
 }
 
 function generatedKindKey(asset: Asset | undefined) {

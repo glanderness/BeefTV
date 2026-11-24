@@ -20,10 +20,11 @@ function hasVisibleKeyboardHost(selector: string) {
     );
 }
 
-const CANVAS_EDITORS = [MODAL_HOSTS, "[data-director-workbench='true']", "[data-canvas-folder-browser]"].join(",");
+const CANVAS_EDITORS = [MODAL_HOSTS, "[data-director-workbench='true']", "[data-canvas-folder-browser]", "[data-canvas-video-fullscreen='true']"].join(",");
 
 export function hasCanvasKeyboardHost() {
-    return hasVisibleKeyboardHost(CANVAS_EDITORS);
+    const doc = document as Document & { webkitFullscreenElement?: Element | null };
+    return Boolean(doc.fullscreenElement || doc.webkitFullscreenElement) || hasVisibleKeyboardHost(CANVAS_EDITORS);
 }
 
 export function hasDeleteOverlay() {

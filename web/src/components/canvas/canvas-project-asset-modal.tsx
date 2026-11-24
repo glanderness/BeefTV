@@ -43,7 +43,7 @@ export function CanvasProjectAssetModal({
         });
         if (detail) return projectItems;
         // 自由画布未关联项目时回退到个人素材库。
-        return mediaAssets.filter((asset) => asset.kind !== "model" && asset.kind !== "entity" && asset.status !== "archived").map((media): ProjectPickerItem => ({ id: media.id, category: normalizeAssetCategory(media.category), media }));
+        return mediaAssets.filter((asset) => asset.kind !== "model" && asset.kind !== "entity" && asset.status !== "archived").map((media): ProjectPickerItem => ({ id: media.id, category: normalizeAssetCategory(media.category), folderId: media.folderId, media }));
     }, [detail?.assets, mediaAssets]);
     const localPickerItems = useMemo<AssetLibraryPickerItem[]>(
         () =>
@@ -101,7 +101,7 @@ export function CanvasProjectAssetModal({
             emptyDescription={detail ? "先在项目角色与资产中完成角色确认或素材关联。" : "当前为自由画布，可先在素材库添加内容。"}
             footerNote={externalAssetSources.error || "角色引用会在生成时解析当前角色版本"}
             onFolderAction={
-                onInsertFolder
+                detail && onInsertFolder
                     ? async (folderId) => {
                           await onInsertFolder(folderId);
                           onClose();
