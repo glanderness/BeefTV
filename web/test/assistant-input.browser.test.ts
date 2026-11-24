@@ -448,7 +448,7 @@ test("status polling does not pile up initial history reads and reloads paused t
         createdAt: "2026-10-08",
     });
     pausedTurnReason = "model_unavailable_for_resume";
-    statusPayload = { available: false, reason: "host_starting" };
+    statusPayload = { available: false, reason: "host_busy" };
     let releaseInitialHistory!: () => void;
     const initialHistoryGate = new Promise<void>(resolve => { releaseInitialHistory = resolve; });
     holdHistory = () => initialHistoryGate;
@@ -456,7 +456,7 @@ test("status polling does not pile up initial history reads and reloads paused t
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
 
-    // 1. Wait for at least two 2s host_starting /assistant/status polls while initial /assistant/history is still in flight.
+    // 1. Wait for at least two 2s transient /assistant/status polls while initial /assistant/history is still in flight.
     const pollDeadline = Date.now() + 8000;
     while (statusCalls < 2 && Date.now() < pollDeadline) {
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -517,7 +517,7 @@ test("cold-start 503 hides false failure banner until ready and deleting non-cur
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
 
-    // Cold-start 503 while host_starting must show "正在读取对话…" without flashing "没能读取对话。请重新读取。" or looping!
+    // Cold-start host_starting defers /assistant/history (0 wasted 503 calls) while showing "正在读取对话…" without flashing errors!
     await page.getByText("正在读取对话…", { exact: true }).waitFor({ timeout: 5000 });
     const pollDeadline = Date.now() + 6000;
     while (statusCalls < 2 && Date.now() < pollDeadline) {
@@ -525,9 +525,9 @@ test("cold-start 503 hides false failure banner until ready and deleting non-cur
     }
     await new Promise(resolve => setTimeout(resolve, 300));
     expect(await page.getByText("没能读取对话。请重新读取。").count()).toBe(0);
-    expect(historyCalls).toBe(1);
+    expect(historyCalls).toBe(0);
 
-    // Once status becomes model_not_configured (read-only host ready), history reloads (#2) with s1+s2 and paused turn!
+    // Once status becomes model_not_configured (read-only host ready), history loads (#1) with s1+s2 and paused turn!
     failHistoryStatus = 0;
     pausedTurnReason = "model_unavailable_for_resume";
     turns.push({
@@ -547,25 +547,25 @@ test("cold-start 503 hides false failure banner until ready and deleting non-cur
     });
     statusPayload = { available: false, reason: "model_not_configured" };
     await page.getByText("首次读取失败后的对话", { exact: true }).waitFor({ timeout: 6000 });
-    expect(historyCalls).toBe(2);
+    expect(historyCalls).toBe(1);
 
-    // Open session dropdown (s1 + s2 loaded), trigger paused-turn reload (#3) via status becoming available,
-    // delete non-current session s2 WHILE #3 is held in flight, let #3 return an active turn (2s poll),
-    // and verify 2s background poll #4 still fires (proving historyInFlight returned to 0)!
+    // Open session dropdown (s1 + s2 loaded), trigger paused-turn reload (#2) via status becoming available,
+    // delete non-current session s2 WHILE #2 is held in flight, let #2 return an active turn (2s poll),
+    // and verify 2s background poll #3 still fires (proving historyInFlight returned to 0)!
     await page.getByRole("button", { name: "历史对话", exact: true }).click();
     await page.getByRole("button", { name: "删除会话 旧支线对话", exact: true }).waitFor({ timeout: 4000 });
-    let releaseThirdRead!: () => void;
-    const thirdReadGate = new Promise<void>(resolve => { releaseThirdRead = resolve; });
-    let markThirdReadEntered!: () => void;
-    const thirdReadEntered = new Promise<void>(resolve => { markThirdReadEntered = resolve; });
+    let releaseSecondRead!: () => void;
+    const secondReadGate = new Promise<void>(resolve => { releaseSecondRead = resolve; });
+    let markSecondReadEntered!: () => void;
+    const secondReadEntered = new Promise<void>(resolve => { markSecondReadEntered = resolve; });
     holdHistory = async () => {
-        if (historyCalls === 3) {
-            markThirdReadEntered();
-            await thirdReadGate;
+        if (historyCalls === 2) {
+            markSecondReadEntered();
+            await secondReadGate;
             pausedTurnReason = undefined;
             running = true;
             turns.length = 0;
-        } else if (historyCalls >= 4) {
+        } else if (historyCalls >= 3) {
             running = false;
             turns.splice(0, turns.length, {
                 turnId: "busy",
@@ -584,13 +584,13 @@ test("cold-start 503 hides false failure banner until ready and deleting non-cur
         }
     };
     statusPayload = { available: true, model: { channelId: "ch-1", channelName: "Local", id: "restored-model", name: "Restored" } };
-    await thirdReadEntered;
+    await secondReadEntered;
     await page.getByRole("button", { name: "删除会话 旧支线对话", exact: true }).click();
     await new Promise(resolve => setTimeout(resolve, 150));
-    releaseThirdRead();
+    releaseSecondRead();
 
     await page.getByText("删除支线会话后自动刷新仍然正常。", { exact: true }).waitFor({ timeout: 8000 });
-    expect(historyCalls).toBe(4);
+    expect(historyCalls).toBe(3);
     expect(await page.getByRole("button", { name: "删除会话 旧支线对话", exact: true }).count()).toBe(0);
     await page.close();
 }, 35000);
