@@ -21,8 +21,9 @@ import { getBuiltinPresetsVersion, getPartnerIndicatorVersion, livePartnerSyncIs
 import { MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, channelAllowsEmptyAPIKey, mergeSavedServiceChannel, pluginServices, servicePresetFor } from "@/lib/model-service-presets";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { localWorkspaceConfig } from "@/lib/user-session";
+import { getBeefTVConnection } from "@/services/api/beeftv-connection";
 import { getLocalModelConfig } from "@/services/api/workspace";
-import { commitModelConfig, flushModelConfig, getModelConfigPersistenceState, subscribeModelConfigPersistence, type ModelConfigPersistenceState } from "@/services/model-config-repository";
+import { acceptExternalModelConfig, commitModelConfig, flushModelConfig, getModelConfigPersistenceState, subscribeModelConfigPersistence, withoutModelConfigAutosave, type ModelConfigPersistenceState } from "@/services/model-config-repository";
 import { createChannelCatalogRequests } from "@/services/channel-catalog-requests";
 import { getTransportFailureKind } from "@/services/api/request";
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
@@ -53,7 +54,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
     const [newChannelId, setNewChannelId] = useState<string | null>(null);
     const [serviceEditor, setServiceEditor] = useState<ModelChannel | null | undefined>(undefined);
     const [pluginServiceIds, setPluginServiceIds] = useState<ReadonlySet<string>>(() => new Set());
-    const { connection: beefConnection, busy: beefBusy, catalogSyncFailed, connect, cancel, disconnect, retryCatalog, openAccount } = useBeefTVConnection();
+    const { connection: beefConnection, busy: beefBusy, catalogSyncFailed, connect, cancel, disconnect, retryCatalog, openAccount, noteCatalogRevision } = useBeefTVConnection();
     const requests = useRef(createChannelCatalogRequests());
     const deleting = useRef(new Set<string>());
     const [deleteFailures, setDeleteFailures] = useState<Record<string, string>>({});
@@ -191,19 +192,26 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                 return;
             }
             if (localMode && isBuiltinBeefTVChannel(latestChannel)) {
-                const server = await getLocalModelConfig();
+                const [server, summary] = await Promise.all([getLocalModelConfig(), getBeefTVConnection()]);
                 if (!requests.current.current(channel.id, request)) return;
                 const current = useConfigStore.getState().config;
-                replaceConfig(localWorkspaceConfig(normalizeConfigSnapshot({
+                const nextConfig = localWorkspaceConfig(normalizeConfigSnapshot({
                     config: mergeManagedBeefTVCatalog(current, server.config),
-                }).config));
+                }).config);
+                withoutModelConfigAutosave(() => {
+                    replaceConfig(nextConfig);
+                });
+                acceptExternalModelConfig(nextConfig, server.revision);
+                if (typeof summary.catalogRevision === "number") {
+                    noteCatalogRevision(summary.catalogRevision);
+                }
             } else {
                 updateChannels(
                     latestConfig.channels.map((item) => (item.id === channel.id ? applyFetchedChannelModelCatalog(item, result) : item)),
                     latestConfig,
                 );
+                await flushModelConfig();
             }
-            await flushModelConfig();
             message.success(`${latestChannel.name || "当前渠道"}模型列表已更新`);
         } catch (error) {
             if (requests.current.current(channel.id, request)) message.error(channelModelFetchErrorMessage(error));
@@ -260,10 +268,26 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                     return fetched ? applyFetchedChannelModelCatalog(channel, fetched) : channel;
                 });
                 const updated = withChannels(current, nextChannels);
-                replaceConfig(server ? localWorkspaceConfig(normalizeConfigSnapshot({
-                    config: mergeManagedBeefTVCatalog(updated, server.config),
-                }).config) : updated);
-                await flushModelConfig();
+                if (server) {
+                    const nextConfig = localWorkspaceConfig(normalizeConfigSnapshot({
+                        config: mergeManagedBeefTVCatalog(updated, server.config),
+                    }).config);
+                    const onlyManagedRefreshed = successful.every((item) => isBuiltinBeefTVChannel(item.channel));
+                    if (onlyManagedRefreshed) {
+                        withoutModelConfigAutosave(() => {
+                            replaceConfig(nextConfig);
+                        });
+                        acceptExternalModelConfig(nextConfig, server.revision);
+                    } else {
+                        acceptExternalModelConfig(nextConfig, server.revision);
+                        replaceConfig(nextConfig);
+                        await flushModelConfig();
+                    }
+                    noteCatalogRevision(server.revision);
+                } else {
+                    replaceConfig(updated);
+                    await flushModelConfig();
+                }
                 message.success(`已更新 ${successful.length} 个渠道的模型`);
             }
             const warnings = [

@@ -60,7 +60,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 `model.catalog` 可用 `capability`（`text`、`image`、`video`、`audio`）只查询所需类型。桌面视频模型的 `videoPricing` 只投影已保存、通过格式校验的渠道目录报价，不包含连接地址或凭据；缺失表示价格未知。这不是实时计费保证，也不会自动执行预算上限。
 
-BeefTV 官方算力渠道刷新目录时，从同一连接地址的公开价格目录 `GET /api/enterprise/catalog` 读取各模型价格并随模型保存，不携带凭据；读不到时目录照常刷新，价格留空。估算只采用官方渠道保存的价格，其他渠道即使配置里写了价格也不采用。`model.catalog` 不返回这些价格明细，费用通过下面的估算获取。
+BeefTV 官方算力渠道刷新目录时，优先消费服务端 `/v1/models` 在声明 `X-BeefTV-Catalog-Pricing: inline` 时随模型内联返回的价格；旧服务端未内联价格时，再从同一连接地址的公开价格目录 `GET /api/enterprise/catalog` 读取各模型价格并随模型保存，不携带凭据。条件同步支持 `ETag` / `If-None-Match`（`304 Not Modified`）与客户端版本升级自动失效：价格目录出现瞬时 5xx 或网络失败时保留最近一次已保存价格，显式 404 时才清空旧价格。估算只采用官方渠道保存的价格，其他渠道即使配置里写了价格也不采用。`model.catalog` 不返回这些价格明细，费用通过下面的估算获取。
 
 只读操作 `generation.estimate` 接收 1 至 2000 个 `targets:[{ modelKey, kind, parameters?, referenceImages?, referenceVideos?, text? }]`，`kind` 为 `image`、`video` 或 `audio`，`parameters` 与生成节点参数同名（如 `size`、`quality`、`count`、`vquality`、`seconds`），配音传台词 `text`。返回 `items[{ amount, label, approx?, variable?, basis, text, reserve? }]` 与 `summary{ amount, priced, unknown, approx?, text }`：`label` 为服务端统一格式化的紧凑按钮价格标签，`variable=true` 表示按实际输出量结算且生成前无固定单价；`amount=null` 表示暂无价格，原因写在 `text`，不按 0 计入合计；`approx=true` 表示按 Token 或字数折算；`reserve` 是先扣、出账后结算的金额，同样不计入合计。`canvas.generation.propose` 的 `targets[].estimate`、`estimate` 与 `production.estimate` 用同一套计算。对已连接的 BeefTV 官方算力渠道优先调用服务端 `POST /v1/pricing/estimate` 获取权威估价，离线、服务端不可达或自建/BYOK 渠道无缝回退到本地已保存目录估算；全程只读，不建任务、不扣费；内置助手的画布模式不提供这个操作，直接使用提案里的估算。
 
@@ -71,7 +71,7 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 | 路由组 | 用途 |
 | --- | --- |
 | `/workspace/*` | 本地工作区启动、模型配置与 `POST /workspace/model-config/capability` 模型能力草稿规范化（含未保存自定义配置、Seedance 文档化时长/音频/像素下限收紧与 `thinking` 开关） |
-| `/beeftv/connection*` | BeefTV 官方算力连接与账户余额：开始、状态（支持 `refresh=1` 同步实时余额，上游失败时返回结构化错误码而非旧摘要）、取消、断开、读取充值配置（`GET /beeftv/connection/topup/info`）、创建订单并在系统浏览器打开同源收银台入口（`POST /beeftv/connection/topup/checkout`，浏览器未能自动打开时保留 `tradeNo` 并返回 `opened=false` 与 `openError`）、查询支付结果并更新余额（`POST /beeftv/connection/topup/reconcile`，带 `settled` / `credited` 入账确认）；`POST /beeftv/connection/models` 使用已保存凭据刷新并持久化模型目录与报价，成功后移除当前账号目录中已不存在的模型（其他自定义渠道不受影响）；不接受客户端报价，页面收不到密钥 |
+| `/beeftv/connection*` | BeefTV 官方算力连接与账户余额：开始、状态（支持 `refresh=1` 同步实时余额，并返回 `catalogRevision`、`catalogConfigRevision`、`catalogSyncing` 供前端静默热更新官方目录与费用估算；上游失败时返回结构化错误码而非旧摘要）、`POST /beeftv/connection/sync`（带冷却与失败退避的静默目录同步，配合 `X-BeefTV-Catalog-ETag` 变更感知实现无重启无感更新）、取消、断开、读取充值配置（`GET /beeftv/connection/topup/info`）、创建订单并在系统浏览器打开同源收银台入口（`POST /beeftv/connection/topup/checkout`，浏览器未能自动打开时保留 `tradeNo` 并返回 `opened=false` 与 `openError`）、查询支付结果并更新余额（`POST /beeftv/connection/topup/reconcile`，带 `settled` / `credited` 入账确认）；`POST /beeftv/connection/models` 使用已保存凭据强制刷新并持久化模型目录与报价，成功后移除当前账号目录中已不存在的模型（其他自定义渠道不受影响）；不接受客户端报价，页面收不到密钥 |
 | `/canvas-projects/*`, `/projects/*` | 画布、项目、章节、分镜与快照 |
 | `/resources/*` | 本地素材、分片上传和媒体读取 |
 | `/timeline/render-plan` | 只读编译时间线语义渲染计划：不排队、不落盘、不计费 |

@@ -21,6 +21,8 @@ const (
 	BalanceUnknown       = "unknown"
 	BalanceZero          = "zero"
 	BalanceAvailable     = "available"
+	CatalogETagHeader    = "X-BeefTV-Catalog-ETag"
+	CatalogPricingHeader = "X-BeefTV-Catalog-Pricing"
 	connectionSchema     = 1
 	connectionStoreFile  = "beeftv-connection.json"
 )
@@ -44,8 +46,11 @@ type Summary struct {
 	WalletURL       string   `json:"walletUrl,omitempty"`
 	Balance         string   `json:"balance,omitempty"`
 	BalanceCNY      string   `json:"balanceCny,omitempty"`
-	CatalogFailed   bool     `json:"catalogFailed,omitempty"`
-	ErrorReason     string   `json:"errorReason,omitempty"`
+	CatalogFailed         bool     `json:"catalogFailed,omitempty"`
+	CatalogRevision       int64    `json:"catalogRevision,omitempty"`
+	CatalogConfigRevision int64    `json:"catalogConfigRevision,omitempty"`
+	CatalogSyncing        bool     `json:"catalogSyncing,omitempty"`
+	ErrorReason           string   `json:"errorReason,omitempty"`
 	ConnectedAt     string   `json:"connectedAt,omitempty"`
 	CredentialRef   string   `json:"credentialRef,omitempty"`
 	HasCredential   bool     `json:"hasCredential"`
@@ -99,6 +104,13 @@ type persistedState struct {
 	TokenID                 string           `json:"tokenId,omitempty"`
 	Acked                   bool             `json:"acked"`
 	CatalogOK               bool             `json:"catalogOk"`
+	CatalogVersion          int64            `json:"catalogVersion,omitempty"`
+	CatalogConfigRevision   int64            `json:"catalogConfigRevision,omitempty"`
+	CatalogETag             string           `json:"catalogEtag,omitempty"`
+	CatalogInlinePricing    bool             `json:"catalogInlinePricing,omitempty"`
+	PriceCatalogETag        string           `json:"priceCatalogEtag,omitempty"`
+	CatalogSyncedAt         string           `json:"catalogSyncedAt,omitempty"`
+	CatalogClientVersion    string           `json:"catalogClientVersion,omitempty"`
 	AssistantDefaultPending bool             `json:"assistantDefaultPending,omitempty"`
 	Balance                 string           `json:"balance,omitempty"`
 	BalanceCNY              string           `json:"balanceCny,omitempty"`

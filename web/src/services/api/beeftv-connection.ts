@@ -35,6 +35,9 @@ export type BeefTVConnectionSummary = {
     balance?: "unknown" | "zero" | "available" | string;
     balanceCny?: string;
     catalogFailed?: boolean;
+    catalogRevision?: number;
+    catalogConfigRevision?: number;
+    catalogSyncing?: boolean;
     errorReason?: string;
     connectedAt?: string;
     credentialRef?: string;
@@ -104,6 +107,10 @@ export type BeefTVTopUpReconcileResult = {
 export function getBeefTVConnection(signal?: AbortSignal, options?: { refresh?: boolean }) {
     const url = options?.refresh ? "/beeftv/connection?refresh=1" : "/beeftv/connection";
     return http.get<BeefTVConnectionSummary>(url, { signal });
+}
+
+export function syncBeefTVConnection(signal?: AbortSignal) {
+    return http.post<BeefTVConnectionSummary>("/beeftv/connection/sync", {}, { signal });
 }
 
 export function getBeefTVTopUpInfo(signal?: AbortSignal) {

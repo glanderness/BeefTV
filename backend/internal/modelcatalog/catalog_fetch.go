@@ -49,6 +49,7 @@ type catalogPayloadItem struct {
 	VideoCapabilities        json.RawMessage          `json:"video_capabilities"`
 	VideoCapabilitiesVersion string                   `json:"video_capabilities_version"`
 	VideoPricing             json.RawMessage          `json:"video_pricing"`
+	Pricing                  json.RawMessage          `json:"pricing"`
 	MediaCapabilities        json.RawMessage          `json:"media_capabilities"`
 	MediaCapabilitiesVersion string                   `json:"media_capabilities_version"`
 }
@@ -171,6 +172,7 @@ func ParseChannelModelCatalog(data []byte, apiFormat string) ([]ChannelModelCata
 			ImageCapabilities: item.ImageCapabilities,
 			VideoCapabilities: item.VideoCapabilities,
 			VideoPricing:      item.VideoPricing,
+			Pricing:           item.Pricing,
 			MediaCapabilities: item.MediaCapabilities,
 		}
 		if version := strings.TrimSpace(item.ImageCapabilitiesVersion); version != "" || len(item.ImageCapabilities) > 0 {

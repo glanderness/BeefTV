@@ -13,6 +13,19 @@ import (
 	"infinite-canvas/backend/internal/workspace"
 )
 
+func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string, authorizationID string) error {
+	_, err := applyCatalogWithOptions(store, models, previousAccountID, nextAccountID, authorizationID, false)
+	return err
+}
+
+func (s *Service) fetchModels(apiKey string) ([]CatalogModel, error) {
+	res, err := s.fetchModelsConditional(s.lifecycle, apiKey, "", "", false)
+	if err != nil {
+		return nil, err
+	}
+	return res.Models, nil
+}
+
 func TestGeminiAppliedCatalogResolvesBundledProvider(t *testing.T) {
 	// Connect only to the existing loopback fixture. Its catalog runs through
 	// finalizeSavedCredential -> applyCatalog, then both stores are reopened.

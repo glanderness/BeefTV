@@ -262,10 +262,23 @@ export function createModelConfigRepository(dependencies: ModelConfigRepositoryD
         });
     };
 
+    const acceptExternalSnapshot = (config: AiConfig, revision: number) => {
+        if (!Number.isSafeInteger(revision) || revision < 0) return;
+        const nextRevision = Math.max(state.revision, revision);
+        if (pendingReplace === null) {
+            canonicalConfig = config;
+        }
+        canonicalReady = true;
+        if (nextRevision !== state.revision) {
+            publish({ revision: nextRevision });
+        }
+    };
+
     return {
         hydrate,
         commit,
         mutate,
+        acceptExternalSnapshot,
         flush: scheduleDrain,
         getCanonicalConfig: () => (canonicalReady ? (pendingReplace ?? canonicalConfig) : null),
         getState: () => state,
@@ -297,9 +310,28 @@ const repository = createModelConfigRepository({
     write: (config, expectedRevision) => saveLocalModelConfig(omitManagedBeefTVSecrets(config), expectedRevision),
 });
 
+let externalModelConfigUpdateDepth = 0;
+
+export function isApplyingExternalModelConfig() {
+    return externalModelConfigUpdateDepth > 0;
+}
+
+export function withoutModelConfigAutosave<T>(run: () => T): T {
+    externalModelConfigUpdateDepth += 1;
+    try {
+        return run();
+    } finally {
+        externalModelConfigUpdateDepth -= 1;
+    }
+}
+
 export const hydrateModelConfig = repository.hydrate;
-export const commitModelConfig = repository.commit;
+export function commitModelConfig(config: AiConfig): Promise<void> {
+    if (externalModelConfigUpdateDepth > 0) return Promise.resolve();
+    return repository.commit(config);
+}
 export const mutateModelConfig = repository.mutate;
+export const acceptExternalModelConfig = repository.acceptExternalSnapshot;
 export const getCanonicalModelConfig = repository.getCanonicalConfig;
 export const flushModelConfig = repository.flush;
 export const getModelConfigPersistenceState = repository.getState;
