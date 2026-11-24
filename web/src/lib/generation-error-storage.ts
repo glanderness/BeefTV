@@ -27,6 +27,18 @@ export const REFERENCE_PREPARATION_COPY: Record<string, CategoryCopy> = {
     reference_preupload_failed: { reason: "参考素材上传失败，本次尚未开始生成", action: "请检查网络或稍后重试" },
 };
 
+export const SAFE_STORAGE_REJECTION_CODES = [
+    "AccessDenied",
+    "SignatureDoesNotMatch",
+    "InvalidAccessKeyId",
+    "NoSuchBucket",
+    "InvalidBucketName",
+    "RequestTimeTooSkewed",
+    "AuthorizationHeaderMalformed",
+    "PermanentRedirect",
+] as const;
+
+const SAFE_STORAGE_REJECTION_CODE_PATTERN = new RegExp(`\\b(${SAFE_STORAGE_REJECTION_CODES.join("|")})\\b`, "i");
 const SAFE_STORAGE_REJECTION_REASON_PATTERN = /^.+?（HTTP ([345]\d{2})(?:，([A-Za-z]+))?），本次尚未开始生成$/;
 
 // Mirrors backend/internal/referencestorage.SafeStorageRejectionCopy so persisted
@@ -148,7 +160,8 @@ export function resourceStorageFailureMessage(rawValue: string) {
             return "参考素材已上传，但公网地址无法读取，请检查对象存储公开读取权限后重试。";
         }
         const httpStatus = value.match(/(?:HTTP\s*|status(?:\s*code)?\s*[:=]?\s*)([345]\d{2})\b/i)?.[1];
-        const codeMatch = value.match(/\b(AccessDenied|SignatureDoesNotMatch|InvalidAccessKeyId|NoSuchBucket|InvalidBucketName|RequestTimeTooSkewed|AuthorizationHeaderMalformed|PermanentRedirect)\b/i)?.[1];
+        const rawCodeMatch = value.match(SAFE_STORAGE_REJECTION_CODE_PATTERN)?.[1];
+        const codeMatch = rawCodeMatch ? SAFE_STORAGE_REJECTION_CODES.find((item) => item.toLowerCase() === rawCodeMatch.toLowerCase()) : undefined;
         const isStorageUploadRejected = /(?:对象存储(?:拒绝上传|签名校验失败|密钥无效|区域或端点不匹配|请求签名失败)|找不到指定的对象存储桶|参考素材上传被拒绝)/.test(value);
         if (codeMatch || isStorageUploadRejected || /\b403\s+Forbidden\b/i.test(value) || httpStatus === "403") {
             const statusLabel = httpStatus || (codeMatch === "NoSuchBucket" ? "404" : codeMatch === "InvalidBucketName" || codeMatch === "AuthorizationHeaderMalformed" ? "400" : codeMatch === "PermanentRedirect" ? "301" : "403");

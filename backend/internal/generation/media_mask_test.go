@@ -120,8 +120,52 @@ func TestMaskPolicyDoesNotExpandOtherProtocolSupport(t *testing.T) {
 	}
 }
 
+func TestHydrateMediaMaskPreparationErrorsPreserveCategory(t *testing.T) {
+	notReadyCtx := WithRuntime(context.Background(), Runtime{
+		Resources: &maskResourcesFixture{status: "pending"},
+	})
+	notReadyInput := Input{
+		Mode:   "image",
+		Config: Config{InterfaceType: "openai-image"},
+		Mask:   &Media{StorageKey: "resource:mask"},
+	}
+	err := HydrateMedia(notReadyCtx, "owner", &notReadyInput, MediaHydrationPolicyFor(notReadyCtx, notReadyInput))
+	if err == nil {
+		t.Fatal("expected mask not-ready error")
+	}
+	classified := ClassifyError(err)
+	if classified.Category != CategoryInputInaccessible || classified.Uncertain || classified.Retryable {
+		t.Fatalf("mask not-ready lost authored category: %#v", classified)
+	}
+	if !strings.Contains(classified.Reason, "尚未上传完成") {
+		t.Fatalf("mask not-ready lost authored reason: %#v", classified)
+	}
+
+	tooLargeCtx := WithRuntime(context.Background(), Runtime{
+		Resources: &maskResourcesFixture{},
+		Limits:    configurableBudget{limit: 4},
+	})
+	tooLargeInput := Input{
+		Mode:   "image",
+		Config: Config{InterfaceType: "openai-image"},
+		Mask:   &Media{StorageKey: "resource:mask"},
+	}
+	sizeErr := HydrateMedia(tooLargeCtx, "owner", &tooLargeInput, MediaHydrationPolicyFor(tooLargeCtx, tooLargeInput))
+	if sizeErr == nil {
+		t.Fatal("expected mask resource-limit error")
+	}
+	sizeClassified := ClassifyError(sizeErr)
+	if sizeClassified.Category != CategoryInputTooLarge || sizeClassified.Uncertain || sizeClassified.Retryable {
+		t.Fatalf("mask too-large lost authored category: %#v", sizeClassified)
+	}
+	if !strings.Contains(sizeClassified.Reason, "任务参考资源超过") {
+		t.Fatalf("mask too-large lost authored reason: %#v", sizeClassified)
+	}
+}
+
 type maskResourcesFixture struct {
 	hosted     bool
+	status     string
 	opens      []string
 	publicURLs int
 }
@@ -131,7 +175,11 @@ func (p *maskResourcesFixture) Lookup(_, id string) (ResourceInfo, error) {
 	if p.hosted {
 		provider = "cos"
 	}
-	return ResourceInfo{ID: id, Status: "ready", MimeType: "image/png", Provider: provider}, nil
+	status := p.status
+	if status == "" {
+		status = "ready"
+	}
+	return ResourceInfo{ID: id, Status: status, MimeType: "image/png", Provider: provider}, nil
 }
 func (p *maskResourcesFixture) Open(userID, id string) (ResourceInfo, io.ReadCloser, error) {
 	p.opens = append(p.opens, id)

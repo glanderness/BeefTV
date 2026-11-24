@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -185,49 +187,44 @@ func (e UploadRejectionError) SafeStorageFailure() (string, string) {
 	return e.Reason + "，本次尚未开始生成", e.Action
 }
 
+//go:embed safe_storage_errors.json
+var safeStorageErrorsJSON []byte
+
+type safeStorageErrorCopySpec struct {
+	Reason string `json:"reason"`
+	Action string `json:"action"`
+}
+
+type safeStorageErrorCatalog struct {
+	Codes           map[string]safeStorageErrorCopySpec `json:"codes"`
+	Fallback403     safeStorageErrorCopySpec            `json:"fallback403"`
+	FallbackDefault safeStorageErrorCopySpec            `json:"fallbackDefault"`
+}
+
 var (
 	safeStorageReasonPattern = regexp.MustCompile(`^.+?（HTTP ([345]\d{2})(?:，([A-Za-z]+))?），本次尚未开始生成$`)
-	allowlistedS3ErrorCodes  = map[string]struct{}{
-		"AccessDenied":                 {},
-		"SignatureDoesNotMatch":        {},
-		"InvalidAccessKeyId":           {},
-		"NoSuchBucket":                 {},
-		"InvalidBucketName":            {},
-		"RequestTimeTooSkewed":         {},
-		"AuthorizationHeaderMalformed": {},
-		"PermanentRedirect":            {},
-	}
+	safeStorageCatalog       = mustLoadSafeStorageErrorCatalog()
 )
+
+func mustLoadSafeStorageErrorCatalog() safeStorageErrorCatalog {
+	var catalog safeStorageErrorCatalog
+	if err := json.Unmarshal(safeStorageErrorsJSON, &catalog); err != nil {
+		panic("invalid safe_storage_errors.json: " + err.Error())
+	}
+	return catalog
+}
 
 // SafeStorageRejectionCopy builds the canonical application-owned reason and
 // action for an allowlisted S3/COS rejection status and code.
 func SafeStorageRejectionCopy(statusCode int, code string) (string, string) {
-	switch code {
-	case "AccessDenied":
-		return fmt.Sprintf("对象存储拒绝上传（HTTP %d，AccessDenied）", statusCode),
-			"请检查存储桶访问权限（推荐公有读私有写）以及子账号/CAM 是否具备写入与删除权限"
-	case "SignatureDoesNotMatch":
-		return fmt.Sprintf("对象存储签名校验失败（HTTP %d，SignatureDoesNotMatch）", statusCode),
-			"请检查 Secret Access Key、区域代码（如 ap-guangzhou / auto）及本机系统时间后重试"
-	case "InvalidAccessKeyId":
-		return fmt.Sprintf("对象存储密钥无效（HTTP %d，InvalidAccessKeyId）", statusCode),
-			"请检查 Access Key ID（腾讯云 COS 为 SecretId）后重试"
-	case "NoSuchBucket", "InvalidBucketName":
-		return fmt.Sprintf("找不到指定的对象存储桶（HTTP %d，%s）", statusCode, code),
-			"请检查存储桶名称（腾讯云 COS 须含 -APPID 后缀）与区域端点是否一致后重试"
-	case "RequestTimeTooSkewed":
-		return fmt.Sprintf("对象存储拒绝上传（HTTP %d，RequestTimeTooSkewed）", statusCode),
-			"请校准本机系统时间后重试"
-	case "AuthorizationHeaderMalformed", "PermanentRedirect":
-		return fmt.Sprintf("对象存储区域或端点不匹配（HTTP %d，%s）", statusCode, code),
-			"请核对 S3 端点与区域代码是否一致后重试"
+	statusText := strconv.Itoa(statusCode)
+	if entry, ok := safeStorageCatalog.Codes[code]; ok {
+		return strings.ReplaceAll(entry.Reason, "{status}", statusText), entry.Action
 	}
 	if statusCode == http.StatusForbidden {
-		return "对象存储拒绝上传（HTTP 403）",
-			"请检查访问密钥、存储桶名称（腾讯云 COS 须含 -APPID）、区域及存储桶/子账号写入权限"
+		return safeStorageCatalog.Fallback403.Reason, safeStorageCatalog.Fallback403.Action
 	}
-	return fmt.Sprintf("对象存储拒绝上传（HTTP %d）", statusCode),
-		"请检查对象存储端点、区域、访问密钥与存储桶权限后重试"
+	return strings.ReplaceAll(safeStorageCatalog.FallbackDefault.Reason, "{status}", statusText), safeStorageCatalog.FallbackDefault.Action
 }
 
 // MatchSafeStorageFailure reports whether reason and action exactly match an
@@ -243,7 +240,7 @@ func MatchSafeStorageFailure(reason, action string) (int, string, bool) {
 	}
 	code := m[2]
 	if code != "" {
-		if _, ok := allowlistedS3ErrorCodes[code]; !ok {
+		if _, ok := safeStorageCatalog.Codes[code]; !ok {
 			return 0, "", false
 		}
 	}
@@ -280,7 +277,7 @@ func parseSafeS3ErrorCode(body io.Reader) string {
 		return ""
 	}
 	code := strings.TrimSpace(payload.Code)
-	if _, ok := allowlistedS3ErrorCodes[code]; ok {
+	if _, ok := safeStorageCatalog.Codes[code]; ok {
 		return code
 	}
 	return ""

@@ -1,7 +1,9 @@
 import referenceVideoErrors from "./fixtures/reference-video-errors.json";
+import safeStorageErrorsContract from "../../backend/internal/referencestorage/safe_storage_errors.json";
 import { describe, expect, test } from "bun:test";
 import { ApiError } from "../src/services/api/request";
 import { redactLocalPaths } from "../src/lib/local-path-redaction";
+import { matchOwnedStorageRejectionCopy, SAFE_STORAGE_REJECTION_CODES, safeStorageRejectionCopy } from "../src/lib/generation-error-storage";
 
 test("reference transport admission identifies blocked inputs and survives persisted display", () => {
     const message = "当前渠道需要在线素材链接：参考图片 2、参考视频 1无法直接读取。请替换为可访问的 HTTPS 链接，或切换支持本地素材的渠道";
@@ -916,4 +918,28 @@ test("explains all allowlisted COS/S3 rejection codes intact across structured a
     expect(leakedColon.message).not.toContain("AKIAIOSFODNN7EXAMPLE");
     const leakedEquals = explainGenerationError({ code: "provider_unavailable", message: "InvalidAccessKeyId=AKIAIOSFODNN7EXAMPLE" });
     expect(leakedEquals.message).not.toContain("AKIAIOSFODNN7EXAMPLE");
+});
+
+test("TS safe storage rejection allowlist and copy stay in exact parity with Go contract", () => {
+    const goCodes = Object.keys(safeStorageErrorsContract.codes).sort();
+    expect([...SAFE_STORAGE_REJECTION_CODES].sort()).toEqual(goCodes);
+
+    for (const [code, spec] of Object.entries(safeStorageErrorsContract.codes)) {
+        const status = code === "PermanentRedirect" ? "301" : code === "NoSuchBucket" ? "404" : "403";
+        const expectedReason = `${spec.reason.replaceAll("{status}", status)}，本次尚未开始生成`;
+        const tsCopy = safeStorageRejectionCopy(status, code);
+        expect(tsCopy.reason).toBe(expectedReason);
+        expect(tsCopy.action).toBe(spec.action);
+        expect(matchOwnedStorageRejectionCopy(expectedReason, spec.action)).toEqual(tsCopy);
+    }
+
+    const fallback403 = safeStorageRejectionCopy("403", "");
+    expect(fallback403.reason).toBe(`${safeStorageErrorsContract.fallback403.reason}，本次尚未开始生成`);
+    expect(fallback403.action).toBe(safeStorageErrorsContract.fallback403.action);
+    expect(matchOwnedStorageRejectionCopy(fallback403.reason, fallback403.action)).toEqual(fallback403);
+
+    const fallback500 = safeStorageRejectionCopy("500", "");
+    expect(fallback500.reason).toBe(`${safeStorageErrorsContract.fallbackDefault.reason.replaceAll("{status}", "500")}，本次尚未开始生成`);
+    expect(fallback500.action).toBe(safeStorageErrorsContract.fallbackDefault.action);
+    expect(matchOwnedStorageRejectionCopy(fallback500.reason, fallback500.action)).toEqual(fallback500);
 });

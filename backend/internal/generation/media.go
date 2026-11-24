@@ -67,7 +67,7 @@ func HydrateOne(ctx context.Context, userID string, media *Media, policy MediaHy
 		return fmt.Errorf("读取任务参考资源失败：%w", err)
 	}
 	if resource.Status != "ready" {
-		return resourceNotReadyError()
+		return RequestPreparationError{Cause: resourceNotReadyError()}
 	}
 	if runtime.Resources.LocalMode() && resource.UsesObjectStorage() {
 		return RequestPreparationError{Cause: PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地工作区检测到旧的远程素材记录", Action: "请重新导入到本地资源目录后重试"}}
@@ -140,7 +140,7 @@ func HydrateOne(ctx context.Context, userID string, media *Media, policy MediaHy
 		return err
 	}
 	if int64(len(data)) > resourceLimit {
-		return PreparationUserError{Category: CategoryInputTooLarge, Reason: fmt.Sprintf("任务参考资源超过 %s", formatStorageLimit(resourceLimit)), Action: "请压缩素材或调高资源上限后重试"}
+		return RequestPreparationError{Cause: PreparationUserError{Category: CategoryInputTooLarge, Reason: fmt.Sprintf("任务参考资源超过 %s", formatStorageLimit(resourceLimit)), Action: "请压缩素材或调高资源上限后重试"}}
 	}
 	mimeType := NormalizedMediaMIMEType(firstNonEmpty(media.MimeType, resource.MimeType), data)
 	media.DataURL = DataURL(mimeType, data)
