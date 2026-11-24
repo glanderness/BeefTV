@@ -3,8 +3,17 @@ import { readFileSync } from "node:fs";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-const source = read("src/services/api/agent-assistant.ts");
-const hook = read("src/pages/canvas/use-canvas-assistant.ts");
+const source = [
+    read("src/services/api/agent-assistant.ts"),
+    read("src/services/api/agent-assistant-types.ts"),
+    read("src/services/api/agent-assistant-session.ts"),
+    read("src/services/api/agent-assistant-stream.ts"),
+].join("\n");
+const hook = [
+    read("src/pages/canvas/use-canvas-assistant.ts"),
+    read("src/pages/canvas/use-assistant-host-status.ts"),
+    read("src/pages/canvas/use-assistant-sessions.ts"),
+].join("\n");
 const sidebar = read("src/pages/canvas/canvas-assistant-sidebar.tsx");
 const composer = read("src/pages/canvas/canvas-assistant-composer.tsx");
 const turn = read("src/pages/canvas/canvas-assistant-turn.tsx");

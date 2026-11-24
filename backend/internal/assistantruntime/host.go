@@ -405,8 +405,9 @@ func (h *Host) Stop() error {
 	}
 	_ = h.lockLifecycle(context.Background())
 	defer h.unlockLifecycle()
+	err := h.proc.stop()
 	h.proc.clearFailure()
-	return h.proc.stop()
+	return err
 }
 
 // StopContext 在应用关闭时停止**本 Host 启动的**内置宿主子进程。
@@ -534,6 +535,9 @@ func (h *Host) EnsureAsync(provider assistant.Provider, opsURL, desktopToken str
 	state := h.proc.state()
 	if state.Running {
 		return false, nil
+	}
+	if state.Starting {
+		return true, nil
 	}
 	if state.LastError != nil && state.FailedFingerprint == provider.Fingerprint() && time.Since(state.FailedAt) < asyncStartFailureCooldown {
 		return false, state.LastError
