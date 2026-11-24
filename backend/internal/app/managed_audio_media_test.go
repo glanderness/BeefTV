@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -205,6 +207,9 @@ func TestManagedAudioSupportsOmniReferencesAndOptionalVoice(t *testing.T) {
 	}
 	audioSum := sha256.Sum256(audio)
 	var posts atomic.Int32
+	var mu sync.Mutex
+	uploadedPayloads := make([][]byte, 0, 2)
+	submittedRequests := make([]beeftv.MediaRequest, 0, 3)
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -244,6 +249,13 @@ func TestManagedAudioSupportsOmniReferencesAndOptionalVoice(t *testing.T) {
 		case r.URL.Path == "/v1/media/uploads":
 			_ = json.NewEncoder(w).Encode(beeftv.UploadSession{Ticket: "audio-ref-ticket", UploadURL: server.URL + "/put", UploadMethod: "PUT"})
 		case r.URL.Path == "/put":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+			}
+			mu.Lock()
+			uploadedPayloads = append(uploadedPayloads, body)
+			mu.Unlock()
 			w.WriteHeader(http.StatusOK)
 		case r.URL.Path == "/v1/media/uploads/complete":
 			_ = json.NewEncoder(w).Encode(beeftv.UploadedMedia{URL: server.URL + "/uploaded-ref.mp3", Kind: "audio", Mime: "audio/mpeg", Bytes: int64(len(audio)), SHA256: hex.EncodeToString(audioSum[:])})
@@ -259,9 +271,9 @@ func TestManagedAudioSupportsOmniReferencesAndOptionalVoice(t *testing.T) {
 			if request.Options["instructions"] != "温柔甜美少女音" || request.Options["pitch"] != float64(2) || request.Options["volume"] != 1.3 {
 				t.Errorf("unexpected options=%#v", request.Options)
 			}
-			if len(request.Input.References) != 1 || (request.Input.References[0].Kind != "image" && request.Input.References[0].Kind != "audio") {
-				t.Errorf("unexpected references=%+v", request.Input.References)
-			}
+			mu.Lock()
+			submittedRequests = append(submittedRequests, request)
+			mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"task_ref":      request.TaskRef,
 				"media_type":    "audio",
@@ -282,16 +294,36 @@ func TestManagedAudioSupportsOmniReferencesAndOptionalVoice(t *testing.T) {
 	path, dir := filepath.Join(t.TempDir(), "workspace.db"), t.TempDir()
 	svc, db := newManagedImageDirectService(t, path, dir)
 	defer closeDB(t, db)
-	for _, tc := range []struct {
-		id     string
-		images []generation.Media
-		audios []generation.Media
+	localAudioKey := "users/user-1/audio/local-ref-audio.mp3"
+	localAudioPath := filepath.Join(svc.dataDir, "resources", filepath.FromSlash(localAudioKey))
+	if err := os.MkdirAll(filepath.Dir(localAudioPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localAudioPath, audio, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	localAudioResource := model.Resource{
+		ID: "local-ref-audio", UserID: "user-1", Kind: "audio", Provider: "local",
+		ObjectKey: localAudioKey, MimeType: "audio/mpeg", Status: model.ResourceStatusReady,
+		Size: int64(len(audio)), DurationMs: 12000,
+	}
+	if err := svc.repo.CreateResource(&localAudioResource); err != nil {
+		t.Fatal(err)
+	}
+	for index, tc := range []struct {
+		id           string
+		expectedKind string
+		expectedURL  string
+		expectLocal  bool
+		images       []generation.Media
+		audios       []generation.Media
 	}{
-		{id: "audio-omni-image", images: []generation.Media{{URL: server.URL + "/ref.png"}}},
-		{id: "audio-omni-audio", audios: []generation.Media{{URL: server.URL + "/ref.mp3"}}},
+		{id: "audio-omni-image", expectedKind: "image", expectedURL: server.URL + "/ref.png", images: []generation.Media{{URL: server.URL + "/ref.png"}}},
+		{id: "audio-omni-audio", expectedKind: "audio", expectedURL: server.URL + "/uploaded-ref.mp3", audios: []generation.Media{{URL: server.URL + "/ref.mp3"}}},
+		{id: "audio-omni-local-resource", expectedKind: "audio", expectedURL: server.URL + "/uploaded-ref.mp3", expectLocal: true, audios: []generation.Media{{StorageKey: "resource:local-ref-audio"}}},
 	} {
 		input := generation.Input{
-			Mode: "audio", Prompt: "@图片1 你好世界", ReferenceImages: tc.images, ReferenceAudios: tc.audios,
+			Mode: "audio", Prompt: "@音频1 你好世界", ReferenceImages: tc.images, ReferenceAudios: tc.audios,
 			Config: generation.Config{
 				CredentialRef: beeftv.CredentialRef, MediaProtocolVersion: beeftv.MediaProtocolVersion,
 				APIKey: "fixture", BaseURL: server.URL, Model: "seed-audio-1.0",
@@ -310,11 +342,31 @@ func TestManagedAudioSupportsOmniReferencesAndOptionalVoice(t *testing.T) {
 		ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefTVVideoBaseURL: server.URL})
 		ctx = svc.bindGenerationRuntime(ctx, generation.CallMeta{UserID: task.UserID, TaskID: task.ID, TaskType: task.Type})
 		ctx = context.WithValue(withProviderSubmissionKey(ctx, attempt), imageTaskContext{}, task)
+		if tc.expectLocal {
+			// 托管音频应保持本地文件路径直传，不把整段音轨转成 base64 data URL 缓存在内存中。
+			hydrated := input
+			hydrated.ReferenceAudios = append([]generation.Media(nil), input.ReferenceAudios...)
+			if err := generation.HydrateMedia(ctx, task.UserID, &hydrated, generation.MediaHydrationPolicyFor(ctx, hydrated)); err != nil {
+				t.Fatalf("case=%s hydrate err=%v", tc.id, err)
+			}
+			if hydrated.ReferenceAudios[0].StorageKey != "resource:local-ref-audio" || hydrated.ReferenceAudios[0].DataURL != "" || hydrated.ReferenceAudios[0].URL != "" || hydrated.ReferenceAudios[0].Bytes != int64(len(audio)) {
+				t.Fatalf("case=%s expected local resource streaming without data URL, got %+v", tc.id, hydrated.ReferenceAudios[0])
+			}
+		}
 		if result, err := generation.Execute(ctx, input); err != nil || result["mode"] != "audio" {
 			t.Fatalf("case=%s result=%#v err=%v", tc.id, result, err)
 		}
+		mu.Lock()
+		req := submittedRequests[index]
+		mu.Unlock()
+		if len(req.Input.References) != 1 || req.Input.References[0].Kind != tc.expectedKind || req.Input.References[0].URL != tc.expectedURL {
+			t.Fatalf("case=%s expected reference kind=%q url=%q, got %+v", tc.id, tc.expectedKind, tc.expectedURL, req.Input.References)
+		}
 	}
-	if posts.Load() != 2 {
-		t.Fatalf("expected 2 posts, got %d", posts.Load())
+	if posts.Load() != 3 {
+		t.Fatalf("expected 3 posts, got %d", posts.Load())
+	}
+	if len(uploadedPayloads) != 2 || !bytes.Equal(uploadedPayloads[0], audio) || !bytes.Equal(uploadedPayloads[1], audio) {
+		t.Fatalf("expected 2 uploaded audio payloads matching fixture bytes, got count=%d", len(uploadedPayloads))
 	}
 }

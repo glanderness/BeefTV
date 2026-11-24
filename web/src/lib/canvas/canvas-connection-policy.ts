@@ -1,4 +1,4 @@
-import { maxModelInputCapacity, type ModelInputSummary } from "@/lib/model-selection";
+import { audioModelsSupportReferenceKind, maxModelInputCapacity, type ModelInputSummary } from "@/lib/model-selection";
 import { isCanvasMediaNode } from "@/lib/canvas/canvas-node-semantics";
 import { canNodeAcceptInputConnection, getNodeAcceptedInputKinds, getNodeGenerationMode, getNodeInputKind, getNodeMaxInputCount } from "@/lib/canvas/node-registry";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -72,8 +72,13 @@ export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[],
         return options.ignoreCapacity ? "" : capacityError(config, mode, "image", visualInputCount, "参考图") || capacityError(config, mode, "video", input.videoCount, "参考视频") || capacityError(config, mode, "audio", input.audioCount, "参考音频");
     }
     if (mode === "text" && input.audioCount > 0) return "文本生成节点不能连接参考音频";
-    if (mode === "audio" && input.characterCount > 1) return "角色配音一次只能连接一个角色卡";
-    if (mode === "audio" && (input.imageCount > 0 || input.videoCount > 0 || input.audioCount > 0)) return "音频生成节点只接受文本或单个角色卡输入";
+    if (mode === "audio") {
+        if (input.videoCount > 0) return "音频生成节点不能连接参考视频";
+        if (input.characterCount > 1) return "角色配音一次只能连接一个角色卡";
+        if (input.imageCount > 0 && !audioModelsSupportReferenceKind(config, "image")) return "已配置音频模型均不支持参考图";
+        if (input.audioCount > 0 && !audioModelsSupportReferenceKind(config, "audio")) return "已配置音频模型均不支持参考音频";
+        return "";
+    }
     return "";
 }
 

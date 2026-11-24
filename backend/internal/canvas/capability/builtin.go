@@ -63,7 +63,7 @@ func newBuiltinRegistry() *Registry {
 			CreateMetadata: func(string) map[string]any { return map[string]any{"status": "idle"} },
 		},
 		generatedMediaDescriptor("audio", "3", "音频", 340, 120, "audio", ConnectionPolicy{
-			CanSource: true, CanTarget: true, CanReference: true, MaxInputCount: 1, AcceptedInputKinds: []string{"text"},
+			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "audio"},
 		}),
 		{
 			Type: "frame", Version: "1", Label: "背板", DefaultWidth: 760, DefaultHeight: 520,
@@ -192,10 +192,10 @@ func generatedMediaSemantics(nodeType string) generatedMediaCapabilitySemantics 
 		}
 	case "audio":
 		return generatedMediaCapabilitySemantics{
-			Purpose:     "生成或承载一个音频素材，用于配音、音乐、音效或视频参考输入。",
-			GoodFor:     []string{"文本转语音", "配音", "音乐或音效素材", "为视频提供音频参考"},
+			Purpose:     "生成或承载一个音频素材，用于配音、音色克隆、音乐、音效或视频参考输入。",
+			GoodFor:     []string{"文本转语音", "参考音频克隆配音", "参考图生音色", "音乐或音效素材", "为视频提供音频参考"},
 			NotIdealFor: []string{"承载分镜结构", "表达画面构图或镜头运动", "代替视频节点"},
-			Tradeoffs:   []string{"一个节点对应一个音频目标且最多接收一个文本输入", "音频类型、时长和价格仍以模型目录及任务准入为准"},
+			Tradeoffs:   []string{"一个节点对应一个音频目标，可连接文本以及受模型目录支持的参考音频或参考图", "音频类型、参考支持、时长和价格仍以模型目录及任务准入为准"},
 			Actions:     []string{"generate_media", "update_prompt", "use_as_reference"},
 		}
 	default:

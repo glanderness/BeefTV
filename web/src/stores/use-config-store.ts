@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { isDedicatedMediaToolCapability, type MediaCapabilities } from "@/lib/media-capabilities";
+import { isDedicatedMediaToolCapability, sanitizeMediaCapabilities, type MediaCapabilities } from "@/lib/media-capabilities";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
@@ -656,7 +656,14 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         concurrencyLimit: typeof channel?.concurrencyLimit === "number" ? channel.concurrencyLimit : undefined,
         hasApiKey: channel?.hasApiKey,
         hasSecretKey: channel?.hasSecretKey,
-        modelProfiles: channel?.modelProfiles?.map((item) => ({ ...item, protocol: normalizeModelProtocol(item.protocol) })),
+        modelProfiles: channel?.modelProfiles?.map((item) => {
+            const mediaCapabilities = item.mediaCapabilities !== undefined ? sanitizeMediaCapabilities(item.mediaCapabilities) : undefined;
+            return {
+                ...item,
+                protocol: normalizeModelProtocol(item.protocol),
+                ...(item.mediaCapabilities !== undefined ? { mediaCapabilities } : {}),
+            };
+        }),
     };
 }
 
