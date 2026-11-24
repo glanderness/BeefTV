@@ -7,6 +7,33 @@ import crypto from 'node:crypto';
 const safe = value => typeof value === 'string' && /^[A-Za-z0-9_-][A-Za-z0-9._:@-]{0,159}$/.test(value)
   && !/secret|token|password|bearer|api.?key|sk-|:\/\//i.test(value) ? value : undefined;
 
+const OUTCOME_STATUSES = new Set(['ok', 'error']);
+export const MODEL_OUTCOME_REASONS = Object.freeze(
+  JSON.parse(fs.readFileSync(new URL('./model-outcome-reasons.json', import.meta.url), 'utf8')),
+);
+const OUTCOME_REASONS = new Set(MODEL_OUTCOME_REASONS);
+
+export function classifyModelHttpStatus(status) {
+  const code = Number(status);
+  if (!Number.isInteger(code) || code < 100 || code > 599) return 'model_error';
+  if (code >= 200 && code < 300) return 'http_200';
+  const exact = `http_${code}`;
+  if (OUTCOME_REASONS.has(exact)) return exact;
+  if (code >= 400 && code < 500) return 'http_4xx';
+  if (code >= 500) return 'http_5xx';
+  return 'model_error';
+}
+
+export function classifyModelFetchError(error) {
+  const name = String(error?.name || '');
+  const message = [error?.message || error || '', error?.cause?.message || ''].filter(Boolean).join(' ');
+  if (name === 'AbortError' || /\baborted\b/i.test(message)) return 'aborted';
+  if (/idle timeout/i.test(message)) return 'stream_idle_timeout';
+  if (/unexpected\s+eof|ended before|ended without|other side closed|premature close|\bterminated\b|socket/i.test(message)) return 'network_eof';
+  if (/fetch failed|ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|reset|tls|ssl/i.test(message)) return 'network_error';
+  return 'model_error';
+}
+
 export function createDispatchDiagnostics(file, launchId, { maxBytes = 1024 * 1024, segments = 4, maxAgeMs = 48 * 3600000 } = {}) {
   let writeErrors = 0;
   const record = entry => {
@@ -19,7 +46,12 @@ export function createDispatchDiagnostics(file, launchId, { maxBytes = 1024 * 10
       }
       const value = { id: crypto.randomUUID(), launchId: safe(launchId), at: new Date().toISOString(),
         turnId: safe(entry.turnId), canvasId: safe(entry.canvasId), sessionId: safe(entry.sessionId),
-        requestId: safe(entry.requestId), model: safe(entry.model), dispatchIndex: Number.isSafeInteger(entry.dispatchIndex) ? entry.dispatchIndex : undefined };
+        requestId: safe(entry.requestId), model: safe(entry.model),
+        dispatchIndex: Number.isSafeInteger(entry.dispatchIndex) ? entry.dispatchIndex : undefined,
+        status: OUTCOME_STATUSES.has(entry.status) ? entry.status : undefined,
+        reason: OUTCOME_REASONS.has(entry.reason) ? entry.reason : undefined,
+        httpStatus: Number.isInteger(entry.httpStatus) && entry.httpStatus >= 100 && entry.httpStatus <= 599 ? entry.httpStatus : undefined,
+        durationMs: Number.isSafeInteger(entry.durationMs) && entry.durationMs >= 0 ? entry.durationMs : undefined };
       const line = JSON.stringify(value) + '\n';
       let size = 0;
       try { size = fs.statSync(file).size; } catch (error) { if (error.code !== 'ENOENT') throw error; }

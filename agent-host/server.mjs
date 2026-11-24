@@ -21,7 +21,7 @@ import { adaptMediaRequest, attachmentContent, trustedMediaSources, mediaCapabil
 import {nativeSourceKey} from './native-history.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
 import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
-import { createDispatchDiagnostics } from './dispatch-diagnostics.mjs';
+import { classifyModelFetchError, classifyModelHttpStatus, createDispatchDiagnostics } from './dispatch-diagnostics.mjs';
 import { createPluginPackageController } from './plugin-packages.mjs';
 
 // SDK imports install npm undici's direct dispatcher. Restore Node's public env
@@ -97,6 +97,7 @@ async function initializeModel() {
 const outbound = [];
 const ledgerPath = path.join(DATA_DIR, 'agent-requests.jsonl');
 const dispatchDiagnostics = createDispatchDiagnostics(ledgerPath, RUN_ID);
+const outcomeDiagnostics = createDispatchDiagnostics(path.join(DATA_DIR, 'agent-model-outcomes.jsonl'), RUN_ID);
 let dispatched = 0;
 
 const lifetimeBudgetPath = path.join(DATA_DIR, 'agent-request-budget.json');
@@ -169,8 +170,21 @@ globalThis.fetch = async (input, options = {}) => {
     outbound.push(entry);
     if (outbound.length > 200) outbound.shift();
     dispatchDiagnostics.record(entry);
+    const startedAt = Date.now();
+    return await fetchModelWithProgressIdle(input, options, {
+      fetch: realFetch,
+      onSettled: ({ ok, httpStatus, error }) => {
+        outcomeDiagnostics.record({
+          ...entry,
+          status: ok ? 'ok' : 'error',
+          ...(httpStatus ? { httpStatus } : {}),
+          reason: error ? classifyModelFetchError(error) : classifyModelHttpStatus(httpStatus),
+          durationMs: Date.now() - startedAt,
+        });
+      },
+    });
   }
-  return isModelCall ? fetchModelWithProgressIdle(input, options, {fetch: realFetch}) : realFetch(input, options);
+  return realFetch(input, options);
 };
 
 const ops = createOperationBridge({

@@ -337,8 +337,13 @@ test('media discovery preserves descriptions, required versions and modes in mod
       expect(tool.parameters.properties.mode.description).toContain('不能判断连续运动或声音');
       expect(tool.parameters.properties.mode.enum).toEqual(['frames', 'video', 'audio']);
       expect(tool.parameters.properties.expectedVersion).toEqual(original.params.properties.expectedVersion);
-      expect(tool.parameters.properties.expectedVersion.minLength).toBe(1);
-      expect(tool.parameters.required.includes('expectedVersion')).toBe(tool.label !== 'media.overview');
+      if (tool.label === 'media.overview') {
+        expect(tool.parameters.properties.expectedVersion).toBeUndefined();
+        expect(tool.parameters.required.includes('expectedVersion')).toBe(false);
+      } else {
+        expect(tool.parameters.properties.expectedVersion.minLength).toBe(1);
+        expect(tool.parameters.required.includes('expectedVersion')).toBe(true);
+      }
       expect(tool.parameters.properties.canvasId).toBeUndefined();
     }
     expect(tools.find(tool => tool.name === 'media_inspect').description).toContain('15 秒');

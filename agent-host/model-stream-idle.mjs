@@ -68,18 +68,35 @@ function meaningful(protocol, data) {
   return text(event.delta?.text) || text(event.delta?.thinking) || text(event.delta?.signature) || text(event.delta?.partial_json);
 }
 
+function isTerminalEvent(protocol, data) {
+  if (data === '[DONE]') return true;
+  let event; try { event = JSON.parse(data); } catch { return false; }
+  if (!event || typeof event !== 'object') return false;
+  if (protocol === 'completions') return (Array.isArray(event.choices) ? event.choices : []).some(choice => Boolean(choice && typeof choice === 'object' && choice.finish_reason));
+  if (protocol === 'responses') return ['response.completed', 'response.failed', 'response.incomplete'].includes(event.type);
+  if (protocol === 'gemini') return (Array.isArray(event.candidates) ? event.candidates : []).some(candidate => Boolean(candidate && typeof candidate === 'object' && candidate.finishReason));
+  return event.type === 'message_stop' || (event.type === 'message_delta' && Boolean(event.delta?.stop_reason));
+}
+
 // Observe complete SSE records, forwarding the original bytes unchanged. A
 // malformed or oversized record cannot keep the stream alive indefinitely.
-function observer(protocol, progress) {
+function observer(protocol, progress, onTerminal) {
   const decoder = new TextDecoder(); let line = '', data = [], bytes = 0, oversized = false, previousCR = false;
+  const dispatch = () => {
+    if (!oversized && data.length) {
+      const payload = data.join('\n');
+      if (meaningful(protocol, payload)) progress();
+      if (isTerminalEvent(protocol, payload)) onTerminal();
+    }
+    data = []; bytes = 0; oversized = false;
+  };
   const finishLine = () => {
     if (line === '') {
-      if (!oversized && meaningful(protocol, data.join('\n'))) progress();
-      data = []; bytes = 0; oversized = false;
+      dispatch();
     } else if (!oversized && line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
     line = '';
   };
-  return chunk => {
+  const push = chunk => {
     for (const char of decoder.decode(chunk, {stream: true})) {
       if (char === '\n' && previousCR) { previousCR = false; continue; }
       previousCR = char === '\r';
@@ -88,11 +105,78 @@ function observer(protocol, progress) {
       else if (!oversized) line += char;
     }
   };
+  push.flush = () => {
+    for (const char of decoder.decode()) {
+      if (char === '\r' || char === '\n') finishLine();
+      else if (!oversized && ++bytes <= 1024 * 1024) line += char;
+    }
+    if (line !== '') finishLine();
+    if (data.length) dispatch();
+  };
+  return push;
 }
 
-export async function fetchModelWithProgressIdle(input, options = {}, {fetch: transport = globalThis.fetch, timeoutMs = DEFAULT_MODEL_STREAM_IDLE_MS} = {}) {
+function observeNonStreamResponse(response, settle, caller) {
+  if (!response.ok || !response.body) {
+    settle({ ok: response.ok, httpStatus: response.status });
+    return response;
+  }
+  const reader = response.body.getReader();
+  let finished = false;
+  const body = new ReadableStream({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (finished) return;
+        if (next.done) {
+          finished = true;
+          settle({ ok: true, httpStatus: response.status });
+          controller.close();
+          return;
+        }
+        controller.enqueue(next.value);
+      } catch (error) {
+        if (finished) return;
+        finished = true;
+        settle({ ok: false, httpStatus: response.status, error });
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      if (finished) return;
+      finished = true;
+      if (caller?.aborted) {
+        settle({ ok: false, httpStatus: response.status, error: caller.reason || new DOMException('Aborted', 'AbortError') });
+      } else if (reason instanceof Error) {
+        settle({ ok: false, httpStatus: response.status, error: reason });
+      } else {
+        settle({ ok: true, httpStatus: response.status });
+      }
+      return reader.cancel(reason).catch(() => {});
+    },
+  });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+export async function fetchModelWithProgressIdle(input, options = {}, {fetch: transport = globalThis.fetch, timeoutMs = DEFAULT_MODEL_STREAM_IDLE_MS, onSettled} = {}) {
+  let settled = false;
+  const settle = info => {
+    if (settled) return;
+    settled = true;
+    try { onSettled?.(info); } catch { /* Diagnostic hooks must never interrupt model transport. */ }
+  };
+  const signals = [options.signal, input instanceof Request ? input.signal : null].filter(Boolean);
+  const caller = signals.length ? AbortSignal.any(signals) : null;
   const protocol = protocolFor(input, options);
-  if (!protocol) return transport(input, options);
+  if (!protocol) {
+    try {
+      const response = await transport(input, options);
+      return onSettled ? observeNonStreamResponse(response, settle, caller) : response;
+    } catch (error) {
+      settle({ ok: false, error });
+      throw error;
+    }
+  }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid model stream idle timeout');
   if (protocol === 'anthropic' && typeof options.body === 'string' && options.body.includes('"tools"')) {
     const beta = 'fine-grained-tool-streaming-2025-05-14';
@@ -110,15 +194,23 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
     }
   }
   const local = new AbortController();
-  const signals = [options.signal, input instanceof Request ? input.signal : null].filter(Boolean);
-  const caller = signals.length ? AbortSignal.any(signals) : null;
-  const response = await transport(input, {...options, signal: caller ? AbortSignal.any([caller, local.signal]) : local.signal});
-  if (!response.ok || !response.body || !/^text\/event-stream(?:\s*;|\s*$)/i.test(response.headers.get('content-type') || '')) return response;
-  const reader = response.body.getReader(); let timer, finished = false, controller;
+  let response;
+  try {
+    response = await transport(input, {...options, signal: caller ? AbortSignal.any([caller, local.signal]) : local.signal});
+  } catch (error) {
+    settle({ ok: false, error });
+    throw error;
+  }
+  if (!response.ok || !response.body || !/^text\/event-stream(?:\s*;|\s*$)/i.test(response.headers.get('content-type') || '')) {
+    return onSettled ? observeNonStreamResponse(response, settle, caller) : response;
+  }
+  const reader = response.body.getReader(); let timer, finished = false, sawTerminal = false, controller;
   const cleanup = () => { clearTimeout(timer); caller?.removeEventListener('abort', onAbort); };
   const terminate = error => {
     if (finished) return;
-    finished = true; cleanup(); controller.error(error);
+    finished = true; cleanup();
+    settle({ ok: false, httpStatus: response.status, error });
+    controller.error(error);
     local.abort(error); void reader.cancel(error).catch(() => {});
   };
   const onAbort = () => terminate(caller.reason || new DOMException('Aborted', 'AbortError'));
@@ -127,17 +219,38 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
     timer = setTimeout(() => terminate(new Error(`Model stream idle timeout: no text or tool progress for ${timeoutMs} ms`)), timeoutMs);
     timer.unref?.();
   };
-  const observe = observer(protocol, arm);
+  const observe = observer(protocol, arm, () => { sawTerminal = true; });
   const body = new ReadableStream({
     start(value) { controller = value; caller?.addEventListener('abort', onAbort, {once: true}); if (caller?.aborted) onAbort(); else arm(); },
     async pull() {
       try {
         const next = await reader.read(); if (finished) return;
-        if (next.done) { finished = true; cleanup(); controller.close(); return; }
+        if (next.done) {
+          finished = true; cleanup();
+          observe.flush();
+          if (sawTerminal) {
+            settle({ ok: true, httpStatus: response.status });
+          } else {
+            settle({ ok: false, httpStatus: response.status, error: new Error('Model SSE stream ended before terminal event (unexpected EOF)') });
+          }
+          controller.close();
+          return;
+        }
         observe(next.value); controller.enqueue(next.value);
       } catch (error) { terminate(error); }
     },
-    cancel(reason) { if (finished) return; finished = true; cleanup(); const cancelled = reader.cancel(reason).catch(() => {}); local.abort(reason); return cancelled; },
+    cancel(reason) {
+      if (finished) return;
+      finished = true; cleanup();
+      if (caller?.aborted) {
+        settle({ ok: false, httpStatus: response.status, error: caller.reason || new DOMException('Aborted', 'AbortError') });
+      } else if (reason instanceof Error) {
+        settle({ ok: false, httpStatus: response.status, error: reason });
+      } else {
+        settle({ ok: true, httpStatus: response.status });
+      }
+      const cancelled = reader.cancel(reason).catch(() => {}); local.abort(reason); return cancelled;
+    },
   });
   return new Response(body, {status: response.status, statusText: response.statusText, headers: response.headers});
 }

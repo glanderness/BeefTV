@@ -355,6 +355,56 @@ func RecordAssistantGenerationProposalInTx(tx *gorm.DB, userID, turnID, canvasID
 	return tx.Model(&turn).Update("generation_authorization_json", string(encoded)).Error
 }
 
+// ResolveAssistantProposalTargetsInTx resolves the recorded targets for a turn's proposal when
+// the confirmation request omits inline targets. It prefers the canonical GenerationOrder row so
+// continuation turns (which carry an inherited parent authorization) can confirm new proposals.
+func ResolveAssistantProposalTargetsInTx(tx *gorm.DB, userID, canvasID, turnID, proposalID, rawAuthJSON string) ([]GenerationTarget, error) {
+	order, err := LookupGenerationOrderInTx(tx, userID, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	if order != nil && order.CanvasID == canvasID && order.SourceTurnID == turnID && len(order.Targets) > 0 {
+		return order.Targets, nil
+	}
+	if rawAuthJSON == "" {
+		return nil, nil
+	}
+	var existing GenerationAuthorization
+	if json.Unmarshal([]byte(rawAuthJSON), &existing) != nil {
+		return nil, nil
+	}
+	// Inherited parent-turn authorizations belong to an earlier turn and must not
+	// be treated as a proposal created by or confirmed on the current turn.
+	if existing.SourceTurnID != "" && existing.SourceTurnID != turnID {
+		return nil, nil
+	}
+	if existing.ProposalID != "" && existing.ProposalID != proposalID {
+		return nil, Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+	}
+	return existing.Targets, nil
+}
+
+// ValidateTurnAuthorizationConflict rejects confirming a different plan on a turn that has
+// already confirmed its own plan, while allowing continuation turns that only carry an
+// inherited parent-turn grant (existing.SourceTurnID != turnID) to confirm a new proposal.
+func ValidateTurnAuthorizationConflict(turnID, rawAuthJSON string, plan GenerationAuthorization) error {
+	if rawAuthJSON == "" {
+		return nil
+	}
+	encoded, _ := json.Marshal(plan)
+	if rawAuthJSON == string(encoded) {
+		return nil
+	}
+	var existing GenerationAuthorization
+	if json.Unmarshal([]byte(rawAuthJSON), &existing) != nil {
+		return Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+	}
+	if existing.SourceTurnID == turnID && !existing.SamePlan(plan) {
+		return Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+	}
+	return nil
+}
+
 func ProductionTargetHash(target GenerationTarget) string {
 	encoded, _ := json.Marshal(NormalizeGenerationTarget(target))
 	return fmt.Sprintf("%x", sha256.Sum256(encoded))

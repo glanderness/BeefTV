@@ -47,9 +47,12 @@ import {
     createCanvasRun,
     findRecoveredAssistantTurn,
     isAssistantProviderUnreadyReason,
+    isAssistantTransientReason,
     markStoppedBeforeSend,
     readStoredProposals,
+    resolveAssistantStatusPollError,
     shouldAutoLoadHistory,
+    shouldSuppressAssistantHistoryError,
     type AssistantTurnStatus,
     type CanvasRun,
 } from "./canvas-assistant-recovery";
@@ -196,20 +199,45 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         scopedLocalStorage.setItem(WIDTH_STORAGE_KEY, String(clamped));
     }, []);
 
-    // 状态只在面板打开时复查：关着的面板不该一直问后端。正在启动时节奏更快。
-    const starting = status?.reason === "host_starting";
+    // 状态只在面板打开时复查：关着的面板不该一直问后端。正在启动或等待切换时节奏更快。
+    const fastPoll = isAssistantTransientReason(status?.reason);
     useEffect(() => {
         if (!open) return;
         let cancelled = false;
+        let inFlight = false;
+        let consecutiveErrors = 0;
+        let activeController: AbortController | null = null;
         const refresh = () => {
-            getAgentHostStatus()
-                .then((value) => { if (!cancelled) setStatus(value); })
-                .catch(() => { if (!cancelled) setStatus({ available: false }); });
+            if (cancelled || inFlight) return;
+            inFlight = true;
+            const controller = new AbortController();
+            activeController = controller;
+            getAgentHostStatus({ signal: controller.signal })
+                .then((value) => {
+                    if (cancelled) return;
+                    consecutiveErrors = 0;
+                    setStatus(value);
+                })
+                .catch((error) => {
+                    if (cancelled) return;
+                    if (error instanceof DOMException && error.name === "AbortError") return;
+                    consecutiveErrors += 1;
+                    const reason = error instanceof ApiError ? error.reason : undefined;
+                    setStatus((prev) => resolveAssistantStatusPollError(prev, reason, consecutiveErrors));
+                })
+                .finally(() => {
+                    inFlight = false;
+                    if (activeController === controller) activeController = null;
+                });
         };
         refresh();
-        const timer = setInterval(refresh, starting ? 2000 : 15000);
-        return () => { cancelled = true; clearInterval(timer); };
-    }, [open, starting]);
+        const timer = setInterval(refresh, fastPoll ? 2000 : 15000);
+        return () => {
+            cancelled = true;
+            activeController?.abort();
+            clearInterval(timer);
+        };
+    }, [open, fastPoll]);
 
     const loadHistory = useCallback(async (targetCanvas: string, sessionId?: string) => {
         const originNamespace = namespaceRef.current;
@@ -262,7 +290,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             return true;
         } catch (error) {
             if (isLiveRun(originNamespace, targetCanvas, run) && request === run.historyRequest) {
-                const hostStillStarting = statusRef.current === null || statusRef.current.reason === "host_starting";
+                const hostStillStarting = statusRef.current === null || isAssistantTransientReason(statusRef.current.reason);
                 run.historyHostUnavailable = hostStillStarting
                     || (error instanceof ApiError && (error.reason === "host_unreachable" || isAssistantProviderUnreadyReason(error.reason)));
                 run.historyError = run.turns.length || run.pendingUserText || run.pendingAttachments.length || run.streamed || run.reasoning.length
@@ -802,7 +830,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         turns: run.turns,
         plan: run.plan,
         historyLoaded: run.historyLoaded,
-        historyError: (status === null || status.reason === "host_starting" || isAssistantProviderUnreadyReason(status.reason)) && run.historyHostUnavailable && !run.turns.length && !run.pendingUserText && !run.pendingAttachments.length && !run.streamed && !run.reasoning.length ? null : run.historyError,
+        historyError: shouldSuppressAssistantHistoryError(status, run) ? null : run.historyError,
         sessionBusy: run.sessionBusy,
         reloadHistory: () => loadHistory(canvasId),
         pendingUserText: run.pendingUserText,

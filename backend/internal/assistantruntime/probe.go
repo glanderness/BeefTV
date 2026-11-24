@@ -42,7 +42,7 @@ func probeOwned(ctx context.Context, baseURL, pipePath, nonce, token string) Hos
 		transport = localipc.NewDynamicHTTPTransport(nil, 0, true)
 	}
 	client := &http.Client{
-		Timeout:       3 * time.Second,
+		Timeout:       5 * time.Second,
 		Transport:     transport,
 		CheckRedirect: noRedirect,
 	}

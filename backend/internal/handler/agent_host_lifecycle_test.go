@@ -433,15 +433,20 @@ func TestStatusHealthyIdleFingerprintChangeRestarts(t *testing.T) {
 	firstPID := host.PID()
 	t.Setenv("BEEFTV_AGENT_MODEL", "other-model")
 
+	started := time.Now()
 	status := lifecycleRequest(router, http.MethodGet, "/api/assistant/status", "", "")
+	elapsed := time.Since(started)
 	if status.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", status.Code, status.Body.String())
 	}
-	if host.PID() == 0 || host.PID() == firstPID {
-		t.Fatalf("空闲且健康时应按新指纹重启 pid=%d first=%d body=%s", host.PID(), firstPID, status.Body.String())
-	}
 	if !strings.Contains(status.Body.String(), `"reason":"host_starting"`) {
 		t.Fatalf("重启后状态应为 host_starting: %s", status.Body.String())
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("GET /assistant/status 不得同步阻塞等待宿主重启完成，耗时 %v", elapsed)
+	}
+	if !waitUntil(8*time.Second, func() bool { return host.PID() > 0 && host.PID() != firstPID && host.Endpoint() != "" }) {
+		t.Fatalf("空闲且健康时应在后台按新指纹重启完成 pid=%d first=%d endpoint=%q", host.PID(), firstPID, host.Endpoint())
 	}
 }
 

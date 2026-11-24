@@ -10,6 +10,7 @@ export type AssistantUnavailableReason =
     | "credential_missing"
     | "model_protocol_unsupported"
     | "host_starting"
+    | "host_busy"
     | "host_start_failed"
     | "host_unreachable";
 

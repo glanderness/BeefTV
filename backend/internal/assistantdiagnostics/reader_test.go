@@ -201,3 +201,73 @@ func TestRuntimeFailureReasonProjectionAcceptsOnlyExactKnownMachineCodes(t *test
 		t.Fatalf("raw error or result exported: %s", body)
 	}
 }
+
+func TestDurableSchemaVersion2AndModelOutcomeLedgerAreReadCleanly(t *testing.T) {
+	dir, turn, stamp := fixture(t)
+	hash := sha256.Sum256([]byte(turn.CanvasID))
+	file := filepath.Join(dir, "sessions", hex.EncodeToString(hash[:])[:24], "durable", strings.TrimPrefix(turn.SessionID, "durable:")+".sqlite")
+	db, err := sql.Open("sqlite3", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE durable_schema SET version = 2 WHERE singleton = 1"); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	outcomeRows := []map[string]any{
+		{"id": "out-1", "at": stamp.Format(time.RFC3339Nano), "turnId": turn.ID, "canvasId": turn.CanvasID, "sessionId": turn.SessionID, "model": "deepseek-v4.1-flash", "status": "error", "reason": "http_429", "httpStatus": 429, "durationMs": 540},
+		{"id": "out-raw", "at": stamp.Format(time.RFC3339Nano), "turnId": turn.ID, "canvasId": turn.CanvasID, "sessionId": turn.SessionID, "model": "deepseek-v4.1-flash", "status": "error", "reason": "PRIVATE_RAW_BODY", "durationMs": 120},
+		{"id": "out-foreign", "at": stamp.Format(time.RFC3339Nano), "turnId": "foreign-turn", "canvasId": turn.CanvasID, "sessionId": turn.SessionID, "model": "deepseek-v4.1-flash", "status": "error", "reason": "http_502", "durationMs": 200},
+	}
+	var body []byte
+	for _, row := range outcomeRows {
+		b, _ := json.Marshal(row)
+		body = append(append(body, b...), '\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agent-model-outcomes.jsonl"), body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := New(dir).DiagnosticAssistantEvidence("owner-1", stamp.Add(-time.Hour), stamp.Add(time.Hour), []diagnostics.AssistantTurnEvidence{turn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Coverage.Reason == "runtime_schema_unsupported" {
+		t.Fatalf("durable schema v2 should be supported, got coverage: %+v", result.Coverage)
+	}
+	var modelResponses, outcomes int
+	for _, rec := range result.Records {
+		if rec.Name == "model.response" {
+			modelResponses++
+		}
+		if rec.Name == "model.outcome" {
+			outcomes++
+			if rec.ID == "outcome:out-1" && (rec.Status != "error" || rec.Reason != "http_429" || rec.DurationMs != 540) {
+				t.Fatalf("unexpected outcome record: %+v", rec)
+			}
+			if rec.ID == "outcome:out-raw" && rec.Reason != "" {
+				t.Fatalf("unapproved outcome reason leaked: %+v", rec)
+			}
+		}
+	}
+	if modelResponses != 1 || outcomes != 2 {
+		t.Fatalf("expected 1 schema-v2 model.response and 2 scoped outcomes, got responses=%d outcomes=%d records=%+v", modelResponses, outcomes, result.Records)
+	}
+	encoded, _ := json.Marshal(result)
+	if strings.Contains(string(encoded), "PRIVATE_") {
+		t.Fatalf("private text leaked into diagnostic evidence: %s", encoded)
+	}
+}
+
+func TestAllowedOutcomeReasonsLoadedFromEmbeddedFixture(t *testing.T) {
+	if len(allowedOutcomeReasons) < 10 {
+		t.Fatalf("expected embedded outcome reasons, got %d", len(allowedOutcomeReasons))
+	}
+	for _, required := range []string{"http_200", "http_429", "http_502", "stream_idle_timeout", "network_eof", "network_error", "aborted", "model_error"} {
+		if !allowedOutcomeReasons[required] {
+			t.Errorf("embedded allowedOutcomeReasons missing %q", required)
+		}
+	}
+}

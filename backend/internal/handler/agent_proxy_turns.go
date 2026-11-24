@@ -109,7 +109,7 @@ func registerAgentProxyTurnRoutes(
 		if !guard(c, true) {
 			return
 		}
-		_, payload, valid := readAssistantBody(c, app.AssistantProductionConfirmation{})
+		_, payload, valid := readAssistantBodyLimit(c, app.AssistantProductionConfirmation{}, agentProductionConfirmMaxBody)
 		if !valid {
 			return
 		}

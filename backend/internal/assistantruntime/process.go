@@ -24,42 +24,56 @@ const defaultReadyTimeout = 20 * time.Second
 // supervisor 持有本实例启动的子进程、回环端点与实例 nonce。
 // 端点只在本进程就绪且 health 证明 nonce 之后才暴露；绝不把全局端口或别人的 PID 当成所有权。
 type supervisor struct {
-	mu          sync.Mutex
-	cmd         *exec.Cmd
-	done        chan struct{}
-	starting    bool
-	fingerprint string
-	launchedAt  time.Time
-	lastErr     error
-	endpoint    string
-	pipePath    string
-	pipeMode    bool
-	nonce       string
-	lifetimeW   *os.File
-	testOwned   bool
+	mu                sync.Mutex
+	cmd               *exec.Cmd
+	done              chan struct{}
+	starting          bool
+	fingerprint       string
+	launchedAt        time.Time
+	lastErr           error
+	failedFingerprint string
+	failedAt          time.Time
+	endpoint          string
+	pipePath          string
+	pipeMode          bool
+	nonce             string
+	lifetimeW         *os.File
+	testOwned         bool
 }
 
 // State 是状态查询需要的宿主进程事实（不含 nonce 或其它凭据）。
 type State struct {
-	Running     bool
-	Starting    bool
-	Fingerprint string
-	LaunchedAt  time.Time
-	LastError   error
-	Endpoint    string
+	Running           bool
+	Starting          bool
+	Fingerprint       string
+	LaunchedAt        time.Time
+	LastError         error
+	FailedFingerprint string
+	FailedAt          time.Time
+	Endpoint          string
 }
 
 func (s *supervisor) state() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return State{
-		Running:     s.isRunningLocked(),
-		Starting:    s.starting,
-		Fingerprint: s.fingerprint,
-		LaunchedAt:  s.launchedAt,
-		LastError:   s.lastErr,
-		Endpoint:    s.endpoint,
+		Running:           s.isRunningLocked(),
+		Starting:          s.starting,
+		Fingerprint:       s.fingerprint,
+		LaunchedAt:        s.launchedAt,
+		LastError:         s.lastErr,
+		FailedFingerprint: s.failedFingerprint,
+		FailedAt:          s.failedAt,
+		Endpoint:          s.endpoint,
 	}
+}
+
+func (s *supervisor) clearFailure() {
+	s.mu.Lock()
+	s.lastErr = nil
+	s.failedFingerprint = ""
+	s.failedAt = time.Time{}
+	s.mu.Unlock()
 }
 
 func (s *supervisor) isRunningLocked() bool {
@@ -257,6 +271,8 @@ func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerpr
 	}
 	if err := cmd.Start(); err != nil {
 		s.lastErr = err
+		s.failedFingerprint = fingerprint
+		s.failedAt = time.Now()
 		s.mu.Unlock()
 		_ = lifetimeR.Close()
 		_ = lifetimeW.Close()
@@ -307,6 +323,10 @@ func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerpr
 	if err := waitChildReady(ctx, baseURL, listenPipe, nonce, token, timeout, done); err != nil {
 		s.mu.Lock()
 		s.lastErr = err
+		if ctx.Err() == nil {
+			s.failedFingerprint = fingerprint
+			s.failedAt = time.Now()
+		}
 		s.mu.Unlock()
 		if ctx.Err() != nil {
 			cancelStopCtx, cancelStop := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -322,6 +342,8 @@ func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerpr
 		s.endpoint = baseURL
 		s.pipePath = listenPipe
 		s.lastErr = nil
+		s.failedFingerprint = ""
+		s.failedAt = time.Time{}
 	}
 	s.mu.Unlock()
 	return nil

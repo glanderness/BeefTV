@@ -41,6 +41,9 @@ type agentProxyService interface {
 // agentProxyMaxBody 限制转发体积；解析失败或超限都按真实失败返回。
 const agentProxyMaxBody = 64 << 10
 
+// agentProductionConfirmMaxBody 放宽整片制作确认请求体上限，避免多镜头长提示词方案撞 64 KiB 限制。
+const agentProductionConfirmMaxBody = 1 << 20
+
 // hostStartGrace 是宿主从拉起到健康的宽限期：这段时间里状态是「正在启动」而不是「不可达」。
 const hostStartGrace = 20 * time.Second
 
@@ -72,12 +75,16 @@ var assistantSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_:-]{1,128}$`)
 
 // readAssistantBody 读取并解析小型 JSON 请求体，返回原文与解析结果（原文用于原样转给宿主）。
 func readAssistantBody[T any](c *gin.Context, shape T) ([]byte, T, bool) {
-	body, err := io.ReadAll(io.LimitReader(c.Request.Body, agentProxyMaxBody+1))
+	return readAssistantBodyLimit(c, shape, agentProxyMaxBody)
+}
+
+func readAssistantBodyLimit[T any](c *gin.Context, shape T, maxBytes int64) ([]byte, T, bool) {
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxBytes+1))
 	if err != nil {
 		fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体读取失败"))
 		return nil, shape, false
 	}
-	if int64(len(body)) > agentProxyMaxBody {
+	if int64(len(body)) > maxBytes {
 		fail(c, http.StatusRequestEntityTooLarge, app.BadAuthRequest("请求体超过限制"))
 		return nil, shape, false
 	}
@@ -146,15 +153,20 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 			return
 		}
 		modelInfo := gin.H{"id": provider.Model, "channelId": provider.ChannelID, "channelName": provider.ChannelName}
-		health := host.Probe(c.Request.Context())
 		state := host.State()
+		if state.Starting {
+			ok(c, gin.H{"available": false, "reason": "host_starting", "model": modelInfo})
+			return
+		}
+		health := host.Probe(c.Request.Context())
+		state = host.State()
 		if health.OK {
 			if state.Fingerprint != "" && state.Fingerprint != provider.Fingerprint() {
 				if health.Busy {
 					ok(c, gin.H{"available": false, "reason": "host_busy", "model": gin.H{"id": health.Model}})
 					return
 				}
-				if err := host.Restart(provider, hostOpsURL(c), launchToken(c)); err != nil {
+				if err := host.RestartAsync(provider, hostOpsURL(c), launchToken(c)); err != nil {
 					unavailable(c, "host_start_failed")
 					return
 				}
@@ -178,7 +190,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 			ok(c, gin.H{"available": false, "reason": "host_unreachable", "model": modelInfo})
 			return
 		}
-		launched, err := host.Ensure(provider, hostOpsURL(c), launchToken(c), true)
+		launched, err := host.EnsureAsync(provider, hostOpsURL(c), launchToken(c))
 		if err != nil {
 			ok(c, gin.H{"available": false, "reason": "host_start_failed", "model": modelInfo})
 			return

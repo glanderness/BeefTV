@@ -326,7 +326,7 @@ function readMedia(state, rawParams, ctx) {
   if (opIdName !== 'media.overview' && !expectedVersion) {
     throw invalidArg('media_version_required', '先读取 overview，再提供 expectedVersion');
   }
-  if (expectedVersion && expectedVersion !== version) {
+  if (opIdName !== 'media.overview' && expectedVersion && expectedVersion !== version) {
     throw conflict('stale_media_version', '素材内容已变化，请重新读取 overview', { currentVersion: version });
   }
   state.counts.mediaInspections += 1;

@@ -2163,10 +2163,6 @@
         "resourceId": {
           "type": "string"
         },
-        "expectedVersion": {
-          "type": "string",
-          "minLength": 1
-        },
         "startMs": {
           "type": "integer"
         },

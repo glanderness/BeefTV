@@ -10,7 +10,7 @@ const targets = { 'darwin/arm64': ['darwin', 'arm64'], 'darwin/amd64': ['darwin'
 const runtimeModules = ['session-identity.mjs', 'canvas-turn.mjs', 'request-budget.mjs', 'durable-request-budget.mjs',
   'durable-session-owner.mjs', 'durable-session-repository.mjs', 'durable-turn-admission.mjs', 'durable-pointer-resolver.mjs', 'durable-detached-reconciler.mjs', 'durable-turn-projection.mjs', 'durable-extensions.mjs', 'durable-watch-observer.mjs', 'business-progress.mjs', 'durable-turn-budget.mjs', 'media-content.mjs', 'native-part-store.mjs', 'native-history.mjs', 'skill-resource.mjs', 'active-skills.mjs',
   'operation-bridge.mjs', 'await-business-tasks.mjs', 'timeline-delivery.mjs', 'canvas-read-view.mjs', 'canvas-write-view.mjs', 'session-owner.mjs', 'system-prompt.mjs', 'model-stream-idle.mjs', 'model-transport-error.mjs', 'plan.mjs', 'studio-digest.mjs', 'dispatch-diagnostics.mjs', 'plugin-packages.mjs'];
-const sourceFiles = ['server.mjs', 'plugin-host.mjs', ...runtimeModules, 'package.json', 'bun.lock'];
+const sourceFiles = ['server.mjs', 'plugin-host.mjs', ...runtimeModules, 'model-outcome-reasons.json', 'package.json', 'bun.lock'];
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', timeout: 180000 });

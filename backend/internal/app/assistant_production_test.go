@@ -255,3 +255,163 @@ func TestAssistantProductionPendingProposalCannotAuthorizeNextTurn(t *testing.T)
 		}
 	}
 }
+
+func TestContinuationTurnCanConfirmNewProductionAndSingleBatchProposal(t *testing.T) {
+	svc, canvasID, _ := newAssistantTurnService(t)
+	sqlDB, _ := svc.Database().DB()
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	if err := svc.SaveLocalModelConfig([]byte(`{"imageModel":"custom::image","audioModel":"custom::speech","channels":[{"id":"custom","enabled":true,"baseUrl":"https://example.invalid/v1","apiKey":"test-only","models":["image","speech"],"modelProfiles":[{"model":"image","capability":"image","protocol":"openai-image"},{"model":"speech","capability":"audio","protocol":"openai-audio"}]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := svc.UserCanvasProject("local", canvasID)
+	var doc map[string]any
+	_ = json.Unmarshal(raw, &doc)
+	doc["nodes"] = []any{
+		map[string]any{"id": "img1", "type": "image", "title": "镜头1", "metadata": map[string]any{"prompt": "茶杯", "size": "1:1", "count": 1}},
+		map[string]any{"id": "img2", "type": "image", "title": "镜头2", "metadata": map[string]any{"prompt": "书桌", "size": "1:1", "count": 1}},
+		map[string]any{"id": "img3", "type": "image", "title": "镜头3", "metadata": map[string]any{"prompt": "窗台", "size": "1:1", "count": 1}},
+		map[string]any{"id": "speech2", "type": "audio", "title": "旁白2", "metadata": map[string]any{"prompt": "清晨阳光。", "model": "custom::speech", "audioVoice": "alloy"}},
+	}
+	doc["connections"] = []any{}
+	raw, _ = json.Marshal(doc)
+	if _, err := svc.UpsertUserCanvasProject("local", raw); err != nil {
+		t.Fatal(err)
+	}
+
+	// Turn 1 confirms P1 (img1)
+	const turn1 = "101010101010101010101010"
+	if _, err := svc.BeginAssistantTurn("local", canvasID, turn1, AssistantTurnInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AssistantTurns().BindDurableSession("local", turn1, backgroundContinuationSession, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.FinalizeAssistantTurn(turn1); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = svc.UserCanvasProject("local", canvasID)
+	_ = json.Unmarshal(raw, &doc)
+	targetsP1, err := operations.GenerationTargets(svc.BindDomain(nil), doc, []string{"img1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConfirmAssistantProduction("local", turn1, AssistantProductionConfirmation{
+		CanvasID: canvasID, ProposalID: "gp-turn1-shot1", Kind: "image", NodeIDs: []string{"img1"}, Targets: targetsP1, ContinuePlan: true,
+	}); err != nil {
+		t.Fatalf("Turn 1 confirm failed: %v", err)
+	}
+	var t1Row model.AssistantTurn
+	if err := svc.Database().First(&t1Row, "turn_id = ?", turn1).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Continuation Turn 2 inherits T1's GenerationAuthorizationJSON, proposes NEW production P2 (img2 + speech2)
+	const turn2 = "202020202020202020202020202020202020202020202020"
+	if _, err := svc.BeginAssistantTurn("local", canvasID, turn2, AssistantTurnInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AssistantTurns().BindDurableSession("local", turn2, backgroundContinuationSession, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Database().Model(&model.AssistantTurn{}).Where("turn_id = ?", turn2).Update("generation_authorization_json", t1Row.GenerationAuthorizationJSON).Error; err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = svc.UserCanvasProject("local", canvasID)
+	_ = json.Unmarshal(raw, &doc)
+	targetsP2, err := operations.GenerationTargets(svc.BindDomain(nil), doc, []string{"img2", "speech2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Propose in T2: RecordAssistantGenerationProposal preserves inherited T1 grant while T2 runs,
+	// while GenerationOrder records P2 with SourceTurnID=turn2.
+	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
+		dom := svc.BindDomain(tx).(*operationSession)
+		if err := dom.RecordAssistantGenerationProposal("local", turn2, canvasID, operations.GenerationAuthorization{ProposalID: "gp-turn2-shot2", Targets: targetsP2}); err != nil {
+			return err
+		}
+		return dom.RecordGenerationOrder("local", operations.GenerationOrder{
+			OrderID: "gp-turn2-shot2", ProposalID: "gp-turn2-shot2", CanvasID: canvasID, Status: operations.GenerationOrderPending,
+			Kind: "image", NodeIDs: []string{"img2"}, ProductionNodeIDs: []string{"img2", "speech2"}, Targets: targetsP2, SourceTurnID: turn2,
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.FinalizeAssistantTurn(turn2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Confirming P2 on continuation Turn 2 must succeed (previously 409 production_changed deadlock!)
+	res2, err := svc.ConfirmAssistantProduction("local", turn2, AssistantProductionConfirmation{
+		CanvasID: canvasID, ProposalID: "gp-turn2-shot2", Kind: "image", NodeIDs: []string{"img2"}, Targets: targetsP2, ContinuePlan: true,
+	})
+	if err != nil {
+		t.Fatalf("Continuation Turn 2 production confirm failed: %v", err)
+	}
+	res2Map := res2.(map[string]any)
+	if len(res2Map["taskIds"].([]string)) != 1 || res2Map["continuationId"] == "" {
+		t.Fatalf("unexpected Turn 2 confirm result: %#v", res2Map)
+	}
+
+	// Replaying the exact same P2 on Turn 2 must stay idempotent
+	res2Replay, err := svc.ConfirmAssistantProduction("local", turn2, AssistantProductionConfirmation{
+		CanvasID: canvasID, ProposalID: "gp-turn2-shot2", Kind: "image", NodeIDs: []string{"img2"}, Targets: targetsP2, ContinuePlan: true,
+	})
+	if err != nil {
+		t.Fatalf("Turn 2 replay confirm failed: %v", err)
+	}
+	if res2Replay.(map[string]any)["taskIds"].([]string)[0] != res2Map["taskIds"].([]string)[0] {
+		t.Fatal("Turn 2 replay created a duplicate task")
+	}
+
+	// Confirming a DIFFERENT proposal on Turn 2 AFTER Turn 2 already confirmed P2 must still return 409 production_changed
+	targetsP3, err := operations.GenerationTargets(svc.BindDomain(nil), doc, []string{"img3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConfirmAssistantProduction("local", turn2, AssistantProductionConfirmation{
+		CanvasID: canvasID, ProposalID: "gp-turn2-conflict", Kind: "image", NodeIDs: []string{"img3"}, Targets: targetsP3, ContinuePlan: true,
+	}); operations.AsError(err) == nil || operations.AsError(err).Reason != "production_changed" {
+		t.Fatalf("expected 409 production_changed for second distinct confirmation on same turn, got: %v", err)
+	}
+
+	// Continuation Turn 3 inherits T2's newly confirmed grant:
+	// (a) T3 can submit already-authorized speech2 from P2 without re-confirmation;
+	// (b) T3 can also propose a single-batch ordinary proposal (omitting inline Targets) and confirm it!
+	var t2Row model.AssistantTurn
+	if err := svc.Database().First(&t2Row, "turn_id = ?", turn2).Error; err != nil {
+		t.Fatal(err)
+	}
+	const turn3 = "303030303030303030303030303030303030303030303030"
+	if _, err := svc.BeginAssistantTurn("local", canvasID, turn3, AssistantTurnInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AssistantTurns().BindDurableSession("local", turn3, backgroundContinuationSession, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Database().Model(&model.AssistantTurn{}).Where("turn_id = ?", turn3).Update("generation_authorization_json", t2Row.GenerationAuthorizationJSON).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
+		_, e := svc.BindDomain(tx).(*operationSession).SubmitAuthorizedGeneration("local", turn3, canvasID, targetsP2[1:])
+		return e
+	}); err != nil {
+		t.Fatalf("Turn 3 authorized submit for P2 stage 2 failed: %v", err)
+	}
+	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
+		return svc.BindDomain(tx).(*operationSession).RecordGenerationOrder("local", operations.GenerationOrder{
+			OrderID: "gp-turn3-single", ProposalID: "gp-turn3-single", CanvasID: canvasID, Status: operations.GenerationOrderPending,
+			Kind: "image", NodeIDs: []string{"img3"}, Targets: targetsP3, SourceTurnID: turn3,
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.FinalizeAssistantTurn(turn3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConfirmAssistantProduction("local", turn3, AssistantProductionConfirmation{
+		CanvasID: canvasID, ProposalID: "gp-turn3-single", Kind: "image", NodeIDs: []string{"img3"}, ContinuePlan: false,
+	}); err != nil {
+		t.Fatalf("Continuation Turn 3 single-batch confirm (without inline Targets) failed: %v", err)
+	}
+}

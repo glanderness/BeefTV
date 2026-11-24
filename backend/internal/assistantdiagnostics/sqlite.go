@@ -49,7 +49,7 @@ func readSession(file string, session ownedSession, from, to time.Time, out *dia
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	var schema int
-	if db.QueryRowContext(ctx, "SELECT version FROM durable_schema WHERE singleton = 1").Scan(&schema) != nil || schema != 1 {
+	if db.QueryRowContext(ctx, "SELECT version FROM durable_schema WHERE singleton = 1").Scan(&schema) != nil || (schema != 1 && schema != 2) {
 		return errors.New("runtime_schema_unsupported")
 	}
 	reasonCodes := diagnostics.AssistantFailureReasonCodes()

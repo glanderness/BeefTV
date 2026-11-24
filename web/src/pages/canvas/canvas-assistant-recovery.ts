@@ -140,13 +140,38 @@ export function isAssistantProviderUnreadyReason(reason: string | undefined): bo
     return reason === "model_not_configured" || reason === "model_protocol_unsupported" || reason === "credential_missing";
 }
 
+export function isAssistantTransientReason(reason: string | undefined): boolean {
+    return reason === "host_starting" || reason === "host_busy";
+}
+
+export function resolveAssistantStatusPollError(
+    prev: AgentHostStatus | null,
+    reason: AgentHostStatus["reason"],
+    consecutiveErrors: number,
+): AgentHostStatus {
+    if (!reason && prev && (prev.available || isAssistantTransientReason(prev.reason)) && consecutiveErrors < 2) {
+        return prev;
+    }
+    return { available: false, ...(reason ? { reason } : {}) };
+}
+
 export function shouldAutoLoadHistory(run: CanvasRun, currentStatus: AgentHostStatus | null): boolean {
     if (run.streaming || run.sessionBusy) return false;
-    const hostCanServeHistory = Boolean(currentStatus?.available) || isAssistantProviderUnreadyReason(currentStatus?.reason);
+    const hostCanServeHistory = Boolean(currentStatus?.available) || isAssistantProviderUnreadyReason(currentStatus?.reason) || currentStatus?.reason === "host_busy";
     if (!run.historyLoaded) {
         return !run.historyError || hostCanServeHistory;
     }
     return shouldReloadPausedAssistantTurn(run.pausedTurnReason, run.pausedStatusKey, currentStatus);
+}
+
+export function shouldSuppressAssistantHistoryError(status: AgentHostStatus | null, run: CanvasRun): boolean {
+    return (status === null || isAssistantTransientReason(status.reason) || isAssistantProviderUnreadyReason(status.reason))
+        && run.historyHostUnavailable
+        && !run.turns.length
+        && !run.pendingUserText
+        && !run.pendingAttachments.length
+        && !run.streamed
+        && !run.reasoning.length;
 }
 
 export function applyHistoryActiveTurn(run: CanvasRun, history: AssistantHistory, nextSession: string | null) {
