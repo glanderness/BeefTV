@@ -123,10 +123,12 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 		if args.CanvasID != s.CanvasID {
 			return denied("只能检查当前画布关联的媒体")
 		}
-		if args.NodeID != "" && args.AssetID == "" {
+		nodeID := strings.TrimSpace(args.NodeID)
+		assetID := strings.TrimSpace(args.AssetID)
+		if nodeID != "" && assetID == "" {
 			return nil
 		}
-		if args.AssetID != "" && args.NodeID == "" && (s.AssetIDs[args.AssetID] || s.projectReferenceAllowed("asset", args.AssetID)) {
+		if assetID != "" && nodeID == "" && (s.AssetIDs[assetID] || s.projectReferenceAllowed("asset", assetID)) {
 			return nil
 		}
 		return denied("这个媒体未关联到当前画布或本次对话")

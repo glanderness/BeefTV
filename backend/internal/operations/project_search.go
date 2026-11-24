@@ -2,6 +2,7 @@ package operations
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"infinite-canvas/backend/internal/assistantturns"
@@ -33,15 +34,25 @@ func ValidateProjectReference(repo *repository.Repository, activeProject func(us
 	if err != nil {
 		return err
 	}
+	trimmedID := strings.TrimSpace(id)
 	if current.ProjectID == "" {
+		// 独立画布未关联项目：允许访问属于当前用户且已真实绑定到当前画布文档的素材（含同回合刚生成的产物）。
+		if kind == "asset" && trimmedID != "" {
+			if _, err := repo.AssetForUser(userID, trimmedID); err == nil {
+				associatedAssets, _ := assistantturns.AssociatedReferences(json.RawMessage(current.PayloadJSON))
+				if slices.Contains(associatedAssets, trimmedID) {
+					return nil
+				}
+			}
+		}
 		return kernel.Forbidden("当前画布未关联项目，只能使用已引用的资源")
 	}
 	switch kind {
 	case "asset":
-		if _, err := repo.AssetForUser(userID, id); err != nil {
+		if _, err := repo.AssetForUser(userID, trimmedID); err != nil {
 			return kernel.Forbidden("素材不属于当前项目")
 		}
-		linked, err := repo.ProjectAssetLinked(current.ProjectID, id)
+		linked, err := repo.ProjectAssetLinked(current.ProjectID, trimmedID)
 		if err != nil {
 			return err
 		}
@@ -49,7 +60,7 @@ func ValidateProjectReference(repo *repository.Repository, activeProject func(us
 			return nil
 		}
 	case "canvas":
-		other, err := repo.CanvasProjectForUser(userID, id)
+		other, err := repo.CanvasProjectForUser(userID, trimmedID)
 		if err == nil && other.ProjectID == current.ProjectID {
 			return nil
 		}

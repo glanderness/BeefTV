@@ -68,3 +68,11 @@ test("host_busy allows history auto-reload and suppresses transient empty-histor
     expect(shouldSuppressAssistantHistoryError({ available: false, reason: "host_starting" }, erroredRun)).toBe(true);
     expect(shouldSuppressAssistantHistoryError({ available: false, reason: "host_unreachable" }, erroredRun)).toBe(false);
 });
+test("cold-start unknown or host_starting status defers history auto-load until host responds", () => {
+    expect(shouldAutoLoadHistory(createCanvasRun(), null)).toBe(false);
+    expect(shouldAutoLoadHistory(createCanvasRun(), { available: false, reason: "host_starting" })).toBe(false);
+    expect(shouldAutoLoadHistory(createCanvasRun(), { available: true })).toBe(true);
+    expect(shouldAutoLoadHistory(createCanvasRun(), { available: false, reason: "model_not_configured" })).toBe(true);
+    expect(shouldAutoLoadHistory(createCanvasRun(), { available: false, reason: "host_unreachable" })).toBe(true);
+    expect(shouldAutoLoadHistory(createCanvasRun(), { available: false })).toBe(true);
+});

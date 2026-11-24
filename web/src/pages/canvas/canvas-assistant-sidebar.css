@@ -336,7 +336,7 @@
 .canvas-assistant-plan summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
 .canvas-assistant-change { display: flex; flex-direction: column; gap: 8px; padding: 12px 0 12px 14px; border-left: 2px solid var(--border); font-size: 13px; }
 .canvas-assistant-change strong { font-weight: 500; }
-.canvas-assistant-feedback { font-size: 13px; line-height: 1.7; }
+.canvas-assistant-feedback { display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 1.7; }
 .canvas-assistant-change .ant-btn { color: var(--muted-foreground); padding-inline: 4px; }
 .canvas-assistant-card-actions {
     display: flex;

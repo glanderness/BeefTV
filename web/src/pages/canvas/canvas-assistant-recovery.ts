@@ -157,7 +157,9 @@ export function resolveAssistantStatusPollError(
 
 export function shouldAutoLoadHistory(run: CanvasRun, currentStatus: AgentHostStatus | null): boolean {
     if (run.streaming || run.sessionBusy) return false;
-    const hostCanServeHistory = Boolean(currentStatus?.available) || isAssistantProviderUnreadyReason(currentStatus?.reason) || currentStatus?.reason === "host_busy";
+    // 宿主还在初始状态探查或启动中时暂不抢发 /history 与 /sessions，避免冷启动期产生 503 host_unreachable 噪音。
+    if (currentStatus === null || currentStatus.reason === "host_starting") return false;
+    const hostCanServeHistory = Boolean(currentStatus.available) || isAssistantProviderUnreadyReason(currentStatus.reason) || currentStatus.reason === "host_busy";
     if (!run.historyLoaded) {
         return !run.historyError || hostCanServeHistory;
     }
