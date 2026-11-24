@@ -492,7 +492,7 @@ func writeUntrustedDesktopOrigin(w http.ResponseWriter) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"code":   http.StatusForbidden,
 		"data":   nil,
-		"msg":    "不受信任的页面来源无法访问本地接口：请使用 BeefTV 桌面客户端打开，不要直接在普通浏览器访问本地服务端口",
+		"msg":    "不受信任的页面来源无法访问本地接口：请使用 BeefTV 桌面客户端打开；浏览器本地/局域网调试请将该来源加入环境变量 BEEFTV_ALLOWED_ORIGINS",
 		"reason": "untrusted_origin",
 	})
 }

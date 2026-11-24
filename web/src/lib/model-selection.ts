@@ -66,9 +66,14 @@ export function hasDeclaredModelCapability(config: AiConfig, model: string, capa
     return Boolean(version?.trim()) || channel.scope === "system" || hasUserModelCapability(profile);
 }
 
-export function modelCompatibilityError(config: AiConfig, model: string, requirements?: ModelRequirements) {
+export interface ModelCompatibilityIssue {
+    reason: string;
+    shortReason: string;
+}
+
+export function modelCompatibilityIssue(config: AiConfig, model: string, requirements?: ModelRequirements): ModelCompatibilityIssue | null {
     const capability = requirements?.capability;
-    if (!capability) return "";
+    if (!capability) return null;
     const input = requirements?.input;
     const visualInputCount = input ? input.imageCount + input.characterCount : 0;
 
@@ -76,21 +81,30 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
         const hasDeclaredImageCapability = hasDeclaredModelCapability(config, model, "image");
         const image = modelCapabilityConfigFor(config, model).image!;
         // 尺寸兼容不依赖输入摘要：无输入时（如画布重试/工具链）也要按尺寸过滤组内模型。
-        if (hasDeclaredImageCapability && requirements.imageSize && !image.size.allowCustom && !image.size.values.includes(requirements.imageSize)) return "不支持当前尺寸";
-        if (!input) return "";
-        if (input.videoCount > 0) return "图片模型不支持参考视频";
-        if (input.audioCount > 0) return "图片模型不支持参考音频";
-        if (hasDeclaredImageCapability && visualInputCount > 0 && image.references.maxImages === 0) return "仅支持文生图，不支持图片重绘";
-        if (hasDeclaredImageCapability && visualInputCount > image.references.maxImages) return `最多支持 ${image.references.maxImages} 张参考图`;
-        return "";
+        if (hasDeclaredImageCapability && requirements.imageSize && !image.size.allowCustom && !image.size.values.includes(requirements.imageSize)) {
+            return { reason: "不支持当前尺寸", shortReason: "不支持当前尺寸" };
+        }
+        if (!input) return null;
+        if (input.videoCount > 0) return { reason: "图片模型不支持参考视频", shortReason: "不支持参考视频" };
+        if (input.audioCount > 0) return { reason: "图片模型不支持参考音频", shortReason: "不支持参考音频" };
+        if (hasDeclaredImageCapability && visualInputCount > 0 && image.references.maxImages === 0) {
+            return { reason: "仅支持文生图，不支持图片重绘", shortReason: "仅支持文生图" };
+        }
+        if (hasDeclaredImageCapability && visualInputCount > image.references.maxImages) {
+            const text = `最多支持 ${image.references.maxImages} 张参考图`;
+            return { reason: text, shortReason: text };
+        }
+        return null;
     }
 
     if (capability === "video") {
         const capabilityConfig = modelCapabilityConfigFor(config, model);
-        if (!hasDeclaredModelCapability(config, model, "video")) return "";
+        if (!hasDeclaredModelCapability(config, model, "video")) return null;
         const profile = capabilityConfig.video!;
-        if (requirements.videoOperation !== "draft_to_final" && requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) return "不支持当前视频时长";
-        if (!input) return "";
+        if (requirements.videoOperation !== "draft_to_final" && requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) {
+            return { reason: "不支持当前视频时长", shortReason: "不支持当前视频时长" };
+        }
+        if (!input) return null;
         const operation = resolveVideoOperation(input, requirements.videoOperation, profile);
         const refOperation = profile.operations.includes(operation)
             ? operation
@@ -99,22 +113,43 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
               : operation;
         const refs = videoReferencesForOperation(profile, refOperation);
         const maxImages = refOperation === "image_to_video" ? Math.min(2, refs.maxImages) : refs.maxImages;
-        if (visualInputCount < (refs.minImages ?? 0)) return `至少需要 ${refs.minImages} 张参考图`;
-        if (visualInputCount > maxImages) return `最多支持 ${maxImages} 张参考图`;
-        if (input.videoCount > refs.maxVideos) return `最多支持 ${refs.maxVideos} 个参考视频`;
-        if (input.audioCount > refs.maxAudios) return `最多支持 ${refs.maxAudios} 个参考音频`;
-        if (operation !== "concat" && !profile.operations.includes(operation)) return `不支持${videoOperationLabel(operation)}`;
-        return "";
+        if (visualInputCount < (refs.minImages ?? 0)) {
+            const text = `至少需要 ${refs.minImages} 张参考图`;
+            return { reason: text, shortReason: text };
+        }
+        if (visualInputCount > maxImages) {
+            const text = `最多支持 ${maxImages} 张参考图`;
+            return { reason: text, shortReason: text };
+        }
+        if (input.videoCount > refs.maxVideos) {
+            const text = `最多支持 ${refs.maxVideos} 个参考视频`;
+            return { reason: text, shortReason: text };
+        }
+        if (input.audioCount > refs.maxAudios) {
+            const text = `最多支持 ${refs.maxAudios} 个参考音频`;
+            return { reason: text, shortReason: text };
+        }
+        if (operation !== "concat" && !profile.operations.includes(operation)) {
+            const text = `不支持${videoOperationLabel(operation)}`;
+            return { reason: text, shortReason: text };
+        }
+        return null;
     }
 
-    if (!input) return "";
+    if (!input) return null;
 
     if (capability === "text") {
-        return input.audioCount > 0 ? "文本模型不支持参考音频" : "";
+        return input.audioCount > 0 ? { reason: "文本模型不支持参考音频", shortReason: "不支持参考音频" } : null;
     }
 
-    if (input.characterCount > 1) return "角色配音一次只能引用一个角色卡";
-    return input.imageCount > 0 || input.videoCount > 0 || input.audioCount > 0 ? "音频模型只接受文本或单个角色卡输入" : "";
+    if (input.characterCount > 1) return { reason: "角色配音一次只能引用一个角色卡", shortReason: "最多支持 1 个角色卡" };
+    return input.imageCount > 0 || input.videoCount > 0 || input.audioCount > 0
+        ? { reason: "音频模型只接受文本或单个角色卡输入", shortReason: "仅支持文本或单个角色卡" }
+        : null;
+}
+
+export function modelCompatibilityError(config: AiConfig, model: string, requirements?: ModelRequirements) {
+    return modelCompatibilityIssue(config, model, requirements)?.reason || "";
 }
 
 export function modelRequestOptions(config: AiConfig, capability: ModelCapability) {

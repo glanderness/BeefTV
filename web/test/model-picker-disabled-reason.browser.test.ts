@@ -68,11 +68,45 @@ test("canvas provider model picker renders visible disabled reason for text-to-i
         const box = await reason.boundingBox();
         expect(box?.height || 0).toBeGreaterThan(8);
         expect(box?.width || 0).toBeGreaterThan(20);
+        const disabledStyles = await disabledOption.evaluate((el) => {
+            const btnStyle = window.getComputedStyle(el);
+            const reasonEl = el.querySelector(".provider-model-disabled-reason") as HTMLElement | null;
+            const reasonStyle = reasonEl ? window.getComputedStyle(reasonEl) : null;
+            return {
+                buttonOpacity: btnStyle.opacity,
+                reasonColor: reasonStyle?.color || "",
+                reasonOverflow: reasonStyle?.overflow || "",
+                reasonTextOverflow: reasonStyle?.textOverflow || "",
+            };
+        });
+        expect(disabledStyles.buttonOpacity).toBe("1");
+        expect(disabledStyles.reasonColor).toBe("rgb(163, 163, 163)");
+        expect(disabledStyles.reasonOverflow).toBe("hidden");
+        expect(disabledStyles.reasonTextOverflow).toBe("ellipsis");
 
         // Verify enabled model stays single-line without disabled reason element.
         const enabledOption = page.locator('button[role="option"]', { hasText: "Seedream 5.0 Pro" });
         expect(await enabledOption.isDisabled()).toBe(false);
         expect(await enabledOption.locator(".provider-model-disabled-reason").count()).toBe(0);
+    } finally {
+        await page.close();
+    }
+}, 20_000);
+
+test("dark canvas under light app keeps high-contrast model labels and disabled reasons", async () => {
+    const page = await browser.newPage({ viewport: { width: 520, height: 420 } });
+    try {
+        await page.goto(new URL("/?variant=canvas&theme=dark&appTheme=light", server.url).toString());
+        await page.locator(".canvas-composer-model-picker").click();
+        const enabledOption = page.locator('button[role="option"]', { hasText: "Seedream 5.0 Pro" });
+        await enabledOption.waitFor({ state: "visible" });
+        const enabledColor = await enabledOption.evaluate((el) => window.getComputedStyle(el).color);
+        expect(enabledColor).toBe("rgb(237, 237, 237)");
+
+        const disabledReason = page.locator('button[role="option"]', { hasText: "MOSS Image" }).locator(".provider-model-disabled-reason");
+        await disabledReason.waitFor({ state: "visible" });
+        const reasonColor = await disabledReason.evaluate((el) => window.getComputedStyle(el).color);
+        expect(reasonColor).toBe("rgb(163, 163, 163)");
     } finally {
         await page.close();
     }
@@ -94,6 +128,21 @@ test("creation model picker renders visible disabled reason for text-to-image-on
         expect((await reason.innerText()).trim()).toBe("仅支持文生图");
         const box = await reason.boundingBox();
         expect(box?.height || 0).toBeGreaterThan(8);
+        const creationStyles = await disabledOption.evaluate((el) => {
+            const btnStyle = window.getComputedStyle(el);
+            const reasonEl = el.querySelector(".canvas-model-picker-option-reason") as HTMLElement | null;
+            const reasonStyle = reasonEl ? window.getComputedStyle(reasonEl) : null;
+            return {
+                buttonOpacity: btnStyle.opacity,
+                reasonColor: reasonStyle?.color || "",
+                reasonOverflow: reasonStyle?.overflow || "",
+                reasonTextOverflow: reasonStyle?.textOverflow || "",
+            };
+        });
+        expect(creationStyles.buttonOpacity).toBe("1");
+        expect(creationStyles.reasonColor).toBe("rgb(75, 85, 99)");
+        expect(creationStyles.reasonOverflow).toBe("hidden");
+        expect(creationStyles.reasonTextOverflow).toBe("ellipsis");
     } finally {
         await page.close();
     }

@@ -220,18 +220,94 @@ func TestHydrateMediaMissingReferenceStorageSurfacesActionableReason(t *testing.
 }
 
 func TestReferenceStorageRejectionPreservesAllowlistedCOSDiagnostic(t *testing.T) {
-	cause := referencestorage.UploadRejectionError{
-		StatusCode: 403,
-		Code:       "AccessDenied",
-		Reason:     "对象存储拒绝上传（HTTP 403，AccessDenied）",
-		Action:     "请检查存储桶访问权限（推荐公有读私有写）以及子账号/CAM 是否具备写入与公开读取权限",
+	cases := []struct {
+		status int
+		code   string
+	}{
+		{403, "AccessDenied"},
+		{403, "SignatureDoesNotMatch"},
+		{403, "InvalidAccessKeyId"},
+		{404, "NoSuchBucket"},
+		{400, "InvalidBucketName"},
+		{403, "RequestTimeTooSkewed"},
+		{400, "AuthorizationHeaderMalformed"},
+		{301, "PermanentRedirect"},
+		{403, ""},
 	}
-	classified := ClassifyError(RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: cause}})
-	if classified.Category != CategoryProviderUnavailable || classified.ProviderCode != "reference_media_upload_failed" || classified.Uncertain || classified.Retryable {
-		t.Fatalf("unexpected storage classification: %#v", classified)
+	for _, tc := range cases {
+		if tc.status < 400 {
+			// PermanentRedirect may come back as 301 or 400; test 400 for SafeStorageFailure persistence contract too.
+			tc.status = 400
+		}
+		reason, action := referencestorage.SafeStorageRejectionCopy(tc.status, tc.code)
+		cause := referencestorage.UploadRejectionError{
+			StatusCode: tc.status,
+			Code:       tc.code,
+			Reason:     reason,
+			Action:     action,
+		}
+		classified := ClassifyError(RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: cause}})
+		if classified.Category != CategoryProviderUnavailable || classified.ProviderCode != "reference_media_upload_failed" || classified.Uncertain || classified.Retryable {
+			t.Fatalf("status=%d code=%s unexpected storage classification: %#v", tc.status, tc.code, classified)
+		}
+		if classified.BlocksManualRetry() || !classified.BlocksAutomaticRetry() {
+			t.Fatalf("status=%d code=%s must allow manual retry and block automatic retry: %#v", tc.status, tc.code, classified)
+		}
+		msg := classified.UserMessage()
+		if tc.code != "" && !strings.Contains(msg, tc.code) {
+			t.Fatalf("expected code %q in %q", tc.code, msg)
+		}
+		if !strings.Contains(msg, "本次尚未开始生成") {
+			t.Fatalf("expected unsent marker in %q", msg)
+		}
+		// Persisted task.Error restored via ClassifyText (used by assistantturns/task_binding)
+		// must preserve manual-retry allowance and non-uncertain state.
+		restored := ClassifyText(msg)
+		if restored.ProviderCode != "reference_media_upload_failed" || restored.Uncertain || restored.BlocksManualRetry() || !restored.BlocksAutomaticRetry() {
+			t.Fatalf("status=%d code=%s ClassifyText(%q) failed to restore manual retry: %#v", tc.status, tc.code, msg, restored)
+		}
+		// Upstream HTTP responses echoing our copy must still be rejected as uncertain.
+		echoed := ClassifyError(UncertainVideoSubmission(context.Background(), HTTPError{StatusCode: tc.status, Body: msg}))
+		if !echoed.Uncertain || !echoed.BlocksManualRetry() {
+			t.Fatalf("status=%d code=%s echoed HTTP copy must remain uncertain: %#v", tc.status, tc.code, echoed)
+		}
 	}
-	msg := classified.UserMessage()
-	if !strings.Contains(msg, "AccessDenied") || !strings.Contains(msg, "本次尚未开始生成") || !strings.Contains(msg, "公开读取权限") {
-		t.Fatalf("expected allowlisted COS diagnostic in %q", msg)
+}
+
+func TestAdditionalUserActionablePreparationErrorsNeverCollapseToGenericCopy(t *testing.T) {
+	// Verify plugin-disabled, invalid mask, and invalid upload target paths emit concrete causes.
+	_, err := RunImageTask(context.Background(), Input{
+		Mode:   "image",
+		Config: Config{InterfaceType: "nonexistent-custom-plugin"},
+	})
+	if err == nil {
+		t.Fatal("expected image plugin preparation error")
+	}
+	classified := ClassifyError(err)
+	if !strings.Contains(classified.UserMessage(), "nonexistent-custom-plugin") || strings.Contains(classified.UserMessage(), "本次请求在准备时失败") {
+		t.Fatalf("expected concrete image plugin copy, got %q", classified.UserMessage())
+	}
+
+	_, err = RunAudioTask(context.Background(), Input{
+		Mode:   "audio",
+		Config: Config{InterfaceType: "nonexistent-audio-plugin"},
+	})
+	if err == nil {
+		t.Fatal("expected audio plugin preparation error")
+	}
+	classified = ClassifyError(err)
+	if !strings.Contains(classified.UserMessage(), "nonexistent-audio-plugin") || strings.Contains(classified.UserMessage(), "本次请求在准备时失败") {
+		t.Fatalf("expected concrete audio plugin copy, got %q", classified.UserMessage())
+	}
+
+	_, err = runLocalMaskImageTask(context.Background(), Input{}, func(context.Context, Input) (map[string]any, error) {
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("expected local mask preparation error")
+	}
+	classified = ClassifyError(err)
+	if !strings.Contains(classified.UserMessage(), "局部融合需要一张原图和一张蒙版") || strings.Contains(classified.UserMessage(), "本次请求在准备时失败") {
+		t.Fatalf("expected concrete mask copy, got %q", classified.UserMessage())
 	}
 }

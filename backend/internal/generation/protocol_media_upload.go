@@ -85,7 +85,12 @@ func uploadOneProtocolMedia(
 		rawURL := strings.TrimSpace(media.URL)
 		if IsPublicMediaURL(rawURL) {
 			if _, err := outbound.ValidateOutboundURL(rawURL); err != nil {
-				return RequestPreparationError{Cause: err}
+				return RequestPreparationError{Cause: PreparationUserError{
+					Category: CategoryInputInaccessible,
+					Reason:   fmt.Sprintf("%s链接不可访问或不在允许的公网地址范围内，本次尚未开始生成", referenceMediaLabel(kind, index)),
+					Action:   "请使用可公开访问的 HTTPS 链接或重新导入本地素材后重试",
+					Cause:    err,
+				}}
 			}
 			media.URL = rawURL
 			media.DataURL = ""
@@ -226,7 +231,11 @@ func protocolMediaUploadTarget(config Config, meta protocol.Metadata, upload pro
 	if rawURL := strings.TrimSpace(upload.URL); rawURL != "" && useManifestUploadURL(config.BaseURL, meta.BaseURL, rawURL) {
 		parsed, err := url.Parse(rawURL)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return Config{}, "", fmt.Errorf("参考素材上传地址无效")
+			return Config{}, "", PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   "当前模型配置的参考素材上传地址无效，本次尚未开始生成",
+				Action:   "请检查模型协议插件或自定义渠道地址配置后重试",
+			}
 		}
 		target := config
 		target.BaseURL = parsed.Scheme + "://" + parsed.Host
@@ -243,7 +252,11 @@ func protocolMediaUploadTarget(config Config, meta protocol.Metadata, upload pro
 		}
 	}
 	if !strings.HasPrefix(uploadPath, "/") {
-		return Config{}, "", fmt.Errorf("参考素材上传路径无效")
+		return Config{}, "", PreparationUserError{
+			Category: CategoryInvalidParams,
+			Reason:   "当前模型配置的参考素材上传路径无效，本次尚未开始生成",
+			Action:   "请检查模型协议插件或自定义渠道地址配置后重试",
+		}
 	}
 	return config, uploadPath, nil
 }

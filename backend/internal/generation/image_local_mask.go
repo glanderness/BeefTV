@@ -31,18 +31,36 @@ type referenceBytesUploader interface {
 // resumed tasks share exactly the same output, without another paid submission.
 func runLocalMaskImageTask(ctx context.Context, input Input, execute func(context.Context, Input) (map[string]any, error)) (map[string]any, error) {
 	if input.Mask == nil || len(input.ReferenceImages) != 1 {
-		return nil, RequestPreparationError{Cause: errors.New("局部融合需要一张原图和一张蒙版")}
+		return nil, RequestPreparationError{Cause: PreparationUserError{
+			Category: CategoryInvalidParams,
+			Reason:   "局部融合需要一张原图和一张蒙版",
+			Action:   "请同时提供原图和重绘蒙版后重试",
+		}}
 	}
 	source, err := localMaskImage(ctx, &input.Config, input.ReferenceImages[0])
 	if err != nil {
-		return nil, RequestPreparationError{Cause: fmt.Errorf("读取局部重绘原图失败：%w", err)}
+		return nil, RequestPreparationError{Cause: PreparationUserError{
+			Category: CategoryInputInaccessible,
+			Reason:   "读取局部重绘原图失败",
+			Action:   "请确认原图存在且为受支持的图片格式后重试",
+			Cause:    err,
+		}}
 	}
 	mask, err := localMaskImage(ctx, &input.Config, *input.Mask)
 	if err != nil {
-		return nil, RequestPreparationError{Cause: fmt.Errorf("读取局部重绘蒙版失败：%w", err)}
+		return nil, RequestPreparationError{Cause: PreparationUserError{
+			Category: CategoryInputInaccessible,
+			Reason:   "读取局部重绘蒙版失败",
+			Action:   "请重新绘制蒙版后重试",
+			Cause:    err,
+		}}
 	}
 	if source.Bounds().Size() != mask.Bounds().Size() {
-		return nil, RequestPreparationError{Cause: errors.New("局部重绘蒙版尺寸必须与原图一致")}
+		return nil, RequestPreparationError{Cause: PreparationUserError{
+			Category: CategoryInvalidParams,
+			Reason:   "局部重绘蒙版尺寸必须与原图一致",
+			Action:   "请重新进入局部重绘并绘制蒙版后重试",
+		}}
 	}
 	srcBounds, maskBounds := source.Bounds(), mask.Bounds()
 	width, height := srcBounds.Dx(), srcBounds.Dy()
@@ -75,7 +93,11 @@ func runLocalMaskImageTask(ctx context.Context, input Input, execute func(contex
 		}
 	}
 	if !selected {
-		return nil, RequestPreparationError{Cause: errors.New("请先涂抹需要重绘的区域")}
+		return nil, RequestPreparationError{Cause: PreparationUserError{
+			Category: CategoryInvalidParams,
+			Reason:   "请先涂抹需要重绘的区域",
+			Action:   "请使用画笔涂抹要修改的区域后再提交",
+		}}
 	}
 	var maxRefBytes int64
 	if input.ImageCapability != nil {

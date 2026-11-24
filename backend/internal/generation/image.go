@@ -39,7 +39,11 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 	if input.Config.InterfaceType != "" && input.Config.InterfaceType != string(model.ChannelInterfaceOpenAIImage) && input.Config.InterfaceType != string(model.ChannelInterfaceGrokImage) {
 		ctx = EnsureOfficialProtocolAdapter(ctx, input.Config.InterfaceType)
 		if _, ok := DeclarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType); !ok {
-			return nil, RequestPreparationError{Cause: fmt.Errorf("图片协议插件未安装或已停用：%s", input.Config.InterfaceType)}
+			return nil, RequestPreparationError{Cause: PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   fmt.Sprintf("当前图片协议插件未安装或已停用（%s）", input.Config.InterfaceType),
+				Action:   "请在设置中启用对应协议插件或切换模型后重试",
+			}}
 		}
 		return RunDeclarativeProtocolTask(ctx, input)
 	}

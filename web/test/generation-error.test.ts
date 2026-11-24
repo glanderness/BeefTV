@@ -830,15 +830,81 @@ test("lookbehind-free credential and local path redaction preserves exact bounda
     );
 });
 
-test("explains COS/S3 HTTP 403 rejection codes with actionable troubleshooting guidance", () => {
-    const accessDenied = explainGenerationError("对象存储拒绝上传（HTTP 403，AccessDenied）");
-    expect(accessDenied.message).toContain("AccessDenied");
-    expect(accessDenied.message).toContain("公有读私有写");
+test("explains all allowlisted COS/S3 rejection codes intact across structured and text paths", () => {
+    const cases: Array<{ status: string; code: string; backendMessage: string; expectedHint: string }> = [
+        {
+            status: "403",
+            code: "AccessDenied",
+            backendMessage: "对象存储拒绝上传（HTTP 403，AccessDenied），本次尚未开始生成。请检查存储桶访问权限（推荐公有读私有写）以及子账号/CAM 是否具备写入与删除权限。",
+            expectedHint: "公有读私有写",
+        },
+        {
+            status: "403",
+            code: "SignatureDoesNotMatch",
+            backendMessage: "对象存储签名校验失败（HTTP 403，SignatureDoesNotMatch），本次尚未开始生成。请检查 Secret Access Key、区域代码（如 ap-guangzhou / auto）及本机系统时间后重试。",
+            expectedHint: "Secret Access Key",
+        },
+        {
+            status: "403",
+            code: "InvalidAccessKeyId",
+            backendMessage: "对象存储密钥无效（HTTP 403，InvalidAccessKeyId），本次尚未开始生成。请检查 Access Key ID（腾讯云 COS 为 SecretId）后重试。",
+            expectedHint: "SecretId",
+        },
+        {
+            status: "404",
+            code: "NoSuchBucket",
+            backendMessage: "找不到指定的对象存储桶（HTTP 404，NoSuchBucket），本次尚未开始生成。请检查存储桶名称（腾讯云 COS 须含 -APPID 后缀）与区域端点是否一致后重试。",
+            expectedHint: "-APPID",
+        },
+        {
+            status: "400",
+            code: "InvalidBucketName",
+            backendMessage: "找不到指定的对象存储桶（HTTP 400，InvalidBucketName），本次尚未开始生成。请检查存储桶名称（腾讯云 COS 须含 -APPID 后缀）与区域端点是否一致后重试。",
+            expectedHint: "-APPID",
+        },
+        {
+            status: "403",
+            code: "RequestTimeTooSkewed",
+            backendMessage: "对象存储拒绝上传（HTTP 403，RequestTimeTooSkewed），本次尚未开始生成。请校准本机系统时间后重试。",
+            expectedHint: "系统时间",
+        },
+        {
+            status: "400",
+            code: "AuthorizationHeaderMalformed",
+            backendMessage: "对象存储区域或端点不匹配（HTTP 400，AuthorizationHeaderMalformed），本次尚未开始生成。请核对 S3 端点与区域代码是否一致后重试。",
+            expectedHint: "端点与区域代码",
+        },
+        {
+            status: "400",
+            code: "PermanentRedirect",
+            backendMessage: "对象存储区域或端点不匹配（HTTP 400，PermanentRedirect），本次尚未开始生成。请核对 S3 端点与区域代码是否一致后重试。",
+            expectedHint: "端点与区域代码",
+        },
+    ];
 
-    const badSig = explainGenerationError("对象存储签名校验失败（HTTP 403，SignatureDoesNotMatch）");
-    expect(badSig.message).toContain("SignatureDoesNotMatch");
-    expect(badSig.message).toContain("Secret Key");
+    for (const tc of cases) {
+        // Structured backend task failure path (goes through persistedReferencePreparation / sanitizeProviderText).
+        const structured = explainGenerationError({ code: "provider_unavailable", message: tc.backendMessage });
+        expect(structured.message).toContain(tc.code);
+        expect(structured.message).toContain(`HTTP ${tc.status}`);
+        expect(structured.message).toContain(tc.expectedHint);
+        expect(structured.message).not.toContain("参考素材已上传，但公网地址无法读取");
+        expect(structured.uncertain).toBe(false);
 
-    const badBucket = explainGenerationError("对象存储拒绝上传（HTTP 404，NoSuchBucket）");
-    expect(badBucket.message).toContain("-APPID");
+        // Plain-text classification path (goes through resourceStorageFailureMessage).
+        const fromText = explainGenerationError(tc.backendMessage);
+        expect(fromText.message).toContain(tc.code);
+        expect(fromText.message).toContain(`HTTP ${tc.status}`);
+        expect(fromText.message).toContain(tc.expectedHint);
+        expect(fromText.message).not.toContain("参考素材已上传，但公网地址无法读取");
+    }
+
+    // Even when a backend copy mentions 公开读取 alongside AccessDenied, it must stay an upload rejection.
+    const withPublicReadHint = explainGenerationError("对象存储拒绝上传（HTTP 403，AccessDenied），请检查写入与公开读取权限");
+    expect(withPublicReadHint.message).toContain("AccessDenied");
+    expect(withPublicReadHint.message).not.toContain("参考素材已上传，但公网地址无法读取");
+
+    // Genuine post-upload public-read probe failure still maps cleanly.
+    const publicRead = explainGenerationError("素材已上传，但公网地址不可读取（HTTP 403），请检查公开读取设置");
+    expect(publicRead.message).toContain("参考素材已上传，但公网地址无法读取");
 });

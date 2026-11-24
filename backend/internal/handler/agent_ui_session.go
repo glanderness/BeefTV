@@ -101,7 +101,7 @@ func RegisterAgentUISessionRoutes(r gin.IRouter, svc agentUISessionService, ui *
 			return
 		}
 		if !isLoopbackRequest(c.Request) {
-			fail(c, http.StatusForbidden, app.BadAuthRequest("只接受本机同源请求"))
+			fail(c, http.StatusForbidden, app.BadAuthRequest("只接受本机同源请求：请通过本机回环地址访问，或经本机反向代理/隧道转发后重试"))
 			return
 		}
 		user, err := currentUser(c, svc)

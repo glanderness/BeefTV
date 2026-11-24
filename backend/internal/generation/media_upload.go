@@ -64,7 +64,11 @@ func PrepareBeefTVVideoReferences(ctx context.Context, config Config, input *Inp
 			media := &group.items[index]
 			if strings.HasPrefix(media.URL, "asset://") {
 				if managedConnection(config) || requiresBeefTVHTTPReferences(ctx, config) {
-					return RequestPreparationError{Cause: errors.New("当前模型需要可访问的参考素材链接，请重新导入。本次尚未开始生成")}
+					return RequestPreparationError{Cause: PreparationUserError{
+						Category: CategoryInputInaccessible,
+						Reason:   "当前模型需要可访问的参考素材链接，本次尚未开始生成",
+						Action:   "请重新导入参考素材后重试",
+					}}
 				}
 				continue
 			}
@@ -126,7 +130,11 @@ func PrepareBeefTVVideoReferences(ctx context.Context, config Config, input *Inp
 				}
 			}
 			if ref.MaxBytes > 0 && ref.Bytes > ref.MaxBytes {
-				return RequestPreparationError{Cause: fmt.Errorf("参考素材文件不能超过 %s", formatStorageLimit(ref.MaxBytes))}
+				return RequestPreparationError{Cause: PreparationUserError{
+					Category: CategoryInputTooLarge,
+					Reason:   fmt.Sprintf("参考素材文件不能超过 %s", formatStorageLimit(ref.MaxBytes)),
+					Action:   "请压缩或更换更小的参考素材后重试",
+				}}
 			}
 			link, err := client.UploadReference(uploadCtx, ref)
 			if err != nil {

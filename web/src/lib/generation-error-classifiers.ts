@@ -249,6 +249,17 @@ const UNSTRUCTURED_PROMPT_TAIL = new RegExp(
     "i",
 );
 const SIGNED_QUERY = /(?:[?&](?:signature|x-amz-signature|x-oss-signature|token|key)=)[^\s&]+/gi;
+const SAFE_STORAGE_ERROR_CODES = [
+    "AccessDenied",
+    "SignatureDoesNotMatch",
+    "InvalidAccessKeyId",
+    "NoSuchBucket",
+    "InvalidBucketName",
+    "RequestTimeTooSkewed",
+    "AuthorizationHeaderMalformed",
+    "PermanentRedirect",
+] as const;
+const SAFE_STORAGE_CODE_PATTERN = new RegExp(`\\b(?:${SAFE_STORAGE_ERROR_CODES.join("|")})\\b`, "g");
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$/;
 const UNSAFE_ID = /secret|token|password|apikey|api-key|bearer|sk-/i;
 
@@ -573,9 +584,19 @@ export function sanitizeProviderText(value: string) {
     text = text.replace(/\b(?:get|post|put|head|delete|patch|options)\s+(?:""|''|["'])(?:\s*:)?\s*/gi, "");
     // Unstructured messages may echo whole headers or prompts; discard the suffix,
     // since a whitespace-based token matcher cannot know where a secret ends.
+    // Protect allowlisted S3/COS symbolic error codes (such as InvalidAccessKeyId
+    // and AuthorizationHeaderMalformed) so SECRET_PATTERN cannot strip them.
+    const restoredCodes: string[] = [];
+    text = text.replace(SAFE_STORAGE_CODE_PATTERN, (code) => {
+        const index = restoredCodes.push(code) - 1;
+        return `__BEEFTV_SAFE_CODE_${index}__`;
+    });
     text = stripCredentialTail(text).replace(UNSTRUCTURED_PROMPT_TAIL, "[已隐藏]");
     text = redactLocalPaths(text, "[路径已隐藏]");
     text = text.replace(SIGNED_QUERY, "").replace(SECRET_PATTERN, "").replace(PROMPT_ECHO, "$1[已隐藏]");
+    if (restoredCodes.length) {
+        text = text.replace(/__BEEFTV_SAFE_CODE_(\d+)__/g, (_, idx) => restoredCodes[Number(idx)] ?? "");
+    }
     text = text.replace(/\s+/g, " ").trim();
     if (text.startsWith("{") || text.startsWith("[") || text.startsWith("<")) return "";
     return text.slice(0, 240);

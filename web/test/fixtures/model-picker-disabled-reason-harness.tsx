@@ -48,10 +48,11 @@ const testConfig: AiConfig = {
 function Harness() {
     const params = new URLSearchParams(window.location.search);
     const themeName = params.get("theme") === "light" ? "light" : "dark";
+    const appThemeName = params.get("appTheme") === "light" ? "light" : params.get("appTheme") === "dark" ? "dark" : themeName;
     const variant = params.get("variant") === "creation" ? "creation" : "canvas";
-    useThemeStore.setState({ theme: themeName });
+    useThemeStore.setState({ theme: appThemeName });
     useCanvasThemeStore.setState({ theme: themeName, active: true });
-    document.documentElement.classList.toggle("dark", themeName === "dark");
+    document.documentElement.classList.toggle("dark", appThemeName === "dark");
     const [model, setModel] = useState("beeftv::seedream-5.0-pro");
 
     return (

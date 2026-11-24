@@ -4,7 +4,7 @@ import { Popover } from "antd";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { notifyCanvasPopoverOpen, subscribeCanvasPopoverOpen } from "@/lib/canvas/canvas-popover-layer";
-import { compatibleModelInGroup, configuredModelDisplayName, groupModelsByDisplayName, modelCompatibilityError, resolveCompatibleModel, type DisplayModelGroup, type ModelRequirements } from "@/lib/model-selection";
+import { compatibleModelInGroup, configuredModelDisplayName, groupModelsByDisplayName, modelCompatibilityError, modelCompatibilityIssue, resolveCompatibleModel, type DisplayModelGroup, type ModelRequirements } from "@/lib/model-selection";
 import { cn } from "@/lib/utils";
 import { modelDisplayName, modelIcon, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -177,8 +177,10 @@ export function ModelPicker({
         const selected = modelGroup.models.includes(current);
         const model = compatibleModelInGroup(config, modelGroup.models, selectionRequirements, selected ? current : undefined);
         const displayModel = model || (selected ? current : modelGroup.models[0]);
-        const disabledReason = model ? "" : modelCompatibilityError(config, modelGroup.models[0], selectionRequirements) || "当前输入不符合该模型能力";
-        const shortDisabledReason = disabledReason ? compactDisabledModelReason(disabledReason) : "";
+        const issue = model ? null : modelCompatibilityIssue(config, modelGroup.models[0], selectionRequirements);
+        const disabledReason = model ? "" : issue?.reason || "当前输入不符合该模型能力";
+        const shortDisabledReason = model ? "" : issue?.shortReason || disabledReason;
+        const disabledColor = theme.node.label;
         return (
             <button
                 key={modelGroup.key}
@@ -189,8 +191,14 @@ export function ModelPicker({
                 aria-description={disabledReason || undefined}
                 disabled={Boolean(disabledReason)}
                 title={disabledReason || pickerModelOptionLabel(config, displayModel, showConfiguredModelName)}
-                className={providerMenu ? "provider-model-menu-row" : cn("canvas-model-picker-option disabled:cursor-not-allowed disabled:opacity-70", previewedModel === displayModel && "is-previewed")}
-                style={providerMenu ? undefined : { background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text }}
+                className={providerMenu ? "provider-model-menu-row" : cn("canvas-model-picker-option disabled:cursor-not-allowed", previewedModel === displayModel && "is-previewed")}
+                style={
+                    providerMenu
+                        ? disabledReason
+                            ? { color: disabledColor }
+                            : undefined
+                        : { background: selected ? theme.toolbar.activeBg : "transparent", color: disabledReason ? disabledColor : theme.node.text }
+                }
                 onMouseEnter={providerMenu ? undefined : () => setPreviewedModel(displayModel)}
                 onFocus={providerMenu ? undefined : () => setPreviewedModel(displayModel)}
                 onClick={() => {
@@ -204,13 +212,13 @@ export function ModelPicker({
                     <span className="provider-model-menu-row-copy">
                         <span className="truncate">{pickerModelDisplayName(config, displayModel, showConfiguredModelName)}</span>
                         {shortDisabledReason ? (
-                            <span className="provider-model-disabled-reason" style={{ color: theme.node.muted }}>
+                            <span className="provider-model-disabled-reason" style={{ color: disabledColor }}>
                                 {shortDisabledReason}
                             </span>
                         ) : null}
                     </span>
                 ) : (
-                    <ModelLabel config={config} model={displayModel} showConfiguredModelName={showConfiguredModelName} disabledReason={shortDisabledReason} mutedColor={theme.node.muted} />
+                    <ModelLabel config={config} model={displayModel} showConfiguredModelName={showConfiguredModelName} disabledReason={shortDisabledReason} mutedColor={disabledColor} />
                 )}
                 {selected ? <Check className="canvas-model-picker-option-check ml-1 shrink-0" style={{ color: theme.node.activeStroke }} /> : null}
             </button>
@@ -329,14 +337,6 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
     const label = capability === "image" ? "生图" : capability === "video" ? "视频" : capability === "text" ? "文本" : capability === "audio" ? "音频" : "";
     if (capability && config.models.length) return `暂无支持当前输入的${label}模型`;
     return config.models.length ? `暂无匹配的${label}模型` : "当前没有可用模型，请联系管理员或检查模型配置";
-}
-
-function compactDisabledModelReason(reason: string) {
-    const trimmed = reason.trim();
-    if (trimmed === "仅支持文生图，不支持图片重绘") return "仅支持文生图";
-    if (trimmed === "音频模型只接受文本或单个角色卡输入") return "仅支持文本或单个角色卡";
-    if (trimmed === "角色配音一次只能引用一个角色卡") return "最多支持 1 个角色卡";
-    return trimmed;
 }
 
 function ModelLabel({
