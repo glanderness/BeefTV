@@ -326,7 +326,10 @@ export function withoutModelConfigAutosave<T>(run: () => T): T {
 }
 
 export const hydrateModelConfig = repository.hydrate;
-export const commitModelConfig = repository.commit;
+export function commitModelConfig(config: AiConfig): Promise<void> {
+    if (externalModelConfigUpdateDepth > 0) return Promise.resolve();
+    return repository.commit(config);
+}
 export const mutateModelConfig = repository.mutate;
 export const acceptExternalModelConfig = repository.acceptExternalSnapshot;
 export const getCanonicalModelConfig = repository.getCanonicalConfig;

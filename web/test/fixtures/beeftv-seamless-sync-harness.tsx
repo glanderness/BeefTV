@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { GenerationCostBadge } from "@/components/generation/generation-cost-badge";
 import { BeefTVConnectionProvider, useBeefTVConnection } from "@/components/layout/beeftv-connection-provider";
 import { localWorkspaceConfig } from "@/lib/user-session";
-import { commitModelConfig, hydrateModelConfig, isApplyingExternalModelConfig, withoutModelConfigAutosave } from "@/services/model-config-repository";
+import { commitModelConfig, hydrateModelConfig, withoutModelConfigAutosave } from "@/services/model-config-repository";
 import { normalizeConfigSnapshot, resolveModelChannel, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 
 // Mirrors production AppProviders ordering: WorkspaceBootstrapHydrator hydrates
@@ -16,7 +16,7 @@ function HydratorGate({ children }: { children: ReactNode }) {
     useEffect(() => {
         let ready = false;
         const unsubscribe = useConfigStore.subscribe((state) => {
-            if (!ready || isApplyingExternalModelConfig() || state.config.channels.length === 0) return;
+            if (!ready || state.config.channels.length === 0) return;
             void commitModelConfig(state.config);
         });
         void hydrateModelConfig()
