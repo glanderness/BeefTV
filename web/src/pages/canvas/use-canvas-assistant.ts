@@ -10,29 +10,21 @@ import { flushModelConfig, getModelConfigPersistenceState } from "@/services/mod
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { saveCanvasForAssistant } from "@/services/assistant-canvas-save";
 import {
-    activateAssistantSession,
     agentAssistantFailureText,
     assistantPermissionMode,
     AgentTurnFailedError,
     AgentChatNotAdmittedError,
     AgentStreamDetachedError,
     cancelAgentChat,
-    confirmAssistantScriptProposal,
     createAssistantSession,
-    deleteAssistantSession,
-    getAgentHostStatus,
     getAssistantHistory,
     listAssistantSessions,
-    restartAgentHost,
     streamAgentChat,
     steerAgentChat,
-    undoAssistantTurn,
     type AgentChatReference,
     type AssistantAttachment,
-    type AssistantScriptProposal,
     type AssistantSkillSelection,
     type AssistantPermissionMode,
-    type AgentHostStatus,
     type AssistantTurn,
 } from "@/services/api/agent-assistant";
 import { assistantChangedNodeIds, assistantLifecycleText } from "./canvas-assistant-copy";
@@ -50,12 +42,13 @@ import {
     isAssistantTransientReason,
     markStoppedBeforeSend,
     readStoredProposals,
-    resolveAssistantStatusPollError,
     shouldAutoLoadHistory,
     shouldSuppressAssistantHistoryError,
     type AssistantTurnStatus,
     type CanvasRun,
 } from "./canvas-assistant-recovery";
+import { useAssistantHostStatus } from "./use-assistant-host-status";
+import { useAssistantSessionActions } from "./use-assistant-sessions";
 import { recordAssistantInterruption } from "@/services/diagnostics/assistant-diagnostics";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 
@@ -112,11 +105,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const embedded = isEmbeddedRuntime();
     const [open, setOpenState] = useState(() => readStoredOpen(embedded));
     const [width, setWidthState] = useState(readStoredWidth);
-    const [status, setStatus] = useState<AgentHostStatus | null>(null);
-    const [statusBusy, setStatusBusy] = useState(false);
+    const { status, setStatus, statusRef, statusBusy, restartHost } = useAssistantHostStatus(open);
     const [handledProposals, setHandledProposals] = useState<Set<string>>(readStoredProposals);
-    const [runningScriptProposalIds, setRunningScriptProposalIds] = useState<ReadonlySet<string>>(() => new Set());
-    const [scriptProposalFeedback, setScriptProposalFeedback] = useState<Record<string, string>>({});
     const [, forceRender] = useState(0);
 
     const namespace = useSyncExternalStore(onStorageNamespaceChange, getActiveUserScope, () => "guest");
@@ -129,8 +119,6 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     openRef.current = open;
     const activeCanvasRef = useRef(canvasId);
     activeCanvasRef.current = canvasId;
-    const statusRef = useRef(status);
-    statusRef.current = status;
     const onCanvasChangedRef = useRef(onCanvasChanged);
     onCanvasChangedRef.current = onCanvasChanged;
 
@@ -147,8 +135,6 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         setWidthState(readStoredWidth());
         setHandledProposals(readStoredProposals());
         setPreferredPermissionMode(assistantPermissionMode(scopedLocalStorage.getItem(PERMISSION_STORAGE_KEY)));
-        setRunningScriptProposalIds(new Set());
-        setScriptProposalFeedback({});
     }, [embedded, namespace]);
 
     const runFor = useCallback((id: string): CanvasRun => {
@@ -198,46 +184,6 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         setWidthState(clamped);
         scopedLocalStorage.setItem(WIDTH_STORAGE_KEY, String(clamped));
     }, []);
-
-    // 状态只在面板打开时复查：关着的面板不该一直问后端。正在启动或等待切换时节奏更快。
-    const fastPoll = isAssistantTransientReason(status?.reason);
-    useEffect(() => {
-        if (!open) return;
-        let cancelled = false;
-        let inFlight = false;
-        let consecutiveErrors = 0;
-        let activeController: AbortController | null = null;
-        const refresh = () => {
-            if (cancelled || inFlight) return;
-            inFlight = true;
-            const controller = new AbortController();
-            activeController = controller;
-            getAgentHostStatus({ signal: controller.signal })
-                .then((value) => {
-                    if (cancelled) return;
-                    consecutiveErrors = 0;
-                    setStatus(value);
-                })
-                .catch((error) => {
-                    if (cancelled) return;
-                    if (error instanceof DOMException && error.name === "AbortError") return;
-                    consecutiveErrors += 1;
-                    const reason = error instanceof ApiError ? error.reason : undefined;
-                    setStatus((prev) => resolveAssistantStatusPollError(prev, reason, consecutiveErrors));
-                })
-                .finally(() => {
-                    inFlight = false;
-                    if (activeController === controller) activeController = null;
-                });
-        };
-        refresh();
-        const timer = setInterval(refresh, fastPoll ? 2000 : 15000);
-        return () => {
-            cancelled = true;
-            activeController?.abort();
-            clearInterval(timer);
-        };
-    }, [open, fastPoll]);
 
     const loadHistory = useCallback(async (targetCanvas: string, sessionId?: string) => {
         const originNamespace = namespaceRef.current;
@@ -616,144 +562,6 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         rerenderIfActive(activeCanvasRef.current);
     }, [rerenderIfActive, runFor]);
 
-    const startNewSession = useCallback(async () => {
-        const originNamespace = namespaceRef.current;
-        const targetCanvas = activeCanvasRef.current;
-        const run = runFor(targetCanvas);
-        if (run.streaming || run.sessionBusy) return;
-        run.sessionBusy = true;
-        ++run.historyRequest;
-        rerenderIfActive(targetCanvas);
-        try {
-            const sessionId = await createAssistantSession(targetCanvas);
-            if (!isLiveRun(originNamespace, targetCanvas, run)) return;
-            run.sessionId = sessionId;
-            run.recovery = null;
-            run.turns = [];
-            run.reasoning = [];
-            run.reasoningOpen = {};
-            run.plan = null;
-            run.error = null;
-            run.pendingUserText = null;
-            run.pendingContinuationId = null;
-            run.lastSent = null;
-            run.turnStatus = {};
-            run.historyLoaded = true;
-            run.historyError = null;
-            void loadHistory(targetCanvas);
-        } catch {
-            if (isLiveRun(originNamespace, targetCanvas, run)) run.error = "没能新建对话，当前对话仍然保留。请重试。";
-        } finally {
-            run.sessionBusy = false;
-            if (isLiveRun(originNamespace, targetCanvas, run)) rerenderIfActive(targetCanvas);
-        }
-    }, [isLiveRun, loadHistory, rerenderIfActive, runFor]);
-
-    const activateSession = useCallback(async (sessionId: string) => {
-        const originNamespace = namespaceRef.current;
-        const targetCanvas = activeCanvasRef.current;
-        const run = runFor(targetCanvas);
-        if (run.streaming || run.sessionBusy) return;
-        run.sessionBusy = true;
-        ++run.historyRequest;
-        rerenderIfActive(targetCanvas);
-        try {
-            const activated = await activateAssistantSession(targetCanvas, sessionId);
-            if (!activated || !isLiveRun(originNamespace, targetCanvas, run)) return;
-            // 激活成功但读取失败时阻止把旧显示当作新对话继续发送。
-            run.historyLoaded = false;
-            run.plan = null;
-            if (await loadHistory(targetCanvas, activated) && isLiveRun(originNamespace, targetCanvas, run)) {
-                run.recovery = null;
-                run.turnStatus = {};
-                run.reasoning = [];
-                run.reasoningOpen = {};
-                run.error = null;
-                run.lastSent = null;
-                run.pendingUserText = null;
-                run.pendingContinuationId = null;
-            }
-        } catch {
-            if (isLiveRun(originNamespace, targetCanvas, run)) run.error = "没能切换对话，当前对话仍然保留。请重试。";
-        } finally {
-            run.sessionBusy = false;
-            if (isLiveRun(originNamespace, targetCanvas, run)) rerenderIfActive(targetCanvas);
-        }
-    }, [isLiveRun, loadHistory, rerenderIfActive, runFor]);
-
-    const deleteSession = useCallback(async (sessionId: string) => {
-        const originNamespace = namespaceRef.current;
-        const targetCanvas = activeCanvasRef.current;
-        const run = runFor(targetCanvas);
-        if (run.streaming || run.sessionBusy || !sessionId) return false;
-        run.sessionBusy = true;
-        ++run.historyRequest;
-        rerenderIfActive(targetCanvas);
-        try {
-            const result = await deleteAssistantSession(targetCanvas, sessionId);
-            if (!isLiveRun(originNamespace, targetCanvas, run)) return false;
-            run.sessions = run.sessions.filter((item) => item.sessionId !== sessionId);
-            if (run.sessionId === sessionId) {
-                const nextSessionId = result?.currentSessionId ?? run.sessions[0]?.sessionId ?? null;
-                run.sessionId = nextSessionId;
-                run.recovery = null;
-                run.turns = [];
-                run.reasoning = [];
-                run.reasoningOpen = {};
-                run.plan = null;
-                run.error = null;
-                run.pendingUserText = null;
-                run.pendingContinuationId = null;
-                run.lastSent = null;
-                run.turnStatus = {};
-                if (nextSessionId) {
-                    run.historyLoaded = false;
-                    await loadHistory(targetCanvas, nextSessionId);
-                } else {
-                    run.historyLoaded = true;
-                    run.historyError = null;
-                }
-            }
-            return true;
-        } catch {
-            if (isLiveRun(originNamespace, targetCanvas, run)) run.error = "没能删除对话，当前对话仍然保留。请重试。";
-            return false;
-        } finally {
-            run.sessionBusy = false;
-            if (isLiveRun(originNamespace, targetCanvas, run)) rerenderIfActive(targetCanvas);
-        }
-    }, [isLiveRun, loadHistory, rerenderIfActive, runFor]);
-
-    const undoTurn = useCallback(async (turnId: string) => {
-        const originNamespace = namespaceRef.current;
-        const targetCanvas = activeCanvasRef.current;
-        const run = runFor(targetCanvas);
-        run.turnStatus = { ...run.turnStatus, [turnId]: { undoing: true } };
-        rerenderIfActive(targetCanvas);
-        const result = await undoAssistantTurn(turnId, targetCanvas);
-        if (!isLiveRun(originNamespace, targetCanvas, run)) return;
-        run.turnStatus = { ...run.turnStatus, [turnId]: result.ok ? { undone: true } : { undoFailure: result.failure } };
-        rerenderIfActive(targetCanvas);
-        if (result.ok) {
-            const change = run.turns.find(turn => turn.turnId === turnId)?.change;
-            const canvasIds = change?.canvasChanges?.length ? [...new Set(change.canvasChanges.map(item => item.canvasId))] : [targetCanvas];
-            for (const id of canvasIds) onCanvasChangedRef.current?.(id, []);
-        }
-    }, [isLiveRun, rerenderIfActive, runFor]);
-
-    const restartHost = useCallback(async () => {
-        setStatusBusy(true);
-        try {
-            await restartAgentHost();
-            const nextStatus = await getAgentHostStatus();
-            setStatus(nextStatus);
-        } catch {
-            setStatus({ available: false, reason: "host_start_failed" });
-        } finally {
-            setStatusBusy(false);
-        }
-    }, []);
-
     const rememberProposal = useCallback((key: string) => {
         setHandledProposals((current) => {
             if (current.has(key)) return current;
@@ -767,51 +575,25 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const markProposalHandled = useCallback((proposalId: string) => rememberProposal(proposalId), [rememberProposal]);
     const markProposalDismissed = useCallback((proposalId: string) => rememberProposal(dismissedProposalKey(proposalId)), [rememberProposal]);
 
-    const runScriptProposal = useCallback(async (proposal: AssistantScriptProposal, turnId: string, alwaysAllowSession = false) => {
-        const originNamespace = namespaceRef.current;
-        const targetCanvas = activeCanvasRef.current;
-        const run = runFor(targetCanvas);
-        setRunningScriptProposalIds((prev) => {
-            const next = new Set(prev);
-            next.add(proposal.proposalId);
-            return next;
-        });
-        setScriptProposalFeedback((prev) => {
-            if (!prev[proposal.proposalId]) return prev;
-            const next = { ...prev };
-            delete next[proposal.proposalId];
-            return next;
-        });
-        try {
-            const res = await confirmAssistantScriptProposal(targetCanvas, turnId, proposal.proposalId, alwaysAllowSession);
-            if (!isLiveRun(originNamespace, targetCanvas, run)) return;
-            rememberProposal(proposal.proposalId);
-            run.turns = run.turns.map((turn) =>
-                turn.turnId === turnId
-                    ? {
-                          ...turn,
-                          scriptProposals: (turn.scriptProposals || []).map((item) =>
-                              item.proposalId === proposal.proposalId ? res.proposal : item,
-                          ),
-                      }
-                    : turn,
-            );
-            rerenderIfActive(targetCanvas);
-            await loadHistory(targetCanvas, run.sessionId ?? undefined);
-        } catch (error) {
-            if (namespaceRef.current !== originNamespace) return;
-            const msg = error instanceof Error ? error.message : "脚本运行失败，请稍后重试。";
-            setScriptProposalFeedback((prev) => ({ ...prev, [proposal.proposalId]: msg }));
-        } finally {
-            if (namespaceRef.current === originNamespace) {
-                setRunningScriptProposalIds((prev) => {
-                    const next = new Set(prev);
-                    next.delete(proposal.proposalId);
-                    return next;
-                });
-            }
-        }
-    }, [isLiveRun, loadHistory, rememberProposal, rerenderIfActive, runFor]);
+    const {
+        startNewSession,
+        activateSession,
+        deleteSession,
+        undoTurn,
+        runScriptProposal,
+        runningScriptProposalIds,
+        scriptProposalFeedback,
+    } = useAssistantSessionActions({
+        namespace,
+        namespaceRef,
+        activeCanvasRef,
+        onCanvasChangedRef,
+        runFor,
+        isLiveRun,
+        rerenderIfActive,
+        loadHistory,
+        rememberProposal,
+    });
 
     const run = runFor(canvasId);
     const nsPrefix = `${namespace}:`;

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -21,12 +22,54 @@ import (
 
 const defaultReadyTimeout = 20 * time.Second
 
+// childProcess 绑定单次启动的子进程句柄与显式生命周期标记，防止迟退出的旧进程
+// 误判为新进程崩溃，也消除 health 通过到 endpoint 公布之间的窄窗口竞态。
+type childProcess struct {
+	cmd      *exec.Cmd
+	done     chan struct{}
+	stopping bool
+	ready    bool
+	exited   bool
+	waitErr  error
+}
+
+func unexpectedHostExitError(waitErr error) error {
+	if waitErr != nil {
+		return fmt.Errorf("宿主进程意外退出: %w", waitErr)
+	}
+	return errors.New("宿主进程意外退出")
+}
+
+func (s *supervisor) finishChildExit(owned *childProcess, waitErr error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owned.exited = true
+	owned.waitErr = waitErr
+	if s.active != owned {
+		return
+	}
+	pipeMode := s.pipeMode
+	pid := 0
+	if owned.cmd != nil && owned.cmd.Process != nil {
+		pid = owned.cmd.Process.Pid
+	}
+	s.clearIdentityLocked()
+	s.active = nil
+	if !owned.stopping {
+		if owned.ready {
+			s.lastErr = unexpectedHostExitError(waitErr)
+			log.Printf("assistantruntime: agent-host exited unexpectedly (pid=%d, pipe=%v): %v", pid, pipeMode, waitErr)
+		} else {
+			log.Printf("assistantruntime: agent-host exited before ready (pid=%d, pipe=%v): %v", pid, pipeMode, waitErr)
+		}
+	}
+}
+
 // supervisor 持有本实例启动的子进程、回环端点与实例 nonce。
 // 端点只在本进程就绪且 health 证明 nonce 之后才暴露；绝不把全局端口或别人的 PID 当成所有权。
 type supervisor struct {
 	mu                sync.Mutex
-	cmd               *exec.Cmd
-	done              chan struct{}
+	active            *childProcess
 	starting          bool
 	fingerprint       string
 	launchedAt        time.Time
@@ -80,11 +123,11 @@ func (s *supervisor) isRunningLocked() bool {
 	if s.testOwned && s.endpoint != "" && s.nonce != "" {
 		return true
 	}
-	if s.cmd == nil || s.cmd.Process == nil {
+	if s.active == nil || s.active.cmd == nil || s.active.cmd.Process == nil {
 		return false
 	}
 	select {
-	case <-s.done:
+	case <-s.active.done:
 		return false
 	default:
 		return true
@@ -100,10 +143,10 @@ func (s *supervisor) running() bool {
 func (s *supervisor) pid() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cmd == nil || s.cmd.Process == nil {
+	if s.active == nil || s.active.cmd == nil || s.active.cmd.Process == nil {
 		return 0
 	}
-	return s.cmd.Process.Pid
+	return s.active.cmd.Process.Pid
 }
 
 func (s *supervisor) identity() (endpoint, nonce string) {
@@ -291,8 +334,11 @@ func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerpr
 	if listener != nil {
 		_ = listener.Close()
 	}
-	s.cmd = cmd
-	s.done = make(chan struct{})
+	owned := &childProcess{
+		cmd:  cmd,
+		done: make(chan struct{}),
+	}
+	s.active = owned
 	s.fingerprint = fingerprint
 	s.launchedAt = time.Now()
 	s.lastErr = nil
@@ -302,25 +348,17 @@ func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerpr
 	s.pipeMode = listenPipe != ""
 	s.lifetimeW = lifetimeW
 	s.testOwned = false
-	done := s.done
-	ownedCmd := cmd
 	go func() {
-		_ = ownedCmd.Wait()
-		s.mu.Lock()
-		if s.cmd == ownedCmd {
-			s.clearIdentityLocked()
-			s.cmd = nil
-			s.done = nil
-		}
-		s.mu.Unlock()
-		close(done)
+		waitErr := owned.cmd.Wait()
+		s.finishChildExit(owned, waitErr)
+		close(owned.done)
 	}()
 	s.mu.Unlock()
 
 	if timeout <= 0 {
 		timeout = defaultReadyTimeout
 	}
-	if err := waitChildReady(ctx, baseURL, listenPipe, nonce, token, timeout, done); err != nil {
+	if err := waitChildReady(ctx, baseURL, listenPipe, nonce, token, timeout, owned.done); err != nil {
 		s.mu.Lock()
 		s.lastErr = err
 		if ctx.Err() == nil {
@@ -338,15 +376,27 @@ func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerpr
 		return err
 	}
 	s.mu.Lock()
-	if s.cmd == ownedCmd {
+	if s.active == owned && !owned.exited && !owned.stopping {
+		owned.ready = true
 		s.endpoint = baseURL
 		s.pipePath = listenPipe
 		s.lastErr = nil
 		s.failedFingerprint = ""
 		s.failedAt = time.Time{}
+		s.mu.Unlock()
+		return nil
+	}
+	stopping := owned.stopping
+	exitErr := unexpectedHostExitError(owned.waitErr)
+	if !stopping && s.active == nil {
+		s.lastErr = exitErr
+		log.Printf("assistantruntime: agent-host exited immediately after health check: %v", owned.waitErr)
 	}
 	s.mu.Unlock()
-	return nil
+	if stopping {
+		return context.Canceled
+	}
+	return exitErr
 }
 
 func waitChildReady(ctx context.Context, baseURL, pipePath, nonce, token string, timeout time.Duration, done <-chan struct{}) error {
@@ -426,11 +476,13 @@ func (s *supervisor) stopLocked(ctx context.Context) error {
 		s.clearIdentityLocked()
 		return nil
 	}
-	cmd := s.cmd
-	if cmd == nil || cmd.Process == nil {
+	owned := s.active
+	if owned == nil || owned.cmd == nil || owned.cmd.Process == nil {
 		s.clearIdentityLocked()
 		return nil
 	}
+	owned.stopping = true
+	cmd := owned.cmd
 	if s.lifetimeW != nil {
 		_ = s.lifetimeW.Close()
 		s.lifetimeW = nil
@@ -441,7 +493,7 @@ func (s *supervisor) stopLocked(ctx context.Context) error {
 	} else {
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 	}
-	done := s.done
+	done := owned.done
 	s.mu.Unlock()
 	var waitErr error
 	if done != nil {
@@ -475,9 +527,8 @@ func (s *supervisor) stopLocked(ctx context.Context) error {
 		}
 	}
 	s.mu.Lock()
-	if s.cmd == cmd {
-		s.cmd = nil
-		s.done = nil
+	if s.active == owned {
+		s.active = nil
 		s.clearIdentityLocked()
 	}
 	return waitErr
@@ -505,6 +556,5 @@ func (s *supervisor) testingUseEndpoint(baseURL, nonce, fingerprint string) {
 	s.fingerprint = fingerprint
 	s.launchedAt = time.Now()
 	s.lastErr = nil
-	s.cmd = nil
-	s.done = nil
+	s.active = nil
 }
