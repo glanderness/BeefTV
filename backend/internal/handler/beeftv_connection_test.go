@@ -213,4 +213,23 @@ func TestBeefTVTopUpAndRefreshErrorStatusMapping(t *testing.T) {
 			t.Fatalf("%s %s reason = %q, want %q", tc.method, tc.path, errEnv.Reason, tc.wantReason)
 		}
 	}
+
+	syncRec := httptest.NewRecorder()
+	router.ServeHTTP(syncRec, httptest.NewRequest(http.MethodPost, "/api/beeftv/connection/sync", nil))
+	if syncRec.Code != http.StatusOK {
+		t.Fatalf("sync status = %d body=%s", syncRec.Code, syncRec.Body.String())
+	}
+	var syncEnv struct {
+		Code int `json:"code"`
+		Data struct {
+			State           string `json:"state"`
+			CatalogRevision int64  `json:"catalogRevision"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncEnv); err != nil {
+		t.Fatalf("unmarshal sync response: %v", err)
+	}
+	if syncEnv.Code != 0 || syncEnv.Data.State != beeftv.StateConnected || syncEnv.Data.CatalogRevision == 0 {
+		t.Fatalf("unexpected sync summary: %+v", syncEnv)
+	}
 }

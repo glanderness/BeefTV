@@ -235,6 +235,50 @@ func (s *ProviderConfig) path() string { return filepath.Join(s.dataDir, LocalPr
 
 func (s *ProviderConfig) backupPath() string { return s.path() + ".bak" }
 
+// UpdateCatalog loads the latest saved provider document under the workspace
+// lock, applies mutate to a fresh effective config snapshot, preserves user
+// assistant selection/authorization semantics, and saves atomically so
+// concurrent user PUTs to other settings or channels are never reverted.
+func (s *ProviderConfig) UpdateCatalog(authorizationID string, mutate func(config map[string]any) (string, error)) (int64, error) {
+	if s == nil || s.mu == nil || strings.TrimSpace(s.dataDir) == "" {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	document, err := s.loadPrimaryDocument()
+	if err != nil {
+		return 0, err
+	}
+	effective, err := effectiveProviderState(document)
+	if err != nil {
+		return document.Revision, fmt.Errorf("合并内置模型配置失败: %w", err)
+	}
+	config := effective.Config
+	defaultModel, err := mutate(config)
+	if err != nil {
+		return document.Revision, err
+	}
+	if authorizationID != "" && document.AssistantDefaultAuthorization != authorizationID {
+		if saved := savedAssistantSelection(document.Config); saved != "" {
+			config["assistantModel"] = saved
+		} else if defaultModel != "" {
+			config["assistantModel"] = defaultModel
+		}
+		document.AssistantDefaultAuthorization = authorizationID
+	} else if document.Config != nil {
+		if selected, exists := document.Config["assistantModel"]; exists {
+			config["assistantModel"] = selected
+		} else {
+			delete(config, "assistantModel")
+		}
+	}
+	body, err := json.Marshal(config)
+	if err != nil {
+		return document.Revision, err
+	}
+	return s.saveLocalModelConfig(body, document)
+}
+
 func (s *ProviderConfig) LoadEffectiveModelConfig() (EffectiveModelConfig, ConfigHealth, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

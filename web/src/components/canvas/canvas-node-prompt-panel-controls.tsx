@@ -3,6 +3,7 @@ import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { ArrowUp, LoaderCircle } from "lucide-react";
 
 import { GenerationCostLabel, useGenerationCostEstimateState } from "@/components/generation/generation-cost-badge";
+import { useOptionalBeefTVConnection } from "@/components/layout/beeftv-connection-provider";
 import { ModelPicker } from "@/components/model-picker";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { buildCanvasGenerationRequirements, buildGenerationConfig as buildNodeConfig, videoModelSelectionPatch } from "@/lib/canvas/canvas-generation-config";
@@ -91,7 +92,10 @@ export function useCanvasNodeGenerationPreview({
         }),
         [config, mode, prompt, requirements.input?.characterCount, requirements.input?.imageCount, requirements.input?.videoCount],
     );
-    const { estimate, previousEstimate } = useGenerationCostEstimateState(costTarget, { refreshKey: priceChannel.modelProfiles?.length || 0 });
+    const catalogRevision = useOptionalBeefTVConnection()?.catalogRevision ?? 0;
+    const { estimate, previousEstimate } = useGenerationCostEstimateState(costTarget, {
+        refreshKey: `${priceChannel.modelProfiles?.length || 0}:${catalogRevision}`,
+    });
     const previousImagePrice = mode === "image" ? previousEstimate : null;
     const costRefreshing = Boolean(previousImagePrice?.label);
     const costDisplay = useMemo(() => {

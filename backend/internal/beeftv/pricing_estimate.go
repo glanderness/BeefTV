@@ -91,6 +91,11 @@ func (s *Service) EstimatePricing(ctx context.Context, req PricingEstimateReques
 		APIKey:        cred.APIKey,
 		Client:        s.httpClient,
 		AllowHTTPTest: strings.HasPrefix(origin, "http://"),
+		Observe: func(_ *http.Request, resp *http.Response, _ []byte, _ time.Time, _ error) {
+			if resp != nil {
+				s.NoteRemoteCatalogETag(resp.Header.Get(CatalogETagHeader))
+			}
+		},
 	}
 	return client.EstimatePricing(boundedCtx, req)
 }

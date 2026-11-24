@@ -110,6 +110,7 @@ type ChannelModelCatalogItem struct {
 	VideoCapabilities        json.RawMessage                      `json:"videoCapabilities,omitempty"`
 	VideoCapabilitiesVersion *string                              `json:"videoCapabilitiesVersion,omitempty"`
 	VideoPricing             json.RawMessage                      `json:"videoPricing,omitempty"`
+	Pricing                  json.RawMessage                      `json:"pricing,omitempty"`
 	MediaCapabilities        json.RawMessage                      `json:"mediaCapabilities,omitempty"`
 	MediaCapabilitiesVersion *string                              `json:"mediaCapabilitiesVersion,omitempty"`
 }

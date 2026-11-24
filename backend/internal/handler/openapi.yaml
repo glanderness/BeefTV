@@ -157,6 +157,14 @@ paths:
       responses:
         "200":
           description: 信封 data.models 为已保存的上游目录项
+  /beeftv/connection/sync:
+    post:
+      tags: [beeftv]
+      summary: 按冷却时间与 ETag 静默检查并同步官方模型目录
+      description: 用于桌面切回前台或恢复联网时的轻量后台核对；未变更或冷却期内直接返回当前连接摘要。
+      responses:
+        "200":
+          description: 信封 data 为最新连接摘要（含 catalogRevision 与 catalogSyncedAt）
   /beeftv/connection/cancel:
     post:
       tags: [beeftv]

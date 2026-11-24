@@ -39,6 +39,24 @@ func RegisterBeefTVConnectionRoutes(r *gin.RouterGroup, connections beefTVConnec
 		}
 		ok(c, gin.H{"models": models})
 	})
+	r.POST("/beeftv/connection/sync", func(c *gin.Context) {
+		if _, err := workspaceForLocalRequest(c, connections); err != nil {
+			fail(c, http.StatusUnauthorized, err)
+			return
+		}
+		if !enforceRateLimit(c, "beeftv-sync", 60, time.Minute) {
+			return
+		}
+		connection, err := requestBeefTV(c, connections)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		summary, _ := connection.SyncCatalogIfNeeded(c.Request.Context(), beeftv.CatalogSyncOptions{
+			Cooldown: beeftv.DefaultFocusSyncCooldown,
+		})
+		ok(c, summary)
+	})
 	r.GET("/beeftv/connection", func(c *gin.Context) {
 		if _, err := workspaceForLocalRequest(c, connections); err != nil {
 			fail(c, http.StatusUnauthorized, err)

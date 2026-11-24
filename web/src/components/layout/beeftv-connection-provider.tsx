@@ -3,11 +3,13 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 
 import { mergeManagedBeefTVCatalog, shouldRefreshBeefTVCatalog } from "@/lib/managed-beeftv-catalog";
 import { localWorkspaceConfig } from "@/lib/user-session";
-import { cancelBeefTVConnection, disconnectBeefTVConnection, getBeefTVConnection, getBeefTVConnectionEpoch, openBeefTVWallet, startBeefTVConnection, type BeefTVConnectionSummary } from "@/services/api/beeftv-connection";
+import { cancelBeefTVConnection, disconnectBeefTVConnection, getBeefTVConnection, getBeefTVConnectionEpoch, openBeefTVWallet, startBeefTVConnection, syncBeefTVConnection, type BeefTVConnectionSummary } from "@/services/api/beeftv-connection";
 import { getLocalModelConfig } from "@/services/api/workspace";
+import { acceptExternalModelConfig, getModelConfigPersistenceState, withoutModelConfigAutosave } from "@/services/model-config-repository";
 import { normalizeConfigSnapshot, useConfigStore } from "@/stores/use-config-store";
 
 const BeefTVConnectionContext = createContext<ReturnType<typeof useConnectionState> | null>(null);
+const LIFECYCLE_SYNC_THROTTLE_MS = 5_000;
 
 export function BeefTVConnectionProvider({ children }: { children: ReactNode }) {
     const connection = useConnectionState();
@@ -20,6 +22,38 @@ export function useBeefTVConnection() {
     return connection;
 }
 
+export function useOptionalBeefTVConnection() {
+    return useContext(BeefTVConnectionContext);
+}
+
+export function shouldSyncManagedBeefTVRevision(
+    previousState: string | undefined,
+    summary: Pick<BeefTVConnectionSummary, "state" | "catalogRevision" | "catalogConfigRevision">,
+    appliedCatalogRevision: number | null,
+    initialHydratedRevision: number,
+) {
+    const nextCatalogRevision = typeof summary.catalogRevision === "number" && Number.isSafeInteger(summary.catalogRevision) && summary.catalogRevision >= 0 ? summary.catalogRevision : 0;
+    const nextCatalogConfigRevision = typeof summary.catalogConfigRevision === "number" && Number.isSafeInteger(summary.catalogConfigRevision) && summary.catalogConfigRevision > 0 ? summary.catalogConfigRevision : 0;
+    if (summary.state === "connected") {
+        if (appliedCatalogRevision === null) {
+            if (previousState && previousState !== "connected") return true;
+            if (nextCatalogConfigRevision > initialHydratedRevision) return true;
+            return false;
+        }
+        if (nextCatalogRevision > appliedCatalogRevision) {
+            return true;
+        }
+    }
+    return shouldRefreshBeefTVCatalog(previousState, summary.state);
+}
+
+function pollIntervalForSummary(summary: BeefTVConnectionSummary | null | undefined) {
+    const state = summary?.state;
+    if (state === "pending" || state === "connecting") return 2000;
+    if (summary?.catalogSyncing) return 1000;
+    return 30000;
+}
+
 function useConnectionState() {
     const { message } = App.useApp();
     const [connection, setConnection] = useState<BeefTVConnectionSummary | null>(null);
@@ -28,28 +62,28 @@ function useConnectionState() {
     const [syncing, setSyncing] = useState(false);
     const [catalogSyncFailed, setCatalogSyncFailed] = useState(false);
     const [balanceRefreshFailed, setBalanceRefreshFailed] = useState(false);
+    const [catalogRevision, setCatalogRevision] = useState<number>(0);
     const currentConnection = useRef<BeefTVConnectionSummary | null>(null);
     const appliedState = useRef<string | undefined>(undefined);
-    const catalogSync = useRef<{ state: string; selection: string; adopt: boolean; pending: boolean } | null>(null);
+    const initialHydratedRevision = useRef<number>(getModelConfigPersistenceState().revision);
+    const appliedCatalogRevision = useRef<number | null>(null);
+    const desiredCatalogRevision = useRef<number>(0);
+    const catalogSync = useRef<{ state: string; targetRevision: number; selection: string; adopt: boolean; pending: boolean } | null>(null);
     const actionPending = useRef(false);
+    const lifecycleSyncInFlight = useRef(false);
+    const lastLifecycleSyncAt = useRef(0);
     const mutationSeq = useRef(0);
-    const scheduleNextPoll = useRef<((state?: string) => void) | null>(null);
+    const scheduleNextPoll = useRef<((summary?: BeefTVConnectionSummary | null) => void) | null>(null);
 
-    const applyConnection = async (summary: BeefTVConnectionSummary, options?: { allowRetry?: boolean }) => {
-        const previousState = currentConnection.current?.state;
-        currentConnection.current = summary;
-        setConnection(summary);
-        scheduleNextPoll.current?.(summary.state);
-        const retry = catalogSync.current?.state === summary.state ? catalogSync.current : null;
-        if (retry?.pending) return;
-        if (appliedState.current === summary.state && !(retry && options?.allowRetry)) return;
-        appliedState.current = summary.state;
-        if (!retry && !shouldRefreshBeefTVCatalog(previousState, summary.state)) {
-            catalogSync.current = null;
-            setCatalogSyncFailed(false);
-            return;
-        }
-        const intent = retry || { state: summary.state, selection: useConfigStore.getState().config.assistantModel, adopt: summary.state === "connected" && Boolean(previousState && previousState !== "connected"), pending: false };
+    const recordCatalogRevision = (revision: number) => {
+        if (!Number.isSafeInteger(revision) || revision < 0) return;
+        const next = appliedCatalogRevision.current === null ? revision : Math.max(appliedCatalogRevision.current, revision);
+        appliedCatalogRevision.current = next;
+        desiredCatalogRevision.current = Math.max(desiredCatalogRevision.current, next);
+        setCatalogRevision(next);
+    };
+
+    const runCatalogReload = async (intent: { state: string; targetRevision: number; selection: string; adopt: boolean; pending: boolean }) => {
         catalogSync.current = intent;
         intent.pending = true;
         setSyncing(true);
@@ -57,17 +91,74 @@ function useConnectionState() {
             const result = await getLocalModelConfig();
             if (catalogSync.current !== intent) return;
             const current = useConfigStore.getState().config;
-            useConfigStore.getState().replaceConfig(localWorkspaceConfig(normalizeConfigSnapshot({
+            const nextConfig = localWorkspaceConfig(normalizeConfigSnapshot({
                 config: mergeManagedBeefTVCatalog(current, result.config, intent.adopt && current.assistantModel === intent.selection),
-            }).config));
+            }).config);
+            withoutModelConfigAutosave(() => {
+                useConfigStore.getState().replaceConfig(nextConfig);
+            });
+            acceptExternalModelConfig(nextConfig, result.revision);
+            recordCatalogRevision(intent.targetRevision);
             catalogSync.current = null;
             setCatalogSyncFailed(false);
         } catch {
             if (catalogSync.current === intent) setCatalogSyncFailed(true);
         } finally {
             intent.pending = false;
-            if (!catalogSync.current || catalogSync.current === intent) setSyncing(false);
+            const latest = currentConnection.current;
+            const applied = appliedCatalogRevision.current ?? 0;
+            const needsFollowUp = catalogSync.current === null && latest?.state === "connected" && desiredCatalogRevision.current > applied;
+            if (needsFollowUp) {
+                const followUp = {
+                    state: latest.state,
+                    targetRevision: desiredCatalogRevision.current,
+                    selection: useConfigStore.getState().config.assistantModel,
+                    adopt: false,
+                    pending: false,
+                };
+                void runCatalogReload(followUp);
+            } else if (!catalogSync.current || catalogSync.current === intent) {
+                setSyncing(false);
+            }
         }
+    };
+
+    const applyConnection = async (summary: BeefTVConnectionSummary, options?: { allowRetry?: boolean }) => {
+        const previousState = currentConnection.current?.state;
+        currentConnection.current = summary;
+        setConnection(summary);
+        scheduleNextPoll.current?.(summary);
+        const nextCatalogRevision = typeof summary.catalogRevision === "number" && Number.isSafeInteger(summary.catalogRevision) && summary.catalogRevision >= 0 ? summary.catalogRevision : 0;
+        if (nextCatalogRevision > desiredCatalogRevision.current) {
+            desiredCatalogRevision.current = nextCatalogRevision;
+        }
+        const retry = catalogSync.current?.state === summary.state ? catalogSync.current : null;
+        if (retry?.pending) return;
+        const needsSync = shouldSyncManagedBeefTVRevision(previousState, summary, appliedCatalogRevision.current, initialHydratedRevision.current);
+        if (!needsSync && appliedState.current === summary.state && !(retry && options?.allowRetry)) {
+            if (summary.state === "connected") {
+                recordCatalogRevision(nextCatalogRevision);
+            }
+            return;
+        }
+        appliedState.current = summary.state;
+        if (!retry && !needsSync) {
+            if (summary.state === "connected") {
+                recordCatalogRevision(nextCatalogRevision);
+            }
+            catalogSync.current = null;
+            setCatalogSyncFailed(false);
+            return;
+        }
+        const intent = retry || {
+            state: summary.state,
+            targetRevision: nextCatalogRevision,
+            selection: useConfigStore.getState().config.assistantModel,
+            adopt: summary.state === "connected" && Boolean(previousState && previousState !== "connected"),
+            pending: false,
+        };
+        intent.targetRevision = Math.max(intent.targetRevision, nextCatalogRevision);
+        await runCatalogReload(intent);
     };
 
     const refresh = async (options?: { allowRetry?: boolean }) => applyConnection(await getBeefTVConnection(), options);
@@ -75,10 +166,10 @@ function useConnectionState() {
     useEffect(() => {
         let stopped = false;
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const arm = (state = currentConnection.current?.state) => {
+        const arm = (summary = currentConnection.current) => {
             clearTimeout(timer);
             if (stopped) return;
-            timer = setTimeout(poll, state === "pending" || state === "connecting" ? 2000 : 30000);
+            timer = setTimeout(poll, pollIntervalForSummary(summary));
         };
         scheduleNextPoll.current = arm;
         const poll = async () => {
@@ -97,11 +188,52 @@ function useConnectionState() {
                 arm();
             }
         };
+        const syncOnWake = async () => {
+            if (stopped || actionPending.current || lifecycleSyncInFlight.current) return;
+            const currentState = currentConnection.current?.state;
+            if (currentState !== "connected" && currentState !== "catalog_failed") return;
+            const now = Date.now();
+            if (now - lastLifecycleSyncAt.current < LIFECYCLE_SYNC_THROTTLE_MS) return;
+            lastLifecycleSyncAt.current = now;
+            lifecycleSyncInFlight.current = true;
+            const epoch = getBeefTVConnectionEpoch();
+            const seq = mutationSeq.current;
+            try {
+                const summary = await syncBeefTVConnection();
+                if (!stopped && !actionPending.current && epoch === getBeefTVConnectionEpoch() && seq === mutationSeq.current) {
+                    await applyConnection(summary);
+                }
+            } catch { /* 切回前台静默检查失败时不打扰用户。 */ }
+            finally {
+                lifecycleSyncInFlight.current = false;
+            }
+        };
+        const onVisible = () => {
+            if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+            void syncOnWake();
+        };
+        const onOnline = () => {
+            void syncOnWake();
+        };
+        if (typeof window !== "undefined") {
+            window.addEventListener("focus", onVisible);
+            window.addEventListener("online", onOnline);
+        }
+        if (typeof document !== "undefined") {
+            document.addEventListener("visibilitychange", onVisible);
+        }
         void poll();
         return () => {
             stopped = true;
             scheduleNextPoll.current = null;
             clearTimeout(timer);
+            if (typeof window !== "undefined") {
+                window.removeEventListener("focus", onVisible);
+                window.removeEventListener("online", onOnline);
+            }
+            if (typeof document !== "undefined") {
+                document.removeEventListener("visibilitychange", onVisible);
+            }
         };
     }, []);
 
@@ -179,6 +311,7 @@ function useConnectionState() {
         busy,
         loading,
         syncing,
+        catalogRevision,
         balanceRefreshFailed,
         catalogSyncFailed: catalogSyncFailed || Boolean(connection?.catalogFailed || connection?.state === "catalog_failed"),
         connect,
@@ -186,6 +319,7 @@ function useConnectionState() {
         disconnect: () => runAction(disconnectBeefTVConnection),
         refresh: () => runAction(getBeefTVConnection, { allowRetry: true }),
         refreshBalance,
+        noteCatalogRevision: recordCatalogRevision,
         getMutationSeq,
         applySummary,
         applyBalanceCnyIfCurrent,

@@ -41,6 +41,7 @@ import { resolveMediaUrl } from "@/services/file-storage";
 import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import type { PromptOptimizerProvider } from "@/lib/plugins/plugin-types";
 import { GenerationCostBadge } from "@/components/generation/generation-cost-badge";
+import { useOptionalBeefTVConnection } from "@/components/layout/beeftv-connection-provider";
 import { creationComposerCostTarget } from "@/lib/generation-cost-estimate";
 import { creationAttachmentKind, creationMediaAspectRatio, type CreationAttachment, type CreationMode } from "./creation-assets";
 import { creationReferenceCounts, creationReferenceHasRoom, creationReferenceKinds, creationReferenceLimit, creationReferenceLimitMessage, creationReferenceLimitsLabel, displayCreationPrompt, type CreationReference, type CreationReferenceLimits } from "./creation-references";
@@ -337,6 +338,7 @@ export function CreationComposer(props: ComposerProps) {
     const previousAttachmentCountRef = useRef(0);
     const interactionBusy = props.busy || props.referenceReplacementBusy;
     const canSubmit = Boolean(props.prompt.trim()) && !interactionBusy;
+    const catalogRevision = useOptionalBeefTVConnection()?.catalogRevision ?? 0;
     const priceChannel = resolveModelChannel(props.config, props.model);
     const canOptimizePrompt = Boolean(props.promptOptimizerProvider) && (props.mode === "image" || props.mode === "video");
     const optimizerReferences = props.references.filter((reference) => reference.active && reference.kind !== "skill");
@@ -567,7 +569,7 @@ export function CreationComposer(props: ComposerProps) {
                 {props.prompt.trim() || props.attachments.length || props.references.some((reference) => reference.active) ? <Tooltip title="清空提示词和参考内容"><button type="button" className="creation-chat-control is-clear" onClick={props.onClearComposer} disabled={interactionBusy} aria-label="清空提示词和参考内容"><Trash2 /><span>清空</span></button></Tooltip> : null}
             </div>
             <div className="creation-submit-group">
-                <GenerationCostBadge target={costTarget} refreshKey={priceChannel.modelProfiles?.length || 0} className="creation-submit-cost" />
+                <GenerationCostBadge target={costTarget} refreshKey={`${priceChannel.modelProfiles?.length || 0}:${catalogRevision}`} className="creation-submit-cost" />
                 <Button
                     type="text"
                     className="creation-submit is-icon-only"

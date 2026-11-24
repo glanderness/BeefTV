@@ -290,6 +290,7 @@ func (s *Service) RefreshBalance(ctx context.Context) (Summary, error) {
 		return s.Status(), kernel.WrapAppError(http.StatusBadGateway, "账户连接信息格式无效", err)
 	}
 	s.applyRemoteConnectionViewIfCurrent(seq, view)
+	s.NoteRemoteCatalogETag(firstNonEmpty(view.CatalogETag, response.Header.Get(CatalogETagHeader)))
 	return s.Status(), nil
 }
 

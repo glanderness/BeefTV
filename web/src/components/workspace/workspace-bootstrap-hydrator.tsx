@@ -11,7 +11,7 @@ import { applyUserSession, localWorkspaceConfig } from "@/lib/user-session";
 import { getWorkspaceBootstrap, type WorkspaceBootstrapPayload } from "@/services/api/workspace";
 import { getCanvasHydrationHealth } from "@/services/canvas-hydration-health";
 import { hydrateLocalCanvasProjectsFromBackend } from "@/services/local-workspace-repository";
-import { commitModelConfig, flushModelConfig, hydrateModelConfig } from "@/services/model-config-repository";
+import { commitModelConfig, flushModelConfig, hydrateModelConfig, isApplyingExternalModelConfig } from "@/services/model-config-repository";
 import {
     clearWorkspaceStartupFailure,
     consumePrimedWorkspaceBootstrap,
@@ -94,7 +94,7 @@ export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }
     useEffect(() => {
         let ready = false;
         const unsubscribe = useConfigStore.subscribe((state) => {
-            if (applyingHydratedModelConfig || !shouldSaveLocalModelConfig({ subscriptionReady: ready, modelConfigReady: modelConfigReady.current, channelCount: state.config.channels.length })) return;
+            if (applyingHydratedModelConfig || isApplyingExternalModelConfig() || !shouldSaveLocalModelConfig({ subscriptionReady: ready, modelConfigReady: modelConfigReady.current, channelCount: state.config.channels.length })) return;
             void commitModelConfig(state.config);
         });
         const flush = () => { void flushModelConfig(); };

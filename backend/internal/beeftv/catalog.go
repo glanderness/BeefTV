@@ -15,195 +15,176 @@ import (
 // 已经保存过助手模型的用户不会被改写（见 SaveCatalogWithAssistantDefault）。
 const DefaultManagedAssistantModel = "deepseek-v4.1-flash"
 
-func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string, authorizationID string) error {
+func applyCatalogWithOptions(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string, authorizationID string, preserveExistingPricing bool) (int64, error) {
 	if store == nil {
-		return nil
+		return 0, nil
 	}
-	effective, _, err := store.LoadEffectiveModelConfig()
-	if err != nil {
-		return err
-	}
-	config, err := cloneAnyMap(effective.Config)
-	if err != nil {
-		return err
-	}
-	// Reconnecting replaces the official channel saved under the pre-rename ID.
-	channels := withoutLegacyOfficialChannel(config["channels"])
-	replaced := false
-	replaceModels := previousAccountID != "" && nextAccountID != "" && previousAccountID != nextAccountID
-	previousVideos := map[string]bool{}
-	if !replaceModels {
-		for _, raw := range channels {
-			channel, _ := raw.(map[string]any)
-			if channel["id"] != ChannelID {
-				continue
-			}
-			profiles, _ := channel["modelProfiles"].([]any)
-			for _, raw := range profiles {
-				profile, _ := raw.(map[string]any)
-				version, _ := profile["videoCapabilitiesVersion"].(string)
-				config, _ := profile["capabilityConfig"].(map[string]any)
-				video, _ := json.Marshal(config["video"])
-				if _, valid := NormalizeVersionedVideoCapability(video, version); valid {
-					id, _ := profile["model"].(string)
-					previousVideos[id] = true
+	return store.UpdateCatalog(authorizationID, func(config map[string]any) (string, error) {
+		// Reconnecting replaces the official channel saved under the pre-rename ID.
+		channels := withoutLegacyOfficialChannel(config["channels"])
+		replaced := false
+		replaceModels := previousAccountID != "" && nextAccountID != "" && previousAccountID != nextAccountID
+		previousVideos := map[string]bool{}
+		if !replaceModels {
+			for _, raw := range channels {
+				channel, _ := raw.(map[string]any)
+				if channel["id"] != ChannelID {
+					continue
+				}
+				profiles, _ := channel["modelProfiles"].([]any)
+				for _, raw := range profiles {
+					profile, _ := raw.(map[string]any)
+					version, _ := profile["videoCapabilitiesVersion"].(string)
+					cfg, _ := profile["capabilityConfig"].(map[string]any)
+					video, _ := json.Marshal(cfg["video"])
+					if _, valid := NormalizeVersionedVideoCapability(video, version); valid {
+						id, _ := profile["model"].(string)
+						previousVideos[id] = true
+					}
 				}
 			}
 		}
-	}
-	nextModels := make([]any, 0, len(models))
-	nextProfiles := make([]any, 0, len(models))
-	for _, model := range models {
-		nextModels = append(nextModels, model.ID)
-		profile := map[string]any{"model": model.ID}
-		// A refreshed catalog owns this quote. Clear a stale quote when the
-		// current account/model no longer supplies one.
-		profile["videoPricing"] = nil
-		if quote, ok := NormalizeCatalogVideoPricing(model.VideoPricing); ok {
-			profile["videoPricing"] = quote
-		}
-		profile["pricing"] = nil
-		if table, ok := pricing.Normalize(model.Pricing); ok {
-			profile["pricing"] = table
-		}
-		if model.DisplayName != "" {
-			profile["displayName"] = model.DisplayName
-		}
-		capability, protocol := catalogCapabilityAndProtocol(model)
-		if previousVideos[model.ID] && (model.ModelType == "" || model.ModelType == "video") {
-			// A partial refresh cannot reclassify an established video as chat
-			// merely because this response omitted its media declaration.
-			capability, protocol = "video", "openai-videos"
-		}
-		if catalogClearsGeneration(model) {
-			profile["capability"] = ""
-			profile["protocol"] = ""
-		} else {
-			if capability != "" {
-				profile["capability"] = capability
-			}
-			if protocol != "" {
-				profile["protocol"] = protocol
-			}
-			if capability == "video" {
-				if video, ok := NormalizeVersionedVideoCapability(model.VideoCapabilities, model.VideoCapabilitiesVersion); ok {
-					profile["capabilityConfig"] = map[string]any{"version": 1, "video": video}
-					profile["videoCapabilitiesVersion"] = strings.TrimSpace(model.VideoCapabilitiesVersion)
-				}
-			}
-			if capability == "image" {
-				// A partial/older directory must not replace the last valid server
-				// declaration with local model defaults. A valid new version replaces it.
-				if image, ok := NormalizeCatalogImageCapability(model.ImageCapabilities); ok && model.ImageCapabilitiesVersion != "" {
-					profile["capabilityConfig"] = map[string]any{"version": 1, "image": image}
-					profile["imageCapabilitiesVersion"] = model.ImageCapabilitiesVersion
-				}
-			}
-		}
-		if len(model.MediaCapabilities) > 0 && model.MediaCapabilitiesVersion != "" {
-			profile["mediaCapabilities"], profile["mediaCapabilitiesVersion"] = model.MediaCapabilities, model.MediaCapabilitiesVersion
-		}
-		nextProfiles = append(nextProfiles, profile)
-	}
-	for index, raw := range channels {
-		channel, ok := raw.(map[string]any)
-		if !ok || channel["id"] != ChannelID {
-			continue
-		}
-		if replaceModels {
-			channel["models"] = nextModels
-			channel["modelProfiles"] = nextProfiles
-		} else {
-			// Availability belongs to the current account's catalog. Preserve
-			// overrides only for models that are still present in that catalog.
-			channel["models"] = nextModels
-			available := make(map[string]bool, len(models))
-			for _, model := range models {
-				available[model.ID] = true
-			}
-			profiles := make([]any, 0, len(models))
-			for _, raw := range mergeProfiles(channel["modelProfiles"], nextProfiles) {
-				profile, _ := raw.(map[string]any)
-				id, _ := profile["model"].(string)
-				if available[id] {
-					profiles = append(profiles, raw)
-				}
-			}
-			channel["modelProfiles"] = profiles
-		}
-		channel["apiKey"] = ""
-		channel["credentialRef"] = CredentialRef
-		channels[index] = channel
-		replaced = true
-		break
-	}
-	if !replaced {
-		channels = append([]any{map[string]any{
-			"id": ChannelID, "models": nextModels, "modelProfiles": nextProfiles,
-			"apiKey": "", "credentialRef": CredentialRef, "enabled": true,
-		}}, channels...)
-	}
-	config["channels"] = channels
-	defaultModel := ""
-	if authorizationID != "" {
-		preferred := DefaultManagedAssistantModel
-		for _, raw := range channels {
-			channel, _ := raw.(map[string]any)
-			if channel["id"] != ChannelID {
-				continue
-			}
-			if aliases, ok := channel["modelAliases"].(map[string]any); ok {
-				if alias, ok := aliases[preferred].(string); ok && strings.TrimSpace(alias) != "" {
-					preferred = strings.TrimSpace(alias)
-				}
-			}
-		}
-		// Only the freshly fetched catalog can establish availability, not a stale merged entry.
+		nextModels := make([]any, 0, len(models))
+		nextProfiles := make([]any, 0, len(models))
 		for _, model := range models {
+			nextModels = append(nextModels, model.ID)
+			profile := map[string]any{"model": model.ID}
+			// A refreshed catalog owns this quote. Clear a stale quote when the
+			// current account/model no longer supplies one.
+			profile["videoPricing"] = nil
+			if quote, ok := NormalizeCatalogVideoPricing(model.VideoPricing); ok {
+				profile["videoPricing"] = quote
+			}
+			if table, ok := pricing.Normalize(model.Pricing); ok {
+				profile["pricing"] = table
+			} else if !preserveExistingPricing || replaceModels {
+				profile["pricing"] = nil
+			}
+			if model.DisplayName != "" {
+				profile["displayName"] = model.DisplayName
+			}
 			capability, protocol := catalogCapabilityAndProtocol(model)
-			if model.ID == preferred && capability == "text" && (protocol == "chat-completion" || protocol == "claude-api" || protocol == "responses" || protocol == "openai-response") {
-				defaultModel = ChannelID + "::" + preferred
-				break
+			if previousVideos[model.ID] && (model.ModelType == "" || model.ModelType == "video") {
+				// A partial refresh cannot reclassify an established video as chat
+				// merely because this response omitted its media declaration.
+				capability, protocol = "video", "openai-videos"
+			}
+			if catalogClearsGeneration(model) {
+				profile["capability"] = ""
+				profile["protocol"] = ""
+			} else {
+				if capability != "" {
+					profile["capability"] = capability
+				}
+				if protocol != "" {
+					profile["protocol"] = protocol
+				}
+				if capability == "video" {
+					if video, ok := NormalizeVersionedVideoCapability(model.VideoCapabilities, model.VideoCapabilitiesVersion); ok {
+						profile["capabilityConfig"] = map[string]any{"version": 1, "video": video}
+						profile["videoCapabilitiesVersion"] = strings.TrimSpace(model.VideoCapabilitiesVersion)
+					}
+				}
+				if capability == "image" {
+					// A partial/older directory must not replace the last valid server
+					// declaration with local model defaults. A valid new version replaces it.
+					if image, ok := NormalizeCatalogImageCapability(model.ImageCapabilities); ok && model.ImageCapabilitiesVersion != "" {
+						profile["capabilityConfig"] = map[string]any{"version": 1, "image": image}
+						profile["imageCapabilitiesVersion"] = model.ImageCapabilitiesVersion
+					}
+				}
+			}
+			if len(model.MediaCapabilities) > 0 && model.MediaCapabilitiesVersion != "" {
+				profile["mediaCapabilities"], profile["mediaCapabilitiesVersion"] = model.MediaCapabilities, model.MediaCapabilitiesVersion
+			}
+			nextProfiles = append(nextProfiles, profile)
+		}
+		for index, raw := range channels {
+			channel, ok := raw.(map[string]any)
+			if !ok || channel["id"] != ChannelID {
+				continue
+			}
+			if replaceModels {
+				channel["models"] = nextModels
+				channel["modelProfiles"] = nextProfiles
+			} else {
+				// Availability belongs to the current account's catalog. Preserve
+				// overrides only for models that are still present in that catalog.
+				channel["models"] = nextModels
+				available := make(map[string]bool, len(models))
+				for _, model := range models {
+					available[model.ID] = true
+				}
+				profiles := make([]any, 0, len(models))
+				for _, raw := range mergeProfiles(channel["modelProfiles"], nextProfiles) {
+					profile, _ := raw.(map[string]any)
+					id, _ := profile["model"].(string)
+					if available[id] {
+						profiles = append(profiles, raw)
+					}
+				}
+				channel["modelProfiles"] = profiles
+			}
+			channel["apiKey"] = ""
+			channel["credentialRef"] = CredentialRef
+			channels[index] = channel
+			replaced = true
+			break
+		}
+		if !replaced {
+			channels = append([]any{map[string]any{
+				"id": ChannelID, "models": nextModels, "modelProfiles": nextProfiles,
+				"apiKey": "", "credentialRef": CredentialRef, "enabled": true,
+			}}, channels...)
+		}
+		config["channels"] = channels
+		defaultModel := ""
+		if authorizationID != "" {
+			preferred := DefaultManagedAssistantModel
+			for _, raw := range channels {
+				channel, _ := raw.(map[string]any)
+				if channel["id"] != ChannelID {
+					continue
+				}
+				if aliases, ok := channel["modelAliases"].(map[string]any); ok {
+					if alias, ok := aliases[preferred].(string); ok && strings.TrimSpace(alias) != "" {
+						preferred = strings.TrimSpace(alias)
+					}
+				}
+			}
+			// Only the freshly fetched catalog can establish availability, not a stale merged entry.
+			for _, model := range models {
+				capability, protocol := catalogCapabilityAndProtocol(model)
+				if model.ID == preferred && capability == "text" && (protocol == "chat-completion" || protocol == "claude-api" || protocol == "responses" || protocol == "openai-response") {
+					defaultModel = ChannelID + "::" + preferred
+					break
+				}
 			}
 		}
-	}
-	body, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-	return store.SaveCatalogWithAssistantDefault(body, authorizationID, defaultModel)
+		return defaultModel, nil
+	})
 }
 
-func clearBeefTVModels(store *workspace.ProviderConfig) error {
+func clearBeefTVModels(store *workspace.ProviderConfig) (int64, error) {
 	if store == nil {
-		return nil
+		return 0, nil
 	}
-	effective, _, err := store.LoadEffectiveModelConfig()
-	if err != nil {
-		return err
-	}
-	config, err := cloneAnyMap(effective.Config)
-	if err != nil {
-		return err
-	}
-	channels, _ := config["channels"].([]any)
-	for index, raw := range channels {
-		channel, ok := raw.(map[string]any)
-		if !ok || channel["id"] != ChannelID {
-			continue
+	return store.UpdateCatalog("", func(config map[string]any) (string, error) {
+		channels, _ := config["channels"].([]any)
+		for index, raw := range channels {
+			channel, ok := raw.(map[string]any)
+			if !ok || channel["id"] != ChannelID {
+				continue
+			}
+			channel["models"] = []any{}
+			channel["modelProfiles"] = []any{}
+			channel["apiKey"] = ""
+			delete(channel, "credentialRef")
+			channels[index] = channel
 		}
-		channel["models"] = []any{}
-		channel["modelProfiles"] = []any{}
-		channel["apiKey"] = ""
-		delete(channel, "credentialRef")
-		channels[index] = channel
-	}
-	config["channels"] = channels
-	body, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-	return store.SaveLocalModelConfig(body)
+		config["channels"] = channels
+		return "", nil
+	})
 }
 
 func catalogCapabilityAndProtocol(model CatalogModel) (capability, protocol string) {
