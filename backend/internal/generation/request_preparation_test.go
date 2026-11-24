@@ -205,17 +205,34 @@ func TestHydrateMediaMissingReferenceStorageSurfacesActionableReason(t *testing.
 		Config:          Config{InterfaceType: "newapi-channel-2"},
 		ReferenceImages: []Media{{StorageKey: "resource:one"}},
 	}
+	// Call ClassifyError directly without any manual RequestPreparationError wrapper,
+	// matching executor.go's real production call path.
 	err := HydrateMedia(ctx, "owner", &input, MediaHydrationPolicyFor(ctx, input))
 	if err == nil {
 		t.Fatal("expected local mode URL-only preparation error")
 	}
-	classified := ClassifyError(RequestPreparationError{Cause: err})
+	classified := ClassifyError(err)
 	if classified.Category != CategoryInvalidParams || classified.Uncertain || classified.Retryable {
 		t.Fatalf("unexpected classification: %#v", classified)
 	}
 	msg := classified.UserMessage()
 	if !strings.Contains(msg, "参考图片 1：") || !strings.Contains(msg, "参考素材对象存储") || strings.Contains(msg, "本次请求在准备时失败") {
 		t.Fatalf("expected actionable missing reference storage copy, got %q", msg)
+	}
+
+	// Verify RequireURL + inline data URL branch is also wrapped in RequestPreparationError.
+	dataInput := Input{
+		Mode:            "video",
+		Config:          Config{InterfaceType: "newapi-channel-2"},
+		ReferenceImages: []Media{{DataURL: "data:image/png;base64,iVBORw0KGgo="}},
+	}
+	dataErr := HydrateMedia(ctx, "owner", &dataInput, MediaHydrationPolicy{RequireURL: true})
+	if dataErr == nil {
+		t.Fatal("expected inline data URL preparation error")
+	}
+	dataClassified := ClassifyError(dataErr)
+	if dataClassified.Category != CategoryInvalidParams || dataClassified.Uncertain || !strings.Contains(dataClassified.UserMessage(), "参考素材对象存储") {
+		t.Fatalf("unexpected inline data URL classification: %#v (%q)", dataClassified, dataClassified.UserMessage())
 	}
 }
 
@@ -235,10 +252,6 @@ func TestReferenceStorageRejectionPreservesAllowlistedCOSDiagnostic(t *testing.T
 		{403, ""},
 	}
 	for _, tc := range cases {
-		if tc.status < 400 {
-			// PermanentRedirect may come back as 301 or 400; test 400 for SafeStorageFailure persistence contract too.
-			tc.status = 400
-		}
 		reason, action := referencestorage.SafeStorageRejectionCopy(tc.status, tc.code)
 		cause := referencestorage.UploadRejectionError{
 			StatusCode: tc.status,

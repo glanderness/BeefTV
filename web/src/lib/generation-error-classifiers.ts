@@ -259,7 +259,7 @@ const SAFE_STORAGE_ERROR_CODES = [
     "AuthorizationHeaderMalformed",
     "PermanentRedirect",
 ] as const;
-const SAFE_STORAGE_CODE_PATTERN = new RegExp(`\\b(?:${SAFE_STORAGE_ERROR_CODES.join("|")})\\b`, "g");
+const SAFE_STORAGE_CODE_PATTERN = new RegExp(`\\b(?:${SAFE_STORAGE_ERROR_CODES.join("|")})\\b(?!\\s*[=:：])`, "g");
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$/;
 const UNSAFE_ID = /secret|token|password|apikey|api-key|bearer|sk-/i;
 

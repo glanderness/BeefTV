@@ -18,7 +18,7 @@ func prefixPreparationUserError(prefix string, err error) error {
 			userPrep.Reason = prefix + userPrep.Reason
 		}
 		userPrep.Cause = err
-		return userPrep
+		return RequestPreparationError{Cause: userPrep}
 	}
 	return fmt.Errorf("%s%w", prefix, err)
 }
@@ -49,11 +49,11 @@ func HydrateOne(ctx context.Context, userID string, media *Media, policy MediaHy
 	}
 	if !strings.HasPrefix(media.StorageKey, "resource:") {
 		if policy.RequireURL && (strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") || strings.HasPrefix(strings.TrimSpace(media.URL), "data:")) {
-			return PreparationUserError{
+			return RequestPreparationError{Cause: PreparationUserError{
 				Category: CategoryInvalidParams,
 				Reason:   "当前渠道暂不支持直接使用内嵌本地素材",
 				Action:   "请使用可公开访问的 HTTPS 素材链接，或在设置 → 存储设置中开启「参考素材对象存储」后重试",
-			}
+			}}
 		}
 		return nil
 	}
@@ -70,7 +70,7 @@ func HydrateOne(ctx context.Context, userID string, media *Media, policy MediaHy
 		return resourceNotReadyError()
 	}
 	if runtime.Resources.LocalMode() && resource.UsesObjectStorage() {
-		return PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地工作区检测到旧的远程素材记录", Action: "请重新导入到本地资源目录后重试"}
+		return RequestPreparationError{Cause: PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地工作区检测到旧的远程素材记录", Action: "请重新导入到本地资源目录后重试"}}
 	}
 	if policy.KeepLocal {
 		media.URL = ""
@@ -104,11 +104,11 @@ func HydrateOne(ctx context.Context, userID string, media *Media, policy MediaHy
 	useObjectURL := policy.RequireURL || (policy.PreferURL && resource.UsesObjectStorage())
 	if useObjectURL {
 		if runtime.Resources.LocalMode() && policy.RequireURL {
-			return PreparationUserError{
+			return RequestPreparationError{Cause: PreparationUserError{
 				Category: CategoryInvalidParams,
 				Reason:   "当前模型协议要求公网素材地址，本地工作区尚未开启对象存储自动上传",
 				Action:   "请前往设置 → 存储设置开启「参考素材对象存储」，或在模型设置中切换参考素材传输方式 / 改用支持内嵌素材的模型后重试",
-			}
+			}}
 		}
 		signedURL, err := runtime.Resources.PublicURL(resource, time.Now().Add(ResourceURLTTL))
 		if err != nil {

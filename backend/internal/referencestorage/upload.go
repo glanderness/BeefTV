@@ -186,7 +186,7 @@ func (e UploadRejectionError) SafeStorageFailure() (string, string) {
 }
 
 var (
-	safeStorageReasonPattern = regexp.MustCompile(`^.+?（HTTP ([45]\d{2})(?:，([A-Za-z]+))?），本次尚未开始生成$`)
+	safeStorageReasonPattern = regexp.MustCompile(`^.+?（HTTP ([345]\d{2})(?:，([A-Za-z]+))?），本次尚未开始生成$`)
 	allowlistedS3ErrorCodes  = map[string]struct{}{
 		"AccessDenied":                 {},
 		"SignatureDoesNotMatch":        {},
@@ -238,7 +238,7 @@ func MatchSafeStorageFailure(reason, action string) (int, string, bool) {
 		return 0, "", false
 	}
 	statusCode, err := strconv.Atoi(m[1])
-	if err != nil || statusCode < 400 || statusCode > 599 {
+	if err != nil || statusCode < 300 || statusCode > 599 {
 		return 0, "", false
 	}
 	code := m[2]
