@@ -45,12 +45,9 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		if err = tx.First(&source, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, input.CanvasID).Error; err != nil {
 			return err
 		}
-		expectedTargets := input.Targets
-		if len(expectedTargets) == 0 {
-			expectedTargets, err = operations.ResolveAssistantProposalTargetsInTx(tx, userID, input.CanvasID, turnID, input.ProposalID, source.GenerationAuthorizationJSON)
-			if err != nil {
-				return err
-			}
+		expectedTargets, err := operations.ResolveProposalTargetsForConfirmInTx(tx, userID, input.CanvasID, turnID, input.ProposalID, input.Targets, source.GenerationAuthorizationJSON)
+		if err != nil {
+			return err
 		}
 		ids := input.NodeIDs
 		if len(expectedTargets) > 0 {
@@ -71,11 +68,7 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 			return operations.PreconditionFailed("production_revoked", "这次制作授权已停止，请重新确认", nil)
 		}
 		plan := operations.GenerationAuthorization{SourceTurnID: turnID, ProposalID: input.ProposalID, Targets: current}
-		if err = operations.ValidateTurnAuthorizationConflict(turnID, source.GenerationAuthorizationJSON, plan); err != nil {
-			return err
-		}
-		encoded, _ := json.Marshal(plan)
-		if err = tx.Model(&source).Update("generation_authorization_json", string(encoded)).Error; err != nil {
+		if err = operations.ValidateTurnOrderConflictInTx(tx, userID, input.CanvasID, turnID, source.GenerationAuthorizationJSON, plan); err != nil {
 			return err
 		}
 		batch := []operations.GenerationTarget{}
@@ -159,17 +152,16 @@ func (s *Service) ApproveGenerationOrder(userID, proposalID, approvedBy string) 
 	})
 }
 
-func (s *operationSession) RecordAssistantGenerationProposal(userID, turnID, canvasID string, proposal operations.GenerationAuthorization) error {
-	return operations.RecordAssistantGenerationProposalInTx(s.tx, userID, turnID, canvasID, proposal)
-}
-
 func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID string, targets []operations.GenerationTarget) (any, error) {
 	var source model.AssistantTurn
 	if err := s.tx.First(&source, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, canvasID).Error; err != nil {
 		return nil, err
 	}
-	var plan operations.GenerationAuthorization
-	if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &plan) != nil || plan.SourceTurnID == "" {
+	plan, fromLegacy, err := operations.ResolveAuthorizedOrderForTurnInTx(s.tx, userID, canvasID, turnID, source.GenerationAuthorizationJSON)
+	if err != nil {
+		return nil, err
+	}
+	if plan == nil || plan.SourceTurnID == "" {
 		// Only the trusted confirmation endpoint can create a spend grant.
 		// A later model call cannot promote a recorded, unconfirmed proposal.
 		return nil, operations.PreconditionFailed("production_authorization_required", "请先在确认卡片中确认本次制作方案", nil)
@@ -178,7 +170,7 @@ func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID s
 	if err := s.tx.First(&owner, "turn_id = ? AND user_id = ? AND canvas_id = ?", plan.SourceTurnID, userID, canvasID).Error; err != nil {
 		return nil, err
 	}
-	if owner.Undone || owner.ContinuationInvalidated || owner.DurableSessionID != source.DurableSessionID || owner.GenerationAuthorizationJSON != source.GenerationAuthorizationJSON {
+	if source.Undone || source.ContinuationInvalidated || owner.Undone || owner.ContinuationInvalidated || owner.DurableSessionID != source.DurableSessionID || (fromLegacy && (owner.GenerationAuthorizationJSON == "" || (source.GenerationAuthorizationJSON != "" && owner.GenerationAuthorizationJSON != source.GenerationAuthorizationJSON))) {
 		return nil, operations.PreconditionFailed("production_revoked", "本次制作授权已停止", nil)
 	}
 	approved := map[string]operations.GenerationTarget{}
@@ -191,7 +183,7 @@ func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID s
 			return nil, operations.PreconditionFailed("production_changed", "素材或参数超出已确认的制作方案，请重新确认", nil)
 		}
 	}
-	return s.admitProductionTargets(userID, canvasID, plan, targets)
+	return s.admitProductionTargets(userID, canvasID, *plan, targets)
 }
 
 func (s *operationSession) admitProductionTargets(userID, canvasID string, plan operations.GenerationAuthorization, targets []operations.GenerationTarget) (any, error) {

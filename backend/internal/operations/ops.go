@@ -277,16 +277,6 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 			proposedTargets = fallbackTargets
 		}
 	}
-	if strings.TrimSpace(ctx.TurnID) != "" {
-		if recorder, ok := ctx.Domain.(ProposedGenerationRecorder); ok {
-			if err := recorder.RecordAssistantGenerationProposal(ctx.UserID, ctx.TurnID, args.CanvasID, GenerationAuthorization{
-				ProposalID: proposalID,
-				Targets:    proposedTargets,
-			}); err != nil {
-				return nil, AsError(err)
-			}
-		}
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	order := GenerationOrder{
 		OrderID:             proposalID,

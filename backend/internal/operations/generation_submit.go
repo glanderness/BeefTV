@@ -122,12 +122,22 @@ type GenerationOrder struct {
 	UpdatedAt           string                      `json:"updatedAt"`
 }
 
-type AuthorizedGenerationAdmission interface {
-	SubmitAuthorizedGeneration(userID, turnID, canvasID string, targets []GenerationTarget) (any, error)
+// IsOwnerConfirmed reports whether this order was explicitly confirmed by the workspace
+// owner (UI confirmation or owner-authenticated CLI), never by an external caller's auto mode.
+func (o GenerationOrder) IsOwnerConfirmed() bool {
+	if o.Status != GenerationOrderSubmitted {
+		return false
+	}
+	switch strings.TrimSpace(o.ApprovedBy) {
+	case "ui", "owner", "owner-cli":
+		return true
+	default:
+		return false
+	}
 }
 
-type ProposedGenerationRecorder interface {
-	RecordAssistantGenerationProposal(userID, turnID, canvasID string, proposal GenerationAuthorization) error
+type AuthorizedGenerationAdmission interface {
+	SubmitAuthorizedGeneration(userID, turnID, canvasID string, targets []GenerationTarget) (any, error)
 }
 
 // External clients own execution approval; they still use the same task admission.
@@ -256,6 +266,9 @@ func admitGeneration(ctx *Context, raw json.RawMessage, mode generationAdmission
 			}
 			if order == nil || order.CanvasID != args.CanvasID {
 				return nil, NotFound("generation_order_not_found", "生成单不存在")
+			}
+			if order.CallerKind == CallerAssistant || strings.TrimSpace(order.SourceTurnID) != "" {
+				return nil, PermissionDenied("generation_approval_required", "内置助手的生成方案需由用户在界面确认或通过 beeftv approve 批准，外部客户端不能直接提交")
 			}
 			existingOrder = order
 		}

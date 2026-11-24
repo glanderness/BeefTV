@@ -402,11 +402,6 @@ func (s *Service) ClaimContinuation(userID, id string, prepare func(*gorm.DB, *m
 		}
 		assets, tasks := AssociatedReferences(raw)
 		rec := Record{TurnID: row.TurnID, UserID: userID, CanvasID: row.CanvasID, DurableSessionID: row.SessionID, PermissionMode: row.PermissionMode, RevisionBefore: DocumentRevision(doc), CreatedAt: s.now(), State: StateOpen, Document: raw, SelectedNodeIDs: selected, AssociatedAssetIDs: assets, AssociatedTaskIDs: uniqueSorted(append(tasks, ids...))}
-		var source model.AssistantTurn
-		if err := tx.First(&source, "turn_id = ?", row.SourceTurnID).Error; err != nil {
-			return err
-		}
-		rec.GenerationAuthorizationJSON = source.GenerationAuthorizationJSON
 		if _, err = s.store.Insert(tx, recordToModel(rec, s.now())); err != nil {
 			return err
 		}

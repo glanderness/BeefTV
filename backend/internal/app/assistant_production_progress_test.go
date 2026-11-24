@@ -624,7 +624,15 @@ func TestLegacyNullReferenceTargetsConfirmAndContinueWithoutConflict(t *testing.
 	}
 	contID := result.(map[string]any)["continuationId"].(string)
 
-	// Simulate pre-upgrade persisted GenerationAuthorizationJSON still storing `"referenceNodeIds": null`.
+	// Simulate pre-upgrade persisted GenerationAuthorizationJSON (no GenerationOrder row)
+	// still storing `"referenceNodeIds": null`.
+	delRes := svc.Database().Where("user_id = ? AND op = ? AND op_id = ?", "local", "canvas.generation.order", "generation-order:gp-legacy-null").Delete(&model.AgentOpRecord{})
+	if delRes.Error != nil || delRes.RowsAffected != 1 {
+		t.Fatalf("expected to delete exactly 1 canonical order row, got rows=%d err=%v", delRes.RowsAffected, delRes.Error)
+	}
+	if leftover, err := operations.LookupGenerationOrderInTx(svc.Database(), "local", "gp-legacy-null"); err != nil || leftover != nil {
+		t.Fatalf("canonical order still present after delete: %+v %v", leftover, err)
+	}
 	legacyAuth, _ := json.Marshal(operations.GenerationAuthorization{SourceTurnID: source, ProposalID: "gp-legacy-null", Targets: legacyTargets})
 	if err := svc.Database().Model(&model.AssistantTurn{}).Where("turn_id = ? AND user_id = ?", source, "local").
 		Update("generation_authorization_json", string(legacyAuth)).Error; err != nil {
