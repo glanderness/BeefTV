@@ -4,10 +4,13 @@ import {
     extractProviderFields,
     isNetworkText,
     joinSentences,
+    SAFE_STORAGE_REJECTION_CODES,
     sanitizeDebugId,
     type CategoryCopy,
     type GenerationErrorCategory,
 } from "./generation-error-classifiers";
+
+export { SAFE_STORAGE_REJECTION_CODES };
 
 export type ReferenceStorageClassified = {
     category: GenerationErrorCategory;
@@ -26,17 +29,6 @@ export const REFERENCE_PREPARATION_COPY: Record<string, CategoryCopy> = {
     reference_media_upload_failed: { reason: "参考素材上传失败，本次尚未开始生成", action: "请检查对象存储配置和公开读取权限后重试" },
     reference_preupload_failed: { reason: "参考素材上传失败，本次尚未开始生成", action: "请检查网络或稍后重试" },
 };
-
-export const SAFE_STORAGE_REJECTION_CODES = [
-    "AccessDenied",
-    "SignatureDoesNotMatch",
-    "InvalidAccessKeyId",
-    "NoSuchBucket",
-    "InvalidBucketName",
-    "RequestTimeTooSkewed",
-    "AuthorizationHeaderMalformed",
-    "PermanentRedirect",
-] as const;
 
 const SAFE_STORAGE_REJECTION_CODE_PATTERN = new RegExp(`\\b(${SAFE_STORAGE_REJECTION_CODES.join("|")})\\b`, "i");
 const SAFE_STORAGE_REJECTION_REASON_PATTERN = /^.+?（HTTP ([345]\d{2})(?:，([A-Za-z]+))?），本次尚未开始生成$/;
