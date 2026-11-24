@@ -31,7 +31,7 @@ v18 `assistant-generation-continuations` 在既有 v17 活动技能上下文之�
 
 v19 `assistant-continuation-intent-fence` 为 `assistant_turns` 追加 `continuation_invalidated`，默认 false。停止、新用户输入或用户范围变化在取消已有回执的同事务标记旧源回合，阻止仍在准备中的旧确认稍后重新登记接续；普通回合保存不得清除此标记。宿主当前轮的正常 `skill_load` 不代表新用户意图，在同事务同步同用户、画布、会话和原 scope/version 下仍有效的接续回执；已取消或失效的记录不恢复。旧历史、未知列与迁移记录保留，缺列阻止 Ready。
 
-v20 `assistant-production-authorization` 为 `assistant_turns` 追加文本列 `generation_authorization_json`。用户一次确认的有限素材计划固定原回合、方案、节点、模型、提示词、参数及参考节点；后续官方 Pi 接续轮继承同一授权，不能增加素材或改变已确认输入。授权与首批既有任务、画布绑定及接续回执在同一事务保存。每个素材沿用 `proposal:<proposalId>:<nodeId>` 的任务身份，未知响应或再次确认不会重复创建付费任务。停止、新需求或会话变化仍通过 v19 撤销，旧历史不自动获得授权。该字段不代表人民币金额封顶；实际费用由渠道结算。缺列阻止 Ready，重复迁移保留既有授权。
+v20 `assistant-production-authorization` 为 `assistant_turns` 追加文本列 `generation_authorization_json`。用户一次确认的有限素材计划固定原回合、方案、节点、模型、提示词、参数及参考节点；后续官方 Pi 接续轮继承同一授权，不能增加素材或改变已确认输入。授权与首批既有任务、画布绑定及接续回执在同一事务保存。每个素材沿用 `proposal:<proposalId>:<nodeId>` 的任务身份，未知响应或再次确认不会重复创建付费任务。停止、新需求或会话变化仍通过 v19 撤销，旧历史不自动获得授权。该字段不代表人民币金额封顶；实际费用由渠道结算。缺列阻止 Ready，重复迁移保留既有授权。当前实现已将内置助手的生成提案、确认授权与续跑授权查询收归 `agent_op_records` 中的 `GenerationOrder`（`op = canvas.generation.order`）单一来源，且仅接受界面或工作区 owner 显式确认的生成单；`assistant_turns.generation_authorization_json` 不再新写也不再复制到续跑回合，仅作为升级前旧库数据的只读兼容回退保留。
 
 v21 `skill-market-release-metadata` 为 `skill_versions` 追加 `market_release_json TEXT`，在旧库还没有版本表时先创建该表。市场发布记录的发布身份、作者、来源、许可和完整清单属于具体本地版本，私有改编保留原来源，不改写原包内容摘要。迁移保留历史回合、未知字段和既有 ledger；与公开服务的发布状态分别验收。
 
@@ -142,7 +142,7 @@ HTTPS 图片提交前读取同源 `/models` 元数据，仅成功响应明确声
 
 版本 3 `agent-operation-records` 为既有版本 2 工作区创建 `agent_op_records` 及用户、操作 ID 联合主键；版本 4/5 为任务的客户端操作编号补充结构；版本 6 `agent-operation-turn-attribution` 为 `agent_op_records` 增加可空的 `turn_id` 与索引，用于把内置助手一轮对话的写入回执归到该轮上。迁移只新增结构，不重写画布、项目或任务数据；结构创建与迁移记录在同一事务中提交。重复启动不会重复迁移，已成功操作的幂等结果在重启后继续回放。
 
-`turn_id` 为空表示这次写入不属于助手回合（CLI、MCP 与 owner 直连都是如此）。回读既有 `opId` 时不会改写 `turn_id`，同一稳定操作在跨回合重放后仍归属最早执行它的那一轮。
+`turn_id` 为空表示这次写入不属于助手回合（CLI、MCP 与 owner 直连都是如此）。普通幂等回执回读既有 `opId` 时不会改写 `turn_id`，同一稳定操作在跨回合重放后仍归属最早执行它的那一轮；`op = canvas.generation.order` 的生成单记录在创建与状态推进时同步写入并保留其所属的 `SourceTurnID`（内置助手提案回合），便于按回合查询唯一已确认生成单。
 
 | 表 | 用途 | 关键边界 |
 | --- | --- | --- |
@@ -150,8 +150,8 @@ HTTPS 图片提交前读取同源 `/models` 元数据，仅成功响应明确声
 | `canvas_library_folders` | 画布库文件夹 | 按用户归属；删除写入 `deleted_at` 墓碑并清空封面引用，不会物理删行；同时把仍指向它的画布 `library_folder_id`、`payload_json` 与 `revision` 一并更新并记历史。同 ID 不能再导入。封面是资源 ID |
 | `canvas_drawings` | 画板快照与 revision | 主键 `(user_id, canvas_id, drawing_id)`；写入按 revision CAS，丢失应答且正文相同可回放已提交结果；预览和成品字节走资源 ID，参与资源删除引用检查；删除写入墓碑并清空快照与资源引用。未保存草稿由前端保留为可恢复内容，禁止按原 ID 自动重建；后端不另存一份正文。快照计入账号画布和素材数据上限（`StructuredDataMB`），HTTP 请求体为该上限加 JSON 信封余量，没有单独的 8MB 画板上限 |
 | `canvas_snapshots`、`canvas_snapshot_resources` | 画布历史快照与快照引用的资源 | 快照读写按归属校验；历史恢复同样走 revision 前置条件 |
-| `agent_op_records` | 统一操作层的幂等记录：`(user_id, op_id)` 主键、payload 哈希、状态与可空 `turn_id` | 同一 `opId` 同参数回读原结果、不同参数返回冲突；失败操作回滚且不留幂等记录；只在本用户命名空间内回放，不跨用户读取；`turn_id` 与业务写入同事务提交，只有后端鉴权的内置宿主能写入归属 |
-| `assistant_turns` | 助手业务回合：范围、权限、轮前画布快照、结算摘要与撤销标记 | 主键 `turn_id`；必须带用户和画布身份；open 回合才接受写入归属。v15 `permission_mode` 按回合固定，`canvas_snapshots_json` 保存所有写入目标的轮前文档与版本；撤销先检查全部目标，再将旧文档写成新 revision，与 undone 标记同事务提交。v14 `skill_pins_json` 保存用户选定的技能 ID、版本 ID 与内容摘要，并附带选定时记下的显示名 `skillName` 与版本号 `version`（只用于显示，不参与身份比较；旧记录可能没有）；恢复不得自动替换版本。不保存模型对话稿 |
+| `agent_op_records` | 统一操作层的幂等记录与生成单（`canvas.generation.order`）：`(user_id, op_id)` 主键、payload 哈希、状态与可空 `turn_id` | 同一 `opId` 同参数回读原结果、不同参数返回冲突；失败操作回滚且不留幂等记录；只在本用户命名空间内回放，不跨用户读取；`turn_id` 与业务写入同事务提交，只有后端鉴权的内置宿主能写入归属；`canvas.generation.order` 记录同时承载生成提案、owner 确认状态与续跑授权真源 |
+| `assistant_turns` | 助手业务回合：范围、权限、轮前画布快照、结算摘要与撤销标记 | 主键 `turn_id`；必须带用户和画布身份；open 回合才接受写入归属。v15 `permission_mode` 按回合固定，`canvas_snapshots_json` 保存所有写入目标的轮前文档与版本；撤销先检查全部目标，再将旧文档写成新 revision，与 undone 标记同事务提交。v14 `skill_pins_json` 保存用户选定的技能 ID、版本 ID 与内容摘要，并附带选定时记下的显示名 `skillName` 与版本号 `version`（只用于显示，不参与身份比较；旧记录可能没有）；恢复不得自动替换版本。v20 `generation_authorization_json` 已退化为升级前旧库只读兼容回退、不再写入。不保存模型对话稿 |
 | `creation_conversations` | `/create` 页面对话与消息文档 | 主键 `(user_id, conversation_id)`；按 revision CAS 写入；删除写墓碑，稳定 ID 不会被重建。历史 v11 迁移结构保留 `(user_id, import_operation_id)` 部分唯一索引。不保存密钥。临时媒体只从附件/结果 URL 字段去掉，正文保留。删除对话不删除任务或素材 |
 
 版本 10 `assistant-business-turns` 为既有 v9 工作区创建 `assistant_turns`。旧 JSON 文件 `assistant-turns/<hexID>.json` 是只读迁移输入，按被访问的 ID 校验后导入，导入后不再作为竞争事实；生产路径不改写、不删除原文件。保留策略只压缩超龄大快照、留下身份墓碑，不会删掉进行中的回合、回执引用的回合或操作回执。操作层若要把回执记到某一轮，必须在该操作自己的事务里校验回合仍为 open；只做事务外预检无法关闭结算与写入的竞态。

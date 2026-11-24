@@ -37,6 +37,7 @@ func UpsertGenerationOrderInTx(tx *gorm.DB, userID string, order GenerationOrder
 	}
 	opID := generationOrderOpID(proposalID)
 	status := "order:" + string(order.Status)
+	turnID := strings.TrimSpace(order.SourceTurnID)
 	var existing model.AgentOpRecord
 	findErr := tx.Where("user_id = ? AND op_id = ?", userID, opID).First(&existing).Error
 	if errors.Is(findErr, gorm.ErrRecordNotFound) {
@@ -47,7 +48,7 @@ func UpsertGenerationOrderInTx(tx *gorm.DB, userID string, order GenerationOrder
 			PayloadHash: strings.TrimSpace(order.CanvasID),
 			Status:      status,
 			ResultJSON:  string(encoded),
-			TurnID:      "",
+			TurnID:      turnID,
 		}).Error
 	}
 	if findErr != nil {
@@ -57,6 +58,7 @@ func UpsertGenerationOrderInTx(tx *gorm.DB, userID string, order GenerationOrder
 		"payload_hash": strings.TrimSpace(order.CanvasID),
 		"status":       status,
 		"result_json":  string(encoded),
+		"turn_id":      turnID,
 	}).Error
 }
 
@@ -186,6 +188,12 @@ func MarkGenerationOrderSubmittedInTx(
 		order.ApprovedAt = now
 		order.TaskIDs = taskIDs
 		order.ContinuationID = continuationID
+		if strings.TrimSpace(order.SourceTurnID) == "" {
+			order.SourceTurnID = turnID
+		}
+		if len(targets) > 0 {
+			order.Targets = targets
+		}
 		order.UpdatedAt = now
 	} else {
 		modelDisplay := ""
@@ -330,51 +338,86 @@ func ApproveExternalGenerationOrderInTx(tx *gorm.DB, domain Domain, userID, prop
 	return admitted, nil
 }
 
-func RecordAssistantGenerationProposalInTx(tx *gorm.DB, userID, turnID, canvasID string, proposal GenerationAuthorization) error {
-	if strings.TrimSpace(turnID) == "" || strings.TrimSpace(proposal.ProposalID) == "" || len(proposal.Targets) == 0 {
-		return nil
+func parseLegacyAuthorization(raw string) (*GenerationAuthorization, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
 	}
-	var turn model.AssistantTurn
-	if err := tx.First(&turn, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, canvasID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
-		return err
+	var plan GenerationAuthorization
+	if json.Unmarshal([]byte(raw), &plan) != nil {
+		return nil, false
 	}
-	if turn.GenerationAuthorizationJSON != "" {
-		var existing GenerationAuthorization
-		if json.Unmarshal([]byte(turn.GenerationAuthorizationJSON), &existing) == nil && existing.SourceTurnID != "" {
-			return nil
-		}
-	}
-	proposal.SourceTurnID = ""
-	encoded, err := json.Marshal(proposal)
-	if err != nil {
-		return err
-	}
-	return tx.Model(&turn).Update("generation_authorization_json", string(encoded)).Error
+	return &plan, true
 }
 
-// ResolveAssistantProposalTargetsInTx resolves the recorded targets for a turn's proposal when
-// the confirmation request omits inline targets. It prefers the canonical GenerationOrder row so
-// continuation turns (which carry an inherited parent authorization) can confirm new proposals.
-func ResolveAssistantProposalTargetsInTx(tx *gorm.DB, userID, canvasID, turnID, proposalID, rawAuthJSON string) ([]GenerationTarget, error) {
+// LookupTurnSubmittedOrderInTx returns the canonical owner-confirmed GenerationOrder owned by turnID.
+// For pre-upgrade databases where AgentOpRecord.TurnID was empty, it falls back to matching
+// submitted canvas orders by SourceTurnID in ResultJSON.
+func LookupTurnSubmittedOrderInTx(tx *gorm.DB, userID, canvasID, turnID string) (*GenerationOrder, error) {
+	turnID = strings.TrimSpace(turnID)
+	if turnID == "" {
+		return nil, nil
+	}
+	var directRows []model.AgentOpRecord
+	if err := tx.Where("user_id = ? AND op = ? AND payload_hash = ? AND status = ? AND turn_id = ?",
+		userID, generationOrderOpName, strings.TrimSpace(canvasID), "order:"+string(GenerationOrderSubmitted), turnID).
+		Order("created_at DESC").Find(&directRows).Error; err != nil {
+		return nil, err
+	}
+	for _, rec := range directRows {
+		var order GenerationOrder
+		if json.Unmarshal([]byte(rec.ResultJSON), &order) == nil && order.IsOwnerConfirmed() {
+			return &order, nil
+		}
+	}
+	var legacyRows []model.AgentOpRecord
+	if err := tx.Where("user_id = ? AND op = ? AND payload_hash = ? AND status = ? AND turn_id = ''",
+		userID, generationOrderOpName, strings.TrimSpace(canvasID), "order:"+string(GenerationOrderSubmitted)).
+		Order("created_at DESC").Find(&legacyRows).Error; err != nil {
+		return nil, err
+	}
+	for _, rec := range legacyRows {
+		var order GenerationOrder
+		if json.Unmarshal([]byte(rec.ResultJSON), &order) == nil && order.SourceTurnID == turnID && order.IsOwnerConfirmed() {
+			return &order, nil
+		}
+	}
+	return nil, nil
+}
+
+// ResolveProposalTargetsForConfirmInTx resolves the authoritative targets for confirming
+// (turnID, proposalID). When a canonical GenerationOrder exists for proposalID, inline client
+// targets cannot diverge from it and proposals from another turn are rejected.
+func ResolveProposalTargetsForConfirmInTx(
+	tx *gorm.DB,
+	userID, canvasID, turnID, proposalID string,
+	inlineTargets []GenerationTarget,
+	legacyAuthJSON string,
+) ([]GenerationTarget, error) {
 	order, err := LookupGenerationOrderInTx(tx, userID, proposalID)
 	if err != nil {
 		return nil, err
 	}
-	if order != nil && order.CanvasID == canvasID && order.SourceTurnID == turnID && len(order.Targets) > 0 {
-		return order.Targets, nil
+	if order != nil {
+		if order.CanvasID != "" && order.CanvasID != canvasID {
+			return nil, Conflict("production_changed", "制作方案不属于当前画布，请重新确认", nil)
+		}
+		if order.SourceTurnID != "" && order.SourceTurnID != turnID {
+			return nil, Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+		}
+		if len(order.Targets) > 0 {
+			if len(inlineTargets) > 0 && !GenerationTargetsEqual(inlineTargets, order.Targets) {
+				return nil, Conflict("production_changed", "制作方案已变化，请重新确认", nil)
+			}
+			return order.Targets, nil
+		}
 	}
-	if rawAuthJSON == "" {
+	if len(inlineTargets) > 0 {
+		return inlineTargets, nil
+	}
+	existing, ok := parseLegacyAuthorization(legacyAuthJSON)
+	if !ok {
 		return nil, nil
 	}
-	var existing GenerationAuthorization
-	if json.Unmarshal([]byte(rawAuthJSON), &existing) != nil {
-		return nil, nil
-	}
-	// Inherited parent-turn authorizations belong to an earlier turn and must not
-	// be treated as a proposal created by or confirmed on the current turn.
 	if existing.SourceTurnID != "" && existing.SourceTurnID != turnID {
 		return nil, nil
 	}
@@ -384,25 +427,96 @@ func ResolveAssistantProposalTargetsInTx(tx *gorm.DB, userID, canvasID, turnID, 
 	return existing.Targets, nil
 }
 
-// ValidateTurnAuthorizationConflict rejects confirming a different plan on a turn that has
-// already confirmed its own plan, while allowing continuation turns that only carry an
-// inherited parent-turn grant (existing.SourceTurnID != turnID) to confirm a new proposal.
-func ValidateTurnAuthorizationConflict(turnID, rawAuthJSON string, plan GenerationAuthorization) error {
-	if rawAuthJSON == "" {
+// ValidateTurnOrderConflictInTx rejects confirming a second distinct plan on a turn that has
+// already submitted an order, using canonical GenerationOrder as the primary source and reading
+// legacy AssistantTurn.GenerationAuthorizationJSON only for pre-upgrade compatibility.
+func ValidateTurnOrderConflictInTx(tx *gorm.DB, userID, canvasID, turnID, legacyAuthJSON string, plan GenerationAuthorization) error {
+	submitted, err := LookupTurnSubmittedOrderInTx(tx, userID, canvasID, turnID)
+	if err != nil {
+		return err
+	}
+	if submitted != nil {
+		existing := GenerationAuthorization{SourceTurnID: turnID, ProposalID: submitted.ProposalID, Targets: submitted.Targets}
+		if !existing.SamePlan(plan) {
+			return Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+		}
 		return nil
 	}
-	encoded, _ := json.Marshal(plan)
-	if rawAuthJSON == string(encoded) {
+	if strings.TrimSpace(legacyAuthJSON) == "" {
 		return nil
 	}
-	var existing GenerationAuthorization
-	if json.Unmarshal([]byte(rawAuthJSON), &existing) != nil {
+	existing, ok := parseLegacyAuthorization(legacyAuthJSON)
+	if !ok {
 		return Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
 	}
 	if existing.SourceTurnID == turnID && !existing.SamePlan(plan) {
 		return Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
 	}
 	return nil
+}
+
+// LookupConfirmedOrderPlanInTx resolves a specific owner-confirmed (sourceTurnID, proposalID)
+// plan from canonical GenerationOrder first, falling back to pre-upgrade legacyAuthJSON only
+// when no canonical GenerationOrder row exists for proposalID.
+func LookupConfirmedOrderPlanInTx(tx *gorm.DB, userID, canvasID, sourceTurnID, proposalID, legacyAuthJSON string) (*GenerationAuthorization, bool, error) {
+	if strings.TrimSpace(proposalID) != "" {
+		order, err := LookupGenerationOrderInTx(tx, userID, proposalID)
+		if err != nil {
+			return nil, false, err
+		}
+		if order != nil {
+			if order.IsOwnerConfirmed() && order.CanvasID == canvasID && order.SourceTurnID == sourceTurnID {
+				return &GenerationAuthorization{
+					SourceTurnID: order.SourceTurnID,
+					ProposalID:   order.ProposalID,
+					Targets:      order.Targets,
+				}, false, nil
+			}
+			return nil, false, nil
+		}
+	}
+	plan, ok := parseLegacyAuthorization(legacyAuthJSON)
+	if !ok || plan.SourceTurnID == "" || plan.SourceTurnID != sourceTurnID {
+		return nil, false, nil
+	}
+	if strings.TrimSpace(proposalID) != "" && plan.ProposalID != "" && plan.ProposalID != proposalID {
+		return nil, false, nil
+	}
+	return plan, true, nil
+}
+
+// ResolveAuthorizedOrderForTurnInTx resolves the owner-confirmed production authorization
+// governing turnID: either an owner-confirmed GenerationOrder created on turnID itself, or
+// the exact 1-hop continuation receipt bound to turnID (never walking up to ancestor plans),
+// with read-only fallback to legacy GenerationAuthorizationJSON for pre-upgrade turns.
+func ResolveAuthorizedOrderForTurnInTx(tx *gorm.DB, userID, canvasID, turnID, legacyAuthJSON string) (*GenerationAuthorization, bool, error) {
+	if own, err := LookupTurnSubmittedOrderInTx(tx, userID, canvasID, turnID); err != nil {
+		return nil, false, err
+	} else if own != nil {
+		return &GenerationAuthorization{SourceTurnID: own.SourceTurnID, ProposalID: own.ProposalID, Targets: own.Targets}, false, nil
+	}
+	var cont model.AssistantContinuation
+	err := tx.Where("user_id = ? AND canvas_id = ? AND turn_id = ?", userID, canvasID, strings.TrimSpace(turnID)).First(&cont).Error
+	if err == nil {
+		if cont.State == "cancelled" {
+			return nil, false, nil
+		}
+		sourceLegacy := legacyAuthJSON
+		if strings.TrimSpace(sourceLegacy) == "" && strings.TrimSpace(cont.SourceTurnID) != "" {
+			var ownerTurn model.AssistantTurn
+			if tx.Select("generation_authorization_json").First(&ownerTurn, "turn_id = ? AND user_id = ? AND canvas_id = ?", cont.SourceTurnID, userID, canvasID).Error == nil {
+				sourceLegacy = ownerTurn.GenerationAuthorizationJSON
+			}
+		}
+		return LookupConfirmedOrderPlanInTx(tx, userID, canvasID, cont.SourceTurnID, cont.ProposalID, sourceLegacy)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, err
+	}
+	if plan, ok := parseLegacyAuthorization(legacyAuthJSON); ok && plan.SourceTurnID != "" {
+		return plan, true, nil
+	}
+	return nil, false, nil
 }
 
 func ProductionTargetHash(target GenerationTarget) string {
