@@ -94,7 +94,7 @@ func validateManifestRequest(rules []ManifestValidation, request GenerationReque
 			return fmt.Errorf("协议参数校验表达式错误：%w", err)
 		}
 		if !manifestTruthy(value) {
-			return fmt.Errorf("%s", strings.TrimSpace(rule.Message))
+			return ValidationError{Message: strings.TrimSpace(rule.Message)}
 		}
 	}
 	return nil

@@ -46,7 +46,7 @@ export function ModelProviderMenu({ groups, current, capability, preferenceKey =
     };
     return (
         <div role="dialog" aria-label={`选择${modelLabels[capability]}`} data-canvas-settings-popover className="provider-model-menu"
-            style={{ "--provider-model-active": theme.toolbar.activeBg, "--provider-model-border": theme.toolbar.border } as CSSProperties}>
+            style={{ color: theme.node.text, "--provider-model-active": theme.toolbar.activeBg, "--provider-model-border": theme.toolbar.border } as CSSProperties}>
             <Popover trigger="click" open={open} onOpenChange={setOpen} arrow={false} destroyOnHidden
                 placement={window.innerWidth < 520 ? "bottomRight" : "rightTop"}
                 getPopupContainer={element => element.parentElement!}
@@ -54,6 +54,7 @@ export function ModelProviderMenu({ groups, current, capability, preferenceKey =
                 afterOpenChange={visible => { if (visible) menu.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus(); }}
                 content={
                     <div role="menu" aria-label="供应商" id={providerListId} ref={menu} className="model-provider-options"
+                        style={{ color: theme.node.text }}
                         onKeyDown={event => {
                             event.stopPropagation();
                             if (event.key === "Escape" || event.key === "ArrowLeft") {

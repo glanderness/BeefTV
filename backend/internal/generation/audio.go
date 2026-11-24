@@ -20,7 +20,11 @@ func RunAudioTask(ctx context.Context, input Input) (map[string]interface{}, err
 		voice := metadataString(input.Metadata, "resolvedCharacterVoiceKey")
 		hasOmniReference := len(input.ReferenceImages) > 0 || len(input.ReferenceAudios) > 0 || strings.TrimSpace(input.Config.AudioInstructions) != ""
 		if (voice == "" && !hasOmniReference) || (voice != "" && strings.TrimSpace(input.Config.AudioVoice) != voice) {
-			return nil, RequestPreparationError{Cause: errors.New("角色配音缺少已解析的声音绑定")}
+			return nil, RequestPreparationError{Cause: PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   "角色配音缺少已解析的声音绑定",
+				Action:   "请先为该角色配置音色或重新选择角色后重试",
+			}}
 		}
 	}
 	if client, unified, err := useManagedMediaEnvelope(ctx, input.Config, "audio"); err != nil {
@@ -36,7 +40,11 @@ func RunAudioTask(ctx context.Context, input Input) (map[string]interface{}, err
 	}
 	ctx = EnsureOfficialProtocolAdapter(ctx, input.Config.InterfaceType)
 	if _, ok := DeclarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType); !ok {
-		return nil, RequestPreparationError{Cause: fmt.Errorf("音频协议插件未安装或已停用：%s", input.Config.InterfaceType)}
+		return nil, RequestPreparationError{Cause: PreparationUserError{
+			Category: CategoryInvalidParams,
+			Reason:   fmt.Sprintf("当前音频协议插件未安装或已停用（%s）", input.Config.InterfaceType),
+			Action:   "请在设置中启用对应协议插件或切换模型后重试",
+		}}
 	}
 	return RunDeclarativeProtocolTask(ctx, input)
 }

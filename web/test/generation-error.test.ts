@@ -1,7 +1,9 @@
 import referenceVideoErrors from "./fixtures/reference-video-errors.json";
+import safeStorageErrorsContract from "../../backend/internal/referencestorage/safe_storage_errors.json";
 import { describe, expect, test } from "bun:test";
 import { ApiError } from "../src/services/api/request";
 import { redactLocalPaths } from "../src/lib/local-path-redaction";
+import { matchOwnedStorageRejectionCopy, SAFE_STORAGE_REJECTION_CODES, safeStorageRejectionCopy } from "../src/lib/generation-error-storage";
 
 test("reference transport admission identifies blocked inputs and survives persisted display", () => {
     const message = "当前渠道需要在线素材链接：参考图片 2、参考视频 1无法直接读取。请替换为可访问的 HTTPS 链接，或切换支持本地素材的渠道";
@@ -828,4 +830,116 @@ test("lookbehind-free credential and local path redaction preserves exact bounda
     expect(redactLocalPaths("open https://example.com/app/v1 and /opt/secret/file", "[路径已隐藏]")).toBe(
         "open https://example.com/app/v1 and [路径已隐藏]",
     );
+});
+
+test("explains all allowlisted COS/S3 rejection codes intact across structured and text paths", () => {
+    const cases: Array<{ status: string; code: string; backendMessage: string; expectedHint: string }> = [
+        {
+            status: "403",
+            code: "AccessDenied",
+            backendMessage: "对象存储拒绝上传（HTTP 403，AccessDenied），本次尚未开始生成。请检查存储桶访问权限（推荐公有读私有写）以及子账号/CAM 是否具备写入与删除权限。",
+            expectedHint: "公有读私有写",
+        },
+        {
+            status: "403",
+            code: "SignatureDoesNotMatch",
+            backendMessage: "对象存储签名校验失败（HTTP 403，SignatureDoesNotMatch），本次尚未开始生成。请检查 Secret Access Key、区域代码（如 ap-guangzhou / auto）及本机系统时间后重试。",
+            expectedHint: "Secret Access Key",
+        },
+        {
+            status: "403",
+            code: "InvalidAccessKeyId",
+            backendMessage: "对象存储密钥无效（HTTP 403，InvalidAccessKeyId），本次尚未开始生成。请检查 Access Key ID（腾讯云 COS 为 SecretId）后重试。",
+            expectedHint: "SecretId",
+        },
+        {
+            status: "404",
+            code: "NoSuchBucket",
+            backendMessage: "找不到指定的对象存储桶（HTTP 404，NoSuchBucket），本次尚未开始生成。请检查存储桶名称（腾讯云 COS 须含 -APPID 后缀）与区域端点是否一致后重试。",
+            expectedHint: "-APPID",
+        },
+        {
+            status: "400",
+            code: "InvalidBucketName",
+            backendMessage: "找不到指定的对象存储桶（HTTP 400，InvalidBucketName），本次尚未开始生成。请检查存储桶名称（腾讯云 COS 须含 -APPID 后缀）与区域端点是否一致后重试。",
+            expectedHint: "-APPID",
+        },
+        {
+            status: "403",
+            code: "RequestTimeTooSkewed",
+            backendMessage: "对象存储拒绝上传（HTTP 403，RequestTimeTooSkewed），本次尚未开始生成。请校准本机系统时间后重试。",
+            expectedHint: "系统时间",
+        },
+        {
+            status: "400",
+            code: "AuthorizationHeaderMalformed",
+            backendMessage: "对象存储区域或端点不匹配（HTTP 400，AuthorizationHeaderMalformed），本次尚未开始生成。请核对 S3 端点与区域代码是否一致后重试。",
+            expectedHint: "端点与区域代码",
+        },
+        {
+            status: "301",
+            code: "PermanentRedirect",
+            backendMessage: "对象存储区域或端点不匹配（HTTP 301，PermanentRedirect），本次尚未开始生成。请核对 S3 端点与区域代码是否一致后重试。",
+            expectedHint: "端点与区域代码",
+        },
+    ];
+
+    for (const tc of cases) {
+        // Structured backend task failure path (goes through persistedReferencePreparation / sanitizeProviderText).
+        const structured = explainGenerationError({ code: "provider_unavailable", message: tc.backendMessage });
+        expect(structured.message).toContain(tc.code);
+        expect(structured.message).toContain(`HTTP ${tc.status}`);
+        expect(structured.message).toContain(tc.expectedHint);
+        expect(structured.message).not.toContain("参考素材已上传，但公网地址无法读取");
+        expect(structured.uncertain).toBe(false);
+        expect(structured.blockManualRetry).toBe(false);
+
+        // Plain-text classification path (routes persisted owned copy cleanly with identical manual-retry semantics).
+        const fromText = explainGenerationError(tc.backendMessage);
+        expect(fromText.message).toContain(tc.code);
+        expect(fromText.message).toContain(`HTTP ${tc.status}`);
+        expect(fromText.message).toContain(tc.expectedHint);
+        expect(fromText.message).not.toContain("参考素材已上传，但公网地址无法读取");
+        expect(fromText.blockManualRetry).toBe(false);
+    }
+
+    // Generic persisted reference_media_upload_failed copy must NOT be misclassified as post-upload public-read failure.
+    const genericPersisted = explainGenerationError("参考素材上传失败，本次尚未开始生成。请检查对象存储配置和公开读取权限后重试。");
+    expect(genericPersisted.message).toContain("参考素材上传失败，本次尚未开始生成");
+    expect(genericPersisted.message).not.toContain("参考素材已上传，但公网地址无法读取");
+    expect(genericPersisted.blockManualRetry).toBe(false);
+
+    // Genuine post-upload public-read probe failure stays public-read even if AccessDenied appears.
+    const publicRead = explainGenerationError("素材已上传，但公网地址不可读取（HTTP 403，AccessDenied），请检查公开读取设置");
+    expect(publicRead.message).toContain("参考素材已上传，但公网地址无法读取");
+
+    // Credential tail redaction after InvalidAccessKeyId: / InvalidAccessKeyId= must NOT leak secrets.
+    const leakedColon = explainGenerationError({ code: "provider_unavailable", message: "InvalidAccessKeyId: AKIAIOSFODNN7EXAMPLE" });
+    expect(leakedColon.message).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    const leakedEquals = explainGenerationError({ code: "provider_unavailable", message: "InvalidAccessKeyId=AKIAIOSFODNN7EXAMPLE" });
+    expect(leakedEquals.message).not.toContain("AKIAIOSFODNN7EXAMPLE");
+});
+
+test("TS safe storage rejection allowlist and copy stay in exact parity with Go contract", () => {
+    const goCodes = Object.keys(safeStorageErrorsContract.codes).sort();
+    expect([...SAFE_STORAGE_REJECTION_CODES].sort()).toEqual(goCodes);
+
+    for (const [code, spec] of Object.entries(safeStorageErrorsContract.codes)) {
+        const status = code === "PermanentRedirect" ? "301" : code === "NoSuchBucket" ? "404" : "403";
+        const expectedReason = `${spec.reason.replaceAll("{status}", status)}，本次尚未开始生成`;
+        const tsCopy = safeStorageRejectionCopy(status, code);
+        expect(tsCopy.reason).toBe(expectedReason);
+        expect(tsCopy.action).toBe(spec.action);
+        expect(matchOwnedStorageRejectionCopy(expectedReason, spec.action)).toEqual(tsCopy);
+    }
+
+    const fallback403 = safeStorageRejectionCopy("403", "");
+    expect(fallback403.reason).toBe(`${safeStorageErrorsContract.fallback403.reason}，本次尚未开始生成`);
+    expect(fallback403.action).toBe(safeStorageErrorsContract.fallback403.action);
+    expect(matchOwnedStorageRejectionCopy(fallback403.reason, fallback403.action)).toEqual(fallback403);
+
+    const fallback500 = safeStorageRejectionCopy("500", "");
+    expect(fallback500.reason).toBe(`${safeStorageErrorsContract.fallbackDefault.reason.replaceAll("{status}", "500")}，本次尚未开始生成`);
+    expect(fallback500.action).toBe(safeStorageErrorsContract.fallbackDefault.action);
+    expect(matchOwnedStorageRejectionCopy(fallback500.reason, fallback500.action)).toEqual(fallback500);
 });

@@ -101,7 +101,7 @@ func RegisterAgentUISessionRoutes(r gin.IRouter, svc agentUISessionService, ui *
 			return
 		}
 		if !isLoopbackRequest(c.Request) {
-			fail(c, http.StatusForbidden, app.BadAuthRequest("只接受本机同源请求"))
+			fail(c, http.StatusForbidden, app.BadAuthRequest("只接受本机同源请求：请通过本机回环地址访问，或经本机反向代理/隧道转发后重试"))
 			return
 		}
 		user, err := currentUser(c, svc)
@@ -114,7 +114,7 @@ func RegisterAgentUISessionRoutes(r gin.IRouter, svc agentUISessionService, ui *
 		// The UI bootstrap secret comes through the Wails binding, separately from entry credentials.
 		desktopShell := desktopTrust != nil && desktopTrust(c.Request)
 		if !ownerOK && !devBootstrap && !desktopShell {
-			fail(c, http.StatusForbidden, app.BadAuthRequest("签发内置 UI 会话需要 owner 凭据或显式本地引导"))
+			fail(c, http.StatusForbidden, app.BadAuthRequest("签发内置 UI 会话需要 owner 凭据或显式本地引导：请使用 BeefTV 桌面客户端；本地源码调试请配置 BEEFTV_UI_BOOTSTRAP=1 或携带 X-Beeftv-Owner"))
 			return
 		}
 		session := ui.issue(user.ID)

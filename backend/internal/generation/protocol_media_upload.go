@@ -85,17 +85,26 @@ func uploadOneProtocolMedia(
 		rawURL := strings.TrimSpace(media.URL)
 		if IsPublicMediaURL(rawURL) {
 			if _, err := outbound.ValidateOutboundURL(rawURL); err != nil {
-				return RequestPreparationError{Cause: err}
+				return RequestPreparationError{Cause: PreparationUserError{
+					Category: CategoryInputInaccessible,
+					Reason:   fmt.Sprintf("%s链接不可访问或不在允许的公网地址范围内，本次尚未开始生成", referenceMediaLabel(kind, index)),
+					Action:   "请使用可公开访问的 HTTPS 链接或重新导入本地素材后重试",
+					Cause:    err,
+				}}
 			}
 			media.URL = rawURL
 			media.DataURL = ""
 			media.StorageKey = ""
 			return nil
 		}
-		return RequestPreparationError{Cause: errors.New("当前模型需要可访问的参考素材链接或本地素材，请重新导入。本次尚未开始生成")}
+		return RequestPreparationError{Cause: PreparationUserError{
+			Category: CategoryInputInaccessible,
+			Reason:   fmt.Sprintf("%s缺少可访问的参考素材链接或本地素材，本次尚未开始生成", referenceMediaLabel(kind, index)),
+			Action:   "请重新导入该参考素材后重试",
+		}}
 	}
 
-	data, mimeType, err := readProtocolMediaUploadBytes(ctx, userID, kind, *media, upload.MaxBytes)
+	data, mimeType, err := readProtocolMediaUploadBytes(ctx, userID, kind, index, *media, upload.MaxBytes)
 	if err != nil {
 		return RequestPreparationError{Cause: err}
 	}
@@ -145,13 +154,18 @@ func uploadOneProtocolMedia(
 	return nil
 }
 
-func readProtocolMediaUploadBytes(ctx context.Context, userID string, kind string, media Media, maxBytes int64) ([]byte, string, error) {
+func readProtocolMediaUploadBytes(ctx context.Context, userID string, kind string, index int, media Media, maxBytes int64) ([]byte, string, error) {
 	limit := maxBytes
 	if limit <= 0 {
 		limit = defaultProtocolMediaUploadMaxBytes
 	}
+	label := referenceMediaLabel(kind, index)
 	if media.Bytes > limit {
-		return nil, "", errors.New("参考素材超过服务商大小限制")
+		return nil, "", PreparationUserError{
+			Category: CategoryInputTooLarge,
+			Reason:   fmt.Sprintf("%s超过服务商 %s 大小限制", label, formatStorageLimit(limit)),
+			Action:   "请压缩或更换参考素材后重试",
+		}
 	}
 	var (
 		data     []byte
@@ -176,20 +190,38 @@ func readProtocolMediaUploadBytes(ctx context.Context, userID string, kind strin
 		raw := strings.TrimSpace(firstNonEmpty(media.DataURL, media.URL))
 		decodedMIME, decodedData, err := DecodeProviderDataURL(raw)
 		if err != nil {
-			return nil, "", err
+			return nil, "", PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   fmt.Sprintf("%s数据格式无效", label),
+				Action:   "请重新导入该参考素材后重试",
+				Cause:    err,
+			}
 		}
 		data = decodedData
 		mimeType = NormalizedMediaMIMEType(firstNonEmpty(media.MimeType, decodedMIME), data)
 	}
 	if int64(len(data)) > limit {
-		return nil, "", errors.New("参考素材超过服务商大小限制")
+		return nil, "", PreparationUserError{
+			Category: CategoryInputTooLarge,
+			Reason:   fmt.Sprintf("%s超过服务商 %s 大小限制", label, formatStorageLimit(limit)),
+			Action:   "请压缩或更换参考素材后重试",
+		}
 	}
 	if len(data) == 0 {
-		return nil, "", errors.New("参考素材为空，请重新导入")
+		return nil, "", PreparationUserError{
+			Category: CategoryInvalidParams,
+			Reason:   fmt.Sprintf("%s为空", label),
+			Action:   "请重新导入该参考素材后重试",
+		}
 	}
 	if kind == "image" {
 		if err := ValidateImageArtifact(data, mimeType); err != nil {
-			return nil, "", err
+			return nil, "", PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   fmt.Sprintf("%s格式无效或内容不是受支持的图片", label),
+				Action:   "请重新导出为 PNG/JPG/WEBP 后重试",
+				Cause:    err,
+			}
 		}
 	}
 	return data, mimeType, nil
@@ -199,7 +231,11 @@ func protocolMediaUploadTarget(config Config, meta protocol.Metadata, upload pro
 	if rawURL := strings.TrimSpace(upload.URL); rawURL != "" && useManifestUploadURL(config.BaseURL, meta.BaseURL, rawURL) {
 		parsed, err := url.Parse(rawURL)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return Config{}, "", fmt.Errorf("参考素材上传地址无效")
+			return Config{}, "", PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   "当前模型配置的参考素材上传地址无效，本次尚未开始生成",
+				Action:   "请检查模型协议插件或自定义渠道地址配置后重试",
+			}
 		}
 		target := config
 		target.BaseURL = parsed.Scheme + "://" + parsed.Host
@@ -216,7 +252,11 @@ func protocolMediaUploadTarget(config Config, meta protocol.Metadata, upload pro
 		}
 	}
 	if !strings.HasPrefix(uploadPath, "/") {
-		return Config{}, "", fmt.Errorf("参考素材上传路径无效")
+		return Config{}, "", PreparationUserError{
+			Category: CategoryInvalidParams,
+			Reason:   "当前模型配置的参考素材上传路径无效，本次尚未开始生成",
+			Action:   "请检查模型协议插件或自定义渠道地址配置后重试",
+		}
 	}
 	return config, uploadPath, nil
 }

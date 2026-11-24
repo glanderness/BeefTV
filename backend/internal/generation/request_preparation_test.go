@@ -17,6 +17,7 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/protocol"
+	"infinite-canvas/backend/internal/referencestorage"
 )
 
 func TestMultipartPreparationCannotBeAnUncertainPaidSubmission(t *testing.T) {
@@ -156,6 +157,20 @@ func TestRequestPreparationErrorUsesTypedSafeCopyContract(t *testing.T) {
 			wantNotContain: "internal sqlite migration failure",
 		},
 		{
+			name:           "manifest validation error surfaces authored rule message",
+			cause:          protocol.ValidationError{Message: "当前视频模型需要至少一张首帧图片"},
+			wantCategory:   CategoryInvalidParams,
+			wantContain:    "当前视频模型需要至少一张首帧图片",
+			wantNotContain: "本次请求在准备时失败",
+		},
+		{
+			name:           "prefixed preparation user error keeps slot label and action",
+			cause:          prefixPreparationUserError("参考图片 1：", PreparationUserError{Category: CategoryInvalidParams, Reason: "当前模型协议要求公网素材地址，本地工作区尚未开启对象存储自动上传", Action: "请前往设置 → 存储设置开启「参考素材对象存储」后重试"}),
+			wantCategory:   CategoryInvalidParams,
+			wantContain:    "参考图片 1：当前模型协议要求公网素材地址",
+			wantNotContain: "本次请求在准备时失败",
+		},
+		{
 			name:           "raw http error inside preparation stays generic",
 			cause:          HTTPError{StatusCode: 500, Body: "internal server error"},
 			wantCategory:   CategoryInputInaccessible,
@@ -177,5 +192,135 @@ func TestRequestPreparationErrorUsesTypedSafeCopyContract(t *testing.T) {
 				t.Fatalf("UserMessage() = %q, must not contain %q", msg, tc.wantNotContain)
 			}
 		})
+	}
+}
+
+func TestHydrateMediaMissingReferenceStorageSurfacesActionableReason(t *testing.T) {
+	var events []string
+	ctx := WithRuntime(context.Background(), Runtime{
+		Resources: stageResources{events: &events},
+	})
+	input := Input{
+		Mode:            "video",
+		Config:          Config{InterfaceType: "newapi-channel-2"},
+		ReferenceImages: []Media{{StorageKey: "resource:one"}},
+	}
+	// Call ClassifyError directly without any manual RequestPreparationError wrapper,
+	// matching executor.go's real production call path.
+	err := HydrateMedia(ctx, "owner", &input, MediaHydrationPolicyFor(ctx, input))
+	if err == nil {
+		t.Fatal("expected local mode URL-only preparation error")
+	}
+	classified := ClassifyError(err)
+	if classified.Category != CategoryInvalidParams || classified.Uncertain || classified.Retryable {
+		t.Fatalf("unexpected classification: %#v", classified)
+	}
+	msg := classified.UserMessage()
+	if !strings.Contains(msg, "参考图片 1：") || !strings.Contains(msg, "参考素材对象存储") || strings.Contains(msg, "本次请求在准备时失败") {
+		t.Fatalf("expected actionable missing reference storage copy, got %q", msg)
+	}
+
+	// Verify RequireURL + inline data URL branch is also wrapped in RequestPreparationError.
+	dataInput := Input{
+		Mode:            "video",
+		Config:          Config{InterfaceType: "newapi-channel-2"},
+		ReferenceImages: []Media{{DataURL: "data:image/png;base64,iVBORw0KGgo="}},
+	}
+	dataErr := HydrateMedia(ctx, "owner", &dataInput, MediaHydrationPolicy{RequireURL: true})
+	if dataErr == nil {
+		t.Fatal("expected inline data URL preparation error")
+	}
+	dataClassified := ClassifyError(dataErr)
+	if dataClassified.Category != CategoryInvalidParams || dataClassified.Uncertain || !strings.Contains(dataClassified.UserMessage(), "参考素材对象存储") {
+		t.Fatalf("unexpected inline data URL classification: %#v (%q)", dataClassified, dataClassified.UserMessage())
+	}
+}
+
+func TestReferenceStorageRejectionPreservesAllowlistedCOSDiagnostic(t *testing.T) {
+	cases := []struct {
+		status int
+		code   string
+	}{
+		{403, "AccessDenied"},
+		{403, "SignatureDoesNotMatch"},
+		{403, "InvalidAccessKeyId"},
+		{404, "NoSuchBucket"},
+		{400, "InvalidBucketName"},
+		{403, "RequestTimeTooSkewed"},
+		{400, "AuthorizationHeaderMalformed"},
+		{301, "PermanentRedirect"},
+		{403, ""},
+	}
+	for _, tc := range cases {
+		reason, action := referencestorage.SafeStorageRejectionCopy(tc.status, tc.code)
+		cause := referencestorage.UploadRejectionError{
+			StatusCode: tc.status,
+			Code:       tc.code,
+			Reason:     reason,
+			Action:     action,
+		}
+		classified := ClassifyError(RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: cause}})
+		if classified.Category != CategoryProviderUnavailable || classified.ProviderCode != "reference_media_upload_failed" || classified.Uncertain || classified.Retryable {
+			t.Fatalf("status=%d code=%s unexpected storage classification: %#v", tc.status, tc.code, classified)
+		}
+		if classified.BlocksManualRetry() || !classified.BlocksAutomaticRetry() {
+			t.Fatalf("status=%d code=%s must allow manual retry and block automatic retry: %#v", tc.status, tc.code, classified)
+		}
+		msg := classified.UserMessage()
+		if tc.code != "" && !strings.Contains(msg, tc.code) {
+			t.Fatalf("expected code %q in %q", tc.code, msg)
+		}
+		if !strings.Contains(msg, "本次尚未开始生成") {
+			t.Fatalf("expected unsent marker in %q", msg)
+		}
+		// Persisted task.Error restored via ClassifyText (used by assistantturns/task_binding)
+		// must preserve manual-retry allowance and non-uncertain state.
+		restored := ClassifyText(msg)
+		if restored.ProviderCode != "reference_media_upload_failed" || restored.Uncertain || restored.BlocksManualRetry() || !restored.BlocksAutomaticRetry() {
+			t.Fatalf("status=%d code=%s ClassifyText(%q) failed to restore manual retry: %#v", tc.status, tc.code, msg, restored)
+		}
+		// Upstream HTTP responses echoing our copy must still be rejected as uncertain.
+		echoed := ClassifyError(UncertainVideoSubmission(context.Background(), HTTPError{StatusCode: tc.status, Body: msg}))
+		if !echoed.Uncertain || !echoed.BlocksManualRetry() {
+			t.Fatalf("status=%d code=%s echoed HTTP copy must remain uncertain: %#v", tc.status, tc.code, echoed)
+		}
+	}
+}
+
+func TestAdditionalUserActionablePreparationErrorsNeverCollapseToGenericCopy(t *testing.T) {
+	// Verify plugin-disabled, invalid mask, and invalid upload target paths emit concrete causes.
+	_, err := RunImageTask(context.Background(), Input{
+		Mode:   "image",
+		Config: Config{InterfaceType: "nonexistent-custom-plugin"},
+	})
+	if err == nil {
+		t.Fatal("expected image plugin preparation error")
+	}
+	classified := ClassifyError(err)
+	if !strings.Contains(classified.UserMessage(), "nonexistent-custom-plugin") || strings.Contains(classified.UserMessage(), "本次请求在准备时失败") {
+		t.Fatalf("expected concrete image plugin copy, got %q", classified.UserMessage())
+	}
+
+	_, err = RunAudioTask(context.Background(), Input{
+		Mode:   "audio",
+		Config: Config{InterfaceType: "nonexistent-audio-plugin"},
+	})
+	if err == nil {
+		t.Fatal("expected audio plugin preparation error")
+	}
+	classified = ClassifyError(err)
+	if !strings.Contains(classified.UserMessage(), "nonexistent-audio-plugin") || strings.Contains(classified.UserMessage(), "本次请求在准备时失败") {
+		t.Fatalf("expected concrete audio plugin copy, got %q", classified.UserMessage())
+	}
+
+	_, err = runLocalMaskImageTask(context.Background(), Input{}, func(context.Context, Input) (map[string]any, error) {
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("expected local mask preparation error")
+	}
+	classified = ClassifyError(err)
+	if !strings.Contains(classified.UserMessage(), "局部融合需要一张原图和一张蒙版") || strings.Contains(classified.UserMessage(), "本次请求在准备时失败") {
+		t.Fatalf("expected concrete mask copy, got %q", classified.UserMessage())
 	}
 }

@@ -86,7 +86,7 @@ func ApplyProtocolAuth(req *http.Request, config Config, auth protocol.ManifestA
 	case "volcengine-v4":
 		secret := ProtocolCredentialField(config, auth.SecretField)
 		if credential == "" || secret == "" {
-			return errors.New("火山引擎 V4 鉴权需要 Access Key 和 Secret Key")
+			return PreparationUserError{Category: CategoryAuth, Reason: "火山引擎 V4 鉴权需要 Access Key 和 Secret Key", Action: "请前往设置 → 模型服务补齐该渠道的 Access Key 和 Secret Key 后重试"}
 		}
 		credentials := base.Credentials{
 			AccessKeyID: credential, SecretAccessKey: secret,
@@ -109,7 +109,7 @@ func ApplyProtocolAuth(req *http.Request, config Config, auth protocol.ManifestA
 		secret := ProtocolCredentialField(config, auth.SecretField)
 		if secret == "" {
 			if credential == "" {
-				return errors.New("JWT HS256 鉴权需要 Access Key 和 Secret Key（或已签名的 Bearer Token）")
+				return PreparationUserError{Category: CategoryAuth, Reason: "JWT HS256 鉴权需要 Access Key 和 Secret Key（或已签名的 Bearer Token）", Action: "请前往设置 → 模型服务补齐该渠道的访问密钥后重试"}
 			}
 			header := defaultString(strings.TrimSpace(auth.Header), "Authorization")
 			prefix := auth.Prefix

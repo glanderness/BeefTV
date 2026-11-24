@@ -114,7 +114,12 @@ func runManagedVideoTask(ctx context.Context, client *beeftv.MediaClient, input 
 	if intent.Seconds != "" {
 		value, err := strconv.ParseFloat(intent.Seconds, 64)
 		if err != nil {
-			return nil, RequestPreparationError{Cause: errors.New("视频时长无效")}
+			return nil, RequestPreparationError{Cause: PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   "视频时长无效",
+				Action:   "请选择当前模型支持的视频时长后重试",
+				Cause:    err,
+			}}
 		}
 		options["seconds"] = value
 	}

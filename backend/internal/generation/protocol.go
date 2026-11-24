@@ -92,7 +92,12 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 					err = ValidateImageArtifact(data, mime)
 				}
 				if err != nil {
-					return nil, RequestPreparationError{Cause: fmt.Errorf("参考图片 %d MIME 类型无效或内容不是图片：%w", index+1, err)}
+					return nil, RequestPreparationError{Cause: PreparationUserError{
+						Category: CategoryInvalidParams,
+						Reason:   fmt.Sprintf("参考图片 %d MIME 类型无效或内容不是图片", index+1),
+						Action:   "请重新导出为 PNG/JPG/WEBP 后重试",
+						Cause:    err,
+					}}
 				}
 			}
 		}

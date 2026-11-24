@@ -441,6 +441,10 @@ main[data-libtv-readonly-dense="true"] .canvas-floating-dock {
 }
 .creation-model-picker-surface .canvas-model-picker-option > .canvas-model-picker-option-content,
 .app-user-workspace .creation-model-picker-menu .canvas-model-picker-option > .canvas-model-picker-option-content {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
     width: 100% !important;
     min-width: 0 !important;
     height: auto !important;
@@ -458,6 +462,17 @@ main[data-libtv-readonly-dense="true"] .canvas-floating-dock {
 }
 .canvas-model-picker-description {
     display: none !important;
+}
+.canvas-model-picker-option-reason {
+    display: block;
+    width: 100%;
+    margin-top: 3px;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Compact material drag previews do not cover the workflow drop target. */
