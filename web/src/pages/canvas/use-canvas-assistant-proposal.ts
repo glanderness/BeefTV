@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { confirmAssistantProduction, confirmAssistantProposalRunnable, type AssistantGenerationProposal } from "@/services/api/agent-assistant";
+import { ApiError } from "@/services/api/request";
 import { armAssistantContinuation, registerAssistantSubmission } from "@/services/api/assistant-continuation";
 import { refreshLocalCanvasProjectIfChanged } from "@/services/local-workspace-repository";
 import type { Skill } from "@/services/api/skills";
@@ -26,6 +27,22 @@ type UseCanvasAssistantProposalOptions = {
     continuePlan?: boolean;
     onContinuationArmed?: () => void;
 };
+
+export function productionConfirmationErrorMessage(error: unknown): string {
+    if (error instanceof AssistantProposalBlockedError) {
+        return error.message;
+    }
+    if (error instanceof ApiError) {
+        if (error.reason === "continuation_intent_changed") {
+            return "要求已更新，请让助手重新提出生成方案。";
+        }
+        const statusOrCode = error.status !== undefined && error.status >= 400 ? error.status : error.code;
+        if (!error.retryable && statusOrCode !== undefined && statusOrCode >= 400 && statusOrCode < 500 && error.message) {
+            return error.message;
+        }
+    }
+    return "暂未确认制作是否开始，请重试查询同一方案，不会重复提交已接受的素材。";
+}
 
 export function useCanvasAssistantProposal({
     projectId,
@@ -92,7 +109,7 @@ export function useCanvasAssistantProposal({
                 })().catch(error => {
                     if (!lifetime.matches(owner, projectIdRef.current)) return;
                     if (error instanceof AssistantProposalBlockedError && error.reason === "canvas_saving") recordAssistantProposalCanvasRejection(owner.canvasId);
-                    setAssistantProposalFeedback(current => ({ ...current, [proposalId]: error instanceof AssistantProposalBlockedError ? error.message : "暂未确认制作是否开始，请重试查询同一方案，不会重复提交已接受的素材。" }));
+                    setAssistantProposalFeedback(current => ({ ...current, [proposalId]: productionConfirmationErrorMessage(error) }));
                 }).finally(() => {
                     claimsRef.current.delete(proposalId);
                     setRunningProposalIds(current => { const next = new Set(current); next.delete(proposalId); return next; });

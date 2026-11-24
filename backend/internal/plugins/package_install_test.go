@@ -1108,3 +1108,351 @@ func TestCuratedCommunityPluginManifestPassesWritingAndInstall(t *testing.T) {
 		t.Fatalf("Manifest.ID = %q, want %q", installed.Manifest.ID, EagleAssetConnector)
 	}
 }
+
+func TestInstallPackagePromotesNpmPackageContentsToPluginRoot(t *testing.T) {
+	dataDir := t.TempDir()
+	rt, err := NewRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer capability.BuiltinRegistry().ResetPluginDescriptors()
+	svc := New(rt, nil)
+	svc.SetPackageFetcher(func(_ context.Context, spec, _ string, prefixDir string) (string, error) {
+		root, err := copyPackageFetcher(context.Background(), spec, "", prefixDir)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(prefixDir, "package.json"), []byte(`{"private":true,"dependencies":{"pkg":"1.0.0"}}`), 0o644); err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(filepath.Join(prefixDir, "node_modules", "hoisted-dep"), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(prefixDir, "node_modules", "hoisted-dep", "index.js"), []byte("export const x = 1;\n"), 0o644); err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(filepath.Join(prefixDir, "node_modules", "shared-dep"), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(prefixDir, "node_modules", "shared-dep", "version.txt"), []byte("hoisted"), 0o644); err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(filepath.Join(root, "node_modules", "shared-dep"), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(root, "node_modules", "shared-dep", "version.txt"), []byte("nested"), 0o644); err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(filepath.Join(prefixDir, "node_modules", "@acme", "helper"), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(prefixDir, "node_modules", "@acme", "helper", "index.js"), []byte("export const h = 1;\n"), 0o644); err != nil {
+			return "", err
+		}
+		return root, nil
+	})
+
+	src := writeSamplePluginDir(t, "1.0.0")
+	if _, err := svc.InstallPackage(src, ""); err != nil {
+		t.Fatalf("InstallPackage failed: %v", err)
+	}
+	installRoot := filepath.Join(dataDir, "plugins", "storyboard-grid-test")
+	if _, err := os.Stat(filepath.Join(installRoot, "dist", "client.js")); err != nil {
+		t.Fatalf("expected dist/client.js directly under plugin root %q: %v", installRoot, err)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, "node_modules", "storyboard-grid-test")); !os.IsNotExist(err) {
+		t.Fatalf("expected package itself not nested under node_modules/<id>, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, "node_modules", "hoisted-dep", "index.js")); err != nil {
+		t.Fatalf("expected hoisted runtime dependency preserved under plugin root node_modules: %v", err)
+	}
+	sharedBytes, err := os.ReadFile(filepath.Join(installRoot, "node_modules", "shared-dep", "version.txt"))
+	if err != nil || string(sharedBytes) != "nested" {
+		t.Fatalf("expected package's own nested dep to win over hoisted dep, got %q err=%v", string(sharedBytes), err)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, "node_modules", "@acme", "helper", "index.js")); err != nil {
+		t.Fatalf("expected scoped dependency preserved under plugin root node_modules: %v", err)
+	}
+	var enabled EnabledPackageView
+	for _, item := range svc.EnabledPackages() {
+		if item.ID == "storyboard-grid-test" {
+			enabled = item
+		}
+	}
+	if filepath.Clean(enabled.PackageDir) != filepath.Clean(installRoot) {
+		t.Fatalf("PackageDir = %q, want plugin root %q", enabled.PackageDir, installRoot)
+	}
+
+	// Scoped npm package should also flatten into plugins/<id> and preserve sibling scoped deps.
+	scopedSrc := t.TempDir()
+	writePluginFolder(t, scopedSrc, map[string]string{
+		"dist/client.js": "export function activate() {}\n",
+		"package.json": `{
+  "name": "@acme/scoped-demo",
+  "version": "1.0.0",
+  "beeftv": {
+    "name": "Scoped Demo",
+    "client": "./dist/client.js"
+  }
+}`,
+	})
+	if _, err := svc.InstallPackage(scopedSrc, ""); err != nil {
+		t.Fatalf("InstallPackage scoped failed: %v", err)
+	}
+	scopedRoot := filepath.Join(dataDir, "plugins", "acme-scoped-demo")
+	if _, err := os.Stat(filepath.Join(scopedRoot, "dist", "client.js")); err != nil {
+		t.Fatalf("expected scoped package dist/client.js at root %q: %v", scopedRoot, err)
+	}
+	if _, err := os.Stat(filepath.Join(scopedRoot, "node_modules", "@acme", "scoped-demo")); !os.IsNotExist(err) {
+		t.Fatalf("expected scoped package not nested under node_modules/@acme/scoped-demo, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(scopedRoot, "node_modules", "@acme", "helper", "index.js")); err != nil {
+		t.Fatalf("expected sibling scoped dep preserved: %v", err)
+	}
+}
+
+func TestReconcileStoredRecordOnStartupMigratesLegacyNestedNpmLayout(t *testing.T) {
+	t.Run("promotes legacy nested npm layout and preserves hoisted runtime deps", func(t *testing.T) {
+		dataDir := t.TempDir()
+		installRoot := filepath.Join(dataDir, "plugins", "legacy-nested-plugin")
+		nestedPkgDir := filepath.Join(installRoot, "node_modules", "legacy-nested-plugin")
+		writePluginFolder(t, nestedPkgDir, map[string]string{
+			"dist/client.js": "export function activate() {}\n",
+			"package.json": `{
+  "name": "legacy-nested-plugin",
+  "version": "1.2.3",
+  "beeftv": {
+    "id": "legacy-nested-plugin",
+    "name": "Legacy Nested",
+    "client": "./dist/client.js"
+  }
+}`,
+		})
+		if err := os.MkdirAll(filepath.Join(installRoot, "node_modules", "hoisted-runtime"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(installRoot, "node_modules", "hoisted-runtime", "index.js"), []byte("export const ok = true;\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		rawManifest := []byte(`{"schemaVersion":2,"metadata":{"id":"legacy-nested-plugin","name":"Legacy Nested","version":"1.2.3","enabled":true}}`)
+		reconciled := reconcileStoredRecordOnStartup(dataDir, RegistryRecord{
+			ID:         "legacy-nested-plugin",
+			Source:     OriginPackage,
+			PackageDir: nestedPkgDir,
+			Raw:        rawManifest,
+		})
+		if filepath.Clean(reconciled.PackageDir) != filepath.Clean(installRoot) {
+			t.Fatalf("reconciled PackageDir = %q, want promoted root %q", reconciled.PackageDir, installRoot)
+		}
+		if _, err := os.Stat(filepath.Join(installRoot, "dist", "client.js")); err != nil {
+			t.Fatalf("expected migrated dist/client.js at root: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(installRoot, "node_modules", "hoisted-runtime", "index.js")); err != nil {
+			t.Fatalf("expected hoisted runtime dep preserved after migration: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(installRoot, "node_modules", "legacy-nested-plugin")); !os.IsNotExist(err) {
+			t.Fatalf("expected legacy nested package dir removed after migration, err=%v", err)
+		}
+	})
+
+	t.Run("self-heals crash window when files are already promoted at installRoot but record still points to nested path", func(t *testing.T) {
+		dataDir := t.TempDir()
+		installRoot := filepath.Join(dataDir, "plugins", "crash-healed-plugin")
+		writePluginFolder(t, installRoot, map[string]string{
+			"dist/client.js": "export function activate() {}\n",
+			"package.json": `{
+  "name": "crash-healed-plugin",
+  "version": "1.0.0",
+  "beeftv": {
+    "id": "crash-healed-plugin",
+    "name": "Crash Healed",
+    "client": "./dist/client.js"
+  }
+}`,
+		})
+		staleNested := filepath.Join(installRoot, "node_modules", "crash-healed-plugin")
+		reconciled := reconcileStoredRecordOnStartup(dataDir, RegistryRecord{
+			ID:         "crash-healed-plugin",
+			Source:     OriginPackage,
+			PackageDir: staleNested,
+			Raw:        []byte(`{"schemaVersion":2,"metadata":{"id":"crash-healed-plugin","name":"Crash Healed","version":"1.0.0","enabled":true}}`),
+		})
+		if filepath.Clean(reconciled.PackageDir) != filepath.Clean(installRoot) {
+			t.Fatalf("crash-window self-heal PackageDir = %q, want %q", reconciled.PackageDir, installRoot)
+		}
+	})
+
+	t.Run("rolls back cleanly when nested package manifest ID mismatches expected record ID", func(t *testing.T) {
+		dataDir := t.TempDir()
+		installRoot := filepath.Join(dataDir, "plugins", "expected-plugin")
+		nestedPkgDir := filepath.Join(installRoot, "node_modules", "other-plugin")
+		writePluginFolder(t, nestedPkgDir, map[string]string{
+			"dist/client.js": "export function activate() {}\n",
+			"package.json": `{
+  "name": "other-plugin",
+  "version": "1.0.0",
+  "beeftv": {
+    "id": "wrong-plugin-id",
+    "name": "Wrong ID",
+    "client": "./dist/client.js"
+  }
+}`,
+		})
+		reconciled := reconcileStoredRecordOnStartup(dataDir, RegistryRecord{
+			ID:         "expected-plugin",
+			Source:     OriginPackage,
+			PackageDir: nestedPkgDir,
+			Raw:        []byte(`{"schemaVersion":2,"metadata":{"id":"expected-plugin","name":"Expected","version":"1.0.0","enabled":true}}`),
+		})
+		if filepath.Clean(reconciled.PackageDir) != filepath.Clean(nestedPkgDir) {
+			t.Fatalf("expected mismatch migration to keep original PackageDir %q, got %q", nestedPkgDir, reconciled.PackageDir)
+		}
+		if _, err := os.Stat(filepath.Join(nestedPkgDir, "dist", "client.js")); err != nil {
+			t.Fatalf("expected rollback to preserve original nested dist/client.js: %v", err)
+		}
+	})
+
+	t.Run("ignores out-of-dataDir nested paths without touching filesystem", func(t *testing.T) {
+		dataDir := t.TempDir()
+		outsideRoot := t.TempDir()
+		outsideNested := filepath.Join(outsideRoot, "node_modules", "unrelated-pkg")
+		writePluginFolder(t, outsideNested, map[string]string{
+			"dist/client.js": "export function activate() {}\n",
+			"package.json": `{
+  "name": "unrelated-pkg",
+  "version": "1.0.0",
+  "beeftv": {
+    "id": "unrelated-pkg",
+    "name": "Unrelated",
+    "client": "./dist/client.js"
+  }
+}`,
+		})
+		reconciled := reconcileStoredRecordOnStartup(dataDir, RegistryRecord{
+			ID:         "unrelated-pkg",
+			Source:     OriginPackage,
+			PackageDir: outsideNested,
+			Raw:        []byte(`{"schemaVersion":2,"metadata":{"id":"unrelated-pkg","name":"Unrelated","version":"1.0.0","enabled":true}}`),
+		})
+		if filepath.Clean(reconciled.PackageDir) != filepath.Clean(outsideNested) {
+			t.Fatalf("out-of-dataDir path should not be migrated, got %q", reconciled.PackageDir)
+		}
+		if _, err := os.Stat(filepath.Join(outsideNested, "dist", "client.js")); err != nil {
+			t.Fatalf("out-of-dataDir files must remain untouched: %v", err)
+		}
+	})
+
+	t.Run("rejects traversal expectedID values such as .. or . without touching dataDir", func(t *testing.T) {
+		dataDir := t.TempDir()
+		trickyNested := filepath.Join(dataDir, "node_modules", "evil-pkg")
+		writePluginFolder(t, trickyNested, map[string]string{
+			"dist/client.js": "export function activate() {}\n",
+			"package.json":   `{"name":"evil-pkg","version":"1.0.0","beeftv":{"id":"..","name":"Evil","client":"./dist/client.js"}}`,
+		})
+		for _, badID := range []string{"..", ".", "../escape", "a/b"} {
+			gotDir, migrated, err := migrateNestedPackageDir(dataDir, badID, trickyNested)
+			if err != nil || migrated || gotDir != trickyNested {
+				t.Fatalf("bad expectedID %q should be ignored cleanly, got dir=%q migrated=%v err=%v", badID, gotDir, migrated, err)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(trickyNested, "dist", "client.js")); err != nil {
+			t.Fatalf("dataDir files must remain untouched on invalid expectedID: %v", err)
+		}
+	})
+
+	t.Run("recovers mid-migration crash from leftover migrating-layout backup dir", func(t *testing.T) {
+		// Case A: crashed right after os.Rename(expectedRoot, backupDir) before promote.
+		dataDir := t.TempDir()
+		installRoot := filepath.Join(dataDir, "plugins", "mid-crash-before-promote")
+		backupDir := filepath.Join(dataDir, "plugins", ".migrating-layout-mid-crash-before-promote")
+		writePluginFolder(t, filepath.Join(backupDir, "node_modules", "mid-crash-before-promote"), map[string]string{
+			"dist/client.js": "export function activate() {}\n",
+			"package.json": `{
+  "name": "mid-crash-before-promote",
+  "version": "1.0.0",
+  "beeftv": {
+    "id": "mid-crash-before-promote",
+    "name": "Mid Crash A",
+    "client": "./dist/client.js"
+  }
+}`,
+		})
+		staleNested := filepath.Join(installRoot, "node_modules", "mid-crash-before-promote")
+		reconciledA := reconcileStoredRecordOnStartup(dataDir, RegistryRecord{
+			ID:         "mid-crash-before-promote",
+			Source:     OriginPackage,
+			PackageDir: staleNested,
+			Raw:        []byte(`{"schemaVersion":2,"metadata":{"id":"mid-crash-before-promote","name":"Mid Crash A","version":"1.0.0","enabled":true}}`),
+		})
+		if filepath.Clean(reconciledA.PackageDir) != filepath.Clean(installRoot) {
+			t.Fatalf("mid-crash A PackageDir = %q, want %q", reconciledA.PackageDir, installRoot)
+		}
+		if _, err := os.Stat(filepath.Join(installRoot, "dist", "client.js")); err != nil {
+			t.Fatalf("expected recovered dist/client.js at root: %v", err)
+		}
+		if _, err := os.Stat(backupDir); !os.IsNotExist(err) {
+			t.Fatalf("expected backupDir cleaned after recovery, err=%v", err)
+		}
+
+		// Case B: crashed after .promoted-root was created inside backupDir before swapping to installRoot.
+		installRootB := filepath.Join(dataDir, "plugins", "mid-crash-after-promote")
+		backupDirB := filepath.Join(dataDir, "plugins", ".migrating-layout-mid-crash-after-promote")
+		writePluginFolder(t, filepath.Join(backupDirB, ".promoted-root"), map[string]string{
+			"dist/client.js": "export function activate() {}\n",
+			"package.json": `{
+  "name": "mid-crash-after-promote",
+  "version": "1.0.0",
+  "beeftv": {
+    "id": "mid-crash-after-promote",
+    "name": "Mid Crash B",
+    "client": "./dist/client.js"
+  }
+}`,
+		})
+		staleNestedB := filepath.Join(installRootB, "node_modules", "mid-crash-after-promote")
+		reconciledB := reconcileStoredRecordOnStartup(dataDir, RegistryRecord{
+			ID:         "mid-crash-after-promote",
+			Source:     OriginPackage,
+			PackageDir: staleNestedB,
+			Raw:        []byte(`{"schemaVersion":2,"metadata":{"id":"mid-crash-after-promote","name":"Mid Crash B","version":"1.0.0","enabled":true}}`),
+		})
+		if filepath.Clean(reconciledB.PackageDir) != filepath.Clean(installRootB) {
+			t.Fatalf("mid-crash B PackageDir = %q, want %q", reconciledB.PackageDir, installRootB)
+		}
+		if _, err := os.Stat(filepath.Join(installRootB, "dist", "client.js")); err != nil {
+			t.Fatalf("expected recovered dist/client.js at root B: %v", err)
+		}
+		if _, err := os.Stat(backupDirB); !os.IsNotExist(err) {
+			t.Fatalf("expected backupDirB cleaned after recovery, err=%v", err)
+		}
+	})
+
+	t.Run("migration backup namespace never collides with sibling plugin IDs", func(t *testing.T) {
+		dataDir := t.TempDir()
+		fooRoot := filepath.Join(dataDir, "plugins", "foo")
+		fooNested := filepath.Join(fooRoot, "node_modules", "foo")
+		siblingRoot := filepath.Join(dataDir, "plugins", "foo.migrating-layout")
+		writePluginFolder(t, fooNested, map[string]string{
+			"dist/client.js": "export function activate() {}\n",
+			"package.json":   `{"name":"foo","version":"1.0.0","beeftv":{"id":"foo","name":"Foo","client":"./dist/client.js"}}`,
+		})
+		writePluginFolder(t, siblingRoot, map[string]string{
+			"dist/client.js": "export const sibling = true;\n",
+			"package.json":   `{"name":"foo.migrating-layout","version":"1.0.0","beeftv":{"id":"foo.migrating-layout","name":"Sibling","client":"./dist/client.js"}}`,
+		})
+		reconciled := reconcileStoredRecordOnStartup(dataDir, RegistryRecord{
+			ID:         "foo",
+			Source:     OriginPackage,
+			PackageDir: fooNested,
+			Raw:        []byte(`{"schemaVersion":2,"metadata":{"id":"foo","name":"Foo","version":"1.0.0","enabled":true}}`),
+		})
+		if filepath.Clean(reconciled.PackageDir) != filepath.Clean(fooRoot) {
+			t.Fatalf("foo PackageDir = %q, want %q", reconciled.PackageDir, fooRoot)
+		}
+		siblingBytes, err := os.ReadFile(filepath.Join(siblingRoot, "dist", "client.js"))
+		if err != nil || string(siblingBytes) != "export const sibling = true;\n" {
+			t.Fatalf("sibling plugin foo.migrating-layout was modified or deleted: %q err=%v", string(siblingBytes), err)
+		}
+	})
+}

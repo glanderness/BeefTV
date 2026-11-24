@@ -9,9 +9,16 @@ import type { StyleExecutionPlan } from "@/lib/canvas/style-profile";
 import type { SkillRuntimeMetadata } from "@/services/skill-runtime";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
+export const CANVAS_LEAVE_ABORT_REASON = "canvas_leave" as const;
+
+export function isCanvasLeaveAbort(signal: AbortSignal): boolean {
+    return signal.aborted && signal.reason === CANVAS_LEAVE_ABORT_REASON;
+}
+
 export type CanvasGenerationExecutorDependencies = {
     pageUi: CanvasPageUiStoreHook;
     projectId: string;
+    isActiveProject?: () => boolean;
     nodesRef: { current: CanvasNodeData[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;

@@ -85,4 +85,54 @@ func TestEnrichAPICallLogPayloadNeverTreatsTraceRequestIDOrFailedCreateAsProvide
 			t.Fatalf("failed create with accepted task_id must not be DefiniteImageInputRejection: %v", resultErr)
 		}
 	})
+
+	t.Run("managed media poll path /v1/media/tasks/<task_ref> never treats client task_ref as ProviderRequestID when task_id is absent", func(t *testing.T) {
+		unknownPoll := model.ApiCallLog{
+			RequestKind:  "poll",
+			Capability:   "video",
+			Path:         "/v1/media/tasks/c64554ba-b04b-5993-b7e8-9bb37fa907e9",
+			Status:       model.ApiCallStatusSucceeded,
+			StatusCode:   200,
+			ResponseBody: `{"task_ref":"c64554ba-b04b-5993-b7e8-9bb37fa907e9","media_type":"video","status":"unknown","error":{"code":"media_result_unknown","category":"unknown","message":"The original submission is unconfirmed."}}`,
+		}
+		EnrichAPICallLog(&unknownPoll, []byte(unknownPoll.ResponseBody))
+		if unknownPoll.ProviderRequestID != "" {
+			t.Fatalf("managed media poll without task_id polluted ProviderRequestID with task_ref: %q", unknownPoll.ProviderRequestID)
+		}
+
+		rejectedPoll := model.ApiCallLog{
+			RequestKind:  "poll",
+			Capability:   "video",
+			Path:         "/v1/media/tasks/c64554ba-b04b-5993-b7e8-9bb37fa907e9",
+			Status:       model.ApiCallStatusSucceeded,
+			StatusCode:   200,
+			ResponseBody: `{"task_ref":"c64554ba-b04b-5993-b7e8-9bb37fa907e9","media_type":"video","status":"failed","error":{"code":"media_submission_rejected","category":"upstream","message":"The original submission did not start and was not charged."}}`,
+		}
+		EnrichAPICallLog(&rejectedPoll, []byte(rejectedPoll.ResponseBody))
+		if rejectedPoll.ProviderRequestID != "" {
+			t.Fatalf("managed media rejected poll without task_id polluted ProviderRequestID: %q", rejectedPoll.ProviderRequestID)
+		}
+
+		for _, variantPath := range []string{
+			"/v1/media/tasks/c64554ba-b04b-5993-b7e8-9bb37fa907e9?poll=1",
+			"/v1/media/tasks/c64554ba-b04b-5993-b7e8-9bb37fa907e9/content",
+		} {
+			if got := ProviderRequestIDFromPath(variantPath); got != "" {
+				t.Fatalf("ProviderRequestIDFromPath(%q) = %q, want empty", variantPath, got)
+			}
+		}
+
+		acceptedPoll := model.ApiCallLog{
+			RequestKind:  "poll",
+			Capability:   "video",
+			Path:         "/v1/media/tasks/c64554ba-b04b-5993-b7e8-9bb37fa907e9",
+			Status:       model.ApiCallStatusSucceeded,
+			StatusCode:   200,
+			ResponseBody: `{"task_ref":"c64554ba-b04b-5993-b7e8-9bb37fa907e9","task_id":"task_real_provider_id","media_type":"video","status":"in_progress"}`,
+		}
+		EnrichAPICallLog(&acceptedPoll, []byte(acceptedPoll.ResponseBody))
+		if acceptedPoll.ProviderRequestID != "task_real_provider_id" {
+			t.Fatalf("ProviderRequestID = %q, want task_real_provider_id", acceptedPoll.ProviderRequestID)
+		}
+	})
 }

@@ -32,6 +32,8 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Canvas
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
+import { isCanvasLeaveAbort } from "./canvas-generation-executor-types";
+import type { CanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { canvasGenerationFailureMetadata, canvasImagePendingResultMessage } from "./canvas-generation-failure";
 import { canvasNodeHasPendingOutcomeResult, isNodeRegenerateBlocked, isNodeRegenerateConfirm, readNodeTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
@@ -45,6 +47,8 @@ import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-s
 type UseCanvasGenerationExecutorOptions = {
     pageUi: CanvasPageUiStoreHook;
     projectId: string;
+    ownerLifetime?: CanvasOwnerLifetime;
+    getLiveProjectId?: () => string;
     domainProjectId?: string;
     addedSkills: Skill[];
     assets: Asset[];
@@ -82,6 +86,8 @@ export type CanvasNodeGenerationOptions = {
 export function useCanvasGenerationExecutor({
     pageUi,
     projectId,
+    ownerLifetime,
+    getLiveProjectId,
     domainProjectId,
     addedSkills,
     assets,
@@ -118,6 +124,13 @@ export function useCanvasGenerationExecutor({
                 submissionLocksRef.current,
                 nodeId,
                 async (releaseSubmission) => {
+                    const capturedOwner = ownerLifetime?.capture(projectId);
+                    const isActiveProject = () =>
+                        capturedOwner
+                            ? ownerLifetime!.matches(capturedOwner, getLiveProjectId ? getLiveProjectId() : projectId)
+                            : getLiveProjectId
+                              ? getLiveProjectId() === projectId
+                              : true;
                     let stage = "validation";
                     const attemptId = createClientId();
                     let preparing = false;
@@ -137,9 +150,14 @@ export function useCanvasGenerationExecutor({
                     const controller = options?.controller ?? new AbortController();
                     const preparationMessageKey = `canvas-generation-preparation-${attemptId}`;
                     const setPreflightNotice = (errText: string) => {
-                        setNodes((current) => current.map((node) => node.id === nodeId
-                            ? { ...node, metadata: { ...node.metadata, generationPreflightError: errText } }
-                            : node));
+                        if (!isActiveProject()) return;
+                        setNodes((current) =>
+                            isActiveProject()
+                                ? current.map((node) => node.id === nodeId
+                                      ? { ...node, metadata: { ...node.metadata, generationPreflightError: errText } }
+                                      : node)
+                                : current,
+                        );
                     };
                     const reportError = (error: unknown) => {
                         if (controller.signal.aborted || isGenerationCanceled(error)) return;
@@ -456,6 +474,7 @@ export function useCanvasGenerationExecutor({
                         }
 
                         controller.signal.throwIfAborted();
+                        if (!isActiveProject()) return;
                         if (mode === "video" && options?.rememberVideoDefaults) {
                             useCreationPreferencesStore.getState().confirmVideoSettings(generationConfig, sourceNode?.metadata?.videoH3Options);
                         }
@@ -464,30 +483,32 @@ export function useCanvasGenerationExecutor({
                         diagnostic("generation_dispatch_started");
                         if (isPreparingEmptyImage) {
                             setNodes((current) =>
-                                current.map((node) =>
-                                    node.id === nodeId
-                                        ? {
-                                              ...node,
-                                              metadata: {
-                                                  ...node.metadata,
-                                                  prompt,
-                                                  composerContent: prompt,
-                                                  status: NODE_STATUS_LOADING,
-                                                  taskStage: "正在准备生成任务",
-                                                  taskProgress: 0,
-                                                  taskCreatedAt: new Date().toISOString(),
-                                                  errorDetails: undefined,
-                                                  generationErrorCode: undefined,
-                                                  generationErrorSummary: undefined,
-                                                  generationProviderCode: undefined,
-                                                  taskFailureDiagnostics: undefined,
-                                                  taskOutcome: undefined,
-                                                  failedPromptFingerprint: undefined,
-                                                  failedInputFingerprint: undefined,
-                                              },
-                                          }
-                                        : node,
-                                ),
+                                isActiveProject()
+                                    ? current.map((node) =>
+                                          node.id === nodeId
+                                              ? {
+                                                    ...node,
+                                                    metadata: {
+                                                        ...node.metadata,
+                                                        prompt,
+                                                        composerContent: prompt,
+                                                        status: NODE_STATUS_LOADING,
+                                                        taskStage: "正在准备生成任务",
+                                                        taskProgress: 0,
+                                                        taskCreatedAt: new Date().toISOString(),
+                                                        errorDetails: undefined,
+                                                        generationErrorCode: undefined,
+                                                        generationErrorSummary: undefined,
+                                                        generationProviderCode: undefined,
+                                                        taskFailureDiagnostics: undefined,
+                                                        taskOutcome: undefined,
+                                                        failedPromptFingerprint: undefined,
+                                                        failedInputFingerprint: undefined,
+                                                    },
+                                                }
+                                              : node,
+                                      )
+                                    : current,
                             );
                         }
 
@@ -497,14 +518,16 @@ export function useCanvasGenerationExecutor({
                         const statusPrompt = sourceNode?.type === CanvasNodeType.Config ? effectivePrompt : prompt;
                         if (markSourceStatus)
                             setNodes((current) =>
-                                current.map((node) =>
-                                    node.id === nodeId
-                                        ? {
-                                              ...node,
-                                              metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, statusPrompt), status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, generationErrorSummary: undefined, generationProviderCode: undefined, taskFailureDiagnostics: undefined, taskOutcome: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined },
-                                          }
-                                        : node,
-                                ),
+                                isActiveProject()
+                                    ? current.map((node) =>
+                                          node.id === nodeId
+                                              ? {
+                                                    ...node,
+                                                    metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, statusPrompt), status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, generationErrorSummary: undefined, generationProviderCode: undefined, taskFailureDiagnostics: undefined, taskOutcome: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined },
+                                                }
+                                              : node,
+                                      )
+                                    : current,
                             );
 
                         let pendingNodeIds: string[] = [];
@@ -512,6 +535,7 @@ export function useCanvasGenerationExecutor({
                         const execution = {
                             pageUi,
                             projectId,
+                            isActiveProject,
                             nodesRef,
                             nodeId,
                             sourceNode,
@@ -554,7 +578,8 @@ export function useCanvasGenerationExecutor({
                                     setRunningNodeId((current) => current === nodeId ? null : current);
                                     releaseSubmission();
                                 }
-                                if (firstBinding) setNodes((current) => {
+                                if (firstBinding && (!isActiveProject || isActiveProject())) setNodes((current) => {
+                                    if (isActiveProject && !isActiveProject()) return current;
                                     const source = current.find((node) => node.id === nodeId);
                                     if (!source || source.metadata?.lastGenerationRequestFingerprint === requestFingerprint) return current;
                                     return current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, lastGenerationRequestFingerprint: requestFingerprint } } : node));
@@ -584,41 +609,45 @@ export function useCanvasGenerationExecutor({
                             else await executeTextGeneration(execution);
                             emitPluginEvent("generation.completed", { nodeId, nodeType: mode });
                         } catch (error) {
-                            if (isGenerationCanceled(error)) return;
+                            if (isGenerationCanceled(error) || isCanvasLeaveAbort(controller.signal) || (isActiveProject && !isActiveProject())) return;
                             const failure = canvasGenerationFailureMetadata(error, { ...generationContext, mode });
                             emitPluginEvent("generation.failed", { nodeId, nodeType: mode, error: failure.errorDetails });
                             if (options?.waitForTaskCapacity && isGenerationTaskCapacityError(error)) {
                                 setNodes((current) =>
-                                    current.map((node) => {
-                                        if (node.id !== nodeId && !pendingNodeIds.includes(node.id)) return node;
-                                        const metadata = { ...(node.metadata || {}), status: NODE_STATUS_IDLE, errorDetails: undefined };
-                                        delete metadata.taskId;
-                                        delete metadata.taskStatus;
-                                        delete metadata.taskProgress;
-                                        delete metadata.taskStage;
-                                        delete metadata.taskCreatedAt;
-                                        delete metadata.taskUpdatedAt;
-                                        delete metadata.taskStartedAt;
-                                        delete metadata.taskCompletedAt;
-                                        delete metadata.taskDurationMs;
-                                        return { ...node, metadata };
-                                    }),
+                                    isActiveProject()
+                                        ? current.map((node) => {
+                                              if (node.id !== nodeId && !pendingNodeIds.includes(node.id)) return node;
+                                              const metadata = { ...(node.metadata || {}), status: NODE_STATUS_IDLE, errorDetails: undefined };
+                                              delete metadata.taskId;
+                                              delete metadata.taskStatus;
+                                              delete metadata.taskProgress;
+                                              delete metadata.taskStage;
+                                              delete metadata.taskCreatedAt;
+                                              delete metadata.taskUpdatedAt;
+                                              delete metadata.taskStartedAt;
+                                              delete metadata.taskCompletedAt;
+                                              delete metadata.taskDurationMs;
+                                              return { ...node, metadata };
+                                          })
+                                        : current,
                                 );
                                 return;
                             }
                             message.error(failure.errorDetails);
                             setNodes((current) =>
-                                current.map((node) => {
-                                    if (node.id !== nodeId && !pendingNodeIds.includes(node.id)) return node;
-                                    if (node.id === nodeId && !pendingNodeIds.includes(node.id)) {
-                                        if (sourceReleased) return node;
-                                        if (hasPreviousResult) {
-                                            return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, generationErrorSummary: undefined, generationProviderCode: undefined, taskFailureDiagnostics: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } };
-                                        }
-                                        if (!markSourceStatus) return node;
-                                    }
-                                    return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, ...failure } };
-                                }),
+                                isActiveProject()
+                                    ? current.map((node) => {
+                                          if (node.id !== nodeId && !pendingNodeIds.includes(node.id)) return node;
+                                          if (node.id === nodeId && !pendingNodeIds.includes(node.id)) {
+                                              if (sourceReleased) return node;
+                                              if (hasPreviousResult) {
+                                                  return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, generationErrorSummary: undefined, generationProviderCode: undefined, taskFailureDiagnostics: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } };
+                                              }
+                                              if (!markSourceStatus) return node;
+                                          }
+                                          return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, ...failure } };
+                                      })
+                                    : current,
                             );
                         }
                     } catch (error) {
@@ -644,10 +673,12 @@ export function useCanvasGenerationExecutor({
             domainProjectId,
             effectiveConfig,
             finishGenerationRequest,
+            getLiveProjectId,
             isAiConfigReady,
             message,
             modal,
             nodesRef,
+            ownerLifetime,
             connectionsRef,
             projectId,
             setConnections,

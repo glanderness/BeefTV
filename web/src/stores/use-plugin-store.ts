@@ -15,7 +15,8 @@ export const LEGACY_PLUGIN_ID_MAP: Readonly<Record<string, string>> = Object.fre
     "media-conversion": "beeftv-plugin-media-conversion",
 });
 
-type PluginLifecycleListener = (pluginId?: string) => void;
+export type PluginLifecycleReason = "sync" | "enable" | "disable" | "remove" | "update" | "status";
+type PluginLifecycleListener = (pluginId?: string, reason?: PluginLifecycleReason) => void;
 const lifecycleListeners = new Set<PluginLifecycleListener>();
 
 export function onPluginStoreLifecycleChange(listener: PluginLifecycleListener): () => void {
@@ -25,14 +26,31 @@ export function onPluginStoreLifecycleChange(listener: PluginLifecycleListener):
     };
 }
 
-function notifyLifecycle(pluginId?: string): void {
+function notifyLifecycle(pluginId?: string, reason?: PluginLifecycleReason): void {
     for (const listener of lifecycleListeners) {
         try {
-            listener(pluginId);
+            listener(pluginId, reason);
         } catch (err) {
             console.warn("[use-plugin-store] Lifecycle listener failed:", err);
         }
     }
+}
+
+function shallowEqualRecord(a: Record<string, string>, b: Record<string, string>): boolean {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+        if (a[key] !== b[key]) return false;
+    }
+    return true;
+}
+
+function clearInvalidRuntimeStatus(statuses: Record<string, string>, pluginId: string): Record<string, string> {
+    if (statuses[pluginId] !== "invalid") return statuses;
+    const next = { ...statuses };
+    delete next[pluginId];
+    return next;
 }
 
 type BackendPluginEntry = { manifest: PluginManifest | PluginManifestV2; enabled: boolean };
@@ -132,12 +150,13 @@ function fallbackManifest(pluginId: string): PluginManifest | PluginManifestV2 {
 
 export const usePluginStore = create<PluginStore>()(
     persist(
-        (set) => ({
+        (set, get) => ({
             hydrated: false,
             installations: [],
             runtimeStatuses: {},
             pluginStates: {},
             ensurePlugin: (manifest) => {
+                let manifestChanged = false;
                 set((state) => {
                     const canonicalId = LEGACY_PLUGIN_ID_MAP[manifest.id] ?? manifest.id;
                     const normalizedManifest = canonicalId === manifest.id ? manifest : { ...manifest, id: canonicalId };
@@ -146,32 +165,48 @@ export const usePluginStore = create<PluginStore>()(
                     if (current && sameManifestRevision(current.manifest, normalizedManifest) && migrated.length === state.installations.length) {
                         return { hydrated: true };
                     }
+                    manifestChanged = true;
                     const timestamp = now();
                     const next: PluginInstallation = current
                         ? { ...current, manifest: normalizedManifest, updatedAt: timestamp }
                         : { manifest: normalizedManifest, enabled: false, config: {}, installedAt: timestamp, updatedAt: timestamp };
-                    return { hydrated: true, installations: [...migrated.filter((item) => item.manifest.id !== canonicalId), next] };
+                    const nextRuntimeStatuses = clearInvalidRuntimeStatus(state.runtimeStatuses, canonicalId);
+                    return {
+                        hydrated: true,
+                        installations: [...migrated.filter((item) => item.manifest.id !== canonicalId), next],
+                        ...(nextRuntimeStatuses !== state.runtimeStatuses ? { runtimeStatuses: nextRuntimeStatuses } : {}),
+                    };
                 });
-                notifyLifecycle(manifest.id);
+                notifyLifecycle(manifest.id, manifestChanged ? "update" : "sync");
             },
             // 整张表一次写完。每次写入都会把所有清单存一遍，逐个插件写会让页面卡住好几秒。
             syncBackendPlugins: (plugins, states) => {
                 set((state) => {
                     const migrated = migrateLegacyPluginInstallations(state.installations);
                     const installations = new Map(migrated.map((item) => [item.manifest.id, item]));
+                    let nextRuntimeStatuses = state.runtimeStatuses;
                     const timestamp = now();
                     for (const { manifest, enabled } of plugins) {
                         const current = installations.get(manifest.id);
+                        const changed = Boolean(current && !sameManifestRevision(current.manifest, manifest));
+                        if (changed) {
+                            nextRuntimeStatuses = clearInvalidRuntimeStatus(nextRuntimeStatuses, manifest.id);
+                        }
                         installations.set(
                             manifest.id,
                             current
-                                ? { ...current, manifest: sameManifestRevision(current.manifest, manifest) ? current.manifest : manifest, enabled, updatedAt: timestamp, lastError: undefined }
+                                ? { ...current, manifest: changed ? manifest : current.manifest, enabled, updatedAt: timestamp, lastError: changed ? undefined : current.lastError }
                                 : { manifest, enabled, config: {}, installedAt: timestamp, updatedAt: timestamp },
                         );
                     }
-                    return { hydrated: true, pluginStates: states, installations: [...installations.values()] };
+                    return {
+                        hydrated: true,
+                        pluginStates: states,
+                        installations: [...installations.values()],
+                        ...(nextRuntimeStatuses !== state.runtimeStatuses ? { runtimeStatuses: nextRuntimeStatuses } : {}),
+                    };
                 });
-                notifyLifecycle();
+                notifyLifecycle(undefined, "sync");
             },
             setEnabled: (pluginId, enabled) => {
                 const canonicalId = LEGACY_PLUGIN_ID_MAP[pluginId] ?? pluginId;
@@ -193,17 +228,22 @@ export const usePluginStore = create<PluginStore>()(
                                   updatedAt: timestamp,
                               },
                           ];
-                    return { installations };
+                    const nextRuntimeStatuses = clearInvalidRuntimeStatus(state.runtimeStatuses, canonicalId);
+                    return {
+                        installations,
+                        ...(nextRuntimeStatuses !== state.runtimeStatuses ? { runtimeStatuses: nextRuntimeStatuses } : {}),
+                    };
                 });
-                notifyLifecycle(canonicalId);
+                notifyLifecycle(canonicalId, enabled ? "enable" : "disable");
             },
             setRuntimeStatuses: (runtimeStatuses) => {
+                if (shallowEqualRecord(get().runtimeStatuses, runtimeStatuses)) return;
                 set({ runtimeStatuses });
-                notifyLifecycle();
+                notifyLifecycle(undefined, "status");
             },
             setPluginStates: (pluginStates) => {
                 set({ pluginStates });
-                notifyLifecycle();
+                notifyLifecycle(undefined, "sync");
             },
             updateConfig: (pluginId, config) => {
                 const canonicalId = LEGACY_PLUGIN_ID_MAP[pluginId] ?? pluginId;
@@ -226,12 +266,18 @@ export const usePluginStore = create<PluginStore>()(
             },
             removePlugin: (pluginId) => {
                 const canonicalId = LEGACY_PLUGIN_ID_MAP[pluginId] ?? pluginId;
-                set((state) => ({
-                    installations: migrateLegacyPluginInstallations(state.installations).filter(
-                        (item) => item.manifest.id !== canonicalId && item.manifest.id !== pluginId,
-                    ),
-                }));
-                notifyLifecycle(canonicalId);
+                set((state) => {
+                    const nextRuntimeStatuses = { ...state.runtimeStatuses };
+                    delete nextRuntimeStatuses[canonicalId];
+                    delete nextRuntimeStatuses[pluginId];
+                    return {
+                        installations: migrateLegacyPluginInstallations(state.installations).filter(
+                            (item) => item.manifest.id !== canonicalId && item.manifest.id !== pluginId,
+                        ),
+                        runtimeStatuses: nextRuntimeStatuses,
+                    };
+                });
+                notifyLifecycle(canonicalId, "remove");
             },
         }),
         {
@@ -246,7 +292,7 @@ export const usePluginStore = create<PluginStore>()(
                             ? { hydrated: true, installations: migrateLegacyPluginInstallations(state.installations) }
                             : { hydrated: true },
                     );
-                    notifyLifecycle();
+                    notifyLifecycle(undefined, "sync");
                 }
             },
         },
@@ -255,6 +301,7 @@ export const usePluginStore = create<PluginStore>()(
 
 export function isPluginEffectivelyEnabled(pluginId: string, fallbackEnabled?: boolean) {
     const state = usePluginStore.getState();
+    if (state.runtimeStatuses[pluginId] === "invalid") return false;
     const serverState = state.pluginStates[pluginId];
     if (serverState) return serverState.effectiveEnabled;
     if (pluginId in state.runtimeStatuses) return state.runtimeStatuses[pluginId] === "enabled";

@@ -195,3 +195,24 @@ func TestVendorNeutralBYOKProtocolsSupportBusinessActionsAndLastFramePoll(t *tes
 		}
 	}
 }
+
+func TestNormalizeSeedanceTaskOptionsSkipsDraftToFinalEvenWithFrameRefs(t *testing.T) {
+	req := NormalizeSeedanceTaskOptions(GenerationRequest{
+		Capability:  CapabilityVideo,
+		Model:       "seedance-2.5",
+		Operation:   "draft_to_final",
+		AspectRatio: "16:9",
+		Duration:    5,
+		Images:      []MediaReference{{URL: "https://example.com/first.png", Role: "first_frame"}},
+		Extra:       map[string]any{"draft_task_id": "cgt-draft-1", "taskTypeConstraints": true},
+	})
+	if req.Operation != "draft_to_final" {
+		t.Fatalf("operation = %q, want draft_to_final", req.Operation)
+	}
+	if req.AspectRatio != "16:9" || req.Duration != 5 {
+		t.Fatalf("draft_to_final must not rewrite aspect_ratio/duration: ratio=%q duration=%v", req.AspectRatio, req.Duration)
+	}
+	if len(req.Images) != 0 {
+		t.Fatalf("draft_to_final must clear reference images, got %d", len(req.Images))
+	}
+}

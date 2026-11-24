@@ -207,7 +207,7 @@ export function assistantProductionProposalParts(
     const priceSummary = awaitingConfirmation ? proposal.production.estimate?.text : "";
     const header = `整片制作方案：${images} 张图片、${videos.length} 段视频、${audio.length} 段配音${priceSummary ? `\n${priceSummary}` : ""}`;
     const targetLines = targets.map((t) => formatProposalTargetLine(t, targets, proposal.model, awaitingConfirmation));
-    const footer = awaitingConfirmation ? "确认后按此方案生成素材，并自动完成声音、字幕和剪辑（可点击下方按钮或直接发送「确认」开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。" : "";
+    const footer = awaitingConfirmation ? "确认后按此方案生成素材，并自动完成声音、字幕和剪辑（请点击下方按钮确认开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。" : "";
     return { header, targetLines, footer };
 }
 

@@ -163,7 +163,18 @@ func ProviderResponsePayloads(responseBody []byte) []map[string]any {
 }
 
 func ProviderRequestIDFromPath(path string) string {
-	parts := strings.Split(strings.Trim(strings.TrimSpace(path), "/"), "/")
+	cleanPath := strings.TrimSpace(path)
+	if idx := strings.IndexAny(cleanPath, "?#"); idx >= 0 {
+		cleanPath = cleanPath[:idx]
+	}
+	parts := strings.Split(strings.Trim(cleanPath, "/"), "/")
+	// Managed media endpoints address tasks by client-generated task_ref (/v1/media/tasks/<task_ref>[/...]),
+	// never an upstream provider job ID; the real upstream task_id is only extracted from response JSON.
+	for i := 0; i+1 < len(parts); i++ {
+		if strings.EqualFold(strings.TrimSpace(parts[i]), "media") && strings.EqualFold(strings.TrimSpace(parts[i+1]), "tasks") {
+			return ""
+		}
+	}
 	for index := len(parts) - 1; index >= 0; index-- {
 		part := strings.TrimSpace(parts[index])
 		if part == "" || part == "content" || part == "download" {

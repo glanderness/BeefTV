@@ -106,28 +106,51 @@ func isSeedance25ConstraintModel(r GenerationRequest) bool {
 	return strings.HasSuffix(m, "seedance-2.5") || strings.Contains(m, "seedance-2.5-") || strings.HasSuffix(m, "seedance-2-5") || strings.Contains(m, "seedance-2-5-")
 }
 
+// ResolveVideoTaskTypeConstraints returns the canonical Seedance-family task-type
+// constraints (locking aspect_ratio to "adaptive" and/or duration to -1) from
+// explicit operation and media role intent. Shared by legacy protocol adapters
+// and managed media execution so both paths stay in lockstep.
+func ResolveVideoTaskTypeConstraints(operation string, hasVideoRef, hasFrameRole bool) (lockAdaptiveRatio bool, forceAutoDuration bool) {
+	if operation == "draft_to_final" {
+		return false, false
+	}
+	if hasFrameRole {
+		lockAdaptiveRatio = true
+	}
+	if hasVideoRef {
+		switch operation {
+		case "extend":
+			lockAdaptiveRatio = true
+		case "inpaint", "replace_element", "style_transfer":
+			lockAdaptiveRatio = true
+			forceAutoDuration = true
+		}
+	}
+	return lockAdaptiveRatio, forceAutoDuration
+}
+
 // NormalizeSeedanceTaskOptions applies only explicit task intent, never guesses
 // edit/extend intent from free-form prompts. See the official Seedance 2.5 guide.
 func NormalizeSeedanceTaskOptions(r GenerationRequest) GenerationRequest {
-	if isSeedance25ConstraintModel(r) {
-		locked := false
+	r = NormalizeVideoDraftTaskOptions(r)
+	if isSeedance25ConstraintModel(r) && r.Operation != "draft_to_final" {
+		hasFrameRole := false
 		for _, media := range r.Images {
-			locked = locked || media.Role == "first_frame" || media.Role == "last_frame"
-		}
-		if len(r.Videos) > 0 {
-			switch r.Operation {
-			case "extend":
-				locked = true
-			case "inpaint", "replace_element", "style_transfer":
-				locked = true
-				r.Duration = -1
+			if media.Role == "first_frame" || media.Role == "last_frame" {
+				hasFrameRole = true
+				break
 			}
 		}
-		if locked {
+		lockAdaptiveRatio, forceAutoDuration := ResolveVideoTaskTypeConstraints(r.Operation, len(r.Videos) > 0, hasFrameRole)
+		if forceAutoDuration {
+			r.Duration = -1
+		}
+		if lockAdaptiveRatio {
 			r.AspectRatio = "adaptive"
 		}
+		r.Output.AspectRatio, r.Output.Duration, r.Output.Resolution = r.AspectRatio, r.Duration, r.Resolution
 	}
-	return NormalizeVideoDraftTaskOptions(r)
+	return r
 }
 
 func NormalizeVideoDraftTaskOptions(r GenerationRequest) GenerationRequest {

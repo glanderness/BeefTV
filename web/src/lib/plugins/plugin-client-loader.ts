@@ -28,6 +28,40 @@ const activeCleanups = new Map<string, () => void>();
 const activatingPromises = new Map<string, Promise<boolean>>();
 /** 每个已激活插件加载的入口地址；从文件夹重新安装后地址变了，就要换成新代码。 */
 const loadedEntries = new Map<string, string>();
+/** 加载或激活失败的入口签名；同版本内停止自动重试，直到版本变更或用户手动重新启用/重试。 */
+const failedEntries = new Map<string, string>();
+
+function failedEntryKeyFor(pluginId: string, manifest?: PluginManifest | PluginManifestV2): string {
+    return clientEntryFor(pluginId, manifest) ?? `setup:${(manifest?.revision || manifest?.version || "").trim()}`;
+}
+
+function markClientPluginInvalid(
+    pluginId: string,
+    message: string,
+    manifest: PluginManifest | PluginManifestV2 | undefined,
+    stage: "import" | "activate",
+    reportBackend: boolean,
+): void {
+    disposePluginContributions(pluginId);
+    activeCleanups.delete(pluginId);
+    loadedEntries.delete(pluginId);
+    failedEntries.set(pluginId, failedEntryKeyFor(pluginId, manifest));
+    const store = usePluginStore.getState();
+    store.setError(pluginId, message);
+    if (store.runtimeStatuses[pluginId] !== "invalid") {
+        store.setRuntimeStatuses({
+            ...store.runtimeStatuses,
+            [pluginId]: "invalid",
+        });
+    }
+    if (reportBackend) {
+        void reportPluginLoadError(pluginId, message, stage, manifest?.revision)
+            .then((res) => recoverIfRevisionChanged(pluginId, manifest, res?.plugin))
+            .catch(() => {
+                // ignore network error in offline/test environments
+            });
+    }
+}
 
 /** 地址使用内容指纹路径段隔离，使入口内部相对静态导入（如 ./presets.js）自动继承当前版本路径，不会命中浏览器旧模块缓存。 */
 export function clientEntryFor(pluginId: string, manifest?: PluginManifest | PluginManifestV2): string | undefined {
@@ -115,6 +149,7 @@ export function recoverIfRevisionChanged(
         return;
     }
     const store = usePluginStore.getState();
+    failedEntries.delete(pluginId);
     store.setError(pluginId, undefined);
     store.setRuntimeStatuses({
         ...store.runtimeStatuses,
@@ -142,6 +177,13 @@ export async function activateClientPluginModule(
     const deactivator = resolveModuleDeactivator(mod);
 
     if (!activator) {
+        markClientPluginInvalid(
+            pluginId,
+            `插件 "${pluginId}" 客户端入口未导出有效的 activate 函数`,
+            options?.manifest,
+            "activate",
+            options?.reportBackendError !== false,
+        );
         return false;
     }
 
@@ -168,25 +210,18 @@ export async function activateClientPluginModule(
                 disposePluginContributions(pluginId);
             }
         });
+        failedEntries.delete(pluginId);
         usePluginStore.getState().setError(pluginId, undefined);
         return true;
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        disposePluginContributions(pluginId);
-        activeCleanups.delete(pluginId);
-        usePluginStore.getState().setError(pluginId, message);
-        const state = usePluginStore.getState();
-        state.setRuntimeStatuses({
-            ...state.runtimeStatuses,
-            [pluginId]: "invalid",
-        });
-        if (options?.reportBackendError !== false) {
-            void reportPluginLoadError(pluginId, message, "activate", options?.manifest?.revision)
-                .then((res) => recoverIfRevisionChanged(pluginId, options?.manifest, res?.plugin))
-                .catch(() => {
-                    // ignore network error in offline/test environments
-                });
-        }
+        markClientPluginInvalid(
+            pluginId,
+            message,
+            options?.manifest,
+            "activate",
+            options?.reportBackendError !== false,
+        );
         return false;
     }
 }
@@ -202,10 +237,14 @@ export async function loadAndActivateClientPlugin(
     const existingPromise = activatingPromises.get(pluginId);
     if (existingPromise) return existingPromise;
 
-    const run = (async () => {
-        const registered = getRegisteredPlugin(pluginId);
-        const manifest = options?.manifest ?? registered?.manifest;
+    const registered = getRegisteredPlugin(pluginId);
+    const manifest = options?.manifest ?? registered?.manifest;
+    const entryKey = failedEntryKeyFor(pluginId, manifest);
+    if (failedEntries.get(pluginId) === entryKey) {
+        return false;
+    }
 
+    const run = (async () => {
         if (registered?.setup) {
             return activateClientPluginModule(
                 pluginId,
@@ -235,16 +274,7 @@ export async function loadAndActivateClientPlugin(
             return activated;
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            disposePluginContributions(pluginId);
-            usePluginStore.getState().setError(pluginId, message);
-            const state = usePluginStore.getState();
-            state.setRuntimeStatuses({
-                ...state.runtimeStatuses,
-                [pluginId]: "invalid",
-            });
-            void reportPluginLoadError(pluginId, message, "import", manifest?.revision)
-                .then((res) => recoverIfRevisionChanged(pluginId, manifest, res?.plugin))
-                .catch(() => {});
+            markClientPluginInvalid(pluginId, message, manifest, "import", true);
             return false;
         }
     })();
@@ -269,6 +299,7 @@ export function deactivateClientPlugin(pluginId: string): void {
 }
 
 export function deactivateAllClientPlugins(): void {
+    failedEntries.clear();
     for (const pluginId of Array.from(activeCleanups.keys())) {
         deactivateClientPlugin(pluginId);
     }
@@ -295,6 +326,7 @@ export function activateRegisteredSetupSync(pluginId: string): boolean {
                             disposePluginContributions(pluginId);
                         }
                     });
+                    usePluginStore.getState().setError(pluginId, undefined);
                 },
                 (err) => {
                     const message = err instanceof Error ? err.message : String(err);
@@ -363,6 +395,9 @@ export function syncActiveClientPlugins(changedPluginId?: string): void {
                 deactivateClientPlugin(pluginId);
             }
             if (!activeCleanups.has(pluginId)) {
+                if (failedEntries.get(pluginId) === failedEntryKeyFor(pluginId, manifest)) {
+                    continue;
+                }
                 if (plugin?.setup) {
                     activateRegisteredSetupSync(pluginId);
                 } else if (manifest?.client) {
@@ -379,6 +414,17 @@ export function syncActiveClientPlugins(changedPluginId?: string): void {
     }
 }
 
-onPluginStoreLifecycleChange((changedPluginId) => {
+onPluginStoreLifecycleChange((changedPluginId, reason) => {
+    if (changedPluginId && (reason === "enable" || reason === "disable" || reason === "remove" || reason === "update")) {
+        failedEntries.delete(changedPluginId);
+    } else if (!changedPluginId && reason === "sync") {
+        // Keep failedEntries in lockstep with store runtimeStatuses when backend sync clears "invalid".
+        const runtimeStatuses = usePluginStore.getState().runtimeStatuses;
+        for (const pluginId of failedEntries.keys()) {
+            if (runtimeStatuses[pluginId] !== "invalid") {
+                failedEntries.delete(pluginId);
+            }
+        }
+    }
     syncActiveClientPlugins(changedPluginId);
 });

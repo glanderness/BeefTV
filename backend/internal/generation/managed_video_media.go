@@ -8,6 +8,7 @@ import (
 
 	"infinite-canvas/backend/internal/beeftv"
 	"infinite-canvas/backend/internal/modelcatalog"
+	"infinite-canvas/backend/internal/protocol"
 )
 
 type managedClientContextKey struct{}
@@ -153,9 +154,33 @@ func runManagedVideoTask(ctx context.Context, client *beeftv.MediaClient, input 
 	if value, exists := input.Metadata["videoMiddleFrameTime"]; exists {
 		options["middle_frame_time"] = value
 	}
+	applyManagedVideoTaskTypeConstraints(input.VideoCapability, operation, refs, options)
 	request := beeftv.MediaRequest{TaskRef: SubmissionKeyFromContext(ctx), MediaType: "video", Model: input.Config.Model, Operation: operation, Options: options}
 	request.Input.Prompt = intent.Prompt
 	return executeManagedMedia(ctx, client, request, refs)
+}
+
+func applyManagedVideoTaskTypeConstraints(profile *modelcatalog.VideoCapabilityConfig, operation string, refs []beeftv.LocalMediaReference, options map[string]any) {
+	if profile == nil || !profile.TaskTypeConstraints || operation == "draft_to_final" {
+		return
+	}
+	hasVideo := false
+	hasFrameRole := false
+	for _, ref := range refs {
+		if ref.Kind == "video" {
+			hasVideo = true
+		}
+		if ref.Kind == "image" && (ref.Role == "first_frame" || ref.Role == "last_frame") {
+			hasFrameRole = true
+		}
+	}
+	lockAdaptiveRatio, forceAutoDuration := protocol.ResolveVideoTaskTypeConstraints(operation, hasVideo, hasFrameRole)
+	if forceAutoDuration {
+		options["seconds"] = float64(-1)
+	}
+	if lockAdaptiveRatio {
+		options["aspect_ratio"] = "adaptive"
+	}
 }
 
 func resolveManagedVideoOperation(input Input, refs []beeftv.LocalMediaReference) (string, error) {

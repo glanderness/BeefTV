@@ -83,23 +83,60 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 
 type SourceRevisions = Pick<ProposalSourceState, "canvasId" | "canvasRevision" | "modelConfigRevision">;
 
+function comparableChannel(channel: AiConfig["channels"][number]) {
+    // GET /workspace/model-config redacts secret values to __BEEFTV_REDACTED__, so we compare
+    // secret/header presence (plus header names and non-secret channel fields) rather than raw secret strings.
+    const hasApiKey = Boolean(channel.apiKey?.trim() || channel.hasApiKey);
+    const hasSecretKey = Boolean(channel.secretKey?.trim() || channel.hasSecretKey);
+    const normalizedHeaders = (channel.headers || []).map((header) => ({
+        name: header.name,
+        hasValue: Boolean(header.value?.trim()),
+    }));
+    if (channel.id === "beeftv" && channel.pinned) {
+        const {
+            models: _cm,
+            modelProfiles: _cp,
+            apiKey: _ak,
+            secretKey: _sk,
+            credentialRef: _cr,
+            hasApiKey: _hak,
+            hasSecretKey: _hsk,
+            baseUrl: _bu,
+            headers: _hd,
+            ...channelRest
+        } = channel;
+        const videoQuotes = Object.fromEntries(
+            (channel.modelProfiles || [])
+                .filter((item) => item.videoPricing)
+                .map((item) => [item.model, item.videoPricing])
+                .sort(([a], [b]) => String(a).localeCompare(String(b))),
+        );
+        return { ...channelRest, videoQuotes };
+    }
+    const {
+        apiKey: _ak,
+        secretKey: _sk,
+        hasApiKey: _hak,
+        hasSecretKey: _hsk,
+        headers: _hd,
+        ...channelRest
+    } = channel;
+    return {
+        ...channelRest,
+        hasApiKey,
+        hasSecretKey,
+        headers: normalizedHeaders,
+    };
+}
+
 function comparableConfig(config: AiConfig) {
-    // Managed credentials and backend-owned catalog ordering/profiles on the
-    // pinned beeftv channel are supplied by the backend, never by the proposal.
-    const { models: _m, imageModels: _im, videoModels: _vm, textModels: _tm, audioModels: _am, ...rest } = config;
+    // Managed credentials/profiles on pinned beeftv and redacted BYOK secrets
+    // returned by GET /workspace/model-config must not trigger false mismatches.
+    const { models: _m, imageModels: _im, videoModels: _vm, textModels: _tm, audioModels: _am, apiKey: rootApiKey, ...rest } = config;
     return canonicalize({
         ...rest,
-        channels: config.channels.map((channel) => {
-            if (channel.id !== "beeftv" || !channel.pinned) return channel;
-            const { models: _cm, modelProfiles: _cp, apiKey: _ak, secretKey: _sk, credentialRef: _cr, hasApiKey: _hak, hasSecretKey: _hsk, baseUrl: _bu, ...channelRest } = channel;
-            const videoQuotes = Object.fromEntries(
-                (channel.modelProfiles || [])
-                    .filter((item) => item.videoPricing)
-                    .map((item) => [item.model, item.videoPricing])
-                    .sort(([a], [b]) => String(a).localeCompare(String(b))),
-            );
-            return { ...channelRest, videoQuotes };
-        }),
+        hasRootApiKey: Boolean(rootApiKey?.trim()),
+        channels: config.channels.map(comparableChannel),
     });
 }
 
