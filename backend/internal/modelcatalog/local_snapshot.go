@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/pricing"
 	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/providerpreset"
@@ -236,4 +237,53 @@ func PublicCatalogFromLocalSnapshot(body []byte, workflow ...WorkflowLookup) (*C
 	}
 	response := NewCatalogResponse(CatalogSourceSystem, nil, channels)
 	return &response, nil
+}
+
+// LocalChannelConfig extracts a single channel's runtime connection fields from a local model config snapshot.
+// Only the managed system channel carries channelId so custom BYOK channels remain admitted as custom channels.
+func LocalChannelConfig(body []byte, channelID string) (map[string]any, bool, error) {
+	var snapshot struct {
+		Channels []struct {
+			ID                   string                    `json:"id"`
+			BaseURL              string                    `json:"baseUrl"`
+			APIKey               string                    `json:"apiKey"`
+			SecretKey            string                    `json:"secretKey"`
+			CredentialRef        string                    `json:"credentialRef"`
+			APIFormat            string                    `json:"apiFormat"`
+			InterfaceType        string                    `json:"interfaceType"`
+			ReferenceAssetOrigin string                    `json:"referenceAssetOrigin"`
+			Headers              []outbound.OutboundHeader `json:"headers"`
+		} `json:"channels"`
+	}
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		return nil, false, err
+	}
+	for _, channel := range snapshot.Channels {
+		if channel.ID != channelID {
+			continue
+		}
+		config := map[string]any{
+			"baseUrl":       channel.BaseURL,
+			"apiKey":        channel.APIKey,
+			"apiFormat":     channel.APIFormat,
+			"interfaceType": channel.InterfaceType,
+		}
+		if channel.SecretKey != "" {
+			config["secretKey"] = channel.SecretKey
+		}
+		if channel.CredentialRef != "" {
+			config["credentialRef"] = channel.CredentialRef
+		}
+		if channel.ID == managedChannelID {
+			config["channelId"] = channel.ID
+		}
+		if origin := strings.TrimSpace(channel.ReferenceAssetOrigin); origin != "" {
+			config["referenceAssetOrigin"] = origin
+		}
+		if len(channel.Headers) > 0 {
+			config["headers"] = channel.Headers
+		}
+		return config, true, nil
+	}
+	return nil, false, nil
 }

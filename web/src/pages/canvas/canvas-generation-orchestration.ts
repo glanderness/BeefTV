@@ -3,6 +3,9 @@ import { nanoid } from "nanoid";
 import { beefTVImageContract } from "@/lib/beeftv-image-contracts";
 
 import { getNodeSpec } from "@/constant/canvas";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { modelCompatibilityError } from "@/lib/model-selection";
+import { seedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
 import { applyGenerationTaskResultToNodes, applyMaterializedGenerationTaskResultToNodes, generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
 import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
 import { bindMissingCanvasResourceAssets, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
@@ -12,6 +15,7 @@ import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { Asset } from "@/stores/use-asset-store";
+import { selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 
 import { CanvasOwnerAbandonedError, canvasOwnerCanPersist, canvasOwnerEpochMatches, canvasOwnerUserMatches, type CanvasOwnerEpoch } from "./canvas-owner-epoch";
@@ -242,4 +246,30 @@ export async function runOwnedCanvasHistoryInsert(input: {
         if (error instanceof CanvasOwnerAbandonedError) return "abandoned";
         throw error;
     }
+}
+
+export function resolveVideoEditNodeDraft(effectiveConfig: AiConfig, node: CanvasNodeData, operation: "extend" | "inpaint") {
+    const editQuality = node.metadata?.vquality || "720p";
+    const candidateModels = [node.metadata?.model, effectiveConfig.videoModel, ...selectableModelsByCapability(effectiveConfig, "video")].filter((item): item is string => Boolean(item));
+    const editRequirementsFor = (modelKey: string) => {
+        const constraints = seedanceSettingsConstraints(modelCapabilityConfigFor(effectiveConfig, modelKey), 0, 1, 0, operation);
+        return {
+            capability: "video" as const,
+            videoOperation: operation,
+            videoSeconds: constraints.durationLocked ? "-1" : node.metadata?.seconds || effectiveConfig.videoSeconds,
+            options: { vquality: editQuality },
+            input: { textCount: 1, imageCount: 0, videoCount: 1, audioCount: 0, characterCount: 0 },
+        };
+    };
+    const targetModel =
+        candidateModels.find((item) => modelCapabilityConfigFor(effectiveConfig, item).video?.operations?.includes(operation) && !modelCompatibilityError(effectiveConfig, item, editRequirementsFor(item))) ||
+        candidateModels.find((item) => !modelCompatibilityError(effectiveConfig, item, editRequirementsFor(item))) ||
+        node.metadata?.model;
+    const constraints = targetModel ? seedanceSettingsConstraints(modelCapabilityConfigFor(effectiveConfig, targetModel), 0, 1, 0, operation) : {};
+    return {
+        model: targetModel,
+        size: "adaptive",
+        seconds: constraints.durationLocked ? "-1" : node.metadata?.seconds,
+        vquality: editQuality,
+    };
 }

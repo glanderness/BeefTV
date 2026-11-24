@@ -229,11 +229,13 @@ export function normalizeAssistantProposal(proposal: AssistantGenerationProposal
     };
 }
 
+const PRODUCTION_CONFIRM_TIMEOUT_MS = 30_000;
+
 export async function confirmAssistantProduction(canvasId: string, turnId: string, proposal: AssistantGenerationProposal, continuePlan = false) {
     const normalized = normalizeAssistantProposal(proposal);
     return http.post<{ taskIds: string[]; continuationId: string; orderId?: string; order?: GenerationOrder }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(normalized.proposalId)}/production`, {
         canvasId, kind: normalized.kind, nodeIds: normalized.nodeIds, targets: normalized.production?.targets, continuePlan,
-    }, await uiSessionConfig());
+    }, { ...(await uiSessionConfig()), timeout: PRODUCTION_CONFIRM_TIMEOUT_MS });
 }
 
 export async function listGenerationOrders(canvasId: string) {
@@ -241,7 +243,7 @@ export async function listGenerationOrders(canvasId: string) {
 }
 
 export async function approveGenerationOrder(proposalId: string) {
-    return http.post<{ taskIds: string[]; continuationId?: string; order?: GenerationOrder }>(`/assistant/generation-orders/${encodeURIComponent(proposalId)}/approve`, {}, await uiSessionConfig());
+    return http.post<{ taskIds: string[]; continuationId?: string; order?: GenerationOrder }>(`/assistant/generation-orders/${encodeURIComponent(proposalId)}/approve`, {}, { ...(await uiSessionConfig()), timeout: PRODUCTION_CONFIRM_TIMEOUT_MS });
 }
 
 export type AssistantPlan = {

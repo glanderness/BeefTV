@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CanvasAssistantTurnView } from "@/pages/canvas/canvas-assistant-turn";
 import { assistantProposalProgress, assistantProposalText } from "@/pages/canvas/canvas-assistant-copy";
+import { productionConfirmationErrorMessage } from "@/pages/canvas/use-canvas-assistant-proposal";
+import { ApiError } from "@/services/api/request";
 import { normalizeAssistantProposal, type AssistantGenerationProposal, type AssistantScriptProposal, type AssistantTurn } from "@/services/api/agent-assistant";
 
 const proposal: AssistantGenerationProposal = {
@@ -470,4 +472,16 @@ test("production proposal tolerates legacy null referenceNodeIds and parameters 
     );
     expect(html).toContain("橘猫侦探定妆图");
     expect(html).toContain("确认并制作整片");
+});
+
+test("production confirmation footer does not mislead users into typing confirmation in chat, and surfaces 4xx ApiError messages", () => {
+    const text = assistantProposalText(proposal);
+    expect(text).toContain("请点击下方按钮确认开始");
+    expect(text).not.toContain("直接发送「确认」");
+
+    expect(productionConfirmationErrorMessage(new ApiError("制作方案已变化，请重新确认", { status: 409, reason: "production_changed" }))).toBe("制作方案已变化，请重新确认");
+    expect(productionConfirmationErrorMessage(new ApiError("素材模型暂不可用", { status: 200, code: 412, reason: "generation_model_unavailable" }))).toBe("素材模型暂不可用");
+    expect(productionConfirmationErrorMessage(new ApiError("intent changed", { status: 409, reason: "continuation_intent_changed" }))).toBe("要求已更新，请让助手重新提出生成方案。");
+    expect(productionConfirmationErrorMessage(new ApiError("timeout", { status: 504 }))).toBe("暂未确认制作是否开始，请重试查询同一方案，不会重复提交已接受的素材。");
+    expect(productionConfirmationErrorMessage(new Error("network down"))).toBe("暂未确认制作是否开始，请重试查询同一方案，不会重复提交已接受的素材。");
 });

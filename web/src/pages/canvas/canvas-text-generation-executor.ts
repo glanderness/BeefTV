@@ -23,6 +23,7 @@ export async function executeTextGeneration({
     controller,
     editingTextNode,
     projectId,
+    isActiveProject,
     setNodes,
     setConnections,
     startGenerationRequest,
@@ -87,12 +88,15 @@ export async function executeTextGeneration({
         ];
         const nextConnections = [...(project?.connections || canvasConnections), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: nodeId, toNodeId: childId }))];
         if (project) useCanvasStore.getState().updateProject(projectId, { nodes: nextNodes, connections: nextConnections });
-        nodesRef.current = nextNodes;
-        setNodes(nextNodes);
-        setConnections(nextConnections);
+        if (!isActiveProject || isActiveProject()) {
+            nodesRef.current = nextNodes;
+            setNodes(nextNodes);
+            setConnections(nextConnections);
+        }
     }
 
     textTargetIds.forEach((targetNodeId) => startGenerationRequest(targetNodeId, nodeId, nodeId, controller));
+    const isCurrent = () => !controller.signal.aborted && (!isActiveProject || isActiveProject());
     const answers = await Promise.all(
         textTargetIds.map((targetNodeId) =>
             runCanvasGenerationTaskToConsumer(
@@ -110,7 +114,11 @@ export async function executeTextGeneration({
                     metadata: { sourceNodeId: nodeId, ...taskContext, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, ...skillMetadata },
                 },
                 {
-                    onSubmission: (metadata) => projectCanvasGenerationSubmission(nodesRef, setNodes, [targetNodeId], metadata),
+                    isCurrent,
+                    onSubmission: (metadata) => {
+                        if (!isCurrent()) return;
+                        projectCanvasGenerationSubmission(nodesRef, setNodes, [targetNodeId], metadata);
+                    },
                     bindTask: (task) => bindGenerationTask(targetNodeId, task),
                     consumeTask: (task) => applyGenerationTaskResult(targetNodeId, task),
                 },
@@ -119,9 +127,9 @@ export async function executeTextGeneration({
                 .finally(() => finishGenerationRequest(targetNodeId, controller)),
         ),
     );
-    if (controller.signal.aborted) return;
+    if (!isCurrent()) return;
     void answers;
     if (isConfigNode) {
-        setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, taskOutcome: undefined, failedPromptFingerprint: undefined } } : node)));
+        setNodes((current) => isCurrent() ? current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, taskOutcome: undefined, failedPromptFingerprint: undefined } } : node)) : current);
     }
 }

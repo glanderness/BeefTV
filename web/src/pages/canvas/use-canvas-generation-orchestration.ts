@@ -5,7 +5,6 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
-import { modelCompatibilityError } from "@/lib/model-selection";
 
 import { promoteLegacyBatchTableSize } from "@/lib/canvas/canvas-batch-table";
 import { persistCanvasDocument } from "@/services/local-workspace-repository";
@@ -15,7 +14,7 @@ import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import type { Skill } from "@/services/api/skills";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { selectableModelsByCapability, useEffectiveConfig } from "@/stores/use-config-store";
+import { useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 
 import {
@@ -23,6 +22,7 @@ import {
     createInsertingHistoryGate,
     rebaseInsertedCanvasNode,
     reconcileImageBatchRootNodes,
+    resolveVideoEditNodeDraft,
     runImageBatchChildRetry,
     runOwnedCanvasHistoryInsert,
     selectRetryableImageBatchChildren,
@@ -112,9 +112,13 @@ export function useCanvasGenerationOrchestration({
         setNodes,
     });
 
+    const getLiveProjectId = useCallback(() => projectIdRef.current, []);
+
     const handleGenerateNode = useCanvasGenerationExecutor({
         pageUi,
         projectId,
+        ownerLifetime: lifetime,
+        getLiveProjectId,
         domainProjectId,
         addedSkills,
         assets,
@@ -427,20 +431,7 @@ export function useCanvasGenerationOrchestration({
             const defaultPrompt = operation === "extend"
                 ? `基于 @视频1 自然顺延后续动作、镜头运动与环境氛围，保持人物与画风一致`
                 : `基于 @视频1 进行画面修改：保持原有构图与节奏，将主体调整为 `;
-            const editSeconds = node.metadata?.seconds || effectiveConfig.videoSeconds;
-            const editQuality = node.metadata?.vquality || "720p";
-            const editRequirements = {
-                capability: "video" as const,
-                videoOperation: operation,
-                videoSeconds: editSeconds,
-                options: { vquality: editQuality },
-                input: { textCount: 1, imageCount: 0, videoCount: 1, audioCount: 0, characterCount: 0 },
-            };
-            const candidateModels = [node.metadata?.model, effectiveConfig.videoModel, ...selectableModelsByCapability(effectiveConfig, "video")].filter((item): item is string => Boolean(item));
-            const targetModel =
-                candidateModels.find((item) => modelCapabilityConfigFor(effectiveConfig, item).video?.operations?.includes(operation) && !modelCompatibilityError(effectiveConfig, item, editRequirements)) ||
-                candidateModels.find((item) => !modelCompatibilityError(effectiveConfig, item, editRequirements)) ||
-                node.metadata?.model;
+            const editDraft = resolveVideoEditNodeDraft(effectiveConfig, node, operation);
             const childNode: CanvasNodeData = {
                 id: nanoid(),
                 type: CanvasNodeType.Video,
@@ -452,10 +443,10 @@ export function useCanvasGenerationOrchestration({
                     status: "idle",
                     prompt: defaultPrompt,
                     composerContent: defaultPrompt,
-                    model: targetModel,
-                    size: "adaptive",
-                    seconds: node.metadata?.seconds,
-                    vquality: node.metadata?.vquality || "720p",
+                    model: editDraft.model,
+                    size: editDraft.size,
+                    seconds: editDraft.seconds,
+                    vquality: editDraft.vquality,
                     generateAudio: node.metadata?.generateAudio ?? "true",
                     watermark: node.metadata?.watermark ?? "false",
                     draft: "false",

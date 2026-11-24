@@ -278,10 +278,6 @@ func (c *Runtime) InstallPackageContext(parentCtx context.Context, source, regis
 			}
 		}
 	}
-	relRoot, err := filepath.Rel(stageDir, staged.RootDir)
-	if err != nil {
-		return View{}, err
-	}
 	if mustUseVerifiedBuiltin {
 		if exists {
 			if note := deferralFor(
@@ -292,7 +288,11 @@ func (c *Runtime) InstallPackageContext(parentCtx context.Context, source, regis
 				return View{}, packageError(http.StatusConflict, "plugin_update_deferred", strings.Join(note.Reasons, "；"))
 			}
 		}
-		installed, cleanupBlob, blobErr := stageHotUpdatedBuiltinBlob(c.dataDir, id, stageDir, relRoot, staged.SHA256)
+		promotedRoot, promoteErr := promoteStagedPackageRoot(stageDir, staged.RootDir)
+		if promoteErr != nil {
+			return View{}, packageError(http.StatusBadRequest, "plugin_package_invalid", promoteErr.Error())
+		}
+		installed, cleanupBlob, blobErr := stageHotUpdatedBuiltinBlob(c.dataDir, id, promotedRoot, ".", staged.SHA256)
 		if blobErr != nil {
 			return View{}, packageError(http.StatusBadRequest, "plugin_package_invalid", blobErr.Error())
 		}
@@ -315,6 +315,11 @@ func (c *Runtime) InstallPackageContext(parentCtx context.Context, source, regis
 		return view, nil
 	}
 
+	promotedRoot, promoteErr := promoteStagedPackageRoot(stageDir, staged.RootDir)
+	if promoteErr != nil {
+		return View{}, packageError(http.StatusBadRequest, "plugin_package_invalid", promoteErr.Error())
+	}
+
 	installRoot := filepath.Join(pluginsRoot, id)
 	backupDir := ""
 	if _, err := os.Stat(installRoot); err == nil {
@@ -329,11 +334,11 @@ func (c *Runtime) InstallPackageContext(parentCtx context.Context, source, regis
 			_ = os.Rename(backupDir, installRoot)
 		}
 	}
-	if err := os.Rename(stageDir, installRoot); err != nil {
+	if err := os.Rename(promotedRoot, installRoot); err != nil {
 		restore()
 		return View{}, fmt.Errorf("启用新插件目录失败：%w", err)
 	}
-	installed, err := protocol.ParsePluginPackageDir(filepath.Join(installRoot, relRoot))
+	installed, err := protocol.ParsePluginPackageDir(installRoot)
 	if err != nil {
 		restore()
 		return View{}, packageError(http.StatusBadRequest, "plugin_package_invalid", err.Error())

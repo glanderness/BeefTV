@@ -296,3 +296,40 @@ test("managed beeftv catalog ordering and profile synthesis differences do not f
     };
     expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => persisted, noWait))).toBe("settings_changed");
 });
+
+test("BYOK channel secret redaction from backend does not false-positive settings_changed", async () => {
+    const live = fixture();
+    const persisted = fixture();
+    live.config.apiKey = "sk-legacy-live";
+    live.config.channels = [{
+        id: "portable-aipai-3",
+        name: "Portable BYOK",
+        apiFormat: "openai",
+        baseUrl: "https://byok.example.test/v1",
+        apiKey: "sk-live-plaintext-key",
+        secretKey: "sec-live-plaintext",
+        headers: [{ name: "X-Custom-Auth", value: "token-live-123" }],
+        models: ["custom-image-model"],
+        modelProfiles: [{ model: "custom-image-model", capability: "image", protocol: "openai-image" }],
+    }];
+    persisted.config.apiKey = "__BEEFTV_REDACTED__";
+    persisted.config.channels = [{
+        id: "portable-aipai-3",
+        name: "Portable BYOK",
+        apiFormat: "openai",
+        baseUrl: "https://byok.example.test/v1",
+        apiKey: "__BEEFTV_REDACTED__",
+        secretKey: "__BEEFTV_REDACTED__",
+        hasApiKey: true,
+        hasSecretKey: true,
+        headers: [{ name: "X-Custom-Auth", value: "__BEEFTV_REDACTED__" }],
+        models: ["custom-image-model"],
+        modelProfiles: [{ model: "custom-image-model", capability: "image", protocol: "openai-image" }],
+    }];
+
+    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => persisted, noWait))).toBe("passed");
+
+    // Non-secret BYOK config edits must still be detected as settings_changed.
+    persisted.config.channels[0]!.baseUrl = "https://other.example.test/v1";
+    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => persisted, noWait))).toBe("settings_changed");
+});

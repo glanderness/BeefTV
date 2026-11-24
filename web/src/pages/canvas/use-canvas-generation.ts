@@ -14,6 +14,7 @@ import { useTaskDetails } from "@/hooks/use-task-details";
 import { readNodeLiveTaskTelemetry } from "@/stores/use-generation-task-telemetry";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { CANVAS_LEAVE_ABORT_REASON } from "./canvas-generation-executor-types";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { canvasNodeNeedsGenerationRecovery, consumeGenerationRecoveryRestore, isGenerationRecoveryRestored, MISSING_GENERATION_TASK_IDENTITY_DETAILS } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
@@ -736,8 +737,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     useEffect(
         () => () => {
             void recoveryCoordinatorRef.current?.abortAndDrain();
-            consumerControllerRef.current.abort();
-            generationRequestsRef.current.forEach((request) => request.controller.abort());
+            consumerControllerRef.current.abort(CANVAS_LEAVE_ABORT_REASON);
+            generationRequestsRef.current.forEach((request) => request.controller.abort(CANVAS_LEAVE_ABORT_REASON));
             generationRequestsRef.current.clear();
         },
         [projectId],

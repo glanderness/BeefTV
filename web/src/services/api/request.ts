@@ -152,14 +152,29 @@ function retryAfterMilliseconds(headers: unknown) {
 export type HttpRequestConfig = Omit<AxiosRequestConfig, "method" | "url" | "data" | "baseURL">;
 
 const HEAVY_CANVAS_DOCUMENT_TIMEOUT_MS = 180_000;
+const CANVAS_DOCUMENT_READ_TIMEOUT_MS = 30_000;
 
 function isHeavyCanvasDocumentWrite(method: string, url: string) {
     if (method === "get" || method === "delete") return false;
     return url === "/ops/canvas.document.commit" || url === "/ops/canvas.document.patch" || /^\/canvas-projects\/[^/?#]+$/.test(url);
 }
 
+function isCanvasDocumentRead(method: string, url: string) {
+    if (method === "get") {
+        // Only full canvas documents and version history snapshots get the 30s read budget;
+        // lightweight list probes (GET /canvas-projects) keep the 4s startup fallback timeout.
+        return /^\/canvas-projects\/[^/?#]+(?:\/history(?:\/[^/?#]+)?)?(?:[?#]|$)/.test(url);
+    }
+    return method === "post" && (url === "/ops/canvas.get" || url.startsWith("/ops/canvas.get?"));
+}
+
 function send<T>(method: string, url: string, data?: unknown, config?: HttpRequestConfig) {
-    const timeout = config?.timeout ?? (isHeavyCanvasDocumentWrite(method, url) ? HEAVY_CANVAS_DOCUMENT_TIMEOUT_MS : undefined);
+    const defaultTimeout = isHeavyCanvasDocumentWrite(method, url)
+        ? HEAVY_CANVAS_DOCUMENT_TIMEOUT_MS
+        : isCanvasDocumentRead(method, url)
+          ? CANVAS_DOCUMENT_READ_TIMEOUT_MS
+          : undefined;
+    const timeout = config?.timeout ?? defaultTimeout;
     return request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...(timeout !== undefined ? { timeout } : {}), ...config }));
 }
 

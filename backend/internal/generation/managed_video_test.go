@@ -474,3 +474,206 @@ func TestRunManagedVideoTaskWireEnvelopeOperationAndFrameRoles(t *testing.T) {
 		})
 	}
 }
+
+func TestRunManagedVideoTaskAppliesTaskTypeConstraints(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	cases := []struct {
+		name           string
+		operation      string
+		images         []Media
+		useServerVideo bool
+		metadata       map[string]any
+		wantOp         string
+		wantRatio      any
+		wantSeconds    any
+		wantNoRatio    bool
+		wantNoSeconds  bool
+	}{
+		{
+			name:           "inpaint locks adaptive ratio and duration -1",
+			operation:      "inpaint",
+			useServerVideo: true,
+			wantOp:         "inpaint",
+			wantRatio:      "adaptive",
+			wantSeconds:    float64(-1),
+		},
+		{
+			name:           "replace_element locks adaptive ratio and duration -1",
+			operation:      "replace_element",
+			useServerVideo: true,
+			wantOp:         "replace_element",
+			wantRatio:      "adaptive",
+			wantSeconds:    float64(-1),
+		},
+		{
+			name:           "style_transfer locks adaptive ratio and duration -1",
+			operation:      "style_transfer",
+			useServerVideo: true,
+			wantOp:         "style_transfer",
+			wantRatio:      "adaptive",
+			wantSeconds:    float64(-1),
+		},
+		{
+			name:           "extend locks adaptive ratio while keeping duration",
+			operation:      "extend",
+			useServerVideo: true,
+			wantOp:         "extend",
+			wantRatio:      "adaptive",
+			wantSeconds:    float64(5),
+		},
+		{
+			name:        "image_to_video first_frame locks adaptive ratio",
+			operation:   "image_to_video",
+			images:      []Media{{URL: "https://93.184.216.34/first.png"}},
+			wantOp:      "image_to_video",
+			wantRatio:   "adaptive",
+			wantSeconds: float64(5),
+		},
+		{
+			name:        "image_to_video explicit last_frame locks adaptive ratio",
+			operation:   "image_to_video",
+			images:      []Media{{ID: "end-img", URL: "https://93.184.216.34/last.png"}},
+			metadata:    map[string]any{"videoEditOperation": "image_to_video", "videoEndFrameNodeId": "end-img"},
+			wantOp:      "image_to_video",
+			wantRatio:   "adaptive",
+			wantSeconds: float64(5),
+		},
+		{
+			name:          "draft_to_final does not re-inject aspect_ratio or seconds",
+			operation:     "draft_to_final",
+			metadata:      map[string]any{"videoEditOperation": "draft_to_final", "videoDraftTaskId": "task_draft_1"},
+			wantOp:        "draft_to_final",
+			wantNoRatio:   true,
+			wantNoSeconds: true,
+		},
+	}
+
+	profile := &modelcatalog.VideoCapabilityConfig{
+		Operations:          []string{"text_to_video", "image_to_video", "reference_to_video", "inpaint", "replace_element", "style_transfer", "extend", "draft_to_final"},
+		TaskTypeConstraints: true,
+		Draft:               modelcatalog.VideoBooleanConfig{Supported: true},
+		Duration:            modelcatalog.VideoDurationConfig{Selection: "enum", Values: []int{-1, 4, 5, 6, 7, 8}, Default: 5},
+		Ratios:              []string{"16:9", "9:16", "adaptive"},
+		Resolutions:         []string{"480p", "720p", "1080p"},
+		References:          modelcatalog.VideoReferenceConfig{MaxImages: 4, MaxImageBytes: 30 << 20, MaxVideos: 1, MaxVideoBytes: 50 << 20},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotReq beeftv.MediaRequest
+			var lastUpload beeftv.UploadRequest
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/models":
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set(beeftv.MediaProtocolHeader, beeftv.MediaProtocolVersion)
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"media_protocol": beeftv.MediaDiscovery{
+							Version:              beeftv.MediaProtocolVersion,
+							SupportedMediaTypes:  []string{"video"},
+							TaskSubmitURL:        "/v1/media/tasks",
+							TaskQueryURLTemplate: "/v1/media/tasks/{task_ref}",
+							UploadsURL:           "/v1/media/uploads",
+						},
+						"data": []any{},
+					})
+				case r.Method == http.MethodGet && r.URL.Path == "/src.mp4":
+					w.Header().Set("Content-Type", "video/mp4")
+					_, _ = w.Write([]byte("src-mp4-bytes"))
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/media/uploads":
+					_ = json.NewDecoder(r.Body).Decode(&lastUpload)
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(beeftv.UploadSession{
+						UploadURL:    "http://" + r.Host + "/put-upload",
+						UploadMethod: http.MethodPut,
+						Ticket:       "ticket-1",
+					})
+				case r.Method == http.MethodPut && r.URL.Path == "/put-upload":
+					w.WriteHeader(http.StatusOK)
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/media/uploads/complete":
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"url":    "http://" + r.Host + "/uploaded-src.mp4",
+						"kind":   lastUpload.Kind,
+						"mime":   lastUpload.Mime,
+						"bytes":  lastUpload.Bytes,
+						"sha256": lastUpload.SHA256,
+					})
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/media/tasks":
+					if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+						t.Fatalf("decode /v1/media/tasks: %v", err)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"task_ref":      gotReq.TaskRef,
+						"media_type":    "video",
+						"status":        "completed",
+						"outputs":       []map[string]any{{"kind": "video", "url": "http://" + r.Host + "/out.mp4"}},
+						"billing_state": "settled",
+						"usage_state":   "completed",
+					})
+				case r.Method == http.MethodGet && r.URL.Path == "/out.mp4":
+					w.Header().Set("Content-Type", "video/mp4")
+					_, _ = w.Write([]byte("mp4-bytes"))
+				default:
+					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			var videos []Media
+			if tc.useServerVideo {
+				videos = []Media{{URL: server.URL + "/src.mp4"}}
+			}
+			meta := tc.metadata
+			if meta == nil {
+				meta = map[string]any{"videoEditOperation": tc.operation}
+			}
+			input := Input{
+				Mode:   "video",
+				Prompt: "replace background",
+				Config: Config{
+					CredentialRef:        beeftv.CredentialRef,
+					MediaProtocolVersion: beeftv.MediaProtocolVersion,
+					BaseURL:              server.URL,
+					APIKey:               "fixture",
+					Model:                "opaque-video-model",
+					VQuality:             "720p",
+					Size:                 "16:9",
+					VideoSeconds:         "5",
+				},
+				ReferenceImages: tc.images,
+				ReferenceVideos: videos,
+				Metadata:        meta,
+			}
+			ctx := WithSubmissionKey(WithEndpoints(context.Background(), Endpoints{BeefTVVideoBaseURL: server.URL}), "constraints-"+tc.operation)
+			ctx = WithRuntime(ctx, Runtime{
+				Config:       managedVideoWireConfigPort{profile: profile},
+				ManagedMedia: &managedVideoWireMediaPort{},
+				Limits:       stubLimits{},
+			})
+			client := managedMediaClient(ctx, input.Config)
+			if _, err := runManagedVideoTask(ctx, client, input); err != nil {
+				t.Fatalf("runManagedVideoTask failed: %v", err)
+			}
+			if gotReq.Operation != tc.wantOp {
+				t.Fatalf("operation = %q, want %q", gotReq.Operation, tc.wantOp)
+			}
+			if tc.wantNoRatio {
+				if _, exists := gotReq.Options["aspect_ratio"]; exists {
+					t.Fatalf("aspect_ratio should be omitted for %s, got %#v", tc.operation, gotReq.Options)
+				}
+			} else if gotReq.Options["aspect_ratio"] != tc.wantRatio {
+				t.Fatalf("aspect_ratio = %#v, want %#v (options=%#v)", gotReq.Options["aspect_ratio"], tc.wantRatio, gotReq.Options)
+			}
+			if tc.wantNoSeconds {
+				if _, exists := gotReq.Options["seconds"]; exists {
+					t.Fatalf("seconds should be omitted for %s, got %#v", tc.operation, gotReq.Options)
+				}
+			} else if gotReq.Options["seconds"] != tc.wantSeconds {
+				t.Fatalf("seconds = %#v, want %#v (options=%#v)", gotReq.Options["seconds"], tc.wantSeconds, gotReq.Options)
+			}
+		})
+	}
+}
