@@ -1,7 +1,8 @@
 import { Button } from "antd";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
-import { getResourceBlob, getResourcePlaybackBlob, resourceStorageKey } from "@/services/api/resources";
+import { getResourceBlob, resourceStorageKey } from "@/services/api/resources";
 import { downloadOwnedOrBrowserMedia, isWailsNativeShell } from "@/services/desktop-media-save";
 import type { AssistantTurnOutput } from "@/services/api/agent-assistant";
 
@@ -46,10 +47,9 @@ function CanvasAssistantVideoOutputs({ outputs }: { outputs: Extract<AssistantTu
     const currentIdentity = useRef(identity);
     currentIdentity.current = identity;
     const [records, setRecords] = useState<{ identity: string; tasks: Record<string, GenerationTask>; unread: string[] }>({ identity: "", tasks: {}, unread: [] });
-    const [playback, setPlayback] = useState<{ identity: string; taskId: string; url: string; loading?: boolean; error?: boolean } | null>(null);
+    const [activePlay, setActivePlay] = useState<{ identity: string; taskId: string } | null>(null);
     const [feedback, setFeedback] = useState<{ identity: string; text: string } | null>(null);
     const ownedURLs = useRef(new Set<string>());
-    const playerURL = useRef("");
     const requestSerial = useRef(0);
     const [retry, setRetry] = useState(0);
     useEffect(() => {
@@ -76,10 +76,12 @@ function CanvasAssistantVideoOutputs({ outputs }: { outputs: Extract<AssistantTu
     }, [identity, signature, retry]);
     useEffect(() => {
         const urls = ownedURLs.current;
-        return () => { requestSerial.current++; for (const url of urls) URL.revokeObjectURL(url); urls.clear(); playerURL.current = ""; };
+        return () => { requestSerial.current++; for (const url of urls) URL.revokeObjectURL(url); urls.clear(); };
     }, [identity]);
     const tasks = records.identity === identity ? records.tasks : {};
-    const shownPlayback = playback?.identity === identity ? playback : null;
+    const playingTaskId = activePlay?.identity === identity ? activePlay.taskId : "";
+    const playingResourceId = playingTaskId ? assistantOutputResource(tasks[playingTaskId]) : null;
+    const videoPlayback = useResourceVideoPlayback(playingResourceId ? resourceStorageKey(playingResourceId) : "", "", Boolean(playingResourceId));
     const last = outputs.at(-1);
     const lastReady = last && assistantOutputResource(tasks[last.taskId]);
     const lastTask = last ? tasks[last.taskId] : undefined;
@@ -88,22 +90,13 @@ function CanvasAssistantVideoOutputs({ outputs }: { outputs: Extract<AssistantTu
         : lastTask.status === "queued" || lastTask.status === "running" ? "这是之前已完成的版本；后一次正在合成。"
         : lastTask.status === "failed" || lastTask.status === "cancelled" ? "这是之前已完成的版本；后一次合成未完成。"
         : lastTask.status === "succeeded" ? "这是之前已完成的版本；后一次成片暂不可用。" : "这是之前已完成的版本；后一次合成结果尚未确认。";
-    async function play(taskId: string) {
-        const resourceId = assistantOutputResource(tasks[taskId]);
-        if (!resourceId) return;
-        const serial = ++requestSerial.current;
-        setPlayback({ identity, taskId, url: "", loading: true });
-        try {
-            const blob = await getResourcePlaybackBlob(resourceStorageKey(resourceId));
-            if (serial !== requestSerial.current || currentIdentity.current !== identity) return;
-            if (!blob) throw Error("missing media");
-            const url = URL.createObjectURL(blob);
-            if (playerURL.current) { URL.revokeObjectURL(playerURL.current); ownedURLs.current.delete(playerURL.current); }
-            playerURL.current = url; ownedURLs.current.add(url);
-            setPlayback({ identity, taskId, url });
-        } catch {
-            if (serial === requestSerial.current && currentIdentity.current === identity) setPlayback({ identity, taskId, url: "", error: true });
+    function play(taskId: string) {
+        if (!assistantOutputResource(tasks[taskId])) return;
+        if (playingTaskId === taskId) {
+            videoPlayback.retry();
+            return;
         }
+        setActivePlay({ identity, taskId });
     }
     async function download(taskId: string, title: string) {
         const resourceId = assistantOutputResource(tasks[taskId]);
@@ -136,10 +129,9 @@ function CanvasAssistantVideoOutputs({ outputs }: { outputs: Extract<AssistantTu
         return <div key={output.taskId} className="canvas-assistant-card">
             <strong>{title}</strong><span role="status">{status}</span>
             {ready && output.taskId !== last?.taskId ? <span className="canvas-assistant-meta">{lastReady ? "之前的版本" : previousNotice}</span> : null}
-            {ready ? <div className="canvas-assistant-card-actions"><Button size="small" loading={shownPlayback?.taskId === output.taskId && shownPlayback.loading} onClick={() => void play(output.taskId)}>播放成片</Button><Button size="small" autoInsertSpace={false} onClick={() => void download(output.taskId, title)}>下载</Button></div> : null}
+            {ready ? <div className="canvas-assistant-card-actions"><Button size="small" loading={playingTaskId === output.taskId && videoPlayback.loading} onClick={() => play(output.taskId)}>播放成片</Button><Button size="small" autoInsertSpace={false} onClick={() => void download(output.taskId, title)}>下载</Button></div> : null}
             {unread ? <Button size="small" onClick={() => setRetry(value => value + 1)}>重读状态</Button> : null}
-            {shownPlayback?.taskId === output.taskId && shownPlayback.url ? <Suspense fallback={<span>正在读取播放器…</span>}><Player src={shownPlayback.url} title={title} mimeType="video/mp4" autoPlay compactControls className="w-full" /></Suspense> : null}
-            {shownPlayback?.taskId === output.taskId && shownPlayback.error ? <span role="status">暂时无法播放，请重新读取成片。</span> : null}
+            {playingTaskId === output.taskId && videoPlayback.error ? <span role="status">暂时无法播放，请重新读取成片。</span> : playingTaskId === output.taskId && videoPlayback.url ? <Suspense fallback={<span>正在读取播放器…</span>}><Player key={videoPlayback.url} src={videoPlayback.url} title={title} mimeType="video/mp4" autoPlay compactControls className="w-full" onError={() => { if (!videoPlayback.requestCompatible()) videoPlayback.fail(); }} /></Suspense> : null}
         </div>;
     })}{feedback?.identity === identity ? <span role="status">{feedback.text}</span> : null}</div>;
 }

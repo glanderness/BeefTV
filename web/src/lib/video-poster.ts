@@ -1,4 +1,5 @@
 import { videoFrameSeekSeconds, waitForPresentedVideoFrame } from "@/lib/canvas/canvas-video-frame";
+import { isUndecodableVideoTrack } from "@/lib/video-player-policy";
 
 export type CapturedVideoPoster = {
     width: number;
@@ -80,10 +81,17 @@ function captureVideoPosterNow(source: string, options: CaptureVideoPosterOption
         video.muted = true;
         video.playsInline = true;
         if (isCrossOriginHttpUrl(source)) video.crossOrigin = "anonymous";
-        video.onloadedmetadata = readMetadata;
+        video.onloadedmetadata = () => {
+            readMetadata();
+            if (isUndecodableVideoTrack(video)) finish(metadata);
+        };
         video.onerror = () => finish(metadata);
         video.onloadeddata = () => {
             readMetadata();
+            if (isUndecodableVideoTrack(video)) {
+                finish(metadata);
+                return;
+            }
             if (signal?.aborted) {
                 fail(abortError());
                 return;

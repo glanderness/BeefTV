@@ -33,6 +33,7 @@ import { aceternityMotion } from "@/lib/aceternity-motion";
 import { ASSET_CATEGORY_LABELS } from "@/lib/asset-category";
 import { formatShotOrdinal } from "@/lib/shot-label";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { buildImageResolutionOptions, formatImageResolutionSize, supportsImageResolutionPresets } from "@/lib/image-resolution-tiers";
 import { normalizeVideoValue, videoDurationOptions, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
@@ -132,6 +133,7 @@ export function CreationMessageView({ item, shotNumber, onRetryFailure, onCreate
 function CreationUserMessage({ item, shotNumber, onEditUserMessage }: { item: CreationMessage; shotNumber: number; onEditUserMessage: (text: string) => void }) {
     const [previewUrl, setPreviewUrl] = useState("");
     const [previewType, setPreviewType] = useState<"image" | "video">("image");
+    const [previewStorageKey, setPreviewStorageKey] = useState("");
     const copyText = useCopyText();
     const visiblePrompt = displayCreationPrompt(item.content, item.references || []);
     const user = useUserStore((state) => state.user);
@@ -146,10 +148,10 @@ function CreationUserMessage({ item, shotNumber, onEditUserMessage }: { item: Cr
             const url = attachment.previewUrl || ("dataUrl" in attachment ? attachment.dataUrl : attachment.url) || "";
             const imageUrl = kind === "image" ? resolveResourceUrl(attachment.storageKey, url) : "";
             const previewUrl = kind === "image" ? imageUrl : url;
-            return <button key={attachment.id} type="button" className={!previewable ? "is-file" : undefined} onClick={() => { if (!previewable) return; setPreviewType(kind === "video" ? "video" : "image"); setPreviewUrl(kind === "video" ? attachment.url || "" : previewUrl); }} aria-label={previewable ? `预览 ${attachment.name || "附件"}` : attachment.name || "附件"} disabled={previewable && !previewUrl}>{kind === "video" ? <video src={attachment.url || ""} poster={url !== attachment.url ? url : undefined} muted playsInline preload="metadata" /> : kind === "image" ? <CachedResourceImage storageKey={attachment.storageKey} src={imageUrl} alt={attachment.name || "附件"} width={44} height={44} loading="lazy" decoding="async" /> : kind === "audio" ? <Music2 /> : <FileText />}{previewable ? <span aria-hidden="true"><Maximize2 /></span> : null}</button>;
+            return <button key={attachment.id} type="button" className={!previewable ? "is-file" : undefined} onClick={() => { if (!previewable) return; setPreviewType(kind === "video" ? "video" : "image"); setPreviewStorageKey(attachment.storageKey || ""); setPreviewUrl(kind === "video" ? attachment.url || "" : previewUrl); }} aria-label={previewable ? `预览 ${attachment.name || "附件"}` : attachment.name || "附件"} disabled={previewable && !previewUrl}>{kind === "video" ? <video src={attachment.url || ""} poster={url !== attachment.url ? url : undefined} muted playsInline preload="metadata" /> : kind === "image" ? <CachedResourceImage storageKey={attachment.storageKey} src={imageUrl} alt={attachment.name || "附件"} width={44} height={44} loading="lazy" decoding="async" /> : kind === "audio" ? <Music2 /> : <FileText />}{previewable ? <span aria-hidden="true"><Maximize2 /></span> : null}</button>;
         })}</div> : null}
         <div className="creation-user-message-actions"><Tooltip title="复制提示词"><button type="button" className="creation-user-message-copy" aria-label="复制提示词" onClick={() => copyText(visiblePrompt, "提示词已复制")}><Copy /></button></Tooltip><Tooltip title="编辑并重新发送"><button type="button" className="creation-user-message-edit" aria-label="编辑提示词" onClick={() => onEditUserMessage(visiblePrompt)}><Pencil /></button></Tooltip></div>
-        <CreationMediaPreviewModal url={previewUrl} type={previewType} onClose={() => setPreviewUrl("")} />
+        <CreationMediaPreviewModal url={previewUrl} type={previewType} storageKey={previewStorageKey} onClose={() => { setPreviewUrl(""); setPreviewStorageKey(""); }} />
     </article>;
 }
 
@@ -205,10 +207,14 @@ function MediaResult({ item, onRetryFailure, onCreateVariant, onContinueCanvas, 
     }
     if (!resultUrls.length) return <div className="creation-media-empty">没有返回可预览结果 <button type="button" onClick={onRetryFailure}>重试</button></div>;
     const isVideo = item.mode === "video";
+    const firstResultAsset = assets.find((candidate) => candidate.id === resultAssetIds[0]);
+    const firstVideoStorageKey = firstResultAsset && "data" in firstResultAsset && "storageKey" in firstResultAsset.data && typeof firstResultAsset.data.storageKey === "string"
+        ? firstResultAsset.data.storageKey
+        : resourceStorageKeyFromUrl(resultUrls[0] || "");
     return <div className="creation-media-result">
         {isVideo ? <button type="button" className="creation-video-result" onClick={() => { setPreviewType("video"); setPreviewUrl(displayUrls[0]); }} aria-label="预览生成视频"><video muted preload="metadata" src={displayUrls[0]} /><span><Maximize2 />预览视频</span></button> : <div className="creation-image-result-grid">{displayUrls.map((url) => <button key={url} type="button" className="creation-image-result" onClick={() => { setPreviewType("image"); setPreviewUrl(url); }} aria-label="预览生成图片"><img src={url} alt="生成结果" /><span><Maximize2 /></span></button>)}</div>}
         <div className="creation-media-actions"><span>{isVideo ? "视频结果" : `${resultUrls.length} 张图片`}</span><Button type="link" size="small" loading={openingCanvas} disabled={!canContinueWithResults} title={canContinueWithResults ? undefined : "素材保存完成后才能转入画布"} onClick={() => onContinueCanvas(resultAssetIds)}>添加到画布</Button>{displayUrls.map((url, index) => <a key={`${url}-download`} href={url} download>{displayUrls.length > 1 ? `下载 ${index + 1}` : <><Download />下载</>}</a>)}</div>
-        <CreationMediaPreviewModal url={previewUrl} type={previewType} onClose={() => setPreviewUrl("")} />
+        <CreationMediaPreviewModal url={previewUrl} type={previewType} storageKey={previewType === "video" ? firstVideoStorageKey : undefined} onClose={() => setPreviewUrl("")} />
     </div>;
 }
 
@@ -230,11 +236,21 @@ function CreationMessageReferences({ references }: { references: CreationReferen
     })}</div>;
 }
 
-function CreationMediaPreviewModal({ url, type, onClose }: { url: string; type: "image" | "video"; onClose: () => void }) {
+export function CreationMediaPreviewModal({ url, type, storageKey, onClose }: { url: string; type: "image" | "video"; storageKey?: string; onClose: () => void }) {
+    const playback = useResourceVideoPlayback(storageKey || "", url, Boolean(url) && type === "video");
     if (type === "image") return <CanvasImagePreview src={url} alt="媒体预览" onClose={onClose} />;
 
     return <AppModal flush open={Boolean(url)} title={null} footer={null} centered destroyOnHidden width="min(1160px, calc(100vw - 32px))" onCancel={onClose} className="creation-media-preview-modal">
-        {url ? <video controls autoPlay className="creation-media-preview-video" src={url} /> : null}
+        {playback.error ? (
+            <div role="status" className="flex min-h-48 flex-col items-center justify-center gap-3 p-6 text-center text-sm">
+                <span>{playback.error}</span>
+                <Button size="small" onClick={playback.retry}>重新加载</Button>
+            </div>
+        ) : playback.url ? (
+            <video key={playback.url} controls autoPlay className="creation-media-preview-video" src={playback.url} {...playback.videoFallbackProps} />
+        ) : url ? (
+            <div role="status" className="grid min-h-48 place-items-center p-6 text-sm">正在准备视频预览…</div>
+        ) : null}
     </AppModal>;
 }
 
@@ -256,7 +272,7 @@ export function CreationReferenceAddButton({ label, disabled, onOpenLibrary }: {
 
 export function CreationAttachmentThumbnail({ item, onPreview, onRemove }: {
     item: CreationAttachment;
-    onPreview: (type: "image" | "video", url: string) => void;
+    onPreview: (type: "image" | "video", url: string, storageKey?: string) => void;
     onRemove: (id: string) => void;
 }) {
     const kind = creationAttachmentKind(item);
@@ -266,7 +282,7 @@ export function CreationAttachmentThumbnail({ item, onPreview, onRemove }: {
     const previewUrl = kind === "image" ? imageUrl : url;
     const content = kind === "video" ? <video src={item.url} poster={item.previewUrl !== item.url ? item.previewUrl : undefined} muted playsInline preload="metadata" aria-label={item.name} /> : kind === "image" ? <CachedResourceImage storageKey={item.storageKey} src={imageUrl} alt={item.name} loading="lazy" decoding="async" fallback={<span className="creation-chat-file-icon"><ImageIcon /></span>} /> : <span className="creation-chat-file-icon">{kind === "audio" ? <Music2 /> : <FileText />}<em>{item.name}</em></span>;
     return <div className="creation-reference-card-content">
-        {previewable ? <button type="button" className="creation-reference-card-preview" onClick={() => onPreview(kind === "video" ? "video" : "image", previewUrl)} aria-label={`放大预览 ${item.name}`} disabled={!previewUrl}>{content}<span aria-hidden="true"><Maximize2 /></span></button> : <div className="creation-reference-card-preview is-file" aria-label={item.name} title={item.name}>{content}</div>}
+        {previewable ? <button type="button" className="creation-reference-card-preview" onClick={() => onPreview(kind === "video" ? "video" : "image", previewUrl, item.storageKey)} aria-label={`放大预览 ${item.name}`} disabled={!previewUrl}>{content}<span aria-hidden="true"><Maximize2 /></span></button> : <div className="creation-reference-card-preview is-file" aria-label={item.name} title={item.name}>{content}</div>}
         <button type="button" className="creation-reference-card-remove" onPointerDownCapture={(event) => event.stopPropagation()} onMouseDownCapture={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onRemove(item.id); }} aria-label={`移除 ${item.name}`}><X /></button>
     </div>;
 }
@@ -327,6 +343,7 @@ type CreationReferenceFilter = "all" | "image" | "video" | "audio" | "file";
 export function CreationComposer(props: ComposerProps) {
     const [previewUrl, setPreviewUrl] = useState("");
     const [previewType, setPreviewType] = useState<"image" | "video">("image");
+    const [previewStorageKey, setPreviewStorageKey] = useState("");
     const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
     const [referenceFilter, setReferenceFilter] = useState<CreationReferenceFilter>("all");
     const [canDragReferences, setCanDragReferences] = useState(false);
@@ -427,9 +444,10 @@ export function CreationComposer(props: ComposerProps) {
         drag.moved = true;
         setTrackState((current) => ({ ...current, isDragging: true, isExpanded: true }));
     };
-    const previewAttachment = (type: "image" | "video", url: string) => {
+    const previewAttachment = (type: "image" | "video", url: string, storageKey?: string) => {
         if (suppressAttachmentClickRef.current || cardDragRef.current?.moved) return;
         setPreviewType(type);
+        setPreviewStorageKey(storageKey || "");
         setPreviewUrl(url);
     };
     const reorderVisibleAttachments = useCallback((next: CreationAttachment[]) => {
@@ -587,7 +605,7 @@ export function CreationComposer(props: ComposerProps) {
                 </Button>
             </div>
         </footer>
-        <CreationMediaPreviewModal url={previewUrl} type={previewType} onClose={() => setPreviewUrl("")} />
+        <CreationMediaPreviewModal url={previewUrl} type={previewType} storageKey={previewStorageKey} onClose={() => { setPreviewUrl(""); setPreviewStorageKey(""); }} />
         </SpotlightSurface>
     </HoverBorderGradient>;
 

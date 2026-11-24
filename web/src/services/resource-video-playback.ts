@@ -21,25 +21,27 @@ export async function resolveResourceVideoPlayback(
     const id = resourceIdFromStorageKey(effectiveKey);
     if (id) {
         let resource = await refreshResource(id, { signal });
-        if (needsCompatible && resource.playbackStatus !== "processing") {
-            resource = await prepareResourcePlayback(id, { signal });
-        }
-        for (let attempt = 0; resource.playbackStatus === "processing"; attempt += 1) {
-            if (attempt >= 120) throw new Error("视频预览仍在准备中，请稍后重新打开");
-            await waitForPlaybackPoll(signal);
-            resource = await refreshResource(id, { signal });
-        }
-        if (resource.playbackStatus === "ready") {
-            if (canUseLoopbackMediaTicket()) {
-                const stream = await tryResolveMediaStream(id, "playback", signal);
-                if (stream) return stream;
+        if (resource) {
+            if (needsCompatible && resource.playbackStatus !== "processing") {
+                resource = await prepareResourcePlayback(id, { signal });
             }
-            const playback = await getResourcePlayback(effectiveKey, { signal });
-            if (!playback) throw new Error("视频预览不可用，请重试");
-            return playback;
-        }
-        if (needsCompatible && resource.playbackStatus !== "ready") {
-            throw new Error("视频已导入，暂时无法准备预览，请重试。原文件仍可下载。");
+            for (let attempt = 0; resource?.playbackStatus === "processing"; attempt += 1) {
+                if (attempt >= 120) throw new Error("视频预览仍在准备中，请稍后重新打开");
+                await waitForPlaybackPoll(signal);
+                resource = await refreshResource(id, { signal });
+            }
+            if (resource?.playbackStatus === "ready") {
+                if (canUseLoopbackMediaTicket()) {
+                    const stream = await tryResolveMediaStream(id, "playback", signal);
+                    if (stream) return stream;
+                }
+                const playback = await getResourcePlayback(effectiveKey, { signal });
+                if (!playback) throw new Error("视频预览不可用，请重试");
+                return playback;
+            }
+            if (needsCompatible && resource?.playbackStatus !== "ready") {
+                throw new Error("视频已导入，暂时无法准备预览，请重试。原文件仍可下载。");
+            }
         }
         if (canUseLoopbackMediaTicket()) {
             const originalStream = await tryResolveMediaStream(id, "original", signal);

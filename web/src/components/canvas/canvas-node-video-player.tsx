@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type S
 import { Maximize2, Pause, Play, Volume2, VolumeX } from "lucide-react";
 
 import { useVideoAudioTrack } from "@/hooks/use-video-audio-track";
-import { normalizeVideoPlayerMimeType } from "@/lib/video-player-policy";
+import { isUndecodableVideoTrack, normalizeVideoPlayerMimeType } from "@/lib/video-player-policy";
 
 export type CanvasNodeVideoPlayerProps = {
     src: string;
@@ -101,6 +101,7 @@ export function CanvasNodeVideoPlayer({
     const firstFrameRequestedRef = useRef(false);
     const autoPlayAttemptedRef = useRef(false);
     const deferredAutoPlayRef = useRef(false);
+    const decodeFailureReportedRef = useRef(false);
     const callbacksRef = useRef({ onPlay, onError, onFirstFramePresented });
     callbacksRef.current = { onPlay, onError, onFirstFramePresented };
 
@@ -141,6 +142,7 @@ export function CanvasNodeVideoPlayer({
         firstFrameRequestedRef.current = false;
         autoPlayAttemptedRef.current = false;
         deferredAutoPlayRef.current = false;
+        decodeFailureReportedRef.current = false;
         const sourceKey = `${src}::${normalizedType}`;
         if (firstSourceRef.current !== null && firstSourceRef.current !== sourceKey) {
             videoRef.current?.load();
@@ -153,11 +155,24 @@ export function CanvasNodeVideoPlayer({
         const video = videoRef.current;
         if (!root || !video) return;
         return bindCanvasViewportVideoPause(root, video, () => {
-            if (deferredAutoPlayRef.current) {
+            if (deferredAutoPlayRef.current && !decodeFailureReportedRef.current) {
                 tryInitialAutoPlayRef.current(video);
             }
         });
     }, []);
+
+    const reportDecodeFailure = () => {
+        if (decodeFailureReportedRef.current) return;
+        decodeFailureReportedRef.current = true;
+        callbacksRef.current.onError?.();
+    };
+
+    const rejectUndecodableVideo = (video: HTMLVideoElement) => {
+        if (!isUndecodableVideoTrack(video)) return false;
+        video.pause();
+        reportDecodeFailure();
+        return true;
+    };
 
     const markFirstFrame = (video: HTMLVideoElement) => {
         if (firstFrameRequestedRef.current) return;
@@ -175,7 +190,7 @@ export function CanvasNodeVideoPlayer({
 
     const togglePlay = () => {
         const video = videoRef.current;
-        if (!video) return;
+        if (!video || decodeFailureReportedRef.current) return;
         if (video.paused || video.ended) {
             void video.play().catch(() => undefined);
         } else {
@@ -212,19 +227,24 @@ export function CanvasNodeVideoPlayer({
                 }}
                 onLoadedMetadata={(event) => {
                     const video = event.currentTarget;
+                    if (rejectUndecodableVideo(video)) return;
                     if (Number.isFinite(video.duration) && video.duration > 0) setDuration(video.duration);
                     probeVideoAudio(video);
                     tryInitialAutoPlay(video);
                 }}
                 onLoadedData={(event) => {
-                    markFirstFrame(event.currentTarget);
-                    probeVideoAudio(event.currentTarget);
-                    tryInitialAutoPlay(event.currentTarget);
+                    const video = event.currentTarget;
+                    if (rejectUndecodableVideo(video)) return;
+                    markFirstFrame(video);
+                    probeVideoAudio(video);
+                    tryInitialAutoPlay(video);
                 }}
                 onCanPlay={(event) => {
-                    markFirstFrame(event.currentTarget);
-                    probeVideoAudio(event.currentTarget);
-                    tryInitialAutoPlay(event.currentTarget);
+                    const video = event.currentTarget;
+                    if (rejectUndecodableVideo(video)) return;
+                    markFirstFrame(video);
+                    probeVideoAudio(video);
+                    tryInitialAutoPlay(video);
                 }}
                 onPlay={() => {
                     setPlaying(true);
@@ -237,7 +257,7 @@ export function CanvasNodeVideoPlayer({
                     const next = event.currentTarget.duration;
                     if (Number.isFinite(next) && next > 0) setDuration(next);
                 }}
-                onError={() => callbacksRef.current.onError?.()}
+                onError={reportDecodeFailure}
             >
                 <source src={src} type={normalizedType} />
             </video>

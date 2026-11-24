@@ -33,7 +33,7 @@ function AttachmentPreview({ attachment }: { attachment: AssistantAttachment }) 
     if (!url) return <span className="canvas-assistant-meta" role="status">正在读取预览…</span>;
     const onError = () => setPreview({ identity, url: "", error: true });
     return attachment.kind === "image" ? <img src={url} alt={attachment.name} loading="lazy" onError={onError} />
-        : attachment.kind === "video" ? <video src={url} aria-label={attachment.name} controls preload="metadata" onError={() => { if (!video.requestCompatible()) video.fail(); }} /> : <audio src={url} aria-label={attachment.name} controls preload="metadata" onError={onError} />;
+        : attachment.kind === "video" ? <video src={url} aria-label={attachment.name} controls preload="metadata" {...video.videoFallbackProps} /> : <audio src={url} aria-label={attachment.name} controls preload="metadata" onError={onError} />;
 }
 
 export function CanvasAssistantAttachments({ attachments, onChange, onRemove }: {

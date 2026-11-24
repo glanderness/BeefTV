@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { isUndecodableVideoTrack } from "../src/lib/video-player-policy";
 import { apiClient } from "../src/services/api/request";
 import { resolveResourceVideoPlayback } from "../src/services/resource-video-playback";
 
@@ -61,4 +62,14 @@ test("浏览器解码失败后才申请兼容预览", async () => {
     };
     expect(await resolveResourceVideoPlayback("resource:hevc-demand", "original", new AbortController().signal, true)).toEqual({ blob: compatible, compatible: true });
     expect(urls).toEqual(["/resources/hevc-demand", "/resources/hevc-demand/playback", "/resources/hevc-demand/file?variant=playback&proxy=1"]);
+});
+
+test("isUndecodableVideoTrack 仅在已载入元数据但视频轨尺寸为 0 时判定不可解码", () => {
+    expect(isUndecodableVideoTrack(null)).toBe(false);
+    expect(isUndecodableVideoTrack({ readyState: 0, videoWidth: 0, videoHeight: 0 })).toBe(false);
+    expect(isUndecodableVideoTrack({ readyState: 1, videoWidth: 0, videoHeight: 0 })).toBe(true);
+    expect(isUndecodableVideoTrack({ readyState: 4, videoWidth: 0, videoHeight: 0 })).toBe(true);
+    expect(isUndecodableVideoTrack({ readyState: 4, videoWidth: 688, videoHeight: 0 })).toBe(true);
+    expect(isUndecodableVideoTrack({ readyState: 1, videoWidth: 688, videoHeight: 1280 })).toBe(false);
+    expect(isUndecodableVideoTrack({ readyState: 4, videoWidth: 688, videoHeight: 1280 })).toBe(false);
 });

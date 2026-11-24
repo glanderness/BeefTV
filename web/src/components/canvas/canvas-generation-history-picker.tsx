@@ -158,7 +158,7 @@ function HistoryMediaPreview({ task }: { task: GenerationTask }) {
     const playback = useResourceVideoPlayback(media?.storageKey || "", media?.url || "", Boolean(media));
     if (error || playback.error) return <div className="flex size-full flex-col items-center justify-center gap-2 text-xs text-foreground/60" role="status">预览加载失败<Button size="small" type="text" onClick={event => { event.stopPropagation(); if (error) setRetry(value => value + 1); else playback.retry(); }}>重新加载</Button></div>;
     if (!playback.url) return <div className="grid size-full place-items-center"><Spin size="small" /></div>;
-    return <video src={playback.url} aria-label="生成视频预览" muted playsInline autoPlay preload="metadata" className="size-full object-cover" onError={() => { if (!playback.requestCompatible()) playback.fail(); }} />;
+    return <video src={playback.url} aria-label="生成视频预览" muted playsInline autoPlay preload="metadata" className="size-full object-cover" {...playback.videoFallbackProps} />;
 }
 
 function historyTaskDay(task: GenerationTask) {

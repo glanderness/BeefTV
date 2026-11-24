@@ -117,10 +117,13 @@ export function AssetVideoPreview({ storageKey, url, title, className }: { stora
                         preload="metadata"
                         aria-label={title}
                         className={className}
-                        onError={() => { if (!playback.requestCompatible()) playback.fail(); }}
+                        {...playback.videoFallbackProps}
                         onPlay={() => setPlaying(true)}
                         onPause={() => setPlaying(false)}
-                        onLoadedMetadata={(event) => setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)}
+                        onLoadedMetadata={(event) => {
+                            if (playback.rejectUndecodableVideo(event.currentTarget)) return;
+                            setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0);
+                        }}
                         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
                         onVolumeChange={(event) => {
                             setMuted(event.currentTarget.muted);
