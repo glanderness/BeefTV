@@ -123,6 +123,59 @@ func TestProjectSearchUsesRealLinksAndRechecksMembership(t *testing.T) {
 	if err := svc.ValidateAgentProjectReference("owner", "standalone", "asset", "linked"); err == nil {
 		t.Fatal("standalone expanded library")
 	}
+	// 同回合内新生成并绑定到独立画布节点的自有素材，即使不在回合初 AssetIDs 快照里也应允许按 assetId 审片；
+	// 但未绑定到该画布的自有素材或他人素材仍必须拒绝。
+	boundAsset := model.Asset{
+		ID:          "bound-in-turn",
+		UserID:      "owner",
+		Title:       "Bound Result",
+		Kind:        "image",
+		PayloadJSON: `{"id":"bound-in-turn","title":"Bound Result","kind":"image","resourceId":"` + resource.ID + `"}`,
+	}
+	if err := db.Create(&boundAsset).Error; err != nil {
+		t.Fatal(err)
+	}
+	boundDoc := `{"nodes":[{"id":"direct","type":"image","title":"Reference","metadata":{"assetId":"bound-in-turn","storageKey":"resource:` + resource.ID + `"}},{"id":"spoof-foreign","type":"image","title":"Spoof","metadata":{"assetId":"foreign-asset","storageKey":"resource:` + resource.ID + `"}}]}`
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "standalone").Update("payload_json", boundDoc).Error; err != nil {
+		t.Fatal(err)
+	}
+	standaloneScope := &agentops.AssistantScope{
+		CanvasID: "standalone",
+		ProjectReference: func(kind, id string) error {
+			return svc.ValidateAgentProjectReference("owner", "standalone", kind, id)
+		},
+	}
+	runStandalone := func(op string, params any) (operations.Result, error) {
+		raw, _ := json.Marshal(params)
+		return registry.Execute(operations.Request{UserID: "owner", Op: op, Params: raw, Caller: operations.AssistantCaller(standaloneScope, false)})
+	}
+	if _, err := runStandalone("media.overview", map[string]any{"canvasId": "standalone", "assetId": " bound-in-turn "}); err != nil {
+		t.Fatalf("same-turn bound asset on standalone canvas should be readable by assetId: %v", err)
+	}
+	if _, err := runStandalone("asset.get", map[string]any{"assetId": "bound-in-turn"}); err != nil {
+		t.Fatalf("same-turn bound asset on standalone canvas should pass asset.get: %v", err)
+	}
+	if _, err := runStandalone("media.overview", map[string]any{"canvasId": "standalone", "assetId": "linked"}); err == nil {
+		t.Fatal("unbound owner asset on standalone canvas must remain denied")
+	}
+	if _, err := runStandalone("media.overview", map[string]any{"canvasId": "standalone", "assetId": "foreign-asset"}); err == nil {
+		t.Fatal("foreign asset must remain denied even if its assetId appears in canvas payload")
+	}
+	// 项目画布撤回项目链接后，即使画布节点 payload 仍留有该素材的 assetId，也不得绕过 ProjectAssetLink 校验。
+	projectDocWithLinked := `{"id":"current","nodes":[{"id":"n-linked","type":"image","title":"Linked","metadata":{"assetId":"linked","storageKey":"resource:` + resource.ID + `"}}]}`
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "current").Updates(map[string]any{"project_id": "p1", "payload_json": projectDocWithLinked}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("project_id = ? AND asset_id = ?", "p1", "linked").Delete(&model.ProjectAssetLink{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run("media.overview", map[string]any{"canvasId": "current", "assetId": "linked"}); err == nil {
+		t.Fatal("revoked project link must stay denied even when canvas payload still references assetId")
+	}
+	if _, err := run("asset.get", map[string]any{"assetId": "linked"}); err == nil {
+		t.Fatal("revoked project link asset.get must stay denied even when canvas payload still references assetId")
+	}
+	db.Create(&model.ProjectAssetLink{ID: "l4", ProjectID: "p1", AssetID: "linked"})
 	page, err := svc.CanvasService().UserAssetsPage("owner", 1, 20, canvas.UserAssetPageFilter{ProjectID: "p1"})
 	if err != nil || len(page.Assets) != 1 || len(page.ProjectCounts) != 0 {
 		t.Fatalf("scoped filter=%+v err=%v", page, err)

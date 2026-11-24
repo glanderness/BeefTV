@@ -205,3 +205,22 @@ test("真实侧栏保留草稿与产物引用，由用户发送检查，并更�
     expect(errors).toEqual([]);
     await page.close();
 }, 60000);
+
+test("多条未恢复的工具失败提示纵向分行排布，不粘连成一行", async () => {
+    historyToolCalls = [
+        { tool: "media.overview", args: { nodeId: "n1" }, isError: true, error: "media_input_unsupported" },
+        { tool: "canvas.edge.create", args: { fromNodeId: "s1", toNodeId: "v1" }, isError: true, error: "invalid_argument" },
+    ];
+    const page = await browser.newPage({ viewport: { width: 420, height: 900 } });
+    try {
+        await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
+        const items = page.locator(".canvas-assistant-feedback .canvas-assistant-failed");
+        await items.nth(1).waitFor({ state: "visible" });
+        expect(await items.count()).toBe(2);
+        const first = (await items.nth(0).boundingBox())!;
+        const second = (await items.nth(1).boundingBox())!;
+        expect(second.y).toBeGreaterThanOrEqual(first.y + first.height);
+    } finally {
+        await page.close();
+    }
+}, 30000);
