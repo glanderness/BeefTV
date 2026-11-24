@@ -12,22 +12,49 @@ const hasFfmpeg = !ffmpegProbe.error && ffmpegProbe.status === 0;
 async function startVideoHarnessEnv(durationSeconds = 0.4) {
     const dir = mkdtempSync(join(tmpdir(), "beeftv-video-recovery-"));
     const file = join(dir, "preview.mp4");
-    const result = spawnSync("ffmpeg", ["-nostdin", "-v", "error", "-f", "lavfi", "-i", `color=c=red:s=64x48:r=5:d=${durationSeconds}`, "-c:v", "libx264", "-pix_fmt", "yuv420p", file]);
+    const result = spawnSync("ffmpeg", [
+        "-nostdin", "-v", "error", "-y",
+        "-f", "lavfi", "-i", `color=c=red:s=64x48:r=5:d=${durationSeconds}`,
+        "-f", "lavfi", "-i", `sine=frequency=440:duration=${durationSeconds}`,
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", file,
+    ]);
     if (result.error) throw new Error(`ffmpeg unavailable: ${result.error.message}`);
     if (result.status !== 0) throw new Error(result.stderr?.toString() || `ffmpeg exited with status ${result.status}`);
+    const audioOnlyFallbackFile = join(dir, "mp4v-aac.mp4");
+    const audioOnlyResult = spawnSync("ffmpeg", [
+        "-nostdin", "-v", "error", "-y",
+        "-f", "lavfi", "-i", `color=c=blue:s=64x48:r=5:d=${durationSeconds}`,
+        "-f", "lavfi", "-i", `sine=frequency=440:duration=${durationSeconds}`,
+        "-c:v", "mpeg4", "-c:a", "aac", "-movflags", "+faststart", audioOnlyFallbackFile,
+    ]);
+    if (audioOnlyResult.error) throw new Error(`ffmpeg unavailable: ${audioOnlyResult.error.message}`);
+    if (audioOnlyResult.status !== 0) throw new Error(audioOnlyResult.stderr?.toString() || `ffmpeg exited with status ${audioOnlyResult.status}`);
     const dist = join(dir, "dist");
     await build({ configFile: false, root: join(import.meta.dir, ".."), publicDir: false, logLevel: "error",
         define: { __APP_VERSION__: '"test"', __APP_CHANGELOG__: '""', __BEEFTV_HEAVY_MEDIA_ENABLED__: "false", "import.meta.env.VITE_CANVAS_LOCAL_MODE": '"false"', "import.meta.env.VITE_CANVAS_BACKEND_URL": '"/api"' },
         resolve: { alias: { "@": join(import.meta.dir, "../src") } },
         build: { outDir: dist, emptyOutDir: true, rolldownOptions: { input: join(import.meta.dir, "fixtures/canvas-video-recovery-harness.html") } },
     });
-    const state = { mode: "direct", prepares: 0, status: "ready" };
-    const server = Bun.serve({ port: 0, fetch(request) {
+    const state = { mode: "direct", prepares: 0, status: "ready", prepareDelayMs: 0 };
+    const server = Bun.serve({ port: 0, async fetch(request) {
         const url = new URL(request.url);
-        if (url.pathname === "/api/resources/video/playback") { state.prepares++; state.status = state.mode === "retry" && state.prepares === 1 ? "failed" : "ready"; }
+        if (url.pathname === "/api/tasks/video-task") {
+            return Response.json({ code: 0, data: { id: "video-task", type: "timeline_render", status: "succeeded", prompt: "", attempts: 1, createdAt: "fixture", updatedAt: "fixture", resultJson: JSON.stringify({ resourceId: "video" }) } });
+        }
+        if (url.pathname === "/api/resources/video/playback") {
+            if (state.prepareDelayMs > 0) await Bun.sleep(state.prepareDelayMs);
+            state.prepares++;
+            state.status = state.mode === "retry" && state.prepares === 1 ? "failed" : "ready";
+        }
         if (url.pathname === "/api/resources/video" || url.pathname.endsWith("/playback")) return Response.json({ code: 0, data: { resource: { id: "video", provider: "local", kind: "video", playbackStatus: state.status } } });
         if (url.pathname === "/api/resources/video/file") {
             const compatible = url.searchParams.get("variant") === "playback" && state.status === "ready" && (state.mode !== "missing" || state.prepares > 0);
+            if (state.mode === "audio-only-video-unplayable") {
+                return new Response(Bun.file(audioOnlyFallbackFile), { headers: { "Content-Type": "video/mp4", ETag: compatible ? '"video:pb"' : '"video"' } });
+            }
+            if (state.mode === "audio-only-video") {
+                return new Response(Bun.file(compatible ? file : audioOnlyFallbackFile), { headers: { "Content-Type": "video/mp4", ETag: compatible ? '"video:pb"' : '"video"' } });
+            }
             return new Response(state.mode === "direct" || compatible ? Bun.file(file) : "un-decodable original", { headers: { "Content-Type": "video/mp4", ETag: compatible ? '"video:pb"' : '"video"' } });
         }
         if (url.pathname.startsWith("/api/")) return Response.json({ code: 0, data: {} });
@@ -210,3 +237,134 @@ test.skipIf(!enabled)("所有视频入口按需准备预览，失败可重试，
         }
     } finally { await env.cleanup(); }
 }, 120000);
+
+test.skipIf(!hasFfmpeg)("视频轨不可解码但音轨可播时（无 error 事件、videoWidth=0），各播放入口自动切兼容 H.264 副本且兼容仍无画面时停音报错", async () => {
+    const env = await startVideoHarnessEnv(0.8);
+    try {
+        for (const surface of ["canvas", "viewer", "creation", "workflow", "storyboard", "projectAsset", "assistantOutput", "editor", "attachment", "drawer", "thumbnail"]) {
+            env.state.mode = "audio-only-video";
+            env.state.prepares = 0;
+            env.state.status = "none";
+            env.state.prepareDelayMs = 0;
+            const context = await env.browser.newContext();
+            const page = await context.newPage();
+            const pageErrors: string[] = [];
+            page.on("pageerror", (error) => { pageErrors.push(error.message); console.error(error.stack); });
+            await page.goto(`${env.server.url}?surface=${surface}`);
+            if (surface === "workflow") {
+                await page.getByRole("button", { name: "点击播放镜头视频", exact: true }).click();
+            } else if (surface === "assistantOutput") {
+                await page.getByRole("button", { name: "播放成片", exact: true }).click();
+            }
+            if (surface === "thumbnail") {
+                await page.waitForFunction(() => {
+                    const img = document.querySelector("img");
+                    return Boolean(img && img.complete && img.naturalWidth === 64);
+                }, undefined, { timeout: 10000 });
+            } else {
+                await page.waitForFunction(() => {
+                    const video = document.querySelector("video");
+                    return Boolean(video && video.readyState >= 2 && video.videoWidth === 64 && video.videoHeight === 48);
+                }, undefined, { timeout: 10000 });
+            }
+            if (surface === "canvas") {
+                await page.waitForFunction(() => {
+                    const wrapper = document.querySelector('[data-canvas-video-surface="native"]')?.parentElement;
+                    return Boolean(wrapper && getComputedStyle(wrapper).opacity === "1");
+                }, undefined, { timeout: 7000 });
+            }
+            expect(env.state.prepares).toBe(1);
+            expect(pageErrors).toEqual([]);
+            await context.close();
+        }
+
+        // 兼容回退进行中若旧 <video> 晚到额外的 loadeddata / canplay，不得误判为兼容失败锁死报错态。
+        for (const surface of ["drawer", "attachment"]) {
+            env.state.mode = "audio-only-video";
+            env.state.prepares = 0;
+            env.state.status = "none";
+            env.state.prepareDelayMs = 150;
+            const context = await env.browser.newContext();
+            await context.addInitScript(() => {
+                document.addEventListener("loadedmetadata", (event) => {
+                    const target = event.target;
+                    if (target instanceof HTMLVideoElement && target.videoWidth === 0) {
+                        queueMicrotask(() => {
+                            target.dispatchEvent(new Event("loadeddata"));
+                            target.dispatchEvent(new Event("canplay"));
+                        });
+                        setTimeout(() => {
+                            target.dispatchEvent(new Event("loadeddata"));
+                            target.dispatchEvent(new Event("canplay"));
+                        }, 10);
+                    }
+                }, true);
+            });
+            const page = await context.newPage();
+            const pageErrors: string[] = [];
+            page.on("pageerror", (error) => { pageErrors.push(error.message); console.error(error.stack); });
+            await page.goto(`${env.server.url}?surface=${surface}`);
+            await page.waitForFunction(() => {
+                const video = document.querySelector("video");
+                return Boolean(video && video.readyState >= 2 && video.videoWidth === 64 && video.videoHeight === 48);
+            }, undefined, { timeout: 10000 });
+            expect(env.state.prepares).toBe(1);
+            expect(pageErrors).toEqual([]);
+            await context.close();
+        }
+
+        // 若兼容副本依然无有效视频轨（例如仅含音轨的伪 mp4），各入口不得无限重发转码或后台偷播声音，应停音并展示报错重试态。
+        env.state.prepareDelayMs = 0;
+        for (const [surface, retryLabel] of [
+            ["canvas", "重新加载"],
+            ["viewer", "重试"],
+            ["creation", "重新加载"],
+            ["workflow", "重新加载"],
+            ["storyboard", "重新加载"],
+            ["projectAsset", "重新加载"],
+            ["drawer", /重\s*试/],
+            ["attachment", "重读预览"],
+        ] as const) {
+            env.state.mode = "audio-only-video-unplayable";
+            env.state.prepares = 0;
+            env.state.status = "none";
+            const context = await env.browser.newContext();
+            const page = await context.newPage();
+            const pageErrors: string[] = [];
+            page.on("pageerror", (error) => { pageErrors.push(error.message); console.error(error.stack); });
+            await page.goto(`${env.server.url}?surface=${surface}`);
+            if (surface === "workflow") {
+                await page.getByRole("button", { name: "点击播放镜头视频", exact: true }).click();
+            }
+            await page.getByRole("button", { name: retryLabel, exact: true }).waitFor({ timeout: 10000 });
+            expect(env.state.prepares).toBe(1);
+            expect(await page.evaluate(() => {
+                const video = document.querySelector("video");
+                return !video || video.paused;
+            })).toBe(true);
+            await page.getByRole("button", { name: retryLabel, exact: true }).click();
+            await page.getByRole("button", { name: retryLabel, exact: true }).waitFor({ timeout: 10000 });
+            expect(env.state.prepares).toBe(2);
+            expect(pageErrors).toEqual([]);
+            await context.close();
+        }
+
+        // 助手成片报错态必须隐藏失效的 VideoPlayer，避免残留点不动的播放控件。
+        env.state.mode = "audio-only-video-unplayable";
+        env.state.prepares = 0;
+        env.state.status = "none";
+        const assistantContext = await env.browser.newContext();
+        const assistantPage = await assistantContext.newPage();
+        const assistantErrors: string[] = [];
+        assistantPage.on("pageerror", (error) => { assistantErrors.push(error.message); console.error(error.stack); });
+        await assistantPage.goto(`${env.server.url}?surface=assistantOutput`);
+        await assistantPage.getByRole("button", { name: "播放成片", exact: true }).click();
+        await assistantPage.getByText("暂时无法播放，请重新读取成片。", { exact: true }).waitFor({ timeout: 10000 });
+        expect(env.state.prepares).toBe(1);
+        expect(await assistantPage.locator("video").count()).toBe(0);
+        expect(assistantErrors).toEqual([]);
+        await assistantContext.close();
+    } finally {
+        await env.cleanup();
+    }
+}, 240000);

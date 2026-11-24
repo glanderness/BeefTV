@@ -12,6 +12,7 @@ import { Link, useNavigate } from "react-router";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { ModelPicker } from "@/components/model-picker";
 import { initialWorkbenchModel, refreshedWorkbenchModel } from "./workflow-model-selection";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions } from "@/lib/model-capabilities";
@@ -35,7 +36,7 @@ import {
     type ShotRevisionInput,
     type WorkflowStep,
 } from "@/services/api/projects";
-import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
+import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey } from "@/services/api/resources";
 import { skillRuntime } from "@/services/skill-runtime";
 import { modelDisplayName, modelOptionName, resolveModelChannel, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { SkillRuntimePicker, useSkillRuntimeCatalog } from "@/components/skills/skill-runtime-picker";
@@ -652,21 +653,26 @@ function BoundAssets({ detail, shotId, changing, onUnlink }: { detail: ProjectDe
 function LatestPreview({ artifact, emptyText, onPreviewImage }: { artifact?: ShotArtifact; emptyText: string; onPreviewImage: (artifact: ShotArtifact) => void }) {
     if (!artifact?.resourceId) return <div className="workflow-media-empty"><span><Play className="size-7" /></span><p>{emptyText}</p></div>;
     const src = resourceFileUrl(artifact.resourceId);
-    if (artifact.type === "video") return <VideoArtifactPreview src={src} title="镜头视频" />;
+    if (artifact.type === "video") return <VideoArtifactPreview resourceId={artifact.resourceId} src={src} title="镜头视频" />;
     return <button type="button" className="workflow-preview-media-button" onClick={() => onPreviewImage(artifact)} aria-label={artifact.type === "action_board" ? "点击预览动作预演" : "点击预览分镜图"}>
         <img className={`workflow-preview-media ${artifact.type === "action_board" ? "grayscale" : ""}`} src={src} alt="镜头生成预览" loading="eager" />
         <span className="workflow-preview-expand" aria-hidden="true"><Maximize2 className="size-4" /></span>
     </button>;
 }
 
-function VideoArtifactPreview({ src, title }: { src: string; title: string }) {
+export function VideoArtifactPreview({ resourceId, src, title }: { resourceId: string; src: string; title: string }) {
     const [playing, setPlaying] = useState(false);
+    const playback = useResourceVideoPlayback(resourceStorageKey(resourceId), src, playing);
 
     useEffect(() => {
         setPlaying(false);
-    }, [src]);
+    }, [resourceId, src]);
 
-    if (playing) return <video className="workflow-preview-media" src={src} controls autoPlay playsInline preload="metadata" aria-label={title} />;
+    if (playing) {
+        if (playback.error) return <div role="status" className="workflow-media-empty"><p>{playback.error}</p><Button size="small" onClick={playback.retry}>重新加载</Button></div>;
+        if (!playback.url) return <div role="status" className="workflow-media-empty"><p>正在准备视频预览…</p></div>;
+        return <video key={playback.url} className="workflow-preview-media" src={playback.url} controls autoPlay playsInline preload="metadata" aria-label={title} {...playback.videoFallbackProps} />;
+    }
     return <button type="button" className="workflow-preview-media-button workflow-video-poster" onClick={() => setPlaying(true)} aria-label={`点击播放${title}`}>
         <span className="workflow-preview-media workflow-video-placeholder" aria-hidden="true"><Film /></span>
         <span className="workflow-video-play" aria-hidden="true"><Play className="size-6" fill="currentColor" /></span>

@@ -5,6 +5,7 @@ import { Check, Image as ImageIcon, Music2, Play, UserRound, X } from "lucide-re
 
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { useCanvasNodeActions } from "@/components/canvas/canvas-node-action-context";
+import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import {
@@ -338,16 +339,32 @@ function AssetThumbnail({ node }: { node: CanvasNodeData }) {
     return source && source !== failedUrl ? <img src={source} alt="" loading="lazy" decoding="async" draggable={false} className="size-full object-cover" onError={() => setFailedUrl(source)} /> : <ImageIcon className="size-4" />;
 }
 
-function AssetPreviewModal({ node, onClose }: { node: CanvasNodeData | null; onClose: () => void }) {
-    const source = useNodeMediaSource(node);
+export function AssetPreviewModal({ node, onClose }: { node: CanvasNodeData | null; onClose: () => void }) {
+    const isVideo = node?.type === CanvasNodeType.Video;
+    const videoFallback = isVideo ? node.metadata?.content || "" : "";
+    const videoStorageKey = isVideo ? ownedResourceStorageKey(node.metadata?.storageKey, videoFallback) : "";
+    const videoPlayback = useResourceVideoPlayback(videoStorageKey, videoFallback, Boolean(isVideo && (videoStorageKey || videoFallback)));
+    const source = useNodeMediaSource(isVideo ? null : node);
     return (
         <Modal title={node?.title || "资产预览"} open={Boolean(node)} onCancel={onClose} footer={null} width={880} centered destroyOnHidden>
             {node ? (
                 <div className="grid min-h-56 place-items-center overflow-hidden rounded-lg bg-black/[0.035] p-3 dark:bg-white/[0.035]" data-canvas-no-zoom>
-                    {node.type === CanvasNodeType.Video && source ? <video src={source} controls autoPlay playsInline className="max-h-[68vh] max-w-full rounded-md" />
-                        : node.type === CanvasNodeType.Audio && source ? <audio src={source} controls autoPlay className="w-full max-w-xl" />
-                            : source ? <img src={source} alt={node.title || "资产预览"} className="max-h-[68vh] max-w-full object-contain" />
-                                : <span className="text-sm text-foreground/45">当前资产没有可预览的媒体内容</span>}
+                    {isVideo ? (
+                        videoPlayback.error ? (
+                            <div role="status" className="flex flex-col items-center gap-2 text-sm text-foreground/60">
+                                <span>{videoPlayback.error}</span>
+                                <button type="button" className="rounded border px-3 py-1 text-xs" onClick={videoPlayback.retry}>重新加载</button>
+                            </div>
+                        ) : videoPlayback.url ? (
+                            <video key={videoPlayback.url} src={videoPlayback.url} controls autoPlay playsInline className="max-h-[68vh] max-w-full rounded-md" {...videoPlayback.videoFallbackProps} />
+                        ) : (videoStorageKey || videoFallback) ? (
+                            <span role="status" className="text-sm text-foreground/45">正在准备视频预览…</span>
+                        ) : (
+                            <span className="text-sm text-foreground/45">当前资产没有可预览的媒体内容</span>
+                        )
+                    ) : node.type === CanvasNodeType.Audio && source ? <audio src={source} controls autoPlay className="w-full max-w-xl" />
+                        : source ? <img src={source} alt={node.title || "资产预览"} className="max-h-[68vh] max-w-full object-contain" />
+                            : <span className="text-sm text-foreground/45">当前资产没有可预览的媒体内容</span>}
                 </div>
             ) : null}
         </Modal>

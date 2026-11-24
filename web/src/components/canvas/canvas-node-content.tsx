@@ -22,6 +22,7 @@ import { formatBytes } from "@/lib/image-utils";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { canvasImagePreviewSize, subscribeDevicePixelRatio } from "@/lib/canvas/canvas-image-preview-blob";
 import { isVideoHoverPreviewAllowed, useCanvasMemoryMode } from "@/lib/canvas/canvas-memory-policy";
+import { hasVideoTrackDimensions, isUndecodableVideoTrack } from "@/lib/video-player-policy";
 import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { recordCanvasVideoDiagnostic } from "@/services/diagnostics/canvas-media-diagnostics";
 import { acquireCanvasVideoPreview, canvasDerivedPreviewSourceKey, canvasVideoPreviewNeedsHydration, resolveServerVideoPosterUrl } from "@/services/canvas-video-preview";
@@ -491,7 +492,7 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
         recordCanvasVideoDiagnostic(node, "load_requested");
         const timer = window.setTimeout(() => {
             const video = playerBoxRef.current?.querySelector("video");
-            if (!video || video.readyState < 2) recordCanvasVideoDiagnostic(node, "load_stalled", video);
+            if (!video || video.readyState < 2 || isUndecodableVideoTrack(video)) recordCanvasVideoDiagnostic(node, "load_stalled", video);
         }, 10_000);
         return () => window.clearTimeout(timer);
     }, [mediaActive, url, retryEpoch, node.id]);
@@ -503,7 +504,7 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
         const video = box?.querySelector("video");
         if (!video) return;
         const handleLoadedMetadata = () => {
-            if (video.videoWidth <= 0 || video.videoHeight <= 0) return;
+            if (!hasVideoTrackDimensions(video)) return;
             if (resumeTimeRef.current > 0.5) {
                 const targetTime = Number.isFinite(video.duration) && video.duration > 0
                     ? Math.min(resumeTimeRef.current, Math.max(0, video.duration - 0.1))

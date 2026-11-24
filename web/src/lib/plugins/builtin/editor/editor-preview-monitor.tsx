@@ -285,7 +285,7 @@ export function EditorPreviewMonitor() {
 
     const handleLoadedMetadata = () => {
         const v = videoRef.current;
-        if (!v) return;
+        if (!v || videoPlayback.rejectUndecodableVideo(v)) return;
         applyVideoPosition(v);
         if (playingRef.current) {
             const p = v.play();
@@ -398,6 +398,7 @@ export function EditorPreviewMonitor() {
                         playsInline
                         preload="auto"
                         className="max-h-full max-w-full rounded-md object-contain shadow-lg"
+                        {...videoPlayback.videoFallbackProps}
                         onError={handleMediaError}
                         onLoadedMetadata={handleLoadedMetadata}
                         onEnded={handleVideoEnded}

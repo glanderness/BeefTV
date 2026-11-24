@@ -1,3 +1,5 @@
+import { isUndecodableVideoTrack } from "@/lib/video-player-policy";
+
 // Only the hovered node owns a decoder; pending hover work shares the same lease.
 let stopCurrentPreview: (() => void) | undefined;
 export const VIDEO_HOVER_DELAY_MS = 350;
@@ -63,6 +65,9 @@ export function bindCanvasVideoHoverPreview(element: HTMLElement, resolveSource:
                 video.dataset.canvasHoverPreview = "true";
                 video.addEventListener("ended", cancel, { signal: listeners.signal });
                 video.addEventListener("error", cancel, { signal: listeners.signal });
+                video.addEventListener("loadedmetadata", () => {
+                    if (isUndecodableVideoTrack(video)) cancel();
+                }, { signal: listeners.signal });
                 video.addEventListener("timeupdate", () => {
                     if (video && video.currentTime >= VIDEO_HOVER_PREVIEW_MS / 1000) cancel();
                 }, { signal: listeners.signal });

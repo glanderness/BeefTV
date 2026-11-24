@@ -1,3 +1,5 @@
+import { hasVideoTrackDimensions } from "@/lib/video-player-policy";
+
 const VIDEO_FRAME_TIMEOUT_MS = 20_000;
 const VIDEO_FRAME_PRESENTATION_TIMEOUT_MS = 1_500;
 const MINIMUM_SEEK_EPSILON_MS = 1;
@@ -31,7 +33,7 @@ export function videoFrameSeekSeconds(timeMs: number, durationMs: number) {
 }
 
 function hasDecodedVideoFrame(video: HTMLVideoElement) {
-    return Number(video.readyState) >= 2 && Number(video.videoWidth) > 0 && Number(video.videoHeight) > 0;
+    return Number(video.readyState) >= 2 && hasVideoTrackDimensions(video);
 }
 
 export async function waitForPresentedVideoFrame(

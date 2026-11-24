@@ -19,7 +19,7 @@ const mediaLabels = { image: "图片", video: "视频", audio: "音频", text: "
 function WorkflowVideo({ storageKey }: { storageKey: string }) {
     const playback = useResourceVideoPlayback(storageKey, "");
     return playback.error ? <button className="p-3 text-sm" onClick={() => playback.retry()}>视频预览加载失败，点击重试</button>
-        : playback.url ? <video className="h-full w-full object-contain" src={playback.url} controls preload="metadata" onError={() => { if (!playback.requestCompatible()) playback.fail(); }} />
+        : playback.url ? <video className="h-full w-full object-contain" src={playback.url} controls preload="metadata" {...playback.videoFallbackProps} />
             : <LoaderCircle aria-label="加载视频" className="size-5 animate-spin" />;
 }
 
