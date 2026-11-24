@@ -233,3 +233,57 @@ func TestSaveRecoversFromUndecryptableConfigWhenDisabledOrSecretProvided(t *test
 		t.Fatalf("expected readable enabled config with new secret, got %+v, err=%v", restored, err)
 	}
 }
+
+func TestUploadRejectionParsesAllowlistedS3CodesWithoutLeakingXML(t *testing.T) {
+	cases := []struct {
+		name           string
+		status         int
+		xmlBody        string
+		wantContain    string
+		wantNotContain string
+	}{
+		{
+			name:           "AccessDenied gives COS permission hint",
+			status:         403,
+			xmlBody:        `<Error><Code>AccessDenied</Code><Message>secret-bucket-policy-detail</Message></Error>`,
+			wantContain:    "AccessDenied",
+			wantNotContain: "secret-bucket-policy-detail",
+		},
+		{
+			name:           "SignatureDoesNotMatch gives key/region hint",
+			status:         403,
+			xmlBody:        `<Error><Code>SignatureDoesNotMatch</Code><StringToSign>SECRET_SIGN</StringToSign></Error>`,
+			wantContain:    "SignatureDoesNotMatch",
+			wantNotContain: "SECRET_SIGN",
+		},
+		{
+			name:           "NoSuchBucket gives APPID hint",
+			status:         404,
+			xmlBody:        `<Error><Code>NoSuchBucket</Code><BucketName>private-bucket</BucketName></Error>`,
+			wantContain:    "-APPID",
+			wantNotContain: "private-bucket",
+		},
+		{
+			name:           "Unknown XML code falls back cleanly",
+			status:         403,
+			xmlBody:        `<Error><Code>InternalVendorCode</Code><Message>raw-internal</Message></Error>`,
+			wantContain:    "HTTP 403",
+			wantNotContain: "InternalVendorCode",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := uploadRejectionError(tc.status, strings.NewReader(tc.xmlBody))
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, tc.wantContain) {
+				t.Fatalf("error %q missing %q", msg, tc.wantContain)
+			}
+			if tc.wantNotContain != "" && strings.Contains(msg, tc.wantNotContain) {
+				t.Fatalf("error %q leaked %q", msg, tc.wantNotContain)
+			}
+		})
+	}
+}

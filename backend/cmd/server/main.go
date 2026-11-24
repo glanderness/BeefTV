@@ -146,7 +146,7 @@ func cors() (gin.HandlerFunc, error) {
 	return func(c *gin.Context) {
 		origin := strings.TrimSpace(c.GetHeader("Origin"))
 		if origin != "" && !allowedOriginWithPolicy(c, origin, policy) {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "data": nil, "msg": "不允许的跨域来源"})
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "data": nil, "msg": "不允许的跨域来源：请使用 BeefTV 桌面客户端；本地源码调试请在启动参数中配置 CANVAS_CORS_ORIGINS（与 BEEFTV_ALLOWED_ORIGINS）"})
 			return
 		}
 		if origin != "" {

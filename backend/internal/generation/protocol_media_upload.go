@@ -92,10 +92,14 @@ func uploadOneProtocolMedia(
 			media.StorageKey = ""
 			return nil
 		}
-		return RequestPreparationError{Cause: errors.New("当前模型需要可访问的参考素材链接或本地素材，请重新导入。本次尚未开始生成")}
+		return RequestPreparationError{Cause: PreparationUserError{
+			Category: CategoryInputInaccessible,
+			Reason:   fmt.Sprintf("%s缺少可访问的参考素材链接或本地素材，本次尚未开始生成", referenceMediaLabel(kind, index)),
+			Action:   "请重新导入该参考素材后重试",
+		}}
 	}
 
-	data, mimeType, err := readProtocolMediaUploadBytes(ctx, userID, kind, *media, upload.MaxBytes)
+	data, mimeType, err := readProtocolMediaUploadBytes(ctx, userID, kind, index, *media, upload.MaxBytes)
 	if err != nil {
 		return RequestPreparationError{Cause: err}
 	}
@@ -145,13 +149,18 @@ func uploadOneProtocolMedia(
 	return nil
 }
 
-func readProtocolMediaUploadBytes(ctx context.Context, userID string, kind string, media Media, maxBytes int64) ([]byte, string, error) {
+func readProtocolMediaUploadBytes(ctx context.Context, userID string, kind string, index int, media Media, maxBytes int64) ([]byte, string, error) {
 	limit := maxBytes
 	if limit <= 0 {
 		limit = defaultProtocolMediaUploadMaxBytes
 	}
+	label := referenceMediaLabel(kind, index)
 	if media.Bytes > limit {
-		return nil, "", errors.New("参考素材超过服务商大小限制")
+		return nil, "", PreparationUserError{
+			Category: CategoryInputTooLarge,
+			Reason:   fmt.Sprintf("%s超过服务商 %s 大小限制", label, formatStorageLimit(limit)),
+			Action:   "请压缩或更换参考素材后重试",
+		}
 	}
 	var (
 		data     []byte
@@ -176,20 +185,38 @@ func readProtocolMediaUploadBytes(ctx context.Context, userID string, kind strin
 		raw := strings.TrimSpace(firstNonEmpty(media.DataURL, media.URL))
 		decodedMIME, decodedData, err := DecodeProviderDataURL(raw)
 		if err != nil {
-			return nil, "", err
+			return nil, "", PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   fmt.Sprintf("%s数据格式无效", label),
+				Action:   "请重新导入该参考素材后重试",
+				Cause:    err,
+			}
 		}
 		data = decodedData
 		mimeType = NormalizedMediaMIMEType(firstNonEmpty(media.MimeType, decodedMIME), data)
 	}
 	if int64(len(data)) > limit {
-		return nil, "", errors.New("参考素材超过服务商大小限制")
+		return nil, "", PreparationUserError{
+			Category: CategoryInputTooLarge,
+			Reason:   fmt.Sprintf("%s超过服务商 %s 大小限制", label, formatStorageLimit(limit)),
+			Action:   "请压缩或更换参考素材后重试",
+		}
 	}
 	if len(data) == 0 {
-		return nil, "", errors.New("参考素材为空，请重新导入")
+		return nil, "", PreparationUserError{
+			Category: CategoryInvalidParams,
+			Reason:   fmt.Sprintf("%s为空", label),
+			Action:   "请重新导入该参考素材后重试",
+		}
 	}
 	if kind == "image" {
 		if err := ValidateImageArtifact(data, mimeType); err != nil {
-			return nil, "", err
+			return nil, "", PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   fmt.Sprintf("%s格式无效或内容不是受支持的图片", label),
+				Action:   "请重新导出为 PNG/JPG/WEBP 后重试",
+				Cause:    err,
+			}
 		}
 	}
 	return data, mimeType, nil

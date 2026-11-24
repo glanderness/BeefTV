@@ -11,6 +11,18 @@ import (
 	"time"
 )
 
+func prefixPreparationUserError(prefix string, err error) error {
+	var userPrep PreparationUserError
+	if errors.As(err, &userPrep) && strings.TrimSpace(userPrep.Reason) != "" {
+		if !strings.HasPrefix(userPrep.Reason, prefix) {
+			userPrep.Reason = prefix + userPrep.Reason
+		}
+		userPrep.Cause = err
+		return userPrep
+	}
+	return fmt.Errorf("%s%w", prefix, err)
+}
+
 func HydrateMedia(ctx context.Context, userID string, input *Input, policy MediaHydrationPolicy) error {
 	if input == nil {
 		return nil
@@ -20,7 +32,8 @@ func HydrateMedia(ctx context.Context, userID string, input *Input, policy Media
 		groupPolicy := mediaPolicyForKind(ctx, *input, []string{"image", "video", "audio"}[kind], policy)
 		for index := range group {
 			if err := HydrateOne(ctx, userID, &group[index], groupPolicy); err != nil {
-				return fmt.Errorf("%s %d：%w", []string{"参考图片", "参考视频", "参考音频"}[kind], index+1, err)
+				prefix := fmt.Sprintf("%s %d：", []string{"参考图片", "参考视频", "参考音频"}[kind], index+1)
+				return prefixPreparationUserError(prefix, err)
 			}
 		}
 	}
@@ -36,7 +49,11 @@ func HydrateOne(ctx context.Context, userID string, media *Media, policy MediaHy
 	}
 	if !strings.HasPrefix(media.StorageKey, "resource:") {
 		if policy.RequireURL && (strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") || strings.HasPrefix(strings.TrimSpace(media.URL), "data:")) {
-			return errors.New("当前渠道暂不支持直接使用本地素材，请使用可访问的 HTTPS 素材链接，或选择支持本地素材的渠道")
+			return PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   "当前渠道暂不支持直接使用内嵌本地素材",
+				Action:   "请使用可公开访问的 HTTPS 素材链接，或在设置 → 存储设置中开启「参考素材对象存储」后重试",
+			}
 		}
 		return nil
 	}
@@ -87,7 +104,11 @@ func HydrateOne(ctx context.Context, userID string, media *Media, policy MediaHy
 	useObjectURL := policy.RequireURL || (policy.PreferURL && resource.UsesObjectStorage())
 	if useObjectURL {
 		if runtime.Resources.LocalMode() && policy.RequireURL {
-			return errors.New("当前模型协议要求公网素材地址，本地工作区请改用支持内嵌素材的模型")
+			return PreparationUserError{
+				Category: CategoryInvalidParams,
+				Reason:   "当前模型协议要求公网素材地址，本地工作区尚未开启对象存储自动上传",
+				Action:   "请前往设置 → 存储设置开启「参考素材对象存储」，或在模型设置中切换参考素材传输方式 / 改用支持内嵌素材的模型后重试",
+			}
 		}
 		signedURL, err := runtime.Resources.PublicURL(resource, time.Now().Add(ResourceURLTTL))
 		if err != nil {

@@ -488,7 +488,7 @@ func ProtocolRequestURL(baseURL string, spec protocol.RequestSpec) (string, erro
 	}
 	base, err := url.Parse(channelurl.CleanBase(baseURL))
 	if err != nil || base.Scheme == "" || base.Host == "" {
-		return "", fmt.Errorf("协议根路径请求的 Base URL 无效")
+		return "", PreparationUserError{Category: CategoryInvalidParams, Reason: "渠道服务地址（Base URL）配置无效", Action: "请前往设置 → 模型服务检查并填写完整的 http(s):// 服务地址后重试"}
 	}
 	requestPath, err := url.Parse(spec.Path)
 	if err != nil || !strings.HasPrefix(requestPath.Path, "/") {

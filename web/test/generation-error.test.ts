@@ -829,3 +829,16 @@ test("lookbehind-free credential and local path redaction preserves exact bounda
         "open https://example.com/app/v1 and [路径已隐藏]",
     );
 });
+
+test("explains COS/S3 HTTP 403 rejection codes with actionable troubleshooting guidance", () => {
+    const accessDenied = explainGenerationError("对象存储拒绝上传（HTTP 403，AccessDenied）");
+    expect(accessDenied.message).toContain("AccessDenied");
+    expect(accessDenied.message).toContain("公有读私有写");
+
+    const badSig = explainGenerationError("对象存储签名校验失败（HTTP 403，SignatureDoesNotMatch）");
+    expect(badSig.message).toContain("SignatureDoesNotMatch");
+    expect(badSig.message).toContain("Secret Key");
+
+    const badBucket = explainGenerationError("对象存储拒绝上传（HTTP 404，NoSuchBucket）");
+    expect(badBucket.message).toContain("-APPID");
+});

@@ -110,6 +110,7 @@ export function ReferenceStoragePane() {
                         </p>
                     ) : null}
                     {testResult && <Alert showIcon type={testResult.success ? "success" : "error"} title={testResult.success ? "存储测试通过" : "存储测试未通过"} description={testResult.detail} />}
+                    <p className="storage-detail-note">腾讯云 COS 请确保存储桶名包含 -APPID、区域与端点一致（如 ap-guangzhou）、存储桶为「公有读私有写」且子账号具备写入与删除权限。</p>
                     <p className="storage-detail-note">测试会上传图片，验证公开读取后删除，可能产生少量请求费用。</p>
                 </div>
             </DetailDrawer>

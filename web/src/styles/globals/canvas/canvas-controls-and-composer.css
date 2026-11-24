@@ -570,7 +570,21 @@
         text-align: left;
         cursor: pointer;
     }
+    .provider-model-menu-row-copy {
+        display: flex;
+        min-width: 0;
+        flex: 1 1 auto;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .provider-model-disabled-reason {
+        font-size: 11px;
+        line-height: 1.3;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
     .provider-model-menu-row:is(:hover, :focus-visible, [aria-selected="true"], [aria-checked="true"]) { background: var(--provider-model-active); }
-    .provider-model-menu-row:disabled { opacity: .45; cursor: not-allowed; }
+    .provider-model-menu-row:disabled { opacity: .68; cursor: not-allowed; }
     .provider-model-menu-row svg { width: 14px; height: 14px; flex-shrink: 0; }
 }

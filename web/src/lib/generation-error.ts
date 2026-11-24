@@ -816,9 +816,21 @@ function resourceStorageFailureMessage(rawValue: string) {
             return "参考素材已上传，但公网地址无法读取，请检查对象存储公开读取权限后重试。";
         }
         const rejectedStatus = value.match(/(?:拒绝上传|上传被拒绝)[（(]\s*HTTP\s*(\d{3})\s*[)）]/i)?.[1];
-        if (rejectedStatus || /(?:HTTP\s*403|\bstatus(?:\s*code)?\s*[:=]?\s*403\b|\b403\s+Forbidden\b|\bAccessDenied\b|\bSignatureDoesNotMatch\b|对象存储请求签名失败|对象存储拒绝上传)/i.test(value)) {
+        if (rejectedStatus || /(?:HTTP\s*403|\bstatus(?:\s*code)?\s*[:=]?\s*403\b|\b403\s+Forbidden\b|\bAccessDenied\b|\bSignatureDoesNotMatch\b|\bInvalidAccessKeyId\b|\bNoSuchBucket\b|对象存储请求签名失败|对象存储拒绝上传)/i.test(value)) {
             const statusLabel = rejectedStatus || "403";
-            return `参考素材上传被拒绝（HTTP ${statusLabel}），请检查对象存储密钥和存储桶权限后重试。`;
+            if (/\bAccessDenied\b/i.test(value)) {
+                return `参考素材上传被拒绝（HTTP ${statusLabel}，AccessDenied），请检查存储桶访问权限（推荐公有读私有写）以及子账号写入/读取权限后重试。`;
+            }
+            if (/\bSignatureDoesNotMatch\b/i.test(value)) {
+                return `参考素材上传签名校验失败（HTTP ${statusLabel}，SignatureDoesNotMatch），请检查 Secret Key、区域代码及系统时间后重试。`;
+            }
+            if (/\bInvalidAccessKeyId\b/i.test(value)) {
+                return `参考素材上传密钥无效（HTTP ${statusLabel}，InvalidAccessKeyId），请检查 Access Key ID（腾讯云 COS 为 SecretId）后重试。`;
+            }
+            if (/\bNoSuchBucket\b|\bInvalidBucketName\b/i.test(value)) {
+                return `找不到指定的对象存储桶（HTTP ${statusLabel}），请检查存储桶名称（腾讯云 COS 须含 -APPID）与区域端点是否一致后重试。`;
+            }
+            return `参考素材上传被拒绝（HTTP ${statusLabel}），请检查访问密钥、存储桶名称（腾讯云 COS 须含 -APPID）和存储桶/子账号权限后重试。`;
         }
         if (/(?:尚未启用参考素材对象存储|请先启用参考素材对象存储|对象存储配置(?:损坏|无法解密|无法读取|不可用))/i.test(value)) {
             return "参考素材对象存储配置不可用，请检查存储设置后重试。";

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -84,7 +85,7 @@ func upload(ctx context.Context, config Config, path string, client *http.Client
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", fmt.Errorf("对象存储拒绝上传（HTTP %d），请检查区域、密钥和存储桶权限", response.StatusCode)
+		return "", uploadRejectionError(response.StatusCode, response.Body)
 	}
 	observe(stat.Size(), "processing")
 	publicURL, err := url.JoinPath(config.PublicBaseURL, key)
@@ -159,4 +160,114 @@ func objectEndpointURL(config Config, key string) (string, error) {
 
 func isVirtualHostedOnlyS3Provider(host string) bool {
 	return strings.HasSuffix(host, ".myqcloud.com") || strings.HasSuffix(host, ".aliyuncs.com")
+}
+
+// UploadRejectionError carries an allowlisted S3/COS rejection diagnostic so
+// both storage tests and generation failures can explain HTTP 403 causes
+// without ever exposing raw upstream XML, URLs, or secrets.
+type UploadRejectionError struct {
+	StatusCode int
+	Code       string
+	Reason     string
+	Action     string
+}
+
+func (e UploadRejectionError) Error() string {
+	if strings.TrimSpace(e.Action) == "" {
+		return e.Reason
+	}
+	return e.Reason + "，" + e.Action
+}
+
+func (e UploadRejectionError) SafeStorageFailure() (string, string) {
+	return e.Reason + "，本次尚未开始生成", e.Action
+}
+
+func uploadRejectionError(statusCode int, body io.Reader) error {
+	code := parseSafeS3ErrorCode(body)
+	switch code {
+	case "AccessDenied":
+		return UploadRejectionError{
+			StatusCode: statusCode,
+			Code:       code,
+			Reason:     fmt.Sprintf("对象存储拒绝上传（HTTP %d，AccessDenied）", statusCode),
+			Action:     "请检查存储桶访问权限（推荐公有读私有写）以及子账号/CAM 是否具备写入与公开读取权限",
+		}
+	case "SignatureDoesNotMatch":
+		return UploadRejectionError{
+			StatusCode: statusCode,
+			Code:       code,
+			Reason:     fmt.Sprintf("对象存储签名校验失败（HTTP %d，SignatureDoesNotMatch）", statusCode),
+			Action:     "请检查 Secret Access Key、区域代码（如 ap-guangzhou / auto）及本机系统时间，并确认公开读取权限",
+		}
+	case "InvalidAccessKeyId":
+		return UploadRejectionError{
+			StatusCode: statusCode,
+			Code:       code,
+			Reason:     fmt.Sprintf("对象存储密钥无效（HTTP %d，InvalidAccessKeyId）", statusCode),
+			Action:     "请检查 Access Key ID（腾讯云 COS 为 SecretId）及存储桶公开读取权限",
+		}
+	case "NoSuchBucket", "InvalidBucketName":
+		return UploadRejectionError{
+			StatusCode: statusCode,
+			Code:       code,
+			Reason:     fmt.Sprintf("找不到指定的对象存储桶（HTTP %d，%s）", statusCode, code),
+			Action:     "请检查存储桶名称（腾讯云 COS 须含 -APPID 后缀）、区域端点及公开读取权限",
+		}
+	case "RequestTimeTooSkewed":
+		return UploadRejectionError{
+			StatusCode: statusCode,
+			Code:       code,
+			Reason:     fmt.Sprintf("对象存储拒绝上传（HTTP %d，RequestTimeTooSkewed）", statusCode),
+			Action:     "请校准本机系统时间后重试，并确认存储桶公开读取权限",
+		}
+	case "AuthorizationHeaderMalformed", "PermanentRedirect":
+		return UploadRejectionError{
+			StatusCode: statusCode,
+			Code:       code,
+			Reason:     fmt.Sprintf("对象存储区域或端点不匹配（HTTP %d，%s）", statusCode, code),
+			Action:     "请核对 S3 端点与区域代码是否一致，并确认存储桶公开读取权限",
+		}
+	}
+	if statusCode == http.StatusForbidden {
+		return UploadRejectionError{
+			StatusCode: statusCode,
+			Reason:     "对象存储拒绝上传（HTTP 403）",
+			Action:     "请检查访问密钥、存储桶名称（腾讯云 COS 须含 -APPID）、区域及存储桶/子账号写入与公开读取权限",
+		}
+	}
+	return UploadRejectionError{
+		StatusCode: statusCode,
+		Reason:     fmt.Sprintf("对象存储拒绝上传（HTTP %d）", statusCode),
+		Action:     "请检查端点、区域、密钥和存储桶公开读取权限",
+	}
+}
+
+func parseSafeS3ErrorCode(body io.Reader) string {
+	if body == nil {
+		return ""
+	}
+	raw, err := io.ReadAll(io.LimitReader(body, 4096))
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	var payload struct {
+		Code string `xml:"Code"`
+	}
+	if err := xml.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	switch strings.TrimSpace(payload.Code) {
+	case "AccessDenied",
+		"SignatureDoesNotMatch",
+		"InvalidAccessKeyId",
+		"NoSuchBucket",
+		"InvalidBucketName",
+		"RequestTimeTooSkewed",
+		"AuthorizationHeaderMalformed",
+		"PermanentRedirect":
+		return strings.TrimSpace(payload.Code)
+	default:
+		return ""
+	}
 }

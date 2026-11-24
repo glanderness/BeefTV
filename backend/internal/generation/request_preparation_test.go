@@ -17,6 +17,7 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/protocol"
+	"infinite-canvas/backend/internal/referencestorage"
 )
 
 func TestMultipartPreparationCannotBeAnUncertainPaidSubmission(t *testing.T) {
@@ -156,6 +157,20 @@ func TestRequestPreparationErrorUsesTypedSafeCopyContract(t *testing.T) {
 			wantNotContain: "internal sqlite migration failure",
 		},
 		{
+			name:           "manifest validation error surfaces authored rule message",
+			cause:          protocol.ValidationError{Message: "当前视频模型需要至少一张首帧图片"},
+			wantCategory:   CategoryInvalidParams,
+			wantContain:    "当前视频模型需要至少一张首帧图片",
+			wantNotContain: "本次请求在准备时失败",
+		},
+		{
+			name:           "prefixed preparation user error keeps slot label and action",
+			cause:          prefixPreparationUserError("参考图片 1：", PreparationUserError{Category: CategoryInvalidParams, Reason: "当前模型协议要求公网素材地址，本地工作区尚未开启对象存储自动上传", Action: "请前往设置 → 存储设置开启「参考素材对象存储」后重试"}),
+			wantCategory:   CategoryInvalidParams,
+			wantContain:    "参考图片 1：当前模型协议要求公网素材地址",
+			wantNotContain: "本次请求在准备时失败",
+		},
+		{
 			name:           "raw http error inside preparation stays generic",
 			cause:          HTTPError{StatusCode: 500, Body: "internal server error"},
 			wantCategory:   CategoryInputInaccessible,
@@ -177,5 +192,46 @@ func TestRequestPreparationErrorUsesTypedSafeCopyContract(t *testing.T) {
 				t.Fatalf("UserMessage() = %q, must not contain %q", msg, tc.wantNotContain)
 			}
 		})
+	}
+}
+
+func TestHydrateMediaMissingReferenceStorageSurfacesActionableReason(t *testing.T) {
+	var events []string
+	ctx := WithRuntime(context.Background(), Runtime{
+		Resources: stageResources{events: &events},
+	})
+	input := Input{
+		Mode:            "video",
+		Config:          Config{InterfaceType: "newapi-channel-2"},
+		ReferenceImages: []Media{{StorageKey: "resource:one"}},
+	}
+	err := HydrateMedia(ctx, "owner", &input, MediaHydrationPolicyFor(ctx, input))
+	if err == nil {
+		t.Fatal("expected local mode URL-only preparation error")
+	}
+	classified := ClassifyError(RequestPreparationError{Cause: err})
+	if classified.Category != CategoryInvalidParams || classified.Uncertain || classified.Retryable {
+		t.Fatalf("unexpected classification: %#v", classified)
+	}
+	msg := classified.UserMessage()
+	if !strings.Contains(msg, "参考图片 1：") || !strings.Contains(msg, "参考素材对象存储") || strings.Contains(msg, "本次请求在准备时失败") {
+		t.Fatalf("expected actionable missing reference storage copy, got %q", msg)
+	}
+}
+
+func TestReferenceStorageRejectionPreservesAllowlistedCOSDiagnostic(t *testing.T) {
+	cause := referencestorage.UploadRejectionError{
+		StatusCode: 403,
+		Code:       "AccessDenied",
+		Reason:     "对象存储拒绝上传（HTTP 403，AccessDenied）",
+		Action:     "请检查存储桶访问权限（推荐公有读私有写）以及子账号/CAM 是否具备写入与公开读取权限",
+	}
+	classified := ClassifyError(RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: cause}})
+	if classified.Category != CategoryProviderUnavailable || classified.ProviderCode != "reference_media_upload_failed" || classified.Uncertain || classified.Retryable {
+		t.Fatalf("unexpected storage classification: %#v", classified)
+	}
+	msg := classified.UserMessage()
+	if !strings.Contains(msg, "AccessDenied") || !strings.Contains(msg, "本次尚未开始生成") || !strings.Contains(msg, "公开读取权限") {
+		t.Fatalf("expected allowlisted COS diagnostic in %q", msg)
 	}
 }

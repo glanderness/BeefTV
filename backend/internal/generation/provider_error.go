@@ -11,6 +11,7 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/outbound"
+	"infinite-canvas/backend/internal/protocol"
 )
 
 // FailureCategory 是生成失败的稳定机器可读类目。HTTP 状态只作兜底，不能单独当原因。
@@ -365,7 +366,18 @@ func ClassifyError(err error) Failure {
 	if errors.As(err, &preparation) {
 		var storage ReferenceStoragePreparationError
 		if errors.As(preparation.Cause, &storage) {
-			failure := normalizeFailure(Failure{Category: CategoryProviderUnavailable, ProviderCode: "reference_media_upload_failed", Reason: "参考素材上传失败，本次尚未开始生成", Action: "请检查对象存储配置和公开读取权限后重试"})
+			reason := "参考素材上传失败，本次尚未开始生成"
+			action := "请检查对象存储配置和公开读取权限后重试"
+			var safeStorage interface{ SafeStorageFailure() (string, string) }
+			if errors.As(storage.Cause, &safeStorage) {
+				if safeReason, safeAction := safeStorage.SafeStorageFailure(); strings.TrimSpace(safeReason) != "" {
+					reason = strings.TrimSpace(safeReason)
+					if strings.TrimSpace(safeAction) != "" {
+						action = strings.TrimSpace(safeAction)
+					}
+				}
+			}
+			failure := normalizeFailure(Failure{Category: CategoryProviderUnavailable, ProviderCode: "reference_media_upload_failed", Reason: reason, Action: action})
 			failure.Retryable = false
 			return failure
 		}
@@ -760,6 +772,13 @@ func classifyPreparationCause(cause error) (Failure, bool) {
 			category = CategoryInputInaccessible
 		}
 		failure := normalizeFailure(Failure{Category: category, Reason: userPrep.Reason, Action: userPrep.Action})
+		failure.Uncertain = false
+		failure.Retryable = false
+		return failure, true
+	}
+	var manifestValidation protocol.ValidationError
+	if errors.As(cause, &manifestValidation) && strings.TrimSpace(manifestValidation.Message) != "" {
+		failure := normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: strings.TrimSpace(manifestValidation.Message)})
 		failure.Uncertain = false
 		failure.Retryable = false
 		return failure, true

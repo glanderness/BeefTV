@@ -178,6 +178,7 @@ export function ModelPicker({
         const model = compatibleModelInGroup(config, modelGroup.models, selectionRequirements, selected ? current : undefined);
         const displayModel = model || (selected ? current : modelGroup.models[0]);
         const disabledReason = model ? "" : modelCompatibilityError(config, modelGroup.models[0], selectionRequirements) || "当前输入不符合该模型能力";
+        const shortDisabledReason = disabledReason ? compactDisabledModelReason(disabledReason) : "";
         return (
             <button
                 key={modelGroup.key}
@@ -185,9 +186,10 @@ export function ModelPicker({
                 role="option"
                 aria-selected={selected}
                 aria-disabled={Boolean(disabledReason)}
+                aria-description={disabledReason || undefined}
                 disabled={Boolean(disabledReason)}
                 title={disabledReason || pickerModelOptionLabel(config, displayModel, showConfiguredModelName)}
-                className={providerMenu ? "provider-model-menu-row" : cn("canvas-model-picker-option disabled:cursor-not-allowed disabled:opacity-45", previewedModel === displayModel && "is-previewed")}
+                className={providerMenu ? "provider-model-menu-row" : cn("canvas-model-picker-option disabled:cursor-not-allowed disabled:opacity-70", previewedModel === displayModel && "is-previewed")}
                 style={providerMenu ? undefined : { background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text }}
                 onMouseEnter={providerMenu ? undefined : () => setPreviewedModel(displayModel)}
                 onFocus={providerMenu ? undefined : () => setPreviewedModel(displayModel)}
@@ -198,8 +200,17 @@ export function ModelPicker({
                     window.requestAnimationFrame(() => triggerRef.current?.focus());
                 }}
             >
-                {providerMenu ? <span className="truncate">{pickerModelDisplayName(config, displayModel, showConfiguredModelName)}</span> : (
-                    <ModelLabel config={config} model={displayModel} showConfiguredModelName={showConfiguredModelName} />
+                {providerMenu ? (
+                    <span className="provider-model-menu-row-copy">
+                        <span className="truncate">{pickerModelDisplayName(config, displayModel, showConfiguredModelName)}</span>
+                        {shortDisabledReason ? (
+                            <span className="provider-model-disabled-reason" style={{ color: theme.node.muted }}>
+                                {shortDisabledReason}
+                            </span>
+                        ) : null}
+                    </span>
+                ) : (
+                    <ModelLabel config={config} model={displayModel} showConfiguredModelName={showConfiguredModelName} disabledReason={shortDisabledReason} mutedColor={theme.node.muted} />
                 )}
                 {selected ? <Check className="canvas-model-picker-option-check ml-1 shrink-0" style={{ color: theme.node.activeStroke }} /> : null}
             </button>
@@ -320,20 +331,37 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
     return config.models.length ? `暂无匹配的${label}模型` : "当前没有可用模型，请联系管理员或检查模型配置";
 }
 
+function compactDisabledModelReason(reason: string) {
+    const trimmed = reason.trim();
+    if (trimmed === "仅支持文生图，不支持图片重绘") return "仅支持文生图";
+    if (trimmed === "音频模型只接受文本或单个角色卡输入") return "仅支持文本或单个角色卡";
+    if (trimmed === "角色配音一次只能引用一个角色卡") return "最多支持 1 个角色卡";
+    return trimmed;
+}
+
 function ModelLabel({
     config,
     model,
     showConfiguredModelName,
+    disabledReason,
+    mutedColor,
 }: {
     config: AiConfig;
     model: string;
     showConfiguredModelName: boolean;
+    disabledReason?: string;
+    mutedColor?: string;
 }) {
     return (
-        <span className="canvas-model-picker-option-content flex w-full min-w-0 items-center overflow-hidden">
-            <span className="canvas-model-picker-option-name block min-w-0 flex-1 truncate text-[var(--fs-label)] font-medium leading-none">
+        <span className="canvas-model-picker-option-content flex w-full min-w-0 flex-col items-start justify-center gap-1 overflow-hidden">
+            <span className="canvas-model-picker-option-name block w-full min-w-0 truncate text-[var(--fs-label)] font-medium leading-none">
                 {pickerModelDisplayName(config, model, showConfiguredModelName)}
             </span>
+            {disabledReason ? (
+                <span className="canvas-model-picker-option-reason block w-full min-w-0 truncate text-[11px] font-normal leading-tight" style={mutedColor ? { color: mutedColor } : undefined}>
+                    {disabledReason}
+                </span>
+            ) : null}
         </span>
     );
 }
