@@ -1,4 +1,4 @@
-// Durable 1.5.0 会话视图监听、回合恢复、停止围栏与结算：
+// Durable 1.6.0 会话视图监听、回合恢复、停止围栏与结算：
 // 使用官方 Conversation.watch 与 LiveDoc 驱动流式事件投影，保持与 durable-session-owner 解耦。
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import { AssistantEntry, CompactionEntry, LiveDoc, ToolResultEntry, UserEntry } from '@earendil-works/pi-durable';
