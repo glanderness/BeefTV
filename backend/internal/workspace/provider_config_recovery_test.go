@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -543,6 +544,9 @@ func TestProviderConfigEncodeAndKeyIOErrorsAreClassified(t *testing.T) {
 	})
 
 	t.Run("permission_denied_key_during_encode_and_decode_returns_Permission_without_quarantine", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("POSIX chmod 000 does not deny reads on Windows")
+		}
 		if os.Geteuid() == 0 {
 			t.Skip("chmod 000 does not deny root")
 		}
@@ -598,6 +602,9 @@ func TestProviderConfigEncodeAndKeyIOErrorsAreClassified(t *testing.T) {
 	})
 
 	t.Run("locked_key_error_maps_to_ErrProviderConfigLocked_without_quarantine", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("POSIX chmod 000 does not deny reads on Windows")
+		}
 		if os.Geteuid() == 0 {
 			t.Skip("chmod 000 does not deny root")
 		}

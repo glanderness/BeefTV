@@ -193,59 +193,79 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 	})
 }
 
+func extractProviderTaskIDFromMap(payload map[string]any, allowRequestID bool) (string, error) {
+	if payload == nil {
+		return "", nil
+	}
+	var firstErr error
+	recordErr := func(err error) {
+		if firstErr == nil && err != nil {
+			firstErr = err
+		}
+	}
+
+	// 1. Top-level explicit task_id / taskId / TaskId always takes precedence.
+	if id, err := firstJSONString(payload, "task_id", "taskId", "TaskId"); id != "" {
+		return id, nil
+	} else {
+		recordErr(err)
+	}
+
+	// 2. DashScope envelopes always wrap results in an "output" object and include
+	// a tracing request_id. Only accept explicit task_id / taskId / TaskId inside
+	// output (never generic output.id) and never fall back to tracing request_id.
+	output, hasDashScopeOutput := payload["output"].(map[string]any)
+	if hasDashScopeOutput {
+		if id, err := firstJSONString(output, "task_id", "taskId", "TaskId"); id != "" {
+			return id, nil
+		} else {
+			recordErr(err)
+		}
+	}
+
+	// 3. Legacy compatibility order on top-level fields.
+	topKeys := []string{"id", "name"}
+	if allowRequestID && !hasDashScopeOutput {
+		topKeys = []string{"id", "request_id", "requestId", "name"}
+	}
+	if id, err := firstJSONString(payload, topKeys...); id != "" {
+		return id, nil
+	} else {
+		recordErr(err)
+	}
+
+	// 4. Nested data / Response containers.
+	nestedKeys := []string{"task_id", "taskId", "TaskId", "id"}
+	if allowRequestID && !hasDashScopeOutput {
+		nestedKeys = []string{"task_id", "taskId", "TaskId", "id", "request_id", "requestId"}
+	}
+	for _, key := range []string{"data", "Response"} {
+		if data, ok := payload[key].(map[string]any); ok {
+			if id, err := firstJSONString(data, nestedKeys...); id != "" {
+				return id, nil
+			} else {
+				recordErr(err)
+			}
+		}
+	}
+
+	return "", firstErr
+}
+
 func ExtractProviderTaskID(body []byte) (string, error) {
-	var payload map[string]interface{}
+	var payload map[string]any
 	if json.Unmarshal(body, &payload) != nil {
 		return "", nil
 	}
-	// DashScope envelopes always include request_id as a tracing correlation ID,
-	// never as an async task_id. When output is present, only accept an explicit
-	// job identifier so a non-task response never spins polling /tasks/{request_id}.
-	if output, ok := payload["output"].(map[string]interface{}); ok {
-		if nested, nestedErr := firstJSONString(output, "task_id", "taskId", "TaskId", "id"); nested != "" || nestedErr != nil {
-			return nested, nestedErr
-		}
-		return firstJSONString(payload, "id", "task_id", "taskId", "TaskId", "name")
-	}
-	id, err := firstJSONString(payload, "id", "task_id", "taskId", "TaskId", "request_id", "name")
-	if id != "" {
-		return id, nil
-	}
-	for _, key := range []string{"data", "Response"} {
-		if data, ok := payload[key].(map[string]interface{}); ok {
-			nested, nestedErr := firstJSONString(data, "id", "task_id", "taskId", "TaskId", "request_id")
-			if nested != "" {
-				return nested, nil
-			}
-			if nestedErr != nil {
-				return "", nestedErr
-			}
-		}
-	}
-	return "", err
+	return extractProviderTaskIDFromMap(payload, true)
 }
 
 func extractExplicitProviderJobID(body []byte) (string, error) {
-	var payload map[string]interface{}
+	var payload map[string]any
 	if json.Unmarshal(body, &payload) != nil {
 		return "", nil
 	}
-	id, err := firstJSONString(payload, "id", "task_id", "taskId", "TaskId", "name")
-	if id != "" {
-		return id, nil
-	}
-	for _, key := range []string{"data", "Response"} {
-		if data, ok := payload[key].(map[string]interface{}); ok {
-			nested, nestedErr := firstJSONString(data, "id", "task_id", "taskId", "TaskId")
-			if nested != "" {
-				return nested, nil
-			}
-			if nestedErr != nil {
-				return "", nestedErr
-			}
-		}
-	}
-	return "", err
+	return extractProviderTaskIDFromMap(payload, false)
 }
 
 // queryProtocolAdapterVideoTask 只读取一次已有的声明式 Provider 任务。

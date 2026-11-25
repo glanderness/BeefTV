@@ -29,7 +29,7 @@
 | `audios` | media[] | 否 | `audio_reference` | JSON 字符串 `{"audio_url": "..."}`，支持 URL 或 Base64 Data URL。 |
 | `duration` | integer | 否 | `extra_params.duration` | 时长秒数，随 `extra_params` JSON 字符串下发。 |
 | `aspectRatio` | string | 否 | `width`、`height`、`aspect_ratio` | 按分辨率档位换算为 32 的倍数像素尺寸，同时透传标准画幅比例；直接传入 `WIDTHxHEIGHT` 时原样拆分。 |
-| `resolution` | string | 否 | `width`、`height` | `480p`/`576p` 对应 576 短边（如 `1024x576`），`720p`/`768p` 对应 768 短边（如 `1344x768`），`1080p` 对应 `1920x1088`，`1440p`/`2k` 对应 `2560x1440`。 |
+| `resolution` | string | 否 | `width`、`height` | `480p`/`576p` 对应 576 短边（如 `1024x576`），`720p`/`768p` 对应 768 短边（如 `1344x768`），`1080p` 对应 `1920x1088`，`1440p`/`2k` 对应 `2528x1440`（均按 32 像素对齐）。 |
 | `providerOptions` | object | 否 | `fps`、`num_frames`、`num_inference_steps`、`guidance_scale`、`guidance_scale_2`、`flow_shift`、`seed`、`negative_prompt`、`lora`、`seconds`、`extra_params`、`task`、`audio_flow_shift` | 插件命名空间 `providerOptions.vllm-omni-videos` 下的扩展采样与任务参数。 |
 
 ## 响应与错误
@@ -200,50 +200,236 @@
             }
           },
           {
-            "name": "isLowRes",
+            "name": "normalizedRatio",
             "value": {
-              "$in": [
+              "$switch": {
+                "cases": [
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.ratioNorm"
+                        },
+                        [
+                          "16:9",
+                          "landscape"
+                        ]
+                      ]
+                    },
+                    "then": "16:9"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.ratioNorm"
+                        },
+                        [
+                          "9:16",
+                          "portrait"
+                        ]
+                      ]
+                    },
+                    "then": "9:16"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.ratioNorm"
+                        },
+                        [
+                          "1:1",
+                          "square"
+                        ]
+                      ]
+                    },
+                    "then": "1:1"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.ratioNorm"
+                        },
+                        [
+                          "4:3",
+                          "3:4",
+                          "21:9"
+                        ]
+                      ]
+                    },
+                    "then": {
+                      "$ref": "vars.ratioNorm"
+                    }
+                  }
+                ],
+                "default": null
+              }
+            }
+          },
+          {
+            "name": "ratioField",
+            "value": {
+              "$coalesce": [
                 {
-                  "$ref": "vars.resNorm"
+                  "$ref": "request.providerOptions.vllm-omni-videos.aspect_ratio"
                 },
-                [
-                  "480",
-                  "480p",
-                  "540",
-                  "540p",
-                  "576",
-                  "576p"
-                ]
+                {
+                  "$ref": "vars.normalizedRatio"
+                }
               ]
             }
           },
           {
-            "name": "is1080Res",
+            "name": "resScale",
             "value": {
-              "$in": [
-                {
-                  "$ref": "vars.resNorm"
-                },
-                [
-                  "1080",
-                  "1080p"
-                ]
-              ]
+              "$switch": {
+                "cases": [
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.resNorm"
+                        },
+                        [
+                          "480",
+                          "480p",
+                          "540",
+                          "540p",
+                          "576",
+                          "576p"
+                        ]
+                      ]
+                    },
+                    "then": 0.75
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.resNorm"
+                        },
+                        [
+                          "1080",
+                          "1080p"
+                        ]
+                      ]
+                    },
+                    "then": 1.40625
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.resNorm"
+                        },
+                        [
+                          "1440",
+                          "1440p",
+                          "2k"
+                        ]
+                      ]
+                    },
+                    "then": 1.875
+                  }
+                ],
+                "default": 1
+              }
             }
           },
           {
-            "name": "is2KRes",
+            "name": "baseSize",
             "value": {
-              "$in": [
-                {
-                  "$ref": "vars.resNorm"
-                },
-                [
-                  "1440",
-                  "1440p",
-                  "2k"
-                ]
-              ]
+              "$switch": {
+                "cases": [
+                  {
+                    "when": {
+                      "$eq": [
+                        {
+                          "$ref": "vars.normalizedRatio"
+                        },
+                        "16:9"
+                      ]
+                    },
+                    "then": [
+                      1344,
+                      768
+                    ]
+                  },
+                  {
+                    "when": {
+                      "$eq": [
+                        {
+                          "$ref": "vars.normalizedRatio"
+                        },
+                        "9:16"
+                      ]
+                    },
+                    "then": [
+                      768,
+                      1344
+                    ]
+                  },
+                  {
+                    "when": {
+                      "$eq": [
+                        {
+                          "$ref": "vars.normalizedRatio"
+                        },
+                        "1:1"
+                      ]
+                    },
+                    "then": [
+                      768,
+                      768
+                    ]
+                  },
+                  {
+                    "when": {
+                      "$eq": [
+                        {
+                          "$ref": "vars.normalizedRatio"
+                        },
+                        "4:3"
+                      ]
+                    },
+                    "then": [
+                      1024,
+                      768
+                    ]
+                  },
+                  {
+                    "when": {
+                      "$eq": [
+                        {
+                          "$ref": "vars.normalizedRatio"
+                        },
+                        "3:4"
+                      ]
+                    },
+                    "then": [
+                      768,
+                      1024
+                    ]
+                  },
+                  {
+                    "when": {
+                      "$eq": [
+                        {
+                          "$ref": "vars.normalizedRatio"
+                        },
+                        "21:9"
+                      ]
+                    },
+                    "then": [
+                      1536,
+                      672
+                    ]
+                  }
+                ],
+                "default": null
+              }
             }
           },
           {
@@ -264,436 +450,31 @@
                   }
                 },
                 "else": {
-                  "$switch": {
-                    "cases": [
-                      {
-                        "when": {
-                          "$and": [
+                  "$if": {
+                    "condition": {
+                      "$ref": "vars.baseSize"
+                    },
+                    "then": {
+                      "$ceilStep": [
+                        {
+                          "$multiply": [
                             {
-                              "$ref": "vars.isLowRes"
+                              "$at": [
+                                {
+                                  "$ref": "vars.baseSize"
+                                },
+                                0
+                              ]
                             },
                             {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "16:9",
-                                  "landscape"
-                                ]
-                              ]
+                              "$ref": "vars.resScale"
                             }
                           ]
                         },
-                        "then": 1024
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.isLowRes"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "9:16",
-                                  "portrait"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 576
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.isLowRes"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "1:1",
-                                  "square"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 576
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.isLowRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "4:3"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 768
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.isLowRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "3:4"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 576
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.isLowRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "21:9"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1152
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "16:9",
-                                  "landscape"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1920
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "9:16",
-                                  "portrait"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1088
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "1:1",
-                                  "square"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1088
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "4:3"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1440
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "3:4"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1088
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "21:9"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 2560
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "16:9",
-                                  "landscape"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 2560
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "9:16",
-                                  "portrait"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1440
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "1:1",
-                                  "square"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1440
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "4:3"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1920
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "3:4"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1440
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "21:9"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 3072
-                      },
-                      {
-                        "when": {
-                          "$in": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            [
-                              "16:9",
-                              "landscape"
-                            ]
-                          ]
-                        },
-                        "then": 1344
-                      },
-                      {
-                        "when": {
-                          "$in": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            [
-                              "9:16",
-                              "portrait"
-                            ]
-                          ]
-                        },
-                        "then": 768
-                      },
-                      {
-                        "when": {
-                          "$in": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            [
-                              "1:1",
-                              "square"
-                            ]
-                          ]
-                        },
-                        "then": 768
-                      },
-                      {
-                        "when": {
-                          "$eq": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            "4:3"
-                          ]
-                        },
-                        "then": 1024
-                      },
-                      {
-                        "when": {
-                          "$eq": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            "3:4"
-                          ]
-                        },
-                        "then": 768
-                      },
-                      {
-                        "when": {
-                          "$eq": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            "21:9"
-                          ]
-                        },
-                        "then": 1536
-                      }
-                    ],
-                    "default": null
+                        32
+                      ]
+                    },
+                    "else": null
                   }
                 }
               }
@@ -717,515 +498,34 @@
                   }
                 },
                 "else": {
-                  "$switch": {
-                    "cases": [
-                      {
-                        "when": {
-                          "$and": [
+                  "$if": {
+                    "condition": {
+                      "$ref": "vars.baseSize"
+                    },
+                    "then": {
+                      "$ceilStep": [
+                        {
+                          "$multiply": [
                             {
-                              "$ref": "vars.isLowRes"
+                              "$at": [
+                                {
+                                  "$ref": "vars.baseSize"
+                                },
+                                1
+                              ]
                             },
                             {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "16:9",
-                                  "landscape"
-                                ]
-                              ]
+                              "$ref": "vars.resScale"
                             }
                           ]
                         },
-                        "then": 576
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.isLowRes"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "9:16",
-                                  "portrait"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1024
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.isLowRes"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "1:1",
-                                  "square"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 576
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.isLowRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "4:3"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 576
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.isLowRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "3:4"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 768
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.isLowRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "21:9"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 512
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "16:9",
-                                  "landscape"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1088
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "9:16",
-                                  "portrait"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1920
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "1:1",
-                                  "square"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1088
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "4:3"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1088
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "3:4"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1440
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is1080Res"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "21:9"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1088
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "16:9",
-                                  "landscape"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1440
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "9:16",
-                                  "portrait"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 2560
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$in": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                [
-                                  "1:1",
-                                  "square"
-                                ]
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1440
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "4:3"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1440
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "3:4"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1920
-                      },
-                      {
-                        "when": {
-                          "$and": [
-                            {
-                              "$ref": "vars.is2KRes"
-                            },
-                            {
-                              "$eq": [
-                                {
-                                  "$ref": "vars.ratioNorm"
-                                },
-                                "21:9"
-                              ]
-                            }
-                          ]
-                        },
-                        "then": 1344
-                      },
-                      {
-                        "when": {
-                          "$in": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            [
-                              "16:9",
-                              "landscape"
-                            ]
-                          ]
-                        },
-                        "then": 768
-                      },
-                      {
-                        "when": {
-                          "$in": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            [
-                              "9:16",
-                              "portrait"
-                            ]
-                          ]
-                        },
-                        "then": 1344
-                      },
-                      {
-                        "when": {
-                          "$in": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            [
-                              "1:1",
-                              "square"
-                            ]
-                          ]
-                        },
-                        "then": 768
-                      },
-                      {
-                        "when": {
-                          "$eq": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            "4:3"
-                          ]
-                        },
-                        "then": 768
-                      },
-                      {
-                        "when": {
-                          "$eq": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            "3:4"
-                          ]
-                        },
-                        "then": 1024
-                      },
-                      {
-                        "when": {
-                          "$eq": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            "21:9"
-                          ]
-                        },
-                        "then": 672
-                      }
-                    ],
-                    "default": null
+                        32
+                      ]
+                    },
+                    "else": null
                   }
                 }
               }
-            }
-          },
-          {
-            "name": "ratioField",
-            "value": {
-              "$coalesce": [
-                {
-                  "$ref": "request.providerOptions.vllm-omni-videos.aspect_ratio"
-                },
-                {
-                  "$switch": {
-                    "cases": [
-                      {
-                        "when": {
-                          "$in": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            [
-                              "16:9",
-                              "landscape"
-                            ]
-                          ]
-                        },
-                        "then": "16:9"
-                      },
-                      {
-                        "when": {
-                          "$in": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            [
-                              "9:16",
-                              "portrait"
-                            ]
-                          ]
-                        },
-                        "then": "9:16"
-                      },
-                      {
-                        "when": {
-                          "$in": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            [
-                              "1:1",
-                              "square"
-                            ]
-                          ]
-                        },
-                        "then": "1:1"
-                      },
-                      {
-                        "when": {
-                          "$in": [
-                            {
-                              "$ref": "vars.ratioNorm"
-                            },
-                            [
-                              "4:3",
-                              "3:4",
-                              "21:9"
-                            ]
-                          ]
-                        },
-                        "then": {
-                          "$ref": "vars.ratioNorm"
-                        }
-                      }
-                    ],
-                    "default": null
-                  }
-                }
-              ]
             }
           },
           {

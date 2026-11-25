@@ -16,6 +16,27 @@ func videoDurationSupported(value *VideoCapabilityConfig) bool {
 	return value == nil || value.DurationSupported == nil || *value.DurationSupported
 }
 
+func dashscopeWanModelBase(modelName string) string {
+	base := strings.ToLower(strings.TrimSpace(modelName))
+	if idx := strings.LastIndex(base, "/"); idx >= 0 {
+		base = base[idx+1:]
+	}
+	return base
+}
+
+func isDashscopeWan3Model(modelName string) bool {
+	base := dashscopeWanModelBase(modelName)
+	return base == "wan3" || base == "wan3.0" || strings.HasPrefix(base, "wan3.0-") || strings.HasPrefix(base, "wan3-")
+}
+
+func isDashscopeWanMediaArrayModel(modelName string) bool {
+	if isDashscopeWan3Model(modelName) {
+		return true
+	}
+	base := dashscopeWanModelBase(modelName)
+	return base == "wan2.7" || strings.HasPrefix(base, "wan2.7-")
+}
+
 func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapabilityConfig {
 	video := &VideoCapabilityConfig{
 		References:        VideoReferenceConfig{PromptMaxChars: DefaultVideoPromptMaxChars, MinImages: 0, MaxImages: 9, MaxImageBytes: 30 * 1024 * 1024, MaxVideos: 0, MaxVideoBytes: 0, MaxVideoDuration: 0, MaxAudios: 0, MaxAudioBytes: 0, MaxAudioDuration: 0},
@@ -117,6 +138,48 @@ func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapab
 		video.References.MaxAudioBytes = 15 * 1024 * 1024
 		video.References.MaxAudioDuration = 15
 		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
+	case "vllm-omni-videos":
+		video.References.MaxVideos = 3
+		video.References.MaxVideoBytes = 200 * 1024 * 1024
+		video.References.MaxVideoDuration = 15
+		video.References.MaxAudios = 3
+		video.References.MaxAudioBytes = 15 * 1024 * 1024
+		video.References.MaxAudioDuration = 15
+		video.Duration = VideoDurationConfig{Selection: "range", Min: 1, Max: 15, Step: 1, Default: 5}
+		video.Resolutions = []string{"480p", "720p", "768p", "1080p", "1440p"}
+		video.DefaultResolution = "768p"
+		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
+	case "openai-videos-media-json":
+		video.References.MaxVideos = 3
+		video.References.MaxVideoBytes = 200 * 1024 * 1024
+		video.References.MaxVideoDuration = 15
+		video.References.MaxAudios = 3
+		video.References.MaxAudioBytes = 15 * 1024 * 1024
+		video.References.MaxAudioDuration = 15
+		video.Duration = VideoDurationConfig{Selection: "range", Min: 1, Max: 15, Step: 1, Default: 5}
+		video.Resolutions = []string{"768P"}
+		video.DefaultResolution = "768P"
+		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
+	case "dashscope-wan-video":
+		video.References.MaxVideos = 3
+		video.References.MaxVideoBytes = 200 * 1024 * 1024
+		video.References.MaxVideoDuration = 15
+		video.References.MaxAudios = 3
+		video.References.MaxAudioBytes = 15 * 1024 * 1024
+		video.References.MaxAudioDuration = 15
+		video.Duration = VideoDurationConfig{Selection: "range", Min: 1, Max: 15, Step: 1, Default: 5}
+		video.Resolutions = []string{"480p", "720p", "1080p"}
+		video.DefaultResolution = "720p"
+		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: false}
+		video.Watermark = VideoBooleanConfig{Supported: true, Default: false}
+		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
+		if isDashscopeWanMediaArrayModel(modelName) {
+			video.Ratios = []string{"adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"}
+			video.DefaultRatio = "16:9"
+		}
+		if isDashscopeWan3Model(modelName) {
+			video.Duration = VideoDurationConfig{Selection: "range", Min: 2, Max: 30, Step: 1, Default: 5}
+		}
 	}
 	if protocol == "video-generations-json" {
 		video.Duration.Default = 5

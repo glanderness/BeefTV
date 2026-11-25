@@ -153,4 +153,89 @@ func TestVLLMOmniVideosMultipartContract(t *testing.T) {
 			t.Fatalf("BuildResult = %#v, err = %v", resultSpec, err)
 		}
 	})
+
+	t.Run("resolution and aspect ratio matrix produces 32-aligned dimensions", func(t *testing.T) {
+		cases := []struct {
+			resolution string
+			ratio      string
+			wantW      float64
+			wantH      float64
+			wantRatio  string
+		}{
+			{"480p", "16:9", 1024, 576, "16:9"},
+			{"576p", "landscape", 1024, 576, "16:9"},
+			{"480p", "9:16", 576, 1024, "9:16"},
+			{"480p", "portrait", 576, 1024, "9:16"},
+			{"480p", "1:1", 576, 576, "1:1"},
+			{"480p", "square", 576, 576, "1:1"},
+			{"480p", "4:3", 768, 576, "4:3"},
+			{"480p", "3:4", 576, 768, "3:4"},
+			{"480p", "21:9", 1152, 512, "21:9"},
+			{"720p", "16:9", 1344, 768, "16:9"},
+			{"768p", "16:9", 1344, 768, "16:9"},
+			{"768p", "9:16", 768, 1344, "9:16"},
+			{"768p", "1:1", 768, 768, "1:1"},
+			{"768p", "4:3", 1024, 768, "4:3"},
+			{"768p", "3:4", 768, 1024, "3:4"},
+			{"768p", "21:9", 1536, 672, "21:9"},
+			{"1080p", "16:9", 1920, 1088, "16:9"},
+			{"1080p", "9:16", 1088, 1920, "9:16"},
+			{"1080p", "1:1", 1088, 1088, "1:1"},
+			{"1080p", "4:3", 1440, 1088, "4:3"},
+			{"1080p", "3:4", 1088, 1440, "3:4"},
+			{"1080p", "21:9", 2176, 960, "21:9"},
+			{"1440p", "16:9", 2528, 1440, "16:9"},
+			{"2k", "9:16", 1440, 2528, "9:16"},
+			{"1440p", "1:1", 1440, 1440, "1:1"},
+			{"1440p", "4:3", 1920, 1440, "4:3"},
+			{"1440p", "3:4", 1440, 1920, "3:4"},
+			{"1440p", "21:9", 2880, 1280, "21:9"},
+			{"", "1280x720", 1280, 720, ""},
+		}
+		for _, tc := range cases {
+			create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+				Capability:  CapabilityVideo,
+				Model:       "minimax-h3-fl2va",
+				Prompt:      "matrix check",
+				Resolution:  tc.resolution,
+				AspectRatio: tc.ratio,
+			}})
+			if err != nil {
+				t.Fatalf("%s/%s BuildCreate() error = %v", tc.resolution, tc.ratio, err)
+			}
+			body := manifestTestBody(t, create)
+			if body["width"] != tc.wantW || body["height"] != tc.wantH {
+				t.Fatalf("%s/%s got %v x %v, want %v x %v", tc.resolution, tc.ratio, body["width"], body["height"], tc.wantW, tc.wantH)
+			}
+			if tc.wantRatio == "" {
+				if _, exists := body["aspect_ratio"]; exists {
+					t.Fatalf("%s/%s unexpected aspect_ratio=%v", tc.resolution, tc.ratio, body["aspect_ratio"])
+				}
+			} else {
+				if body["aspect_ratio"] != tc.wantRatio {
+					t.Fatalf("%s/%s aspect_ratio = %v, want %q", tc.resolution, tc.ratio, body["aspect_ratio"], tc.wantRatio)
+				}
+				if int(tc.wantW)%32 != 0 || int(tc.wantH)%32 != 0 {
+					t.Fatalf("%s/%s dimensions %vx%v not 32-aligned", tc.resolution, tc.ratio, tc.wantW, tc.wantH)
+				}
+			}
+		}
+
+		// Empty aspectRatio omits width/height/aspect_ratio cleanly.
+		emptyCreate, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+			Capability: CapabilityVideo,
+			Model:      "minimax-h3-fl2va",
+			Prompt:     "no ratio",
+			Resolution: "768p",
+		}})
+		if err != nil {
+			t.Fatalf("empty ratio BuildCreate() error = %v", err)
+		}
+		emptyBody := manifestTestBody(t, emptyCreate)
+		for _, omitted := range []string{"width", "height", "aspect_ratio"} {
+			if _, exists := emptyBody[omitted]; exists {
+				t.Fatalf("empty ratio must omit %q, got %#v", omitted, emptyBody)
+			}
+		}
+	})
 }

@@ -107,6 +107,10 @@ const FALLBACK_PROTOCOLS: Record<ProtocolCapability, ModelProtocol> = {
     audio: "openai-audio",
 };
 
+export function isMiniMaxVideoModelName(model: string): boolean {
+    return /minimax[-/](?:video|h3)/i.test(model);
+}
+
 export function inferProtocolCapabilityFromModel(model: string): ProtocolCapability {
     const lower = model.toLowerCase();
     if (
@@ -140,7 +144,7 @@ export function inferProtocolCapabilityFromModel(model: string): ProtocolCapabil
         lower.includes("veo") ||
         lower.includes("kling") ||
         lower.includes("seedance") ||
-        /minimax[-/](?:video|h3)/.test(lower) ||
+        isMiniMaxVideoModelName(lower) ||
         lower.includes("hailuo") ||
         lower.includes("pika") ||
         lower.includes("runway") ||

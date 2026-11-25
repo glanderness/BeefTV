@@ -291,10 +291,6 @@ func RunChatCompletionsTextTask(ctx context.Context, input Input) (map[string]in
 func ApplyTextThinking(body map[string]interface{}, input Input, protocol string) {
 	if protocol == "chat-completion" && usesQwenThinkingControl(input.Config) {
 		body["enable_thinking"] = input.TextOptions.Thinking
-		if !input.TextOptions.Thinking {
-			return
-		}
-		body["reasoning_effort"] = "medium"
 		return
 	}
 	if !input.TextOptions.Thinking {

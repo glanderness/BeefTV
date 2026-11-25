@@ -133,3 +133,60 @@ func TestDashscopeCreateWithoutTaskIDDoesNotPollRequestID(t *testing.T) {
 		t.Fatalf("unexpected timeout: %v", err)
 	}
 }
+
+func TestExtractProviderTaskIDTopLevelTaskIDAndDashScopeOutputPrecedence(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantID  string
+		wantErr bool
+	}{
+		{
+			name:   "top-level task_id wins even when output.id is non-string",
+			body:   `{"task_id":"job-1","output":{"id":123}}`,
+			wantID: "job-1",
+		},
+		{
+			name:   "top-level task_id wins over output.id string",
+			body:   `{"task_id":"job-1","output":{"id":"other"}}`,
+			wantID: "job-1",
+		},
+		{
+			name:   "dashscope output extracts explicit output.task_id over request_id",
+			body:   `{"output":{"task_id":"dash-job-2","task_status":"PENDING"},"request_id":"req-trace-2"}`,
+			wantID: "dash-job-2",
+		},
+		{
+			name:   "dashscope output never extracts generic output.id or tracing request_id",
+			body:   `{"output":{"id":"sub-item-1","choices":[]},"request_id":"req-trace-3"}`,
+			wantID: "",
+		},
+		{
+			name:   "dashscope output ignores non-string output.id without error",
+			body:   `{"output":{"id":123,"choices":[]},"request_id":"req-trace-4"}`,
+			wantID: "",
+		},
+		{
+			name:   "top-level id still works alongside dashscope output when task_id absent",
+			body:   `{"id":"top-job-5","output":{"choices":[]},"request_id":"req-trace-5"}`,
+			wantID: "top-job-5",
+		},
+		{
+			name:   "non-dashscope response still supports request_id fallback",
+			body:   `{"request_id":"xai-job-6"}`,
+			wantID: "xai-job-6",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ExtractProviderTaskID([]byte(tc.body))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ExtractProviderTaskID(%s) err = %v, wantErr=%v", tc.body, err, tc.wantErr)
+			}
+			if got != tc.wantID {
+				t.Fatalf("ExtractProviderTaskID(%s) = %q, want %q", tc.body, got, tc.wantID)
+			}
+		})
+	}
+}

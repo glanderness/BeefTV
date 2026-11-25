@@ -7,7 +7,7 @@ import { nanoid } from "nanoid";
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { beefTVVideoContract, isBeefTVEndpoint } from "@/lib/beeftv-video-contracts";
 import { beefTVImageContract } from "@/lib/beeftv-image-contracts";
-import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
+import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, isMiniMaxVideoModelName, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoBoolean, normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { defaultModelCapabilityConfig, upgradeGPTImageCapability, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
@@ -196,7 +196,7 @@ function isVideoModelName(model: string) {
         value.includes("animatediff") ||
         value.includes("ltx-video") ||
         value.includes("ltxvideo") ||
-        /minimax-(?:video|h3)/.test(value) ||
+        isMiniMaxVideoModelName(value) ||
         value.includes("abab-video")
     );
 }

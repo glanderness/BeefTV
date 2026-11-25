@@ -479,6 +479,53 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
         video.references.maxAudioDurationSeconds = 15;
         video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
     }
+    if (protocol === "vllm-omni-videos") {
+        video.references.maxVideos = 3;
+        video.references.maxVideoBytes = 200 * 1024 * 1024;
+        video.references.maxVideoDurationSeconds = 15;
+        video.references.maxAudios = 3;
+        video.references.maxAudioBytes = 15 * 1024 * 1024;
+        video.references.maxAudioDurationSeconds = 15;
+        video.duration = { selection: "range", min: 1, max: 15, step: 1, default: 5 };
+        video.resolutions = ["480p", "720p", "768p", "1080p", "1440p"];
+        video.defaultResolution = "768p";
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
+    }
+    if (protocol === "openai-videos-media-json") {
+        video.references.maxVideos = 3;
+        video.references.maxVideoBytes = 200 * 1024 * 1024;
+        video.references.maxVideoDurationSeconds = 15;
+        video.references.maxAudios = 3;
+        video.references.maxAudioBytes = 15 * 1024 * 1024;
+        video.references.maxAudioDurationSeconds = 15;
+        video.duration = { selection: "range", min: 1, max: 15, step: 1, default: 5 };
+        video.resolutions = ["768P"];
+        video.defaultResolution = "768P";
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
+    }
+    if (protocol === "dashscope-wan-video") {
+        const wanBase = String(model || "").trim().toLowerCase().split("/").pop() || "";
+        const isWan3 = /^wan3(?:\.0)?(?:-|$)/.test(wanBase);
+        const isWanMediaArray = isWan3 || /^wan2\.7(?:-|$)/.test(wanBase);
+        video.references.maxVideos = 3;
+        video.references.maxVideoBytes = 200 * 1024 * 1024;
+        video.references.maxVideoDurationSeconds = 15;
+        video.references.maxAudios = 3;
+        video.references.maxAudioBytes = 15 * 1024 * 1024;
+        video.references.maxAudioDurationSeconds = 15;
+        video.duration = isWan3
+            ? { selection: "range", min: 2, max: 30, step: 1, default: 5 }
+            : { selection: "range", min: 1, max: 15, step: 1, default: 5 };
+        video.resolutions = ["480p", "720p", "1080p"];
+        video.defaultResolution = "720p";
+        video.generateAudio = { supported: true, default: false };
+        video.watermark = { supported: true, default: false };
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
+        if (isWanMediaArray) {
+            video.ratios = ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
+            video.defaultRatio = "16:9";
+        }
+    }
     if (protocol === "volcengine-jimeng-video") {
         video.duration = { selection: "enum", values: [5, 10], default: 5 };
         video.resolutions = ["720p"];

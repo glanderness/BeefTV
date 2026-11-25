@@ -26,17 +26,22 @@ func TestApplyTextThinkingQwenAndDashScope(t *testing.T) {
 		}
 	})
 
-	t.Run("qwen hybrid models enable thinking explicitly when thinking is true", func(t *testing.T) {
-		body := map[string]interface{}{}
-		ApplyTextThinking(body, Input{
-			Config:      Config{BaseURL: "https://relay.example.com/v1", Model: "qwen3.6-plus"},
-			TextOptions: TextOptions{Thinking: true},
-		}, "chat-completion")
-		if body["enable_thinking"] != true {
-			t.Fatalf("enable_thinking = %#v, want true", body["enable_thinking"])
-		}
-		if body["reasoning_effort"] != "medium" {
-			t.Fatalf("reasoning_effort = %#v, want medium", body["reasoning_effort"])
+	t.Run("qwen hybrid models enable thinking explicitly without reasoning_effort when thinking is true", func(t *testing.T) {
+		for _, cfg := range []Config{
+			{BaseURL: "https://relay.example.com/v1", Model: "qwen3.6-plus"},
+			{BaseURL: "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1", Model: "qwen3.7-plus"},
+		} {
+			body := map[string]interface{}{}
+			ApplyTextThinking(body, Input{
+				Config:      cfg,
+				TextOptions: TextOptions{Thinking: true},
+			}, "chat-completion")
+			if body["enable_thinking"] != true {
+				t.Fatalf("model %s: enable_thinking = %#v, want true", cfg.Model, body["enable_thinking"])
+			}
+			if _, hasEffort := body["reasoning_effort"]; hasEffort {
+				t.Fatalf("model %s: unexpected reasoning_effort on Qwen thinking control: %#v", cfg.Model, body)
+			}
 		}
 	})
 

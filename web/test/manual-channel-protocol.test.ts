@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { defaultProtocolForModel, ensureModelProfilesWithUiDefaults, inferProtocolCapabilityFromModel } from "@/lib/model-protocols";
-import { createModelChannel, defaultConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
+import { createModelChannel, defaultConfig, filterModelsByCapability, modelMatchesCapability, resolveModelRequestConfig } from "@/stores/use-config-store";
 
 describe("manual channel protocol defaults", () => {
     test("video models without an explicit protocol stay unconfigured through both list editing and submission", () => {
@@ -77,6 +77,23 @@ describe("manual channel protocol defaults", () => {
         expect(inferProtocolCapabilityFromModel("minimax/h3")).toBe("video");
         expect(inferProtocolCapabilityFromModel("minimax/h3-fast")).toBe("video");
         expect(inferProtocolCapabilityFromModel("minimax/video-01")).toBe("video");
+
+        // Store-layer capability matching and filtering must agree with protocol inference for slash-prefixed H3 names.
+        expect(modelMatchesCapability("goodput::minimax/h3", "video")).toBe(true);
+        expect(modelMatchesCapability("goodput::minimax/h3", "text")).toBe(false);
+        expect(modelMatchesCapability("goodput::minimax/h3-fast", "video")).toBe(true);
+        expect(modelMatchesCapability("goodput::minimax/video-01", "video")).toBe(true);
+        expect(modelMatchesCapability("goodput::minimax/m2", "text")).toBe(true);
+        expect(modelMatchesCapability("goodput::minimax/m2", "video")).toBe(false);
+        const channel = createModelChannel({
+            id: "goodput",
+            name: "GoodPut",
+            baseUrl: "https://api.example.com/v1",
+            apiKey: "test-key",
+            models: ["minimax/h3", "minimax/m2"],
+        });
+        expect(filterModelsByCapability(["goodput::minimax/h3", "goodput::minimax/m2"], "video", [channel])).toEqual(["goodput::minimax/h3"]);
+        expect(filterModelsByCapability(["goodput::minimax/h3", "goodput::minimax/m2"], "text", [channel])).toEqual(["goodput::minimax/m2"]);
     });
 
     test("explicit capability is kept when protocol is missing", () => {
