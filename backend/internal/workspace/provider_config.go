@@ -423,7 +423,7 @@ func (s *ProviderConfig) readDocumentWithBackup() (ProviderStateDocument, Config
 		}
 		document, _, decodeErr := s.decodeStoredDocument(backup)
 		if decodeErr != nil {
-			if errors.Is(decodeErr, ErrProviderConfigKeyUnavailable) {
+			if isNonCorruptBackupDecodeError(decodeErr) {
 				return ProviderStateDocument{}, ConfigHealthReady, false, decodeErr
 			}
 			return ProviderStateDocument{}, ConfigHealthReady, false, wrapCorruptConfigError("模型配置缺失且备份损坏", decodeErr)
@@ -437,21 +437,21 @@ func (s *ProviderConfig) readDocumentWithBackup() (ProviderStateDocument, Config
 	if decodeErr == nil {
 		return document, ConfigHealthReady, migrated, nil
 	}
-	if errors.Is(decodeErr, ErrProviderConfigKeyUnavailable) && !errors.Is(decodeErr, localcrypto.ErrDecryptFailed) {
+	if isNonCorruptPrimaryDecodeError(decodeErr) {
 		return ProviderStateDocument{}, ConfigHealthReady, false, decodeErr
 	}
 	// 主文件损坏但存在有效备份时，读写共用同一份备份基线：
 	// 读取降级为 recovered，写入基于备份继续校验 CAS 与脱敏密钥并在写盘前隔离损坏主文件。
 	backup, backupErr := os.ReadFile(s.backupPath())
 	if backupErr != nil {
-		if !errors.Is(backupErr, os.ErrNotExist) && (isConfigFileInUse(backupErr) || errors.Is(backupErr, os.ErrPermission)) {
+		if !errors.Is(backupErr, os.ErrNotExist) && (isConfigFileInUse(backupErr) || isConfigPermissionError(backupErr)) {
 			return ProviderStateDocument{}, ConfigHealthReady, false, wrapConfigIOError("读取模型配置备份失败", backupErr)
 		}
 		return ProviderStateDocument{}, ConfigHealthReady, false, wrapCorruptConfigError("本地模型配置损坏且无可用备份", decodeErr)
 	}
 	recovered, _, backupDecodeErr := s.decodeStoredDocument(backup)
 	if backupDecodeErr != nil {
-		if errors.Is(backupDecodeErr, ErrProviderConfigKeyUnavailable) {
+		if isNonCorruptBackupDecodeError(backupDecodeErr) {
 			return ProviderStateDocument{}, ConfigHealthReady, false, backupDecodeErr
 		}
 		return ProviderStateDocument{}, ConfigHealthReady, false, wrapCorruptConfigError("本地模型配置及备份均损坏", decodeErr)
@@ -566,7 +566,7 @@ func (s *ProviderConfig) encodeStoredDocument(document ProviderStateDocument) ([
 	}
 	ciphertext, err := localcrypto.Encrypt(s.dataDir, string(body))
 	if err != nil {
-		return nil, err
+		return nil, wrapConfigKeyError("加密本地模型配置失败", err)
 	}
 	return json.Marshal(map[string]any{"schemaVersion": 2, "encryptedConfig": ciphertext})
 }
@@ -591,7 +591,7 @@ func (s *ProviderConfig) decodeStoredDocument(body []byte) (ProviderStateDocumen
 		if errors.Is(err, localcrypto.ErrInvalidCiphertextFormat) || errors.Is(err, localcrypto.ErrInvalidCiphertextLength) {
 			return ProviderStateDocument{}, false, fmt.Errorf("%w: %w", ErrMalformedProviderConfig, err)
 		}
-		return ProviderStateDocument{}, false, fmt.Errorf("%w: %w", ErrProviderConfigKeyUnavailable, err)
+		return ProviderStateDocument{}, false, wrapConfigKeyError("解密本地模型配置失败", err)
 	}
 	return decodeProviderDocument([]byte(plain))
 }

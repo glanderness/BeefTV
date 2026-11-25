@@ -501,6 +501,61 @@ func TestWorkspaceModelConfigReturnsExplicitBusinessErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("legacy_plaintext_migration_with_zero_byte_settings_key", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		dir := t.TempDir()
+		store, err := workspace.NewProviderConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy := []byte(`{"schemaVersion":1,"revision":3,"config":{"channels":[{"id":"custom","apiKey":"legacy-secret","enabled":true}]}}`)
+		if err := os.WriteFile(filepath.Join(dir, workspace.LocalProviderConfigFile), legacy, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".settings-key"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		service := app.NewLocal(nil, dir)
+		router := gin.New()
+		router.Use(WorkspaceMiddleware(workspace.Context{ID: "local", DataDir: dir}))
+		router.Use(RuntimeDependenciesMiddleware(RuntimeDependencies{ProviderConfig: store}))
+		RegisterWorkspaceRoutes(router.Group("/api"), service)
+
+		getRec := httptest.NewRecorder()
+		router.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/api/workspace/model-config", nil))
+		if getRec.Code != http.StatusInternalServerError {
+			t.Fatalf("GET status = %d body=%s", getRec.Code, getRec.Body.String())
+		}
+		var getBody struct {
+			Reason string `json:"reason"`
+			Msg    string `json:"msg"`
+		}
+		if err := json.Unmarshal(getRec.Body.Bytes(), &getBody); err != nil {
+			t.Fatal(err)
+		}
+		if getBody.Reason != "provider_config_key_unavailable" || !strings.Contains(getBody.Msg, "密钥") {
+			t.Fatalf("GET unexpected error payload: %+v", getBody)
+		}
+		if bytes.Contains(getRec.Body.Bytes(), []byte("legacy-secret")) {
+			t.Fatalf("GET leaked secret: %s", getRec.Body.String())
+		}
+
+		putRec := putModelConfig(t, router, 3, "updated-secret")
+		if putRec.Code != http.StatusInternalServerError {
+			t.Fatalf("PUT status = %d body=%s", putRec.Code, putRec.Body.String())
+		}
+		var putBody struct {
+			Reason string `json:"reason"`
+			Msg    string `json:"msg"`
+		}
+		if err := json.Unmarshal(putRec.Body.Bytes(), &putBody); err != nil {
+			t.Fatal(err)
+		}
+		if putBody.Reason != "provider_config_key_unavailable" || !strings.Contains(putBody.Msg, "密钥") {
+			t.Fatalf("PUT unexpected error payload: %+v", putBody)
+		}
+	})
+
 	t.Run("unmatched_redacted_secret_and_non_object_return_400", func(t *testing.T) {
 		router, _ := newModelConfigTestRouter(t)
 		first := putModelConfig(t, router, 0, "seed-secret")

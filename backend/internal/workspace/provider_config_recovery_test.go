@@ -515,3 +515,125 @@ func TestProviderConfigMissingPrimaryWithGCMCorruptBackupReturnsKeyUnavailable(t
 		t.Fatalf("SaveLocalModelConfig() err = %v, want ErrProviderConfigKeyUnavailable", err)
 	}
 }
+
+func TestProviderConfigEncodeAndKeyIOErrorsAreClassified(t *testing.T) {
+	t.Run("zero_byte_key_during_legacy_migration_and_save_returns_KeyUnavailable", func(t *testing.T) {
+		dir := t.TempDir()
+		store, err := NewProviderConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy := []byte(`{"schemaVersion":1,"revision":2,"config":{"channels":[{"id":"custom","apiKey":"legacy-secret"}]}}`)
+		if err := os.WriteFile(filepath.Join(dir, LocalProviderConfigFile), legacy, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".settings-key"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, _, err := store.LoadEffectiveModelConfig(); !errors.Is(err, ErrProviderConfigKeyUnavailable) {
+			t.Fatalf("LoadEffectiveModelConfig() err = %v, want ErrProviderConfigKeyUnavailable", err)
+		}
+		if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"custom","apiKey":"next"}]}`)); !errors.Is(err, ErrProviderConfigKeyUnavailable) {
+			t.Fatalf("SaveLocalModelConfig() err = %v, want ErrProviderConfigKeyUnavailable", err)
+		}
+		if err := store.rotateBackup(); !errors.Is(err, ErrProviderConfigKeyUnavailable) {
+			t.Fatalf("rotateBackup() err = %v, want ErrProviderConfigKeyUnavailable", err)
+		}
+	})
+
+	t.Run("permission_denied_key_during_encode_and_decode_returns_Permission_without_quarantine", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("chmod 000 does not deny root")
+		}
+		dir := t.TempDir()
+		store, err := NewProviderConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"custom","apiKey":"secret-1"}]}`)); err != nil {
+			t.Fatal(err)
+		}
+		primaryPath := filepath.Join(dir, LocalProviderConfigFile)
+		before, err := os.ReadFile(primaryPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyPath := filepath.Join(dir, ".settings-key")
+		if err := os.Chmod(keyPath, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(keyPath, 0o600) })
+
+		if _, _, err := store.LoadEffectiveModelConfig(); !errors.Is(err, ErrProviderConfigPermission) {
+			t.Fatalf("LoadEffectiveModelConfig() err = %v, want ErrProviderConfigPermission", err)
+		}
+		if err := store.rotateBackup(); !errors.Is(err, ErrProviderConfigPermission) {
+			t.Fatalf("rotateBackup() err = %v, want ErrProviderConfigPermission", err)
+		}
+		requireFileUnchanged(t, primaryPath, before)
+		if quarantined := listCorruptPrimaries(t, dir); len(quarantined) != 0 {
+			t.Fatalf("permission error must not quarantine primary: %v", quarantined)
+		}
+		// 同样检查未加密旧配置迁移时密钥无权限读。
+		legacyDir := t.TempDir()
+		legacyStore, err := NewProviderConfig(legacyDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(legacyDir, LocalProviderConfigFile), []byte(`{"channels":[{"id":"custom","apiKey":"legacy"}]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		legacyKeyPath := filepath.Join(legacyDir, ".settings-key")
+		if err := os.WriteFile(legacyKeyPath, make([]byte, 32), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(legacyKeyPath, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(legacyKeyPath, 0o600) })
+		if _, _, err := legacyStore.LoadEffectiveModelConfig(); !errors.Is(err, ErrProviderConfigPermission) {
+			t.Fatalf("legacy LoadEffectiveModelConfig() err = %v, want ErrProviderConfigPermission", err)
+		}
+	})
+
+	t.Run("locked_key_error_maps_to_ErrProviderConfigLocked_without_quarantine", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("chmod 000 does not deny root")
+		}
+		dir := t.TempDir()
+		store, err := NewProviderConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"custom","apiKey":"secret-1"}]}`)); err != nil {
+			t.Fatal(err)
+		}
+		primaryPath := filepath.Join(dir, LocalProviderConfigFile)
+		before, err := os.ReadFile(primaryPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyPath := filepath.Join(dir, ".settings-key")
+		if err := os.Chmod(keyPath, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(keyPath, 0o600) })
+
+		origInUse := isConfigFileInUse
+		t.Cleanup(func() { isConfigFileInUse = origInUse })
+		// 模拟 Windows AV/Defender 占用 .settings-key（OS 返回 sharing/lock violation）。
+		isConfigFileInUse = func(err error) bool { return errors.Is(err, os.ErrPermission) }
+
+		if _, _, err := store.LoadEffectiveModelConfig(); !errors.Is(err, ErrProviderConfigLocked) {
+			t.Fatalf("LoadEffectiveModelConfig() err = %v, want ErrProviderConfigLocked", err)
+		}
+		if err := store.rotateBackup(); !errors.Is(err, ErrProviderConfigLocked) {
+			t.Fatalf("rotateBackup() err = %v, want ErrProviderConfigLocked", err)
+		}
+		requireFileUnchanged(t, primaryPath, before)
+		if quarantined := listCorruptPrimaries(t, dir); len(quarantined) != 0 {
+			t.Fatalf("locked key error must not quarantine primary: %v", quarantined)
+		}
+	})
+}
