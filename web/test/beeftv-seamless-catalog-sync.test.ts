@@ -5,34 +5,39 @@ import { createModelConfigRepository, isApplyingExternalModelConfig, withoutMode
 import { defaultConfig } from "../src/stores/use-config-store";
 
 describe("seamless BeefTV catalog hot-reload rules", () => {
-    test("startup race: already connected UI reloads as soon as catalogRevision advances beyond initial observation", () => {
-        // Disk hydration loaded file revision 5 (catalogRevision=1, catalogConfigRevision=5).
-        expect(shouldSyncManagedBeefTVRevision(undefined, { state: "connected", catalogRevision: 1, catalogConfigRevision: 5 }, null, 5)).toBe(false);
-        // Startup sync finishes 1 second later and bumps catalogRevision 1 -> 2 while state stays "connected".
-        expect(shouldSyncManagedBeefTVRevision("connected", { state: "connected", catalogRevision: 2, catalogConfigRevision: 6 }, 1, 5)).toBe(true);
-        // Subsequent polls with catalogRevision 2 do not re-fetch.
-        expect(shouldSyncManagedBeefTVRevision("connected", { state: "connected", catalogRevision: 2, catalogConfigRevision: 6 }, 2, 5)).toBe(false);
+    test("startup race: already connected UI reloads as soon as catalogConfigRevision advances beyond initial hydration", () => {
+        // Disk hydration loaded file revision 5 (catalogConfigRevision=5).
+        expect(shouldSyncManagedBeefTVRevision(undefined, { state: "connected", catalogConfigRevision: 5 }, null, 5)).toBe(false);
+        // Startup sync finishes 1 second later and bumps catalogConfigRevision 5 -> 6 while state stays "connected".
+        expect(shouldSyncManagedBeefTVRevision("connected", { state: "connected", catalogConfigRevision: 6 }, 5, 5)).toBe(true);
+        // Subsequent polls with catalogConfigRevision 6 do not re-fetch.
+        expect(shouldSyncManagedBeefTVRevision("connected", { state: "connected", catalogConfigRevision: 6 }, 6, 5)).toBe(false);
     });
 
     test("startup race: if backend sync finished between hydration (rev 5) and first connection poll (configRev 6), first poll immediately syncs", () => {
-        expect(shouldSyncManagedBeefTVRevision(undefined, { state: "connected", catalogRevision: 2, catalogConfigRevision: 6 }, null, 5)).toBe(true);
+        expect(shouldSyncManagedBeefTVRevision(undefined, { state: "connected", catalogConfigRevision: 6 }, null, 5)).toBe(true);
     });
 
     test("unrelated user PUT bumping local-model-config revision never masks a background catalog update", () => {
-        // Suppose initial hydration was file revision 5, applied catalogRevision was 1.
-        // Background sync wrote catalogRevision=2 (file rev 6), then before the next poll
-        // user edited settings which committed file rev 7 (or even 10).
-        // Because catalogRevision is catalog-only and independent of file revision, 2 > 1 still triggers reload!
-        expect(shouldSyncManagedBeefTVRevision("connected", { state: "connected", catalogRevision: 2, catalogConfigRevision: 6 }, 1, 10)).toBe(true);
+        // Initial hydration was file revision 5 (applied catalogConfigRevision=5).
+        // Background sync wrote catalogConfigRevision=6, then user edited settings to file rev 10.
+        // Because appliedCatalogRevision tracks only catalog writes (5), 6 > 5 still triggers reload!
+        expect(shouldSyncManagedBeefTVRevision("connected", { state: "connected", catalogConfigRevision: 6 }, 5, 10)).toBe(true);
     });
 
-    test("legacy disk state without catalogVersion (0) still reloads once first sync writes version 1", () => {
-        expect(shouldSyncManagedBeefTVRevision(undefined, { state: "connected", catalogRevision: 0, catalogConfigRevision: 0 }, null, 5)).toBe(false);
-        expect(shouldSyncManagedBeefTVRevision("connected", { state: "connected", catalogRevision: 1, catalogConfigRevision: 6 }, 0, 5)).toBe(true);
+    test("legacy disk state without catalogConfigRevision (0) still reloads once first sync writes revision > initial", () => {
+        expect(shouldSyncManagedBeefTVRevision(undefined, { state: "connected", catalogConfigRevision: 0 }, null, 5)).toBe(false);
+        expect(shouldSyncManagedBeefTVRevision("connected", { state: "connected", catalogConfigRevision: 6 }, 5, 5)).toBe(true);
+    });
+
+    test("manual refresh-all noting server.revision stays in the same revision space and never blocks later catalog updates", () => {
+        // After refreshAllModels merges server.revision=21, the next catalog write advances to 22 (> 21).
+        expect(shouldSyncManagedBeefTVRevision("connected", { state: "connected", catalogConfigRevision: 21 }, 21, 20)).toBe(false);
+        expect(shouldSyncManagedBeefTVRevision("connected", { state: "connected", catalogConfigRevision: 22 }, 21, 20)).toBe(true);
     });
 
     test("disconnecting from connected still triggers managed channel cleanup", () => {
-        expect(shouldSyncManagedBeefTVRevision("connected", { state: "disconnected", catalogRevision: 3, catalogConfigRevision: 7 }, 2, 5)).toBe(true);
+        expect(shouldSyncManagedBeefTVRevision("connected", { state: "disconnected", catalogConfigRevision: 7 }, 6, 5)).toBe(true);
     });
 
     test("acceptExternalSnapshot advances repository revision silently without marking dirty or triggering PUT writeback", async () => {

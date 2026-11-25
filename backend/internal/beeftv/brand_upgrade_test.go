@@ -25,14 +25,10 @@ func TestBrandUpgradePreservesEncryptedIssuerAndRedactsUI(t *testing.T) {
 			if err := saveState(dir, persistedState{Status: StateConnected, EncryptedAPIKey: encrypted, ProviderBaseURL: origin, Acked: true, CatalogOK: true}); err != nil {
 				t.Fatal(err)
 			}
-			var requested, prices, opened string
+			var requested, opened string
 			svc, err := New(Options{DataDir: dir, OpenURL: func(url string) error { opened = url; return nil }, HTTPClient: &http.Client{Transport: brandTransport(func(r *http.Request) (*http.Response, error) {
-				// The public price catalog must never receive the API key.
 				if r.URL.Path == "/api/enterprise/catalog" {
-					prices = r.URL.String()
-					if r.Header.Get("Authorization") != "" {
-						t.Error("price catalog received the credential")
-					}
+					t.Errorf("unexpected legacy price catalog request: %s", r.URL.String())
 					return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
 				}
 				requested = r.URL.String()
@@ -52,8 +48,8 @@ func TestBrandUpgradePreservesEncryptedIssuerAndRedactsUI(t *testing.T) {
 			if _, err := svc.fetchModels(credential.APIKey); err != nil {
 				t.Fatal(err)
 			}
-			if requested != origin+"/v1/models" || prices != origin+"/api/enterprise/catalog" {
-				t.Fatalf("issuer changed: %s %s", requested, prices)
+			if requested != origin+"/v1/models" {
+				t.Fatalf("issuer changed: %s", requested)
 			}
 			config := svc.RedactConfig(map[string]any{"channels": []any{map[string]any{"id": ChannelID, "apiKey": "upgrade-secret", "baseUrl": ProductionOrigin}}})
 			body, _ := json.Marshal(config)

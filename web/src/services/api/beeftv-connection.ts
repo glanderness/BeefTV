@@ -35,7 +35,6 @@ export type BeefTVConnectionSummary = {
     balance?: "unknown" | "zero" | "available" | string;
     balanceCny?: string;
     catalogFailed?: boolean;
-    catalogRevision?: number;
     catalogConfigRevision?: number;
     catalogSyncing?: boolean;
     errorReason?: string;

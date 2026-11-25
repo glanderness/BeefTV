@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/modelcatalog"
-	"infinite-canvas/backend/internal/pricing"
 )
 
 type deviceCodeRequest struct {
@@ -71,12 +70,9 @@ type connectionView struct {
 }
 
 type catalogFetchResult struct {
-	Models         []CatalogModel
-	NotModified    bool
-	ETag           string
-	PriceETag      string
-	InlinePricing  bool
-	PreservePrices bool
+	Models      []CatalogModel
+	NotModified bool
+	ETag        string
 }
 
 func (s *Service) postJSON(path string, payload any, header http.Header) (*http.Response, []byte, error) {
@@ -281,77 +277,14 @@ func (s *Service) boundRequestContext(ctx context.Context) (context.Context, con
 	return reqCtx, cancel
 }
 
-func (s *Service) fetchModelsConditional(ctx context.Context, apiKey, ifNoneMatch, priceIfNoneMatch string, prevInlinePricing bool) (catalogFetchResult, error) {
+func (s *Service) fetchModelsConditional(ctx context.Context, apiKey, ifNoneMatch string) (catalogFetchResult, error) {
 	reqCtx, cancel := s.boundRequestContext(ctx)
 	defer cancel()
-	var result catalogFetchResult
-	var err error
 	if s.fetchCatalog != nil {
-		var models []CatalogModel
-		models, err = s.fetchCatalog(apiKey, ProviderBaseURL(s.Origin()))
-		result.Models = models
-	} else {
-		result, err = s.fetchModelListConditional(reqCtx, apiKey, ifNoneMatch)
+		models, err := s.fetchCatalog(apiKey, ProviderBaseURL(s.Origin()))
+		return catalogFetchResult{Models: models}, err
 	}
-	if err != nil {
-		return result, err
-	}
-	if result.NotModified {
-		// When the cached catalog used explicit inline pricing, the /v1/models ETag
-		// already covers prices so 304 guarantees both models and prices are fresh.
-		if prevInlinePricing {
-			result.InlinePricing = true
-			return result, nil
-		}
-		// Legacy / split-endpoint servers publish prices separately on /api/enterprise/catalog.
-		// Verify that price catalog too so price-only updates are not masked by /v1/models 304.
-		priceRes := s.fetchPriceCatalogConditional(reqCtx, priceIfNoneMatch)
-		result.PriceETag = priceRes.ETag
-		if priceRes.Status == priceCatalogNotModified || priceRes.Status == priceCatalogTransientError {
-			return result, nil
-		}
-		// Price catalog changed (200) or disappeared (404): re-fetch models without
-		// If-None-Match so we can apply the updated prices cleanly.
-		full, fullErr := s.fetchModelListConditional(reqCtx, apiKey, "")
-		if fullErr != nil {
-			return catalogFetchResult{}, fullErr
-		}
-		if full.InlinePricing {
-			return full, nil
-		}
-		full.PriceETag = priceRes.ETag
-		if priceRes.Status == priceCatalogOK {
-			mergeFallbackPricing(full.Models, priceRes.Rows)
-		}
-		return full, nil
-	}
-	if result.InlinePricing {
-		return result, nil
-	}
-	priceRes := s.fetchPriceCatalogConditional(reqCtx, priceIfNoneMatch)
-	result.PriceETag = priceRes.ETag
-	switch priceRes.Status {
-	case priceCatalogOK:
-		mergeFallbackPricing(result.Models, priceRes.Rows)
-	case priceCatalogNotModified, priceCatalogTransientError:
-		result.PreservePrices = true
-	case priceCatalogAbsent:
-		// Server explicitly does not publish a price catalog (404): clear stale prices.
-	}
-	return result, nil
-}
-
-func mergeFallbackPricing(models []CatalogModel, rows map[string]json.RawMessage) {
-	for i := range models {
-		if len(models[i].Pricing) > 0 && string(models[i].Pricing) != "null" {
-			continue
-		}
-		models[i].Pricing = rows[models[i].ID]
-	}
-}
-
-func (s *Service) fetchModelListConditional(ctx context.Context, apiKey, ifNoneMatch string) (catalogFetchResult, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, TokenBaseURL(s.Origin())+"/models", nil)
+	request, err := http.NewRequestWithContext(reqCtx, http.MethodGet, TokenBaseURL(s.Origin())+"/models", nil)
 	if err != nil {
 		return catalogFetchResult{}, err
 	}
@@ -388,7 +321,6 @@ func (s *Service) fetchModelListConditional(ctx context.Context, apiKey, ifNoneM
 		return catalogFetchResult{}, fmt.Errorf("模型列表无效")
 	}
 	parsed = modelcatalog.OverlayCatalogVideoCapabilities(parsed)
-	inlinePricing := strings.EqualFold(strings.TrimSpace(response.Header.Get(CatalogPricingHeader)), "inline")
 	models := make([]CatalogModel, 0, len(parsed))
 	for _, item := range parsed {
 		var pricingRaw json.RawMessage
@@ -427,62 +359,9 @@ func (s *Service) fetchModelListConditional(ctx context.Context, apiKey, ifNoneM
 		})
 	}
 	return catalogFetchResult{
-		Models:        models,
-		ETag:          etag,
-		InlinePricing: inlinePricing,
+		Models: models,
+		ETag:   etag,
 	}, nil
-}
-
-type priceCatalogStatus int
-
-const (
-	priceCatalogOK priceCatalogStatus = iota
-	priceCatalogNotModified
-	priceCatalogAbsent
-	priceCatalogTransientError
-)
-
-type priceCatalogResult struct {
-	Status priceCatalogStatus
-	Rows   map[string]json.RawMessage
-	ETag   string
-}
-
-// fetchPriceCatalogConditional reads the same site's public price catalog.
-// Transient transport/5xx errors preserve previously saved prices, 304 keeps them
-// verified fresh, and 404 clears stale prices because no price catalog is published.
-func (s *Service) fetchPriceCatalogConditional(ctx context.Context, ifNoneMatch string) priceCatalogResult {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, ProviderBaseURL(s.Origin())+"/api/enterprise/catalog", nil)
-	if err != nil {
-		return priceCatalogResult{Status: priceCatalogTransientError}
-	}
-	request.Header.Set("Accept", "application/json")
-	if trimmed := strings.TrimSpace(ifNoneMatch); trimmed != "" {
-		request.Header.Set("If-None-Match", trimmed)
-	}
-	response, err := s.httpClient.Do(request)
-	if err != nil {
-		return priceCatalogResult{Status: priceCatalogTransientError}
-	}
-	defer response.Body.Close()
-	etag := strings.TrimSpace(response.Header.Get("ETag"))
-	if response.StatusCode == http.StatusNotModified {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<16))
-		return priceCatalogResult{Status: priceCatalogNotModified, ETag: firstNonEmpty(etag, ifNoneMatch)}
-	}
-	if response.StatusCode == http.StatusNotFound {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<16))
-		return priceCatalogResult{Status: priceCatalogAbsent}
-	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if err != nil || response.StatusCode != http.StatusOK {
-		return priceCatalogResult{Status: priceCatalogTransientError}
-	}
-	rows, ok := pricing.ParseCatalog(raw)
-	if !ok {
-		return priceCatalogResult{Status: priceCatalogTransientError}
-	}
-	return priceCatalogResult{Status: priceCatalogOK, Rows: rows, ETag: etag}
 }
 
 func parseOAuthError(raw []byte) string {

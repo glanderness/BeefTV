@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// Table keeps the field names of one row in BeefTV official compute's public price catalog
-// (/api/enterprise/catalog), so a stored model profile reads like its source.
+// Table keeps the field names of one inline pricing row returned by BeefTV
+// official compute's /v1/models endpoint, so a stored model profile reads like its source.
 type Table struct {
 	Mode                string             `json:"mode"`
 	Kind                string             `json:"display_kind,omitempty"`
@@ -61,31 +61,6 @@ type Invoice struct {
 type ReferenceInvoice struct {
 	USDCNY     float64 `json:"usd_cny"`
 	ReserveUSD float64 `json:"reserve_usd"`
-}
-
-// ParseCatalog reads the /api/enterprise/catalog response into raw rows keyed
-// by model name. Every amount in it is CNY.
-func ParseCatalog(body []byte) (map[string]json.RawMessage, bool) {
-	var payload struct {
-		Success bool `json:"success"`
-		Data    struct {
-			Currency string            `json:"currency"`
-			Models   []json.RawMessage `json:"models"`
-		} `json:"data"`
-	}
-	if json.Unmarshal(body, &payload) != nil || !payload.Success || payload.Data.Currency != "CNY" {
-		return nil, false
-	}
-	rows := make(map[string]json.RawMessage, len(payload.Data.Models))
-	for _, raw := range payload.Data.Models {
-		var row struct {
-			ModelName string `json:"model_name"`
-		}
-		if json.Unmarshal(raw, &row) == nil && strings.TrimSpace(row.ModelName) != "" {
-			rows[strings.TrimSpace(row.ModelName)] = raw
-		}
-	}
-	return rows, true
 }
 
 // Normalize validates one catalog row. Rows with a malformed or missing price

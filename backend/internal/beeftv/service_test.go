@@ -31,7 +31,6 @@ type fakeEnterprise struct {
 	completeMode string
 	catalogFail  bool
 	models       []map[string]any
-	prices       string
 	opened       []string
 }
 
@@ -124,16 +123,6 @@ func newEnterpriseServer(t *testing.T, fake *fakeEnterprise) *httptest.Server {
 			}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": models})
-	})
-	mux.HandleFunc("/api/enterprise/catalog", func(w http.ResponseWriter, r *http.Request) {
-		fake.mu.Lock()
-		prices := fake.prices
-		fake.mu.Unlock()
-		if prices == "" {
-			http.NotFound(w, r)
-			return
-		}
-		io.WriteString(w, prices)
 	})
 	mux.HandleFunc("/desktop-auth", func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "ok")
@@ -659,8 +648,8 @@ func TestAcceptTokenReplacesCatalogAndRevokesPriorKeyOnAccountSwitch(t *testing.
 	}
 	channel := findChannel(effective.Config["channels"].([]any), ChannelID)
 	ids := map[string]bool{}
-	for _, item := range mergeModelIDs(channel["models"], nil) {
-		ids[item.(string)] = true
+	for _, item := range channelModelIDs(channel["models"]) {
+		ids[item] = true
 	}
 	if ids["gpt-test"] || ids["gpt-image-2"] || !ids["model-b"] || !ids["model-c"] {
 		t.Fatalf("account switch kept stale models: %#v", channel["models"])

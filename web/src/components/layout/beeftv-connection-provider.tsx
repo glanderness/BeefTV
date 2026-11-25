@@ -26,21 +26,23 @@ export function useOptionalBeefTVConnection() {
     return useContext(BeefTVConnectionContext);
 }
 
+function validCatalogRevision(value: unknown) {
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
 export function shouldSyncManagedBeefTVRevision(
     previousState: string | undefined,
-    summary: Pick<BeefTVConnectionSummary, "state" | "catalogRevision" | "catalogConfigRevision">,
+    summary: Pick<BeefTVConnectionSummary, "state" | "catalogConfigRevision">,
     appliedCatalogRevision: number | null,
     initialHydratedRevision: number,
 ) {
-    const nextCatalogRevision = typeof summary.catalogRevision === "number" && Number.isSafeInteger(summary.catalogRevision) && summary.catalogRevision >= 0 ? summary.catalogRevision : 0;
-    const nextCatalogConfigRevision = typeof summary.catalogConfigRevision === "number" && Number.isSafeInteger(summary.catalogConfigRevision) && summary.catalogConfigRevision > 0 ? summary.catalogConfigRevision : 0;
+    const nextRevision = validCatalogRevision(summary.catalogConfigRevision);
     if (summary.state === "connected") {
         if (appliedCatalogRevision === null) {
             if (previousState && previousState !== "connected") return true;
-            if (nextCatalogConfigRevision > initialHydratedRevision) return true;
-            return false;
+            return nextRevision > initialHydratedRevision;
         }
-        if (nextCatalogRevision > appliedCatalogRevision) {
+        if (nextRevision > appliedCatalogRevision) {
             return true;
         }
     }
@@ -62,9 +64,8 @@ function useConnectionState() {
     const [syncing, setSyncing] = useState(false);
     const [catalogSyncFailed, setCatalogSyncFailed] = useState(false);
     const [balanceRefreshFailed, setBalanceRefreshFailed] = useState(false);
-    const [catalogRevision, setCatalogRevision] = useState<number>(0);
+    const [catalogConfigRevision, setCatalogConfigRevision] = useState<number>(0);
     const currentConnection = useRef<BeefTVConnectionSummary | null>(null);
-    const appliedState = useRef<string | undefined>(undefined);
     const initialHydratedRevision = useRef<number>(getModelConfigPersistenceState().revision);
     const appliedCatalogRevision = useRef<number | null>(null);
     const desiredCatalogRevision = useRef<number>(0);
@@ -75,12 +76,12 @@ function useConnectionState() {
     const mutationSeq = useRef(0);
     const scheduleNextPoll = useRef<((summary?: BeefTVConnectionSummary | null) => void) | null>(null);
 
-    const recordCatalogRevision = (revision: number) => {
+    const recordCatalogConfigRevision = (revision: number) => {
         if (!Number.isSafeInteger(revision) || revision < 0) return;
         const next = appliedCatalogRevision.current === null ? revision : Math.max(appliedCatalogRevision.current, revision);
         appliedCatalogRevision.current = next;
         desiredCatalogRevision.current = Math.max(desiredCatalogRevision.current, next);
-        setCatalogRevision(next);
+        setCatalogConfigRevision(next);
     };
 
     const runCatalogReload = async (intent: { state: string; targetRevision: number; selection: string; adopt: boolean; pending: boolean }) => {
@@ -98,7 +99,7 @@ function useConnectionState() {
                 useConfigStore.getState().replaceConfig(nextConfig);
             });
             acceptExternalModelConfig(nextConfig, result.revision);
-            recordCatalogRevision(intent.targetRevision);
+            recordCatalogConfigRevision(intent.targetRevision);
             catalogSync.current = null;
             setCatalogSyncFailed(false);
         } catch {
@@ -128,36 +129,34 @@ function useConnectionState() {
         currentConnection.current = summary;
         setConnection(summary);
         scheduleNextPoll.current?.(summary);
-        const nextCatalogRevision = typeof summary.catalogRevision === "number" && Number.isSafeInteger(summary.catalogRevision) && summary.catalogRevision >= 0 ? summary.catalogRevision : 0;
-        if (nextCatalogRevision > desiredCatalogRevision.current) {
-            desiredCatalogRevision.current = nextCatalogRevision;
+        const nextRevision = validCatalogRevision(summary.catalogConfigRevision);
+        if (nextRevision > desiredCatalogRevision.current) {
+            desiredCatalogRevision.current = nextRevision;
         }
         const retry = catalogSync.current?.state === summary.state ? catalogSync.current : null;
         if (retry?.pending) return;
         const needsSync = shouldSyncManagedBeefTVRevision(previousState, summary, appliedCatalogRevision.current, initialHydratedRevision.current);
-        if (!needsSync && appliedState.current === summary.state && !(retry && options?.allowRetry)) {
+        if (!needsSync && !(retry && options?.allowRetry)) {
             if (summary.state === "connected") {
-                recordCatalogRevision(nextCatalogRevision);
+                const baseline = appliedCatalogRevision.current === null
+                    ? Math.max(nextRevision, initialHydratedRevision.current)
+                    : nextRevision;
+                recordCatalogConfigRevision(baseline);
             }
-            return;
-        }
-        appliedState.current = summary.state;
-        if (!retry && !needsSync) {
-            if (summary.state === "connected") {
-                recordCatalogRevision(nextCatalogRevision);
+            if (!retry) {
+                catalogSync.current = null;
+                setCatalogSyncFailed(false);
             }
-            catalogSync.current = null;
-            setCatalogSyncFailed(false);
             return;
         }
         const intent = retry || {
             state: summary.state,
-            targetRevision: nextCatalogRevision,
+            targetRevision: nextRevision,
             selection: useConfigStore.getState().config.assistantModel,
             adopt: summary.state === "connected" && Boolean(previousState && previousState !== "connected"),
             pending: false,
         };
-        intent.targetRevision = Math.max(intent.targetRevision, nextCatalogRevision);
+        intent.targetRevision = Math.max(intent.targetRevision, nextRevision);
         await runCatalogReload(intent);
     };
 
@@ -311,7 +310,7 @@ function useConnectionState() {
         busy,
         loading,
         syncing,
-        catalogRevision,
+        catalogConfigRevision,
         balanceRefreshFailed,
         catalogSyncFailed: catalogSyncFailed || Boolean(connection?.catalogFailed || connection?.state === "catalog_failed"),
         connect,
@@ -319,7 +318,7 @@ function useConnectionState() {
         disconnect: () => runAction(disconnectBeefTVConnection),
         refresh: () => runAction(getBeefTVConnection, { allowRetry: true }),
         refreshBalance,
-        noteCatalogRevision: recordCatalogRevision,
+        noteCatalogConfigRevision: recordCatalogConfigRevision,
         getMutationSeq,
         applySummary,
         applyBalanceCnyIfCurrent,

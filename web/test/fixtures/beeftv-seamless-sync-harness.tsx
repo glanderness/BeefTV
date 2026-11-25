@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 
 import { GenerationCostBadge } from "@/components/generation/generation-cost-badge";
 import { BeefTVConnectionProvider, useBeefTVConnection } from "@/components/layout/beeftv-connection-provider";
+import { ChannelSettingsPane } from "@/pages/settings/channel-settings-pane";
 import { localWorkspaceConfig } from "@/lib/user-session";
 import { commitModelConfig, hydrateModelConfig, withoutModelConfigAutosave } from "@/services/model-config-repository";
 import { normalizeConfigSnapshot, resolveModelChannel, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
@@ -40,7 +41,7 @@ function HydratorGate({ children }: { children: ReactNode }) {
 
 function SyncHarnessBody() {
     const config = useConfigStore((state) => state.config);
-    const { connection, catalogRevision } = useBeefTVConnection();
+    const { connection, catalogConfigRevision } = useBeefTVConnection();
     const [prompt, setPrompt] = useState("我的镜头描述");
 
     const imageModels = selectableModelsByCapability(config, "image");
@@ -52,12 +53,15 @@ function SyncHarnessBody() {
             : null
     ), [selectedModel]);
 
+    const showChannels = typeof window !== "undefined" && window.location.search.includes("pane=channels");
+
     return (
         <main className="p-4 space-y-3">
             <div data-testid="hydrated-flag">yes</div>
             <div data-testid="connection-state">{connection?.state || "none"}</div>
-            <div data-testid="catalog-revision">{catalogRevision}</div>
+            <div data-testid="catalog-revision">{catalogConfigRevision}</div>
             <div data-testid="image-models">{imageModels.join(",")}</div>
+            {showChannels ? <ChannelSettingsPane /> : null}
             <button
                 type="button"
                 data-testid="user-edit-btn"
@@ -76,7 +80,7 @@ function SyncHarnessBody() {
             />
             <GenerationCostBadge
                 target={costTarget}
-                refreshKey={`${priceChannel.modelProfiles?.length || 0}:${catalogRevision}`}
+                refreshKey={`${priceChannel.modelProfiles?.length || 0}:${catalogConfigRevision}`}
             />
         </main>
     );

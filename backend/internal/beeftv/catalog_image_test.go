@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/workspace"
 )
 
@@ -115,7 +116,7 @@ func TestVerifiedConnectionRefreshesStaleImageLimitAndKeepsValidCatalogOnError(t
 }
 
 func TestCatalogContinuousDurationPreservesServerFacts(t *testing.T) {
-	duration, ok := normalizeCatalogDuration(map[string]any{"selection": "range", "min": float64(1), "max": float64(15), "step": float64(2), "default": float64(4), "continuous": true, "fractionalMin": 0.92})
+	duration, ok := modelcatalog.NormalizeCatalogDuration(map[string]any{"selection": "range", "min": float64(1), "max": float64(15), "step": float64(2), "default": float64(4), "continuous": true, "fractionalMin": 0.92})
 	if !ok || duration["continuous"] != true || duration["fractionalMin"] != 0.92 || duration["default"] != 4 {
 		t.Fatalf("server continuous duration lost: %#v %v", duration, ok)
 	}

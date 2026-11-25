@@ -6,7 +6,6 @@ let server: ReturnType<typeof Bun.serve>;
 
 let serverState = {
     configRevision: 5,
-    catalogVersion: 1,
     catalogConfigRevision: 5,
     catalogSyncing: true,
     models: ["hy-image-v3"],
@@ -60,6 +59,8 @@ beforeAll(async () => {
         plugins: [{
             name: "source",
             setup(builder) {
+                builder.onResolve({ filter: /^@\/components\/model-logo$/ }, () => ({ path: "model-logo", namespace: "test-icons" }));
+                builder.onLoad({ filter: /.*/, namespace: "test-icons" }, () => ({ contents: "export function ModelLogo() { return null; }", loader: "js" }));
                 builder.onResolve({ filter: /^@\// }, (args) => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
             },
         }],
@@ -96,9 +97,22 @@ beforeAll(async () => {
                         state: "connected",
                         hasCredential: true,
                         account: { id: "42", username: "ender", display_name: "Ender" },
-                        catalogRevision: serverState.catalogVersion,
                         catalogConfigRevision: serverState.catalogConfigRevision,
                         catalogSyncing: serverState.catalogSyncing,
+                    },
+                });
+            }
+            if (path === "/api/beeftv/connection/models" && req.method === "POST") {
+                serverState.configRevision += 1;
+                serverState.catalogConfigRevision = serverState.configRevision;
+                return Response.json({
+                    code: 0,
+                    data: {
+                        models: serverState.models.map((id) => ({
+                            id,
+                            modelType: "image",
+                            supportedEndpointTypes: ["image-generation"],
+                        })),
                     },
                 });
             }
@@ -110,7 +124,6 @@ beforeAll(async () => {
                         state: "connected",
                         hasCredential: true,
                         account: { id: "42", username: "ender", display_name: "Ender" },
-                        catalogRevision: serverState.catalogVersion,
                         catalogConfigRevision: serverState.catalogConfigRevision,
                         catalogSyncing: serverState.catalogSyncing,
                     },
@@ -145,7 +158,6 @@ afterAll(async () => {
 test("启动后台同步、用户写配置不掩盖目录更新、切回前台调价热更新无感生效且不丢焦点", async () => {
     serverState = {
         configRevision: 5,
-        catalogVersion: 1,
         catalogConfigRevision: 5,
         catalogSyncing: true,
         models: ["hy-image-v3"],
@@ -172,9 +184,9 @@ test("启动后台同步、用户写配置不掩盖目录更新、切回前台�
         await textarea.fill("我的镜头描述，持续输入中");
         await textarea.focus();
 
-        // 1. Startup background sync writes catalogVersion 1 -> 2 (file rev 6), AND an unrelated
-        //    user config edit bumps file rev 6 -> 7 before the next poll arrives.
-        //    The dedicated catalogRevision must NOT be masked by the user's higher file revision!
+        // 1. Startup background sync writes catalogConfigRevision 5 -> 6, AND an unrelated
+        //    user config edit bumps file rev to 7 before the next poll arrives.
+        //    catalogConfigRevision (6 > 5) must NOT be masked by the user's higher file revision (7)!
         await page.getByTestId("user-edit-btn").click();
         await page.waitForFunction(() => true);
         await new Promise((resolve) => setTimeout(resolve, 120));
@@ -183,8 +195,8 @@ test("启动后台同步、用户写配置不掩盖目录更新、切回前台�
         await textarea.focus();
 
         serverState.models = ["hy-image-v3", "gpt-image-2.5"];
-        serverState.catalogVersion = 2;
-        serverState.catalogConfigRevision = 6; // deliberately LOWER than user's configRevision (7+)!
+        serverState.configRevision = 7;
+        serverState.catalogConfigRevision = 6; // deliberately LOWER than user's configRevision (7)!
         serverState.catalogSyncing = false;
 
         await page.waitForFunction(
@@ -192,17 +204,16 @@ test("启动后台同步、用户写配置不掩盖目录更新、切回前台�
             undefined,
             { timeout: 4000 },
         );
-        expect(await page.getByTestId("catalog-revision").textContent()).toBe("2");
+        expect(await page.getByTestId("catalog-revision").textContent()).toBe("6");
         // Hot-reloading the catalog must NOT trigger any extra PUT writeback!
         expect(serverState.putWrites).toBe(putsAfterUserEdit);
         // Active input focus and edited text must remain completely untouched.
         expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.getAttribute("data-testid"))).toBe("prompt-input");
         expect(await textarea.inputValue()).toBe("我的镜头描述，持续输入中");
 
-        // 2. Server updates ONLY price (model count stays 2) and bumps catalogVersion 2 -> 3.
+        // 2. Server updates ONLY price (model count stays 2) and bumps catalogConfigRevision 6 -> 8.
         //    Trigger window focus -> frontend calls POST /beeftv/connection/sync -> price badge updates automatically!
         serverState.hyPrice = 0.45;
-        serverState.catalogVersion = 3;
         serverState.configRevision += 1;
         serverState.catalogConfigRevision = serverState.configRevision;
 
@@ -220,6 +231,55 @@ test("启动后台同步、用户写配置不掩盖目录更新、切回前台�
         expect(serverState.syncCalls).toBe(1);
         expect(serverState.putWrites).toBe(putsAfterUserEdit);
         expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.getAttribute("data-testid"))).toBe("prompt-input");
+        expect(errors).toEqual([]);
+    } finally {
+        await page.close();
+    }
+}, 30000);
+
+test("刷新全部渠道模型后不阻塞后续官方目录静默热更新（#643 回归）", async () => {
+    serverState = {
+        configRevision: 20,
+        catalogConfigRevision: 20,
+        catalogSyncing: false,
+        models: ["hy-image-v3"],
+        hyPrice: 0.2,
+        putWrites: 0,
+        syncCalls: 0,
+    };
+
+    const page = await browser.newPage();
+    const errors: string[] = [];
+    page.on("console", (msg) => {
+        if (msg.type() === "error") errors.push(msg.text());
+    });
+    page.on("pageerror", (err) => errors.push(err.message));
+
+    try {
+        await page.goto(`${server.url.href}?pane=channels`);
+        await page.waitForFunction(() => document.querySelector('[data-testid="hydrated-flag"]')?.textContent === "yes");
+        await page.waitForFunction(() => document.querySelector('[data-testid="connection-state"]')?.textContent === "connected");
+        expect(await page.getByTestId("image-models").textContent()).toBe("beeftv::hy-image-v3");
+
+        // 点击「拉取全部渠道模型」，触发 refreshAllModels（本地配置 revision=21）
+        await page.getByRole("button", { name: "拉取全部渠道模型" }).click();
+        await page.waitForFunction(() => document.body.textContent?.includes("已更新 1 个渠道的模型"), undefined, { timeout: 4000 });
+
+        // 随后官方目录发布新模型并通过切回前台同步返回新 catalogConfigRevision=22
+        serverState.models = ["hy-image-v3", "gpt-image-2.5"];
+        serverState.configRevision += 1;
+        serverState.catalogConfigRevision = serverState.configRevision;
+
+        await page.evaluate(() => {
+            window.dispatchEvent(new Event("focus"));
+        });
+
+        await page.waitForFunction(
+            () => (document.querySelector('[data-testid="image-models"]')?.textContent || "").includes("beeftv::gpt-image-2.5"),
+            undefined,
+            { timeout: 3000 },
+        );
+        expect(await page.getByTestId("catalog-revision").textContent()).toBe("22");
         expect(errors).toEqual([]);
     } finally {
         await page.close();

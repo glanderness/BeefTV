@@ -7,15 +7,37 @@ import (
 	"testing"
 )
 
-// testdata/enterprise-catalog.json holds the media rows BeefTV 官方算力 published at
-// /api/enterprise/catalog on 2026-11-03.
+// testdata/enterprise-catalog.json holds published media pricing rows used by estimator tests.
+func parseCatalogFixture(body []byte) (map[string]json.RawMessage, bool) {
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Currency string            `json:"currency"`
+			Models   []json.RawMessage `json:"models"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &payload) != nil || !payload.Success || payload.Data.Currency != "CNY" {
+		return nil, false
+	}
+	rows := make(map[string]json.RawMessage, len(payload.Data.Models))
+	for _, raw := range payload.Data.Models {
+		var row struct {
+			ModelName string `json:"model_name"`
+		}
+		if json.Unmarshal(raw, &row) == nil && strings.TrimSpace(row.ModelName) != "" {
+			rows[strings.TrimSpace(row.ModelName)] = raw
+		}
+	}
+	return rows, true
+}
+
 func catalogTable(t *testing.T, model string) *Table {
 	t.Helper()
 	body, err := os.ReadFile("testdata/enterprise-catalog.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, ok := ParseCatalog(body)
+	rows, ok := parseCatalogFixture(body)
 	if !ok {
 		t.Fatal("catalog fixture did not parse")
 	}

@@ -20,6 +20,12 @@ type CatalogSyncOptions struct {
 	Cooldown   time.Duration
 }
 
+type catalogSyncRequest struct {
+	CatalogSyncOptions
+	previousAccountID   string
+	persistFailureState bool
+}
+
 type catalogRefreshCall struct {
 	done       chan struct{}
 	bypassETag bool
@@ -34,14 +40,24 @@ func (s *Service) canSyncCatalogStateLocked() bool {
 	return s.state.Status == StateConnected || s.state.Status == StateCatalogFailed
 }
 
-func (s *Service) recordCatalogWriteLocked(configRev int64) {
-	if s.state.CatalogVersion > s.catalogVersion {
-		s.catalogVersion = s.state.CatalogVersion
+func (s *Service) catalogETagFreshLocked(etag string) bool {
+	return etag != "" &&
+		s.state.Status == StateConnected &&
+		s.state.CatalogOK &&
+		etag == s.state.CatalogETag &&
+		strings.TrimSpace(s.state.CatalogClientVersion) == strings.TrimSpace(s.clientVersion)
+}
+
+func (s *Service) markCatalogFreshLocked(now time.Time, confirmedETag string, forcePersist bool) {
+	s.lastCatalogCheckAt = now
+	s.catalogFailures = 0
+	if confirmedETag != "" && s.pendingCatalogETag == confirmedETag {
+		s.pendingCatalogETag = ""
 	}
-	s.catalogVersion++
-	s.state.CatalogVersion = s.catalogVersion
-	if configRev > 0 {
-		s.state.CatalogConfigRevision = configRev
+	syncedAt := parseTime(s.state.CatalogSyncedAt)
+	if forcePersist || syncedAt.IsZero() || now.Sub(syncedAt) >= catalogSyncPersistInterval {
+		s.state.CatalogSyncedAt = now.UTC().Format(time.RFC3339Nano)
+		_ = s.persistState(s.state)
 	}
 }
 
@@ -74,10 +90,39 @@ func (s *Service) noteCatalogFailureLocked() {
 	s.catalogFailures++
 }
 
-// RefreshCatalog fetches and persists prices through the saved connection. A
-// client config write must never supply the managed catalog's trusted prices.
+func (s *Service) persistCatalogFailureLocked(err error) error {
+	s.state.Status = StateCatalogFailed
+	s.state.CatalogOK = false
+	s.state.LastError = "模型列表读取失败，请重试"
+	s.noteCatalogFailureLocked()
+	if persistErr := s.persistState(s.state); persistErr != nil {
+		s.state.Status = StateStoreError
+		s.state.LastError = "保存连接失败，请重试"
+		return errStore
+	}
+	return err
+}
+
+func (s *Service) triggerAsyncCatalogSyncLocked(now time.Time) {
+	if s.catalogInFlight != nil || !s.canSyncCatalogStateLocked() {
+		return
+	}
+	if backoff := s.catalogFailureBackoffLocked(); backoff > 0 && !s.lastCatalogAttemptAt.IsZero() && now.Sub(s.lastCatalogAttemptAt) < backoff {
+		return
+	}
+	s.workers.Add(1)
+	go func() {
+		defer s.workers.Done()
+		_, _ = s.SyncCatalogIfNeeded(s.lifecycle, CatalogSyncOptions{Force: true})
+	}()
+}
+
+// RefreshCatalog fetches and persists the official catalog through the saved
+// connection. A client config write must never supply trusted managed prices.
 func (s *Service) RefreshCatalog(ctx context.Context) ([]CatalogModel, error) {
-	return s.refreshCatalog(ctx, CatalogSyncOptions{Force: true, BypassETag: true})
+	return s.refreshCatalog(ctx, catalogSyncRequest{
+		CatalogSyncOptions: CatalogSyncOptions{Force: true, BypassETag: true},
+	})
 }
 
 // SyncCatalogIfNeeded checks whether the official catalog is due for a silent
@@ -92,13 +137,14 @@ func (s *Service) SyncCatalogIfNeeded(ctx context.Context, opts CatalogSyncOptio
 	}
 	s.mu.Lock()
 	canSync := s.canSyncCatalogStateLocked()
+	startupPending := s.startupVerifyPending
 	state := s.state
 	lastCheck := s.lastCatalogCheckAt
 	lastAttempt := s.lastCatalogAttemptAt
 	pendingETag := s.pendingCatalogETag
 	backoff := s.catalogFailureBackoffLocked()
 	s.mu.Unlock()
-	if !canSync {
+	if !canSync || (!opts.Force && startupPending) {
 		return s.Status(), nil
 	}
 	now := s.now()
@@ -120,7 +166,7 @@ func (s *Service) SyncCatalogIfNeeded(ctx context.Context, opts CatalogSyncOptio
 	if versionChanged || recoveringCatalog {
 		opts.BypassETag = true
 	}
-	_, err := s.refreshCatalog(ctx, opts)
+	_, err := s.refreshCatalog(ctx, catalogSyncRequest{CatalogSyncOptions: opts})
 	return s.Status(), err
 }
 
@@ -133,40 +179,17 @@ func (s *Service) NoteRemoteCatalogETag(raw string) {
 		return
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !s.canSyncCatalogStateLocked() {
-		s.mu.Unlock()
 		return
 	}
 	now := s.now()
-	if s.state.Status == StateConnected && etag == s.state.CatalogETag &&
-		s.state.CatalogInlinePricing &&
-		strings.TrimSpace(s.state.CatalogClientVersion) == strings.TrimSpace(s.clientVersion) {
-		s.lastCatalogCheckAt = now
-		s.catalogFailures = 0
-		s.pendingCatalogETag = ""
-		syncedAt := parseTime(s.state.CatalogSyncedAt)
-		if syncedAt.IsZero() || now.Sub(syncedAt) >= catalogSyncPersistInterval {
-			s.state.CatalogSyncedAt = now.UTC().Format(time.RFC3339Nano)
-			_ = s.persistState(s.state)
-		}
-		s.mu.Unlock()
+	if s.catalogETagFreshLocked(etag) {
+		s.markCatalogFreshLocked(now, etag, false)
 		return
 	}
 	s.pendingCatalogETag = etag
-	if s.catalogInFlight != nil {
-		s.mu.Unlock()
-		return
-	}
-	if backoff := s.catalogFailureBackoffLocked(); backoff > 0 && !s.lastCatalogAttemptAt.IsZero() && now.Sub(s.lastCatalogAttemptAt) < backoff {
-		s.mu.Unlock()
-		return
-	}
-	s.workers.Add(1)
-	s.mu.Unlock()
-	go func() {
-		defer s.workers.Done()
-		_, _ = s.SyncCatalogIfNeeded(s.lifecycle, CatalogSyncOptions{Force: true})
-	}()
+	s.triggerAsyncCatalogSyncLocked(now)
 }
 
 func (s *Service) startCatalogSyncLoop() {
@@ -195,7 +218,7 @@ func (s *Service) startCatalogSyncLoop() {
 	}()
 }
 
-func (s *Service) refreshCatalog(ctx context.Context, opts CatalogSyncOptions) ([]CatalogModel, error) {
+func (s *Service) refreshCatalog(ctx context.Context, req catalogSyncRequest) ([]CatalogModel, error) {
 	if ctx == nil {
 		ctx = s.lifecycle
 	}
@@ -217,24 +240,19 @@ func (s *Service) refreshCatalog(ctx context.Context, opts CatalogSyncOptions) (
 			case <-s.lifecycle.Done():
 				return nil, s.lifecycle.Err()
 			}
-			// If the caller required a full uncached fetch and the coalesced call
-			// used conditional ETag validation, loop once to run a forced fetch.
-			if opts.BypassETag && !existing.bypassETag && existing.err == nil {
+			if req.BypassETag && !existing.bypassETag && existing.err == nil {
 				continue
 			}
 			return existing.models, existing.err
 		}
-		call := &catalogRefreshCall{
-			done:       make(chan struct{}),
-			bypassETag: opts.BypassETag,
-		}
+		call := &catalogRefreshCall{done: make(chan struct{}), bypassETag: req.BypassETag}
 		observedPending := s.pendingCatalogETag
 		s.pendingCatalogETag = ""
 		s.catalogInFlight = call
 		s.workers.Add(1)
 		s.mu.Unlock()
 
-		models, err := s.executeCatalogRefresh(ctx, opts)
+		models, err := s.executeCatalogRefresh(ctx, req)
 
 		s.mu.Lock()
 		call.models = models
@@ -242,26 +260,17 @@ func (s *Service) refreshCatalog(ctx context.Context, opts CatalogSyncOptions) (
 		if s.catalogInFlight == call {
 			s.catalogInFlight = nil
 		}
-		needFollowUp := err == nil && s.canSyncCatalogStateLocked() &&
-			s.pendingCatalogETag != "" && s.pendingCatalogETag != observedPending && s.pendingCatalogETag != s.state.CatalogETag
-		if needFollowUp {
-			s.workers.Add(1)
+		if err == nil && s.pendingCatalogETag != "" && s.pendingCatalogETag != observedPending && s.pendingCatalogETag != s.state.CatalogETag {
+			s.triggerAsyncCatalogSyncLocked(s.now())
 		}
 		close(call.done)
 		s.mu.Unlock()
 		s.workers.Done()
-
-		if needFollowUp {
-			go func() {
-				defer s.workers.Done()
-				_, _ = s.SyncCatalogIfNeeded(s.lifecycle, CatalogSyncOptions{Force: true})
-			}()
-		}
 		return models, err
 	}
 }
 
-func (s *Service) executeCatalogRefresh(ctx context.Context, opts CatalogSyncOptions) ([]CatalogModel, error) {
+func (s *Service) executeCatalogRefresh(ctx context.Context, req catalogSyncRequest) ([]CatalogModel, error) {
 	s.mu.Lock()
 	state := s.state
 	closed := s.closed
@@ -269,7 +278,7 @@ func (s *Service) executeCatalogRefresh(ctx context.Context, opts CatalogSyncOpt
 	if closed || !state.hasCredential() || !state.Acked {
 		return nil, errNotConnected
 	}
-	if s.provider == nil {
+	if !req.persistFailureState && s.provider == nil {
 		return nil, errStore
 	}
 	if state.Status == StateRevoked || state.Status == StateExpired || state.Status == StateRejected {
@@ -280,17 +289,19 @@ func (s *Service) executeCatalogRefresh(ctx context.Context, opts CatalogSyncOpt
 	}
 	apiKey, err := decryptSecret(s.dataDir, state.EncryptedAPIKey)
 	if err != nil {
+		if req.persistFailureState {
+			s.setError(StateStoreError, "保存连接失败，请重试")
+		}
 		return nil, errStore
 	}
 	ifNoneMatch := ""
-	priceIfNoneMatch := ""
-	prevInlinePricing := false
-	if !opts.BypassETag && state.CatalogOK && strings.TrimSpace(state.CatalogClientVersion) == strings.TrimSpace(s.clientVersion) {
+	if !req.BypassETag && state.CatalogOK && strings.TrimSpace(state.CatalogClientVersion) == strings.TrimSpace(s.clientVersion) {
 		ifNoneMatch = strings.TrimSpace(state.CatalogETag)
-		priceIfNoneMatch = strings.TrimSpace(state.PriceCatalogETag)
-		prevInlinePricing = state.CatalogInlinePricing
 	}
-	res, err := s.fetchModelsConditional(ctx, apiKey, ifNoneMatch, priceIfNoneMatch, prevInlinePricing)
+	res, err := s.fetchModelsConditional(ctx, apiKey, ifNoneMatch)
+	if s.lifecycle.Err() != nil {
+		return nil, s.lifecycle.Err()
+	}
 	if err != nil {
 		if errors.Is(err, errRevoked) {
 			s.MarkRevoked()
@@ -300,10 +311,13 @@ func (s *Service) executeCatalogRefresh(ctx context.Context, opts CatalogSyncOpt
 			return nil, ctx.Err()
 		}
 		s.mu.Lock()
+		defer s.mu.Unlock()
+		if req.persistFailureState {
+			return nil, s.persistCatalogFailureLocked(err)
+		}
 		if s.sameCredentialLocked(state) {
 			s.noteCatalogFailureLocked()
 		}
-		s.mu.Unlock()
 		return nil, errors.New("读取模型列表失败，请重试")
 	}
 	if err := ctx.Err(); err != nil {
@@ -317,30 +331,24 @@ func (s *Service) executeCatalogRefresh(ctx context.Context, opts CatalogSyncOpt
 		}
 		now := s.now()
 		s.lastCatalogAttemptAt = now
-		s.lastCatalogCheckAt = now
-		s.catalogFailures = 0
-		s.state.CatalogSyncedAt = now.UTC().Format(time.RFC3339Nano)
 		s.state.CatalogClientVersion = s.clientVersion
 		if res.ETag != "" {
 			s.state.CatalogETag = res.ETag
 		}
-		if res.PriceETag != "" && !s.state.CatalogInlinePricing {
-			s.state.PriceCatalogETag = res.PriceETag
-		}
-		if s.pendingCatalogETag == s.state.CatalogETag {
-			s.pendingCatalogETag = ""
-		}
-		_ = s.persistState(s.state)
+		s.markCatalogFreshLocked(now, s.state.CatalogETag, true)
 		return nil, nil
 	}
 	for _, model := range res.Models {
 		if len(model.ImageCapabilities) > 0 && string(model.ImageCapabilities) != "null" {
 			if _, valid := NormalizeCatalogImageCapability(model.ImageCapabilities); !valid || model.ImageCapabilitiesVersion == "" {
 				s.mu.Lock()
+				defer s.mu.Unlock()
+				if req.persistFailureState {
+					return nil, s.persistCatalogFailureLocked(errors.New("读取模型能力失败，请重试"))
+				}
 				if s.sameCredentialLocked(state) {
 					s.noteCatalogFailureLocked()
 				}
-				s.mu.Unlock()
 				return nil, errors.New("读取模型能力失败，请重试")
 			}
 		}
@@ -350,20 +358,29 @@ func (s *Service) executeCatalogRefresh(ctx context.Context, opts CatalogSyncOpt
 	if !s.sameCredentialLocked(state) {
 		return nil, errors.New("企业连接已改变，请重新读取模型")
 	}
-	accountID := ""
-	if state.Account != nil {
-		accountID = state.Account.ID.String()
+	nextAccount := ""
+	if s.state.Account != nil {
+		nextAccount = s.state.Account.ID.String()
+	}
+	prevAccount := strings.TrimSpace(req.previousAccountID)
+	if prevAccount == "" {
+		prevAccount = nextAccount
 	}
 	authorizationID := ""
 	if s.state.AssistantDefaultPending {
 		authorizationID = s.state.TokenID
 	}
-	rev, err := applyCatalogWithOptions(s.provider, res.Models, accountID, accountID, authorizationID, res.PreservePrices)
+	rev, changed, err := applyCatalogSnapshot(s.provider, res.Models, prevAccount, nextAccount, authorizationID)
 	if err != nil {
+		if req.persistFailureState {
+			return nil, s.persistCatalogFailureLocked(err)
+		}
 		s.noteCatalogFailureLocked()
 		return nil, errStore
 	}
-	s.recordCatalogWriteLocked(rev)
+	if rev > 0 && (changed || s.state.CatalogConfigRevision == 0) {
+		s.state.CatalogConfigRevision = rev
+	}
 	now := s.now()
 	s.lastCatalogAttemptAt = now
 	s.lastCatalogCheckAt = now
@@ -371,29 +388,23 @@ func (s *Service) executeCatalogRefresh(ctx context.Context, opts CatalogSyncOpt
 	s.state.CatalogOK = true
 	s.state.Status = StateConnected
 	s.state.LastError = ""
+	s.state.Device = nil
 	s.state.AssistantDefaultPending = false
 	if s.state.ConnectedAt == "" {
 		s.state.ConnectedAt = now.UTC().Format(time.RFC3339Nano)
 	}
 	s.state.CatalogSyncedAt = now.UTC().Format(time.RFC3339Nano)
 	s.state.CatalogClientVersion = s.clientVersion
-	s.state.CatalogInlinePricing = res.InlinePricing
-	if res.ETag != "" {
-		s.state.CatalogETag = res.ETag
-	} else {
-		s.state.CatalogETag = ""
-	}
-	if res.InlinePricing {
-		s.state.PriceCatalogETag = ""
-	} else if res.PriceETag != "" {
-		s.state.PriceCatalogETag = res.PriceETag
-	} else if !res.PreservePrices {
-		s.state.PriceCatalogETag = ""
-	}
+	s.state.CatalogETag = res.ETag
 	if s.pendingCatalogETag != "" && s.pendingCatalogETag == s.state.CatalogETag {
 		s.pendingCatalogETag = ""
 	}
-	_ = s.persistState(s.state)
+	if persistErr := s.persistState(s.state); persistErr != nil && req.persistFailureState {
+		s.state.CatalogOK = false
+		s.state.Status = StateStoreError
+		s.state.LastError = "保存连接失败，请重试"
+		return nil, errStore
+	}
 	return res.Models, nil
 }
 
@@ -425,10 +436,7 @@ func (s *Service) verifyRemote() {
 		return
 	}
 	view, status, err := s.remoteConnection(cred.APIKey)
-	if s.lifecycle.Err() != nil {
-		return
-	}
-	if err != nil {
+	if s.lifecycle.Err() != nil || err != nil {
 		return
 	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
@@ -437,26 +445,18 @@ func (s *Service) verifyRemote() {
 	}
 	if status >= 200 && status < 300 {
 		s.applyRemoteConnectionViewIfCurrent(seq, view)
-		// If remote connection already reports a matching ETag for the same
-		// client version and inline pricing, renew freshness without fetching /v1/models.
-		if remoteETag := strings.TrimSpace(view.CatalogETag); remoteETag != "" {
-			s.mu.Lock()
-			matches := remoteETag == s.state.CatalogETag &&
-				s.state.CatalogInlinePricing &&
-				strings.TrimSpace(s.state.CatalogClientVersion) == strings.TrimSpace(s.clientVersion) &&
-				s.state.CatalogOK
-			if matches {
-				now := s.now()
-				s.lastCatalogAttemptAt = now
-				s.lastCatalogCheckAt = now
-				s.catalogFailures = 0
-				s.state.CatalogSyncedAt = now.UTC().Format(time.RFC3339Nano)
-				_ = s.persistState(s.state)
-			}
-			s.mu.Unlock()
-			if matches {
-				return
-			}
+		remoteETag := strings.TrimSpace(view.CatalogETag)
+		s.mu.Lock()
+		matches := s.catalogETagFreshLocked(remoteETag)
+		if matches {
+			now := s.now()
+			s.lastCatalogAttemptAt = now
+			s.markCatalogFreshLocked(now, remoteETag, true)
+		}
+		hasNewerPending := matches && s.pendingCatalogETag != "" && s.pendingCatalogETag != s.state.CatalogETag
+		s.mu.Unlock()
+		if matches && !hasNewerPending {
+			return
 		}
 		_, _ = s.SyncCatalogIfNeeded(s.lifecycle, CatalogSyncOptions{Force: true})
 	}

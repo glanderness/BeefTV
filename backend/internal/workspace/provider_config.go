@@ -156,46 +156,6 @@ func (s *ProviderConfig) SaveLocalModelConfigRevision(body []byte, expectedRevis
 	return s.saveLocalModelConfig(body, existingDocument)
 }
 
-// SaveCatalogWithAssistantDefault records initialization with the config atomically.
-// Connection-state retries and frontend snapshots cannot reset a later user choice.
-// A fresh authorization only fills the gap when nothing was saved yet: reconnecting
-// or switching accounts never moves a user off the assistant model they picked, not
-// even when that model is missing from the new catalog (the app then asks them to
-// choose again instead of silently switching them to a different model).
-func (s *ProviderConfig) SaveCatalogWithAssistantDefault(body []byte, authorizationID, model string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	document, err := s.loadPrimaryDocument()
-	if err != nil {
-		return err
-	}
-	incoming, err := decodeIncomingConfig(body)
-	if err != nil {
-		return err
-	}
-	if authorizationID != "" && document.AssistantDefaultAuthorization != authorizationID {
-		if saved := savedAssistantSelection(document.Config); saved != "" {
-			incoming["assistantModel"] = saved
-		} else if model != "" {
-			incoming["assistantModel"] = model
-		}
-		document.AssistantDefaultAuthorization = authorizationID
-	} else if document.Config != nil {
-		// A catalog read may predate a concurrent explicit selection.
-		if selected, exists := document.Config["assistantModel"]; exists {
-			incoming["assistantModel"] = selected
-		} else {
-			delete(incoming, "assistantModel")
-		}
-	}
-	body, err = json.Marshal(incoming)
-	if err != nil {
-		return err
-	}
-	_, err = s.saveLocalModelConfig(body, document)
-	return err
-}
-
 func savedAssistantSelection(config map[string]any) string {
 	if config == nil {
 		return ""
@@ -239,24 +199,25 @@ func (s *ProviderConfig) backupPath() string { return s.path() + ".bak" }
 // lock, applies mutate to a fresh effective config snapshot, preserves user
 // assistant selection/authorization semantics, and saves atomically so
 // concurrent user PUTs to other settings or channels are never reverted.
-func (s *ProviderConfig) UpdateCatalog(authorizationID string, mutate func(config map[string]any) (string, error)) (int64, error) {
+// A fresh authorization only fills the gap when nothing was saved yet.
+func (s *ProviderConfig) UpdateCatalog(authorizationID string, mutate func(config map[string]any) (string, error)) (int64, bool, error) {
 	if s == nil || s.mu == nil || strings.TrimSpace(s.dataDir) == "" {
-		return 0, nil
+		return 0, false, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	document, err := s.loadPrimaryDocument()
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	effective, err := effectiveProviderState(document)
 	if err != nil {
-		return document.Revision, fmt.Errorf("合并内置模型配置失败: %w", err)
+		return document.Revision, false, fmt.Errorf("合并内置模型配置失败: %w", err)
 	}
 	config := effective.Config
 	defaultModel, err := mutate(config)
 	if err != nil {
-		return document.Revision, err
+		return document.Revision, false, err
 	}
 	if authorizationID != "" && document.AssistantDefaultAuthorization != authorizationID {
 		if saved := savedAssistantSelection(document.Config); saved != "" {
@@ -274,9 +235,10 @@ func (s *ProviderConfig) UpdateCatalog(authorizationID string, mutate func(confi
 	}
 	body, err := json.Marshal(config)
 	if err != nil {
-		return document.Revision, err
+		return document.Revision, false, err
 	}
-	return s.saveLocalModelConfig(body, document)
+	rev, err := s.saveLocalModelConfig(body, document)
+	return rev, err == nil && rev > document.Revision, err
 }
 
 func (s *ProviderConfig) LoadEffectiveModelConfig() (EffectiveModelConfig, ConfigHealth, error) {

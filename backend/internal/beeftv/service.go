@@ -53,7 +53,6 @@ type Service struct {
 	mu                   sync.Mutex
 	state                persistedState
 	balanceSeq           uint64
-	catalogVersion       int64
 	lastCatalogCheckAt   time.Time
 	lastCatalogAttemptAt time.Time
 	catalogFailures      int
@@ -114,8 +113,8 @@ func New(opts Options) (*Service, error) {
 		dataDir: dataDir, origin: origin, httpClient: httpClient, openURL: openURL,
 		now: now, sleep: sleep, provider: opts.Provider, clientVersion: clientVersion,
 		hostname: hostname, fetchCatalog: opts.FetchCatalog, persistFn: opts.Persist,
-		catalogSyncInterval: syncInterval, catalogVersion: state.CatalogVersion,
-		state: state, lifecycle: lifecycle, shutdown: shutdown,
+		catalogSyncInterval: syncInterval,
+		state:               state, lifecycle: lifecycle, shutdown: shutdown,
 	}
 	if svc.httpClient == nil {
 		svc.httpClient = defaultHTTPClient(func() {
@@ -459,14 +458,12 @@ func (s *Service) Disconnect(ctx context.Context) (Summary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Catalog removal and credential invalidation must be atomic to refreshes.
-	rev, err := clearBeefTVModels(s.provider)
+	rev, _, err := clearBeefTVModels(s.provider)
 	if err != nil {
 		s.state.Status = StateStoreError
 		s.state.LastError = "保存连接失败，请重试"
 		return s.summaryLocked(), errStore
 	}
-	s.recordCatalogWriteLocked(rev)
-	nextVersion := s.catalogVersion
 	s.balanceSeq++
 	s.pendingCatalogETag = ""
 	s.lastCatalogCheckAt = time.Time{}
@@ -476,7 +473,6 @@ func (s *Service) Disconnect(ctx context.Context) (Summary, error) {
 		SchemaVersion:         connectionSchema,
 		Status:                StateDisconnected,
 		Balance:               BalanceUnknown,
-		CatalogVersion:        nextVersion,
 		CatalogConfigRevision: rev,
 	}
 	if err := s.persistState(s.state); err != nil {
@@ -501,14 +497,7 @@ func (s *Service) Recover(ctx context.Context) error {
 	state := s.state
 	s.mu.Unlock()
 	if needsFinalize {
-		err := s.finalizeSavedCredential(ctx, "")
-		s.mu.Lock()
-		canSync := s.canSyncCatalogStateLocked()
-		s.mu.Unlock()
-		if canSync {
-			s.startCatalogSyncLoop()
-		}
-		return err
+		return s.finalizeSavedCredential(ctx, "")
 	}
 	if state.Status == StatePending && state.Device != nil {
 		expires := parseTime(state.Device.ExpiresAt)
@@ -560,346 +549,6 @@ func (s *Service) PreserveWrite(incoming, existing map[string]any) {
 	PreserveManagedChannel(incoming, existing, s.HasManagedCredential())
 }
 
-func (s *Service) pollLoop(ctx context.Context, deviceCode string, interval time.Duration, expiresAt time.Time) {
-	if interval < time.Second {
-		interval = 5 * time.Second
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		if !expiresAt.IsZero() && s.now().After(expiresAt) {
-			s.setError(StateExpired, "授权已过期，请重新连接")
-			return
-		}
-		token, code, err := s.pollToken(deviceCode)
-		if ctx.Err() != nil {
-			return
-		}
-		if err != nil {
-			s.updatePollMessage(deviceCode, "连接中断，正在重试")
-			if !s.pause(ctx, interval) {
-				return
-			}
-			continue
-		}
-		switch code {
-		case "", "success":
-			if strings.TrimSpace(token.APIKey) == "" {
-				if !s.pause(ctx, interval) {
-					return
-				}
-				continue
-			}
-			if err := s.acceptToken(ctx, deviceCode, token); err != nil {
-				return
-			}
-			return
-		case "authorization_pending":
-			s.updatePollMessage(deviceCode, "")
-			if !s.pause(ctx, interval) {
-				return
-			}
-		case "slow_down":
-			interval += 5 * time.Second
-			if !s.pause(ctx, interval) {
-				return
-			}
-		case "expired_token", "expired":
-			s.setError(StateExpired, "授权已过期，请重新连接")
-			return
-		case "access_denied", "denied", "rejected":
-			s.setError(StateRejected, "授权被拒绝")
-			return
-		default:
-			s.updatePollMessage(deviceCode, "授权状态读取失败，正在重试")
-			if !s.pause(ctx, interval) {
-				return
-			}
-		}
-	}
-}
-
-func (s *Service) updatePollMessage(deviceCode, message string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.closed && s.state.Status == StatePending && s.state.Device != nil && s.state.Device.DeviceCode == deviceCode {
-		s.state.LastError = message
-	}
-}
-
-const ackRetryLimit = 5
-
-func (s *Service) acceptToken(ctx context.Context, deviceCode string, token tokenSuccess) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	origin := s.Origin()
-	accountID, tokenID, err := validateTokenSuccess(origin, token)
-	if err != nil {
-		s.setError(StateRejected, err.Error())
-		return err
-	}
-	encrypted, err := encryptSecret(s.dataDir, token.APIKey)
-	if err != nil {
-		s.setError(StateStoreError, "保存连接失败，请重试")
-		return errStore
-	}
-	s.mu.Lock()
-	previousAccount := ""
-	if s.state.Account != nil {
-		previousAccount = s.state.Account.ID.String()
-	}
-	previousEncrypted := s.state.EncryptedAPIKey
-	account := token.Account
-	account.ID = wireID(accountID)
-	if s.state.Device == nil {
-		s.state.Device = &persistedDevice{}
-	}
-	s.state.Device.DeviceCode = deviceCode
-	s.state.EncryptedAPIKey = encrypted
-	s.state.ProviderBaseURL = ProviderBaseURL(origin)
-	s.state.Market = "enterprise"
-	s.state.Group = "enterprise"
-	s.state.Account = &account
-	s.state.KeyName = token.KeyName
-	s.state.TokenID = tokenID
-	s.state.Acked = false
-	s.state.CatalogOK = false
-	s.state.CatalogETag = ""
-	s.state.CatalogInlinePricing = false
-	s.state.PriceCatalogETag = ""
-	s.state.CatalogSyncedAt = ""
-	s.state.CatalogClientVersion = ""
-	s.pendingCatalogETag = ""
-	s.lastCatalogCheckAt = time.Time{}
-	s.lastCatalogAttemptAt = time.Time{}
-	s.catalogFailures = 0
-	s.state.AssistantDefaultPending = true
-	s.state.Status = StatePending
-	s.balanceSeq++
-	s.state.QuotaPerUnit = token.QuotaPerUnit
-	s.state.Balance, s.state.BalanceCNY = normalizeRemoteBalance(token.BalanceCNY, token.Quota, BalanceUnknown, "")
-	s.state.LastError = ""
-	if err := s.persistState(s.state); err != nil {
-		s.state.Status = StateStoreError
-		s.state.LastError = "保存连接失败，请重试"
-		s.mu.Unlock()
-		return errStore
-	}
-	s.mu.Unlock()
-	if previousEncrypted != "" && previousAccount != "" && previousAccount != accountID {
-		if oldKey, decryptErr := decryptSecret(s.dataDir, previousEncrypted); decryptErr == nil && oldKey != "" && oldKey != token.APIKey {
-			_ = s.revokeRemote(oldKey)
-		}
-	}
-	return s.finalizeSavedCredential(ctx, previousAccount)
-}
-
-func (s *Service) finalizeSavedCredential(ctx context.Context, previousAccountID string) error {
-	if s.lifecycle.Err() != nil {
-		return s.lifecycle.Err()
-	}
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	s.mu.Lock()
-	state := s.state
-	deviceCode := ""
-	if state.Device != nil {
-		deviceCode = state.Device.DeviceCode
-	}
-	previousAccount := strings.TrimSpace(previousAccountID)
-	s.mu.Unlock()
-	if !state.hasCredential() {
-		return errNotConnected
-	}
-	if !state.Acked {
-		if strings.TrimSpace(deviceCode) == "" {
-			s.markDoomedCredential(StateExpired, "授权已过期，请重新连接")
-			return errAckExpired
-		}
-		s.mu.Lock()
-		s.state.Status = StatePending
-		s.state.LastError = "正在完成连接确认"
-		s.mu.Unlock()
-		if err := s.acknowledgeWithRetry(deviceCode); err != nil {
-			if s.lifecycle.Err() != nil {
-				return s.lifecycle.Err()
-			}
-			s.noteAckFailure(err)
-			return err
-		}
-		s.mu.Lock()
-		previousDevice := s.state.Device
-		s.state.Acked = true
-		s.state.LastError = ""
-		s.state.Device = nil
-		if err := s.persistState(s.state); err != nil {
-			s.state.Acked = false
-			s.state.Device = previousDevice
-			s.state.Status = StateStoreError
-			s.state.LastError = "保存连接失败，请重试"
-			s.mu.Unlock()
-			return errStore
-		}
-		s.mu.Unlock()
-	}
-	apiKey, err := decryptSecret(s.dataDir, state.EncryptedAPIKey)
-	if err != nil {
-		s.setError(StateStoreError, "保存连接失败，请重试")
-		return errStore
-	}
-	fetched, err := s.fetchModelsConditional(ctx, apiKey, "", "", false)
-	if s.lifecycle.Err() != nil {
-		return s.lifecycle.Err()
-	}
-	if err != nil {
-		if errors.Is(err, errRevoked) {
-			s.MarkRevoked()
-			return errRevoked
-		}
-		s.mu.Lock()
-		s.state.Status = StateCatalogFailed
-		s.state.CatalogOK = false
-		s.state.LastError = "模型列表读取失败，请重试"
-		s.noteCatalogFailureLocked()
-		if persistErr := s.persistState(s.state); persistErr != nil {
-			s.state.Status = StateStoreError
-			s.state.LastError = "保存连接失败，请重试"
-			s.mu.Unlock()
-			return errStore
-		}
-		s.mu.Unlock()
-		s.startCatalogSyncLoop()
-		return err
-	}
-	nextAccount := previousAccount
-	s.mu.Lock()
-	if s.state.Account != nil {
-		nextAccount = s.state.Account.ID.String()
-	}
-	s.mu.Unlock()
-	authorizationID := ""
-	if state.AssistantDefaultPending {
-		authorizationID = state.TokenID
-	}
-	rev, err := applyCatalogWithOptions(s.provider, fetched.Models, previousAccount, nextAccount, authorizationID, fetched.PreservePrices)
-	if err != nil {
-		s.mu.Lock()
-		s.state.Status = StateCatalogFailed
-		s.state.CatalogOK = false
-		s.state.LastError = "模型列表读取失败，请重试"
-		s.noteCatalogFailureLocked()
-		if persistErr := s.persistState(s.state); persistErr != nil {
-			s.state.Status = StateStoreError
-			s.state.LastError = "保存连接失败，请重试"
-			s.mu.Unlock()
-			return errStore
-		}
-		s.mu.Unlock()
-		s.startCatalogSyncLoop()
-		return err
-	}
-	s.mu.Lock()
-	s.recordCatalogWriteLocked(rev)
-	now := s.now()
-	s.lastCatalogAttemptAt = now
-	s.lastCatalogCheckAt = now
-	s.catalogFailures = 0
-	s.state.CatalogOK = true
-	s.state.CatalogETag = fetched.ETag
-	s.state.CatalogInlinePricing = fetched.InlinePricing
-	if !fetched.InlinePricing {
-		s.state.PriceCatalogETag = fetched.PriceETag
-	} else {
-		s.state.PriceCatalogETag = ""
-	}
-	s.state.CatalogSyncedAt = now.UTC().Format(time.RFC3339Nano)
-	s.state.CatalogClientVersion = s.clientVersion
-	s.state.AssistantDefaultPending = false
-	s.state.Status = StateConnected
-	s.state.LastError = ""
-	s.state.Device = nil
-	if s.state.ConnectedAt == "" {
-		s.state.ConnectedAt = now.UTC().Format(time.RFC3339Nano)
-	}
-	if err := s.persistState(s.state); err != nil {
-		s.state.CatalogOK = false
-		s.state.Status = StateStoreError
-		s.state.LastError = "保存连接失败，请重试"
-		s.mu.Unlock()
-		return errStore
-	}
-	s.mu.Unlock()
-	s.startCatalogSyncLoop()
-	return nil
-}
-
-func (s *Service) acknowledgeWithRetry(deviceCode string) error {
-	var last error
-	for attempt := 0; attempt < ackRetryLimit; attempt++ {
-		if s.lifecycle.Err() != nil {
-			return s.lifecycle.Err()
-		}
-		if attempt > 0 {
-			if !s.pause(s.lifecycle, time.Second) {
-				return s.lifecycle.Err()
-			}
-		}
-		last = s.acknowledge(deviceCode)
-		if last == nil {
-			return nil
-		}
-		if isPermanentAck(last) {
-			return last
-		}
-	}
-	if last == nil {
-		last = errAckTransient
-	}
-	return last
-}
-
-func (s *Service) noteAckFailure(err error) {
-	switch {
-	case errors.Is(err, errAckExpired):
-		s.markDoomedCredential(StateExpired, "授权已过期，请重新连接")
-	case errors.Is(err, errAckRejected):
-		s.markDoomedCredential(StateRejected, "授权被拒绝")
-	default:
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.state.Status = StateConnectionError
-		s.state.Acked = false
-		s.state.CatalogOK = false
-		s.state.LastError = "连接确认失败，请重试"
-		if persistErr := s.persistState(s.state); persistErr != nil {
-			s.state.Status = StateStoreError
-			s.state.LastError = "保存连接失败，请重试"
-		}
-	}
-}
-
-func (s *Service) markDoomedCredential(status, message string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.state.Status = status
-	s.state.LastError = message
-	s.state.EncryptedAPIKey = ""
-	s.state.Acked = false
-	s.state.CatalogOK = false
-	s.state.Device = nil
-	s.state.TokenID = ""
-	s.state.Account = nil
-	if persistErr := s.persistState(s.state); persistErr != nil {
-		s.state.Status = StateStoreError
-		s.state.LastError = "保存连接失败，请重试"
-	}
-}
-
 func (s *Service) openTrusted(raw string) error {
 	target := strings.TrimSpace(raw)
 	if target == "" {
@@ -933,16 +582,15 @@ func (s *Service) setError(status, message string) {
 
 func (s *Service) summaryLocked() Summary {
 	summary := Summary{
-		State:           s.state.Status,
-		Market:          s.state.Market,
-		KeyName:         s.state.KeyName,
-		TokenID:         s.state.TokenID,
-		Balance:         s.state.Balance,
-		ErrorReason:     s.state.LastError,
-		ConnectedAt:     s.state.ConnectedAt,
-		HasCredential:   s.state.hasCredential(),
+		State:                 s.state.Status,
+		Market:                s.state.Market,
+		KeyName:               s.state.KeyName,
+		TokenID:               s.state.TokenID,
+		Balance:               s.state.Balance,
+		ErrorReason:           s.state.LastError,
+		ConnectedAt:           s.state.ConnectedAt,
+		HasCredential:         s.state.hasCredential(),
 		CatalogFailed:         s.state.Status == StateCatalogFailed || (s.state.hasCredential() && !s.state.CatalogOK && s.state.Status != StatePending),
-		CatalogRevision:       s.state.CatalogVersion,
 		CatalogConfigRevision: s.state.CatalogConfigRevision,
 		CatalogSyncing:        s.startupVerifyPending || s.catalogInFlight != nil,
 	}

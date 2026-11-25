@@ -151,8 +151,12 @@ func TestProviderConfigIdenticalSaveKeepsRevision(t *testing.T) {
 	if repeated != revision {
 		t.Fatalf("unchanged settings advanced revision: %d -> %d", revision, repeated)
 	}
-	if err := store.SaveCatalogWithAssistantDefault(body, "connection", ""); err != nil {
+	revision, _, err = store.UpdateCatalog("", func(map[string]any) (string, error) { return "", nil })
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, changed, err := store.UpdateCatalog("connection", func(map[string]any) (string, error) { return "", nil }); err != nil || changed {
+		t.Fatalf("no-op catalog update failed or changed: changed=%v err=%v", changed, err)
 	}
 	doc, err := store.loadPrimaryDocument()
 	if err != nil {
@@ -161,8 +165,8 @@ func TestProviderConfigIdenticalSaveKeepsRevision(t *testing.T) {
 	if doc.Revision != revision || doc.AssistantDefaultAuthorization != "connection" {
 		t.Fatalf("no-op catalog lost initialization or changed revision: revision=%d marker=%q", doc.Revision, doc.AssistantDefaultAuthorization)
 	}
-	if err := store.SaveCatalogWithAssistantDefault(body, "connection", ""); err != nil {
-		t.Fatal(err)
+	if _, changed, err := store.UpdateCatalog("connection", func(map[string]any) (string, error) { return "", nil }); err != nil || changed {
+		t.Fatalf("repeated catalog update failed or changed: changed=%v err=%v", changed, err)
 	}
 	doc, err = store.loadPrimaryDocument()
 	if err != nil {
@@ -687,7 +691,7 @@ func requireEffectiveChannel(t *testing.T, effective EffectiveModelConfig, id st
 // 新授权只补空缺：已保存的助手选择只要还在本次写入的目录里就保留，
 // 重连和换账号都不能把用户选过的模型改成默认值，即使该模型已不在新目录里：
 // 这时保留原值、由界面提示重新选择，而不是自动换一个模型。
-func TestSaveCatalogWithAssistantDefaultOnlyFillsMissingSelection(t *testing.T) {
+func TestUpdateCatalogOnlyFillsMissingSelection(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		saved    string
@@ -740,8 +744,15 @@ func TestSaveCatalogWithAssistantDefaultOnlyFillsMissingSelection(t *testing.T) 
 			if err := store.SaveLocalModelConfig([]byte(seed)); err != nil {
 				t.Fatal(err)
 			}
-			body := `{"assistantModel":"","channels":` + tc.channels + `}`
-			if err := store.SaveCatalogWithAssistantDefault([]byte(body), "auth-1", "beeftv::deepseek-v4.1-flash"); err != nil {
+			var incomingChannels []any
+			if err := json.Unmarshal([]byte(tc.channels), &incomingChannels); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.UpdateCatalog("auth-1", func(config map[string]any) (string, error) {
+				config["assistantModel"] = ""
+				config["channels"] = incomingChannels
+				return "beeftv::deepseek-v4.1-flash", nil
+			}); err != nil {
 				t.Fatal(err)
 			}
 			effective, _, err := store.LoadEffectiveModelConfig()
