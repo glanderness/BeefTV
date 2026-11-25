@@ -525,6 +525,7 @@ export function defaultVideoCapabilityConfig(protocol?: ModelProtocol, model = "
         }
         if (isT2V) {
             video.references.maxImages = 0;
+            video.generateAudio = { supported: false, default: false };
             video.operations = ["text_to_video"];
         } else if (isR2V || (isMediaArray && !isI2V)) {
             video.references.maxVideos = 3;

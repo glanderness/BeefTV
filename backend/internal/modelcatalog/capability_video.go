@@ -195,6 +195,7 @@ func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapab
 		switch {
 		case isT2V:
 			video.References.MaxImages = 0
+			video.GenerateAudio = VideoBooleanConfig{Supported: false, Default: false}
 			video.Operations = []string{"text_to_video"}
 		case isR2V || (isMediaArray && !isI2V):
 			video.References.MaxVideos = 3
