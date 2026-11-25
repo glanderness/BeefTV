@@ -181,6 +181,35 @@ describe("ModelProtocolBrowser grouping and endpoint guidance", () => {
         expect(html).toContain("https://autodl.art");
     });
 
+    test("uses declared service presets for host matching and connection guidance", () => {
+        const presets = [
+            { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com" },
+            { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api" },
+            { id: "ollama", label: "Ollama", baseUrl: "http://localhost:11434/v1" },
+        ];
+        const protocol: ModelProtocolDefinition = {
+            value: "chat-completion",
+            label: "OpenAI Chat Completions",
+            capability: "text",
+            create: "POST /chat/completions",
+            contentType: "application/json",
+            media: "OpenAI",
+            baseUrl: "https://api.openai.com",
+            presets,
+        };
+
+        for (const preset of presets) {
+            const [option] = buildProtocolBrowserOptions([protocol], "text", `${preset.baseUrl}/custom`);
+            expect(option?.group).toBe("匹配当前服务地址");
+            expect(option?.vendor).toBe(preset.label);
+            expect(option?.details.find((detail) => detail.label === "建议地址")?.value).toEqual(<code>{preset.baseUrl}</code>);
+            expect(option?.description).toContain("兼容");
+        }
+        for (const url of ["https://openrouter.ai.example.com/api", "http://localhost:8080/v1"]) {
+            expect(buildProtocolBrowserOptions([protocol], "text", url)[0]?.group).toBe("常用与通用兼容");
+        }
+    });
+
     test("capability guidance matches the active capability instead of recommending Chat Completions for media", () => {
         expect(protocolGuidanceForCapability("text")).toContain("OpenAI Chat Completions");
         expect(protocolGuidanceForCapability("image")).toContain("OpenAI Images");

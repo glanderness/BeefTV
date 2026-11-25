@@ -65,6 +65,16 @@ function readableHostLabel(rawUrl?: string): string {
     return parsed.hostname.replace(/^\{[^}]+\}[.-]?/g, "");
 }
 
+function matchingProtocolPreset(protocol: ModelProtocolDefinition, channelBaseUrl?: string) {
+    const channel = extractEndpointHost(channelBaseUrl);
+    if (!channel) return undefined;
+    return protocol.presets?.find((preset) => {
+        const endpoint = extractEndpointHost(preset.baseUrl);
+        if (!endpoint) return false;
+        return isLoopbackHost(channel.hostname) ? endpoint.host === channel.host : endpoint.hostname === channel.hostname;
+    });
+}
+
 function matchesChannelBaseUrl(protocol: ModelProtocolDefinition, channelBaseUrl?: string): boolean {
     const channelHost = extractEndpointHost(channelBaseUrl);
     if (!channelHost) return false;
@@ -131,7 +141,7 @@ function protocolDescription(protocol: ModelProtocolDefinition, group: ProtocolG
     if (protocol.workflows?.length) return "工作流接口，模型 ID 请填写服务商提供的工作流标识。";
     if (protocol.authType === "none") return "本地服务接口，通常无需填写 API Key。";
     if (protocolSignatureAuth(protocol.value, protocol.authType)) return "官方签名接口，需成对填写 Access Key 与 Secret Key。";
-    if (group === "generic") {
+    if (group === "generic" || (group === "matched" && isGenericProtocol(protocol))) {
         if (protocol.presets?.length) return "标准兼容接口，适用于多数中转站与 OpenAI 兼容服务商。";
         return "通用兼容接口，适用于 OpenAI 兼容或中转站服务。";
     }
@@ -164,10 +174,11 @@ export function buildProtocolBrowserOptions(
     const preferredOrder = capability ? STANDARD_PROTOCOLS[capability] || [] : [];
 
     const ranked = filtered.map((protocol) => {
-        const group = protocolGroupKey(protocol, channelBaseUrl);
+        const endpointPreset = matchingProtocolPreset(protocol, channelBaseUrl);
+        const group = endpointPreset ? "matched" : protocolGroupKey(protocol, channelBaseUrl);
         const preferredIndex = preferredOrder.indexOf(protocol.value);
         const familyKey = builtinPresetForProtocol(protocol.value)?.name || readableHostLabel(protocol.baseUrl) || protocol.label;
-        return { protocol, group, preferredIndex, familyKey };
+        return { protocol, group, preferredIndex, familyKey, endpointPreset };
     });
 
     ranked.sort((left, right) => {
@@ -183,11 +194,11 @@ export function buildProtocolBrowserOptions(
         return left.protocol.label.localeCompare(right.protocol.label, "zh-CN");
     });
 
-    return ranked.map(({ protocol, group }) => {
+    return ranked.map(({ protocol, group, endpointPreset }) => {
         const meta = GROUP_META[group];
         const preset = builtinPresetForProtocol(protocol.value);
         const authLabel = protocolAuthLabel(protocol);
-        const suggestedBaseUrl = protocol.baseUrl?.trim() && !isLoopbackPlaceholderBaseUrl(protocol) ? protocol.baseUrl.trim() : "";
+        const suggestedBaseUrl = endpointPreset?.baseUrl.trim() || (!isLoopbackPlaceholderBaseUrl(protocol) ? protocol.baseUrl?.trim() : "");
         const details: BrowserChoice["details"] = [
             ...(suggestedBaseUrl ? [{ label: "建议地址", value: <code>{suggestedBaseUrl}</code> }] : []),
             { label: "请求", value: <code>{protocol.create}</code> },
@@ -209,7 +220,7 @@ export function buildProtocolBrowserOptions(
             value: protocol.value,
             label: protocol.label,
             subtitle: protocol.create,
-            vendor: protocolVendorTag(protocol, group),
+            vendor: endpointPreset?.label || protocolVendorTag(protocol, group),
             group: meta.label,
             groupHint: meta.hint,
             description: protocolDescription(protocol, group),
