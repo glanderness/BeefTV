@@ -273,6 +273,8 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 		base, _ := local["baseUrl"].(string)
 		if canonical, ok := channelurl.CanonicalBeefTVOrigin(base); ok {
 			result["baseUrl"] = canonical
+		} else if canonical, ok := channelurl.CanonicalBeefTVOrigin(strings.TrimSuffix(channelurl.CleanBase(base), "/v1")); ok {
+			result["baseUrl"] = canonical
 		} else if key, _ := local["apiKey"].(string); base == "" && key != "" {
 			result["baseUrl"] = channelurl.BeefTVProductionOrigin
 		}
