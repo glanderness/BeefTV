@@ -358,6 +358,13 @@ func TestCloudflare524FailClosedWhenEvidenceMissingOrManaged(t *testing.T) {
 			persistAttempt: true,
 			processErr:     cf524Err,
 		},
+		{
+			name:           "base_url_only_managed",
+			inputJSON:      `{"mode":"image","config":{"baseUrl":"https://api.beeftv.app/v1","model":"gpt-image-1"}}`,
+			attemptChannel: "custom-relay",
+			persistAttempt: true,
+			processErr:     cf524Err,
+		},
 	}
 
 	for _, tc := range cases {
@@ -459,6 +466,139 @@ func TestCloudflare524FailClosedWhenEvidenceMissingOrManaged(t *testing.T) {
 			AttachTaskDelivery(deliverer, view, nil, outcomeFactsForTask(repo), generation.PersistedFailureBlocksRetry(stored.Error, stored.Stage, stored.ErrorCode), nil)
 			if view.Outcome == nil || *view.Outcome != wantRetrievable {
 				t.Fatalf("case %s Outcome = %+v, want %+v", tc.name, view.Outcome, wantRetrievable)
+			}
+		})
+	}
+}
+
+func TestCloudflare524ReceiptStatusCodeClassification(t *testing.T) {
+	cf524Err := generation.HTTPError{StatusCode: 524, Status: "524 A Timeout Occurred", Body: "<html>524</html>"}
+	wantUnrecoverable := localtask.Outcome{Phase: "failed", Regenerate: "confirm", Reason: "result_unrecoverable"}
+	wantRetrievable := localtask.Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "image_recovery_pending"}
+
+	cases := []struct {
+		name               string
+		receiptStatusCode  int
+		expectUnrecoverble bool
+	}{
+		{name: "status_0_pending_receipt", receiptStatusCode: 0, expectUnrecoverble: true},
+		{name: "status_100_informational", receiptStatusCode: 100, expectUnrecoverble: true},
+		{name: "status_200_accepted", receiptStatusCode: 200, expectUnrecoverble: false},
+		{name: "status_302_redirect", receiptStatusCode: 302, expectUnrecoverble: true},
+		{name: "status_429_client_error", receiptStatusCode: 429, expectUnrecoverble: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, repo, terminal, deliverer := newCF524Fixture(t)
+			now := time.Now()
+			expires := now.Add(time.Hour)
+			taskRow := model.Task{
+				ID:             "task-cf524-receipt-" + tc.name,
+				UserID:         "user-cf524",
+				ProjectID:      "canvas-cf524",
+				Type:           "canvas_image",
+				Status:         model.TaskStatusRunning,
+				LeaseOwner:     "worker-cf524",
+				LeaseExpiresAt: &expires,
+				RouteRun:       1,
+				Prompt:         "回执状态码验证",
+				InputJSON:      `{"mode":"image","config":{"baseUrl":"https://relay.thirdparty.example/v1","model":"gpt-image-1"}}`,
+				CreatedAt:      now,
+				UpdatedAt:      now,
+			}
+			attempt := &model.RouteAttempt{
+				ID:            "attempt-cf524-receipt-" + tc.name,
+				TaskID:        taskRow.ID,
+				RouteRun:      1,
+				AttemptNumber: 1,
+				ChannelID:     "custom-relay",
+				Status:        "pending",
+				DispatchState: "not_sent",
+				StartedAt:     now,
+			}
+			receipt := &model.ApiCallLog{
+				ID:          "receipt-" + tc.name,
+				UserID:      taskRow.UserID,
+				TaskID:      taskRow.ID,
+				Capability:  "image",
+				RequestKind: "create",
+				Method:      "POST",
+				Path:        "/v1/images/edits",
+				StatusCode:  tc.receiptStatusCode,
+				Status:      model.ApiCallStatusFailed,
+				StartedAt:   now,
+				CreatedAt:   now,
+			}
+			if tc.receiptStatusCode >= 200 && tc.receiptStatusCode < 300 {
+				receipt.Status = model.ApiCallStatusSucceeded
+			}
+			for _, row := range []any{&taskRow, attempt, receipt} {
+				if err := db.Create(row).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			localtask.ExecuteClaimedTask(localtask.WorkerExecuteDeps{
+				Repo:     repo,
+				Terminal: terminal,
+				Log:      func(string, string, string, string, string) error { return nil },
+				BeginRouteAttempt: func(*model.Task) (*model.RouteAttempt, error) {
+					return attempt, nil
+				},
+				ExecuteRoute: func(ctx context.Context, current *model.Task, currentAttempt *model.RouteAttempt) (localtask.RouteExecutionResult, error) {
+					return localtask.ExecuteRouteAttemptLoop(ctx, localtask.RouteExecuteDeps{
+						MarkDispatching: func(a *model.RouteAttempt) error {
+							a.Status = "dispatching"
+							return repo.SaveRouteAttempt(a)
+						},
+						Process: func(context.Context, model.Task) (map[string]interface{}, []map[string]interface{}, error) {
+							return nil, nil, cf524Err
+						},
+						RefreshState: func(*model.Task) error { return nil },
+						FinishAttempt: func(a *model.RouteAttempt, _ *model.Task, _ error) {
+							a.Status = "failed"
+							a.DispatchState = "submission_unknown"
+							a.FailureCode = "upstream_524"
+							_ = repo.SaveRouteAttempt(a)
+						},
+						NextAfterFailure: func(*model.Task, *model.RouteAttempt, error) (*model.RouteAttempt, error) { return nil, nil },
+						WriteLog:         func(string, string, string, string, string) error { return nil },
+						IsRecoveryErr:    func(error) bool { return false },
+						IsVODParamErr:    func(error) bool { return false },
+						IsImageThrottle:  func(error) bool { return false },
+					}, current, currentAttempt)
+				},
+				DecryptTaskInput:      func(raw string) (string, error) { return raw, nil },
+				ShouldDeferImage:      func(model.Task, error, bool) bool { return false },
+				DeferImage:            func(model.Task) error { return nil },
+				ResolveProviderConfig: func(cfg generation.Config) (generation.Config, error) { return cfg, nil },
+				ImageTaskEnded:        func(error) bool { return false },
+				SaveTaskCompletion:    func(*model.Task, []byte, []byte, bool) error { return nil },
+				PersistGeneratedMedia: func(_ model.Task, r map[string]interface{}) (map[string]interface{}, error) { return r, nil },
+				FinalizeTurnaround:    func(model.Task, map[string]interface{}) (bool, error) { return false, nil },
+			}, cf524TestSession{ctx: context.Background(), task: &taskRow})
+
+			stored, err := repo.Task(taskRow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view := localtask.TaskForOutput(*stored)
+			AttachTaskDelivery(deliverer, view, nil, outcomeFactsForTask(repo), generation.PersistedFailureBlocksRetry(stored.Error, stored.Stage, stored.ErrorCode), nil)
+			if tc.expectUnrecoverble {
+				if stored.RecoveryOutcome == nil || *stored.RecoveryOutcome != localtask.RecoveryUnrecoverable {
+					t.Fatalf("case %s RecoveryOutcome = %v, want %q", tc.name, stored.RecoveryOutcome, localtask.RecoveryUnrecoverable)
+				}
+				if view.Outcome == nil || *view.Outcome != wantUnrecoverable {
+					t.Fatalf("case %s Outcome = %+v, want %+v", tc.name, view.Outcome, wantUnrecoverable)
+				}
+			} else {
+				if stored.RecoveryOutcome != nil {
+					t.Fatalf("case %s should fail-closed on accepted 2xx receipt, got RecoveryOutcome=%q", tc.name, *stored.RecoveryOutcome)
+				}
+				if view.Outcome == nil || *view.Outcome != wantRetrievable {
+					t.Fatalf("case %s Outcome = %+v, want %+v", tc.name, view.Outcome, wantRetrievable)
+				}
 			}
 		})
 	}

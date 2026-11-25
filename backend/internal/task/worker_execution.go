@@ -8,6 +8,7 @@ import (
 	"image"
 	_ "image/png"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -498,8 +499,7 @@ func TerminalWriteApplied(termErr, cause error) bool {
 // isNonRecoverableGatewayTimeout is strictly fail-closed: it returns true only
 // when positive persisted evidence proves a synchronous unmanaged third-party
 // image request hit HTTP 524 with no upstream job handle, no frozen
-// ImageSubmission, and no <300 create receipt (matching mediaattempt recovery
-// semantics without bypassing managed recovery).
+// ImageSubmission, and no accepted 2xx create receipt.
 func isNonRecoverableGatewayTimeout(repo *repository.Repository, task model.Task, decryptedInput string, decryptErr error, err error) bool {
 	if repo == nil || err == nil || decryptErr != nil || strings.TrimSpace(decryptedInput) == "" {
 		return false
@@ -524,11 +524,21 @@ func isNonRecoverableGatewayTimeout(repo *repository.Repository, task model.Task
 	if json.Unmarshal([]byte(decryptedInput), &input) != nil {
 		return false
 	}
-	if strings.TrimSpace(input.Config.BaseURL) == "" && strings.TrimSpace(input.Config.ChannelID) == "" {
+	trimmedBase := strings.TrimSpace(input.Config.BaseURL)
+	if trimmedBase == "" && strings.TrimSpace(input.Config.ChannelID) == "" {
 		return false
 	}
+	if trimmedBase != "" {
+		parsed, parseErr := url.Parse(trimmedBase)
+		if parseErr != nil || parsed.Host == "" {
+			return false
+		}
+		if beeftv.IsManagedBaseURL(trimmedBase) {
+			return false
+		}
+	}
 	if beeftv.IsManagedTaskInput(decryptedInput) ||
-		beeftv.IsManagedChannel(input.Config.ChannelID, input.Config.CredentialRef, input.Config.BaseURL) {
+		beeftv.IsManagedChannel(input.Config.ChannelID, input.Config.CredentialRef, trimmedBase) {
 		return false
 	}
 	evidence, evErr := repo.ImageRecoveryEvidence([]string{task.ID})
@@ -549,7 +559,7 @@ func isNonRecoverableGatewayTimeout(repo *repository.Repository, task model.Task
 	if receiptErr != nil && !errors.Is(receiptErr, gorm.ErrRecordNotFound) {
 		return false
 	}
-	if receipt != nil && receipt.StatusCode < 300 {
+	if receipt != nil && receipt.StatusCode >= 200 && receipt.StatusCode < 300 {
 		return false
 	}
 	return true

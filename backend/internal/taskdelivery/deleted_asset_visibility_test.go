@@ -399,3 +399,202 @@ func TestDeleteAssetDoesNotDeleteOrTombstoneUnrelatedTaskSharingSameResource(t *
 		t.Fatalf("taskB Outcome = %+v, want %+v", summaries[1].Outcome, wantReady)
 	}
 }
+
+func TestDeleteAssetDoesNotTombstoneResultOnlyUnrelatedTaskSharingSameResource(t *testing.T) {
+	db, _, assetSvc, deliverer := newDeletedAssetVisibilityFixture(t)
+	const userID = "user-573-result-only"
+	const projectID = "canvas-573-result-only"
+	const sharedResourceID = "res-shared-result-only"
+	const taskIDA = "task-result-only-a"
+	const taskIDB = "task-result-only-b"
+
+	now := time.Now().UTC()
+	resource := model.Resource{
+		ID: sharedResourceID, UserID: userID, Kind: "image", Provider: "local",
+		ObjectKey: "users/user-573-result-only/image/shared.png", MimeType: "image/png", Size: 1024,
+		Status: model.ResourceStatusReady, CreatedAt: now, UpdatedAt: now,
+	}
+	taskA := model.Task{
+		ID: taskIDA, UserID: userID, ProjectID: projectID, Type: "canvas_image",
+		Status: model.TaskStatusSucceeded, Stage: "生成完成", Prompt: "任务A",
+		ResultJSON: `{"mode":"image","images":[{"storageKey":"resource:res-shared-result-only","url":"/api/resources/res-shared-result-only/file"}]}`,
+		CreatedAt:  now, UpdatedAt: now,
+	}
+	taskB := model.Task{
+		ID: taskIDB, UserID: userID, ProjectID: projectID, Type: "canvas_image",
+		Status: model.TaskStatusSucceeded, Stage: "生成完成", Prompt: "任务B（仅Result无Asset）",
+		ResultJSON: `{"mode":"image","images":[{"storageKey":"resource:res-shared-result-only","url":"/api/resources/res-shared-result-only/file"}]}`,
+		CreatedAt:  now.Add(time.Second), UpdatedAt: now.Add(time.Second),
+	}
+	// taskB only has a generation_output result row referencing the shared resource, with no Asset row.
+	taskBOutputPayload, _ := localtask.EncodeOutputPayload(localtask.CanonicalOutput{
+		OutputIndex:         0,
+		MediaType:           "image",
+		ResourceID:          sharedResourceID,
+		ProviderArtifactRef: "resource:" + sharedResourceID,
+		EffectKey:           localtask.MaterializeEffectKey(taskIDB, 0),
+	})
+	taskBResult := model.Result{
+		ID: "result-only-b", UserID: userID, TaskID: taskIDB, Kind: "generation_output",
+		URL: "/api/resources/" + sharedResourceID + "/file", Payload: taskBOutputPayload,
+		CreatedAt: now.Add(time.Second),
+	}
+	for _, row := range []any{&resource, &taskA, &taskB, &taskBResult} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := deliverer.Deliver(taskA); err != nil {
+		t.Fatalf("Deliver(taskA) error = %v", err)
+	}
+
+	genAssetIDA := localtask.MaterializedAssetID(taskIDA, 0)
+	if err := assetSvc.DeleteUserAssetWithResources(userID, genAssetIDA); err != nil {
+		t.Fatalf("DeleteUserAssetWithResources(genA) error = %v", err)
+	}
+
+	var refreshedA model.Result
+	if err := db.Where("user_id = ? AND task_id = ? AND kind = ?", userID, taskIDA, "generation_output").First(&refreshedA).Error; err != nil {
+		t.Fatal(err)
+	}
+	outA, err := localtask.DecodeOutputPayload(refreshedA.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outA.MaterializationErrorCode != localtask.MaterializeErrorAssetDeleted {
+		t.Fatalf("taskA output not tombstoned: %+v", outA)
+	}
+
+	var refreshedB model.Result
+	if err := db.Where("id = ?", taskBResult.ID).First(&refreshedB).Error; err != nil {
+		t.Fatal(err)
+	}
+	outB, err := localtask.DecodeOutputPayload(refreshedB.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outB.MaterializationErrorCode != "" || outB.ResourceID != sharedResourceID {
+		t.Fatalf("result-only unrelated taskB was cross-tombstoned: %+v (url=%q)", outB, refreshedB.URL)
+	}
+}
+
+func TestPurgeArchivedAssetDoesNotDeleteActiveTwinOrTombstoneLiveHistory(t *testing.T) {
+	db, repo, assetSvc, deliverer := newDeletedAssetVisibilityFixture(t)
+	const userID = "user-573-archive"
+	const projectID = "canvas-573-archive"
+	const resourceID = "res-archive-573"
+	const taskID = "task-archive-573"
+
+	now := time.Now().UTC()
+	resource := model.Resource{
+		ID: resourceID, UserID: userID, Kind: "image", Provider: "local",
+		ObjectKey: "users/user-573-archive/image/item.png", MimeType: "image/png", Size: 1024,
+		Status: model.ResourceStatusReady, CreatedAt: now, UpdatedAt: now,
+	}
+	taskRow := model.Task{
+		ID: taskID, UserID: userID, ProjectID: projectID, Type: "canvas_image",
+		Status: model.TaskStatusSucceeded, Stage: "生成完成", Prompt: "回收站隔离测试",
+		ResultJSON: `{"mode":"image","images":[{"storageKey":"resource:res-archive-573","url":"/api/resources/res-archive-573/file"}]}`,
+		CreatedAt:  now, UpdatedAt: now,
+	}
+	for _, row := range []any{&resource, &taskRow} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := deliverer.Deliver(taskRow); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	genAssetID := localtask.MaterializedAssetID(taskID, 0)
+
+	archivedPersonalPayload, _ := json.Marshal(map[string]any{
+		"id":     "canvas-copy-archived-1",
+		"kind":   "image",
+		"title":  "回收站副本",
+		"source": "Canvas",
+		"status": "archived",
+		"data":   map[string]any{"storageKey": "resource:" + resourceID},
+		"metadata": map[string]any{
+			"source":      "canvas-generation",
+			"canvasId":    projectID,
+			"taskId":      taskID,
+			"resourceKey": "resource:" + resourceID,
+		},
+	})
+	archivedPersonal := model.Asset{
+		ID: "canvas-copy-archived-1", UserID: userID, Kind: "image", Category: model.AssetCategoryMaterial,
+		Status: model.AssetVersionStatusArchived, Title: "回收站副本", PayloadJSON: string(archivedPersonalPayload),
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&archivedPersonal).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Emptying recycle bin (expectedStatus=archived) must NOT delete the active (confirmed) generation twin or tombstone live history.
+	if err := assetSvc.DeleteUserAssetWithResources(userID, archivedPersonal.ID, string(model.AssetVersionStatusArchived)); err != nil {
+		t.Fatalf("DeleteUserAssetWithResources(archived) error = %v", err)
+	}
+
+	var activeTwin model.Asset
+	if err := db.Where("id = ? AND user_id = ?", genAssetID, userID).First(&activeTwin).Error; err != nil {
+		t.Fatalf("active generation twin was unexpectedly deleted during archived purge: %v", err)
+	}
+	if activeTwin.Status != model.AssetVersionStatusConfirmed {
+		t.Fatalf("active generation twin status = %q, want confirmed", activeTwin.Status)
+	}
+
+	var resCount int64
+	if err := db.Model(&model.Resource{}).Where("id = ?", resourceID).Count(&resCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if resCount != 1 {
+		t.Fatalf("resource referenced by surviving active twin was deleted: count=%d", resCount)
+	}
+
+	summaries := localtask.SummariesForOutput([]model.Task{taskRow})
+	AttachTaskSummaryDeliveries(
+		deliverer,
+		[]model.Task{taskRow},
+		summaries,
+		func([]model.Task) map[string]localtask.OutcomeFacts { return map[string]localtask.OutcomeFacts{} },
+		generation.PersistedFailureBlocksRetry,
+		nil,
+		nil,
+	)
+	if summaries[0].ResultState != localtask.ResultStateReady || len(summaries[0].Outputs) != 1 || summaries[0].Outputs[0].MaterializedAssetID != genAssetID {
+		t.Fatalf("live generation output was tombstoned despite surviving active twin: %+v", summaries[0])
+	}
+
+	// Once both the personal copy and the generation twin are archived, purging with expectedStatus=archived removes both and tombstones the output.
+	if err := db.Model(&model.Asset{}).Where("id = ? AND user_id = ?", genAssetID, userID).Update("status", model.AssetVersionStatusArchived).Error; err != nil {
+		t.Fatal(err)
+	}
+	archivedPersonal2 := archivedPersonal
+	archivedPersonal2.ID = "canvas-copy-archived-2"
+	if err := db.Create(&archivedPersonal2).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := assetSvc.DeleteUserAssetWithResources(userID, archivedPersonal2.ID, string(model.AssetVersionStatusArchived)); err != nil {
+		t.Fatalf("DeleteUserAssetWithResources(both archived) error = %v", err)
+	}
+	_, remainingGenTotal, err := repo.UserAssetsPage(userID, 1, 20, repository.UserAssetPageFilter{Status: "archived", Generated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remainingGenTotal != 0 {
+		t.Fatalf("archived generation twin should have been purged alongside archived personal copy: total=%d", remainingGenTotal)
+	}
+	summariesAfter := localtask.SummariesForOutput([]model.Task{taskRow})
+	AttachTaskSummaryDeliveries(
+		deliverer,
+		[]model.Task{taskRow},
+		summariesAfter,
+		func([]model.Task) map[string]localtask.OutcomeFacts { return map[string]localtask.OutcomeFacts{} },
+		generation.PersistedFailureBlocksRetry,
+		nil,
+		nil,
+	)
+	if summariesAfter[0].ResultState != localtask.ResultStateFailedPermanent || len(summariesAfter[0].Outputs) != 1 || summariesAfter[0].Outputs[0].MaterializationErrorCode != "asset_deleted" {
+		t.Fatalf("expected output tombstoned after both archived copies purged: %+v", summariesAfter[0])
+	}
+}

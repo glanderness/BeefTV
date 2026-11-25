@@ -101,3 +101,35 @@ func TestValidateReturnedBaseURLRequiresCanonicalV1(t *testing.T) {
 		t.Fatal("double /v1 must be rejected")
 	}
 }
+
+func TestIsManagedBaseURL(t *testing.T) {
+	t.Setenv(TestOriginEnv, "")
+	for _, managed := range []string{
+		"https://beeftv.app/v1",
+		"https://BEEFTV.APP:443/v1",
+		"https://api.beeftv.app/v1",
+		"http://enterprise.localhost:35184/v1",
+	} {
+		if !IsManagedBaseURL(managed) {
+			t.Fatalf("IsManagedBaseURL(%q) = false, want true", managed)
+		}
+	}
+	for _, unmanaged := range []string{
+		"",
+		"not-a-url",
+		"https://relay.thirdparty.example/v1",
+		"https://evil-beeftv.app/v1",
+		"https://beeftv.app.evil.com/v1",
+	} {
+		if IsManagedBaseURL(unmanaged) {
+			t.Fatalf("IsManagedBaseURL(%q) = true, want false", unmanaged)
+		}
+	}
+	t.Setenv(TestOriginEnv, "http://127.0.0.1:18765")
+	if !IsManagedBaseURL("http://127.0.0.1:18765/v1") {
+		t.Fatal("expected configured test origin base URL to be treated as managed")
+	}
+	if IsManagedBaseURL("http://127.0.0.1:19999/v1") {
+		t.Fatal("unexpected managed match for different loopback port")
+	}
+}

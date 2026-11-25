@@ -30,7 +30,7 @@ import { bindBackendCanvasGenerationResult, CanvasGenerationMaterializationError
 import { materializeEffectKey } from "@/services/generation-task-materializer";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { resetWorkspaceAssetReadStateForTests } from "@/services/workspace-asset-read";
-import { generationAssetId, resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { generationAssetId, recordAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const spies: Array<{ mockRestore: () => void }> = [];
@@ -325,11 +325,11 @@ describe("Bug 1 (#573): deleted assets stay hidden from generation history and a
             expect(putAssetIds).toEqual([]);
             expect(useAssetStore.getState().assets).toEqual([]);
 
-            // When /assets/batch explicitly returns 404, creating a new asset is allowed.
+            // When /assets/batch and /tasks/:id both explicitly return 404 (no backend canonical or task row), creating a new asset is allowed.
             const createdResult = await withAdapter(async (config) => {
                 const method = String(config.method || "get").toUpperCase();
                 const url = String(config.url || "");
-                if (url.includes("/assets/batch")) {
+                if (url.includes("/assets/batch") || url.includes("/tasks/")) {
                     throw new ApiError("Not Found", { status: 404 });
                 }
                 if (method === "PUT" && url.startsWith("/assets/")) {
@@ -345,6 +345,140 @@ describe("Bug 1 (#573): deleted assets stay hidden from generation history and a
             }));
             expect(createdResult.created).toBe(true);
             expect(putAssetIds.length).toBe(1);
+        } finally {
+            setActiveUserScope(prevScope);
+        }
+    });
+
+    test("ensureCanvasNodeAsset never resurrects a deleted canonical generation asset or creates duplicates while delivering", async () => {
+        const prevScope = getActiveUserScope();
+        enterDesktopWailsMode();
+
+        try {
+            // Case A: local tombstone for canonical generation asset -> skips creation even when /assets/batch returns empty.
+            setActiveUserScope("b3-tombstone-local-scope");
+            const deletedTaskId = "task-deleted-local-573";
+            const deletedCanonicalId = await generationAssetId(materializeEffectKey(deletedTaskId, 0));
+            recordAssetStoreDraft(deletedCanonicalId, "delete");
+
+            const putCallsA: string[] = [];
+            const batchCallsA: string[] = [];
+            const deletedNode: CanvasNodeData = {
+                id: "node-deleted-local-573",
+                type: CanvasNodeType.Image,
+                title: "已删生成图",
+                position: { x: 0, y: 0 },
+                width: 512,
+                height: 512,
+                metadata: {
+                    content: "/api/resources/res-deleted-local-573/file",
+                    storageKey: "resource:res-deleted-local-573",
+                    taskId: deletedTaskId,
+                    taskOutputIndex: 0,
+                    status: "success",
+                },
+            };
+
+            const resA = await withAdapter(async (config) => {
+                const method = String(config.method || "get").toUpperCase();
+                const url = String(config.url || "");
+                if (url.includes("/assets/batch")) {
+                    batchCallsA.push(url);
+                    return envelope({ assets: [] });
+                }
+                if (method === "PUT" && url.startsWith("/assets/")) {
+                    putCallsA.push(url);
+                }
+                return envelope({});
+            }, () => ensureCanvasNodeAsset({
+                canvasId: "canvas-tombstone-573",
+                node: deletedNode,
+                source: "canvas-generation",
+                taskId: deletedTaskId,
+            }));
+
+            expect(resA).toEqual({ assetId: "", created: false, linkedToProject: false, confirmed: false });
+            expect(batchCallsA).toEqual([]);
+            expect(putCallsA).toEqual([]);
+            expect(useAssetStore.getState().assets).toEqual([]);
+
+            // Case B: no local tombstone yet, /assets/batch returns empty, backend task reports asset_deleted -> must not create Canvas copy.
+            setActiveUserScope("b3-tombstone-remote-scope");
+            const remoteDeletedTaskId = "task-deleted-remote-573";
+            const putCallsB: string[] = [];
+            const remoteDeletedNode: CanvasNodeData = {
+                ...deletedNode,
+                id: "node-deleted-remote-573",
+                metadata: { ...deletedNode.metadata, taskId: remoteDeletedTaskId },
+            };
+            const resB = await withAdapter(async (config) => {
+                const method = String(config.method || "get").toUpperCase();
+                const url = String(config.url || "");
+                if (url.includes("/assets/batch")) return envelope({ assets: [] });
+                if (url.includes(`/tasks/${remoteDeletedTaskId}`)) {
+                    return envelope({
+                        id: remoteDeletedTaskId,
+                        projectId: "canvas-tombstone-573",
+                        type: "canvas_image",
+                        status: "succeeded",
+                        resultState: "FAILED_PERMANENT",
+                        outputs: [{ outputIndex: 0, mediaType: "image", materializationErrorCode: "asset_deleted" }],
+                        attempts: 1,
+                        createdAt: "2026-10-02T10:00:00.000Z",
+                        updatedAt: "2026-10-02T10:00:00.000Z",
+                    });
+                }
+                if (method === "PUT" && url.startsWith("/assets/")) putCallsB.push(url);
+                return envelope({});
+            }, () => ensureCanvasNodeAsset({
+                canvasId: "canvas-tombstone-573",
+                node: remoteDeletedNode,
+                source: "canvas-generation",
+                taskId: remoteDeletedTaskId,
+            }));
+
+            expect(resB).toEqual({ assetId: "", created: false, linkedToProject: false, confirmed: false });
+            expect(putCallsB).toEqual([]);
+            expect(useAssetStore.getState().assets).toEqual([]);
+
+            // Case C: canonical still delivering (PENDING_MATERIALIZATION) -> must not mint a duplicate Canvas copy.
+            setActiveUserScope("b3-delivering-scope");
+            const deliveringTaskId = "task-delivering-573";
+            const putCallsC: string[] = [];
+            const deliveringNode: CanvasNodeData = {
+                ...deletedNode,
+                id: "node-delivering-573",
+                metadata: { ...deletedNode.metadata, taskId: deliveringTaskId },
+            };
+            const resC = await withAdapter(async (config) => {
+                const method = String(config.method || "get").toUpperCase();
+                const url = String(config.url || "");
+                if (url.includes("/assets/batch")) return envelope({ assets: [] });
+                if (url.includes(`/tasks/${deliveringTaskId}`)) {
+                    return envelope({
+                        id: deliveringTaskId,
+                        projectId: "canvas-tombstone-573",
+                        type: "canvas_image",
+                        status: "succeeded",
+                        resultState: "PENDING_MATERIALIZATION",
+                        outputs: [{ outputIndex: 0, mediaType: "image" }],
+                        attempts: 1,
+                        createdAt: "2026-10-02T10:00:00.000Z",
+                        updatedAt: "2026-10-02T10:00:00.000Z",
+                    });
+                }
+                if (method === "PUT" && url.startsWith("/assets/")) putCallsC.push(url);
+                return envelope({});
+            }, () => ensureCanvasNodeAsset({
+                canvasId: "canvas-tombstone-573",
+                node: deliveringNode,
+                source: "canvas-generation",
+                taskId: deliveringTaskId,
+            }));
+
+            expect(resC).toEqual({ assetId: "", created: false, linkedToProject: false, confirmed: false });
+            expect(putCallsC).toEqual([]);
+            expect(useAssetStore.getState().assets).toEqual([]);
         } finally {
             setActiveUserScope(prevScope);
         }
