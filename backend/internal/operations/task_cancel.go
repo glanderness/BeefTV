@@ -15,7 +15,7 @@ type TaskController interface {
 }
 
 func registerTaskCancelOp(r *Registry) {
-	r.Register(Op{ExternalOnly: true, ReplaySafe: true, ID: "task.cancel", Summary: "取消排队中或进行中的任务；生成已完成但产物还在取回的会停止继续取回，已经取回的不能取消。上游已经受理的任务可能已经计费，这里不承诺退款", Scope: ScopeWorkspaceRead,
+	r.Register(Op{AssistantCanvas: true, ReplaySafe: true, NoTurnCanvas: true, ID: "task.cancel", Summary: "取消排队中或进行中的任务；生成已完成但产物还在取回的会停止继续取回，已经取回的不能取消。上游已经受理的任务可能已经计费，这里不承诺退款", Scope: ScopeWorkspaceRead,
 		Params:  json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string","description":"要取消的任务 ID"}},"required":["taskId"]}`),
 		Handler: opTaskCancel})
 }

@@ -137,20 +137,21 @@ func (s *Service) Begin(userID, canvasID, turnID string, input Input) (int64, er
 		}
 		associatedAssets, associatedTasks := AssociatedReferences(raw)
 		rec = Record{
-			PermissionMode:      Mode(input.PermissionMode),
-			TurnID:              id,
-			UserID:              userID,
-			CanvasID:            canvasID,
-			RevisionBefore:      DocumentRevision(doc),
-			CreatedAt:           s.now(),
-			State:               StateOpen,
-			Document:            raw,
-			SelectedNodeIDs:     uniqueSorted(input.SelectedNodeIDs),
-			ReferencedAssetIDs:  uniqueSorted(input.AssetIDs),
-			ReferencedCanvasIDs: uniqueSorted(input.CanvasIDs),
-			AssociatedAssetIDs:  associatedAssets,
-			AssociatedTaskIDs:   associatedTasks,
-			SkillPins:           SortedSkillPins(input.SkillPins),
+			PermissionMode:        Mode(input.PermissionMode),
+			TurnID:                id,
+			UserID:                userID,
+			CanvasID:              canvasID,
+			RevisionBefore:        DocumentRevision(doc),
+			CreatedAt:             s.now(),
+			State:                 StateOpen,
+			Document:              raw,
+			SelectedNodeIDs:       uniqueSorted(input.SelectedNodeIDs),
+			ReferencedAssetIDs:    uniqueSorted(input.AssetIDs),
+			ReferencedCanvasIDs:   uniqueSorted(input.CanvasIDs),
+			ReferencedResourceIDs: uniqueSorted(input.ResourceIDs),
+			AssociatedAssetIDs:    associatedAssets,
+			AssociatedTaskIDs:     associatedTasks,
+			SkillPins:             SortedSkillPins(input.SkillPins),
 		}
 		inserted, insErr := s.store.Insert(tx, recordToModel(rec, s.now()))
 		if insErr != nil {
@@ -213,7 +214,7 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 		return Scope{}, false, err
 	}
 	for _, receipt := range receipts {
-		if receipt.Op != "canvas.timeline.render" && receipt.Op != "canvas.generation.submit" {
+		if receipt.Op != "canvas.timeline.render" && receipt.Op != "canvas.generation.submit" && receipt.Op != "canvas.generation.regenerate" {
 			continue
 		}
 		var result struct {
@@ -254,16 +255,44 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 			return Scope{}, false, queryErr
 		}
 	}
+	sessionResources, err := s.sessionResourceIDs(rec)
+	if err != nil {
+		return Scope{}, false, err
+	}
 	return Scope{
 		PermissionMode:   Mode(rec.PermissionMode),
 		CanvasID:         rec.CanvasID,
 		AssetIDs:         uniqueSorted(append(append([]string{}, rec.ReferencedAssetIDs...), rec.AssociatedAssetIDs...)),
 		CanvasIDs:        uniqueSorted(rec.ReferencedCanvasIDs),
+		ResourceIDs:      uniqueSorted(append(append([]string{}, rec.ReferencedResourceIDs...), sessionResources...)),
 		TaskIDs:          uniqueSorted(taskIDs),
 		SkillPins:        SortedSkillPins(rec.SkillPins),
 		ActiveSkillPins:  activePins,
 		SessionSkillPins: sessionPins,
 	}, true, nil
+}
+
+// sessionResourceIDs returns file resource IDs attached in earlier rounds of the
+// same Durable conversation and owner so follow-up turns can paginate reading them.
+func (s *Service) sessionResourceIDs(rec Record) ([]string, error) {
+	if strings.TrimSpace(rec.DurableSessionID) == "" || s.store.DB() == nil {
+		return nil, nil
+	}
+	var rows []model.AssistantTurn
+	if err := s.store.DB().Select("turn_id", "referenced_resource_ids").
+		Where("user_id = ? AND durable_session_id = ? AND turn_id <> ? AND referenced_resource_ids <> ''", rec.UserID, rec.DurableSessionID, rec.TurnID).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, row := range rows {
+		ids, err := decodeStringList(row.ReferencedResourceIDs)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ids...)
+	}
+	return uniqueSorted(out), nil
 }
 
 // sessionSkillPins returns the exact pins of other rounds bound to the same
@@ -494,8 +523,12 @@ func (s *Service) VerifyOpenTurnInTx(tx *gorm.DB, userID, turnID, canvasID strin
 	if tx == nil {
 		return errors.New("助手回合校验必须在操作事务内执行")
 	}
-	if err := requireActor(userID, canvasID); err != nil {
-		return err
+	if strings.TrimSpace(canvasID) != "" {
+		if err := requireActor(userID, canvasID); err != nil {
+			return err
+		}
+	} else if strings.TrimSpace(userID) == "" {
+		return &Error{Reason: ReasonIdentity, Message: "缺少用户或画布身份"}
 	}
 	id := NormalizeTurnID(turnID)
 	if id == "" {
@@ -510,6 +543,9 @@ func (s *Service) VerifyOpenTurnInTx(tx *gorm.DB, userID, turnID, canvasID strin
 	}
 	if Mode(rec.PermissionMode) == PermissionReadOnly {
 		return &Error{Reason: "scope_denied", Message: "本轮助手只能读取"}
+	}
+	if strings.TrimSpace(canvasID) == "" {
+		return nil
 	}
 	if rec.CanvasSnapshots == nil {
 		rec.CanvasSnapshots = map[string]CanvasSnapshot{}

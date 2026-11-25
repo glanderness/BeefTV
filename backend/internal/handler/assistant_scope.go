@@ -11,6 +11,7 @@ import (
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/skills"
 )
 
@@ -23,6 +24,7 @@ type assistantScopeService interface {
 
 type assistantReferenceService interface {
 	CanvasService() *canvas.Service
+	Resource(userID, id string) (*model.Resource, error)
 }
 
 // 共享操作层上的助手身份与回合归属。
@@ -52,11 +54,11 @@ func normalizeAssistantReferences(svc assistantReferenceService, userID string, 
 	if len(items) == 0 {
 		return nil, nil
 	}
-	if len(items) > assistantMaxReferences {
+	if len(items) > assistantMaxReferences*4 {
 		return nil, fmt.Errorf("一次对话最多引用 %d 个资源", assistantMaxReferences)
 	}
 	seen := map[string]bool{}
-	out := make([]assistantReference, 0, len(items))
+	out := make([]assistantReference, 0, min(len(items), assistantMaxReferences))
 	for _, item := range items {
 		kind := strings.TrimSpace(item.Kind)
 		id := strings.TrimSpace(item.ID)
@@ -67,6 +69,9 @@ func normalizeAssistantReferences(svc assistantReferenceService, userID string, 
 		if seen[key] {
 			continue
 		}
+		if len(out) >= assistantMaxReferences {
+			return nil, fmt.Errorf("一次对话最多引用 %d 个资源", assistantMaxReferences)
+		}
 		switch kind {
 		case "asset":
 			if _, err := svc.CanvasService().UserAsset(userID, id); err != nil {
@@ -75,6 +80,11 @@ func normalizeAssistantReferences(svc assistantReferenceService, userID string, 
 		case "canvas":
 			if _, err := svc.CanvasService().UserCanvasProject(userID, id); err != nil {
 				return nil, errors.New("引用的画布不存在或不属于当前工作区")
+			}
+		case "resource":
+			res, err := svc.Resource(userID, id)
+			if err != nil || res == nil || res.Status != model.ResourceStatusReady {
+				return nil, errors.New("引用的文件不存在或尚未保存完成")
 			}
 		default:
 			return nil, errors.New("不支持的引用类型: " + kind)
@@ -94,6 +104,8 @@ func assistantTurnInput(selected []string, references []assistantReference) app.
 			input.AssetIDs = append(input.AssetIDs, item.ID)
 		case "canvas":
 			input.CanvasIDs = append(input.CanvasIDs, item.ID)
+		case "resource":
+			input.ResourceIDs = append(input.ResourceIDs, item.ID)
 		}
 	}
 	return input
@@ -128,6 +140,7 @@ func assistantScopeForRequest(c *gin.Context, svc assistantScopeService, userID 
 		CanvasID:       scope.CanvasID,
 		AssetIDs:       assistantIDSet(scope.AssetIDs),
 		CanvasIDs:      assistantIDSet(scope.CanvasIDs),
+		ResourceIDs:    assistantIDSet(scope.ResourceIDs),
 		TaskIDs:        assistantIDSet(scope.TaskIDs),
 		SkillPins:      assistantSkillPinSet(scope.SkillPins, scope.SessionSkillPins, scope.ActiveSkillPins),
 		SkillInstalled: func(pin skills.Pin) bool {

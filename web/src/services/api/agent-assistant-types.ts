@@ -116,6 +116,7 @@ export type GenerationOrder = {
     targetViews?: GenerationOrderTargetView[];
     sourceTurnId?: string;
     taskIds?: string[];
+    regenerate?: boolean;
     continuationId?: string;
     createdAt: string;
     updatedAt: string;
@@ -135,6 +136,7 @@ export type AssistantGenerationProposal = {
     approvalMode?: "ask" | "caller" | "auto";
     status?: "pending" | "approved" | "submitted" | "rejected";
     note?: string;
+    regenerate?: boolean;
     targets?: GenerationOrderTargetView[];
     order?: GenerationOrder;
     production?: { targets: { nodeId: string; title: string; kind: "image" | "video" | "audio"; modelKey: string; prompt: string; parameters: Record<string, string>; metadata?: Record<string, unknown>; referenceNodeIds: string[]; estimate?: CostEstimate }[]; estimate?: CostSummary };
@@ -242,14 +244,14 @@ export type StreamHandlers = {
  * 内置助手默认能读当前画布与画布关联的素材/任务；额外画布只读，素材只读。
  */
 export type AgentChatReference = {
-    kind: "asset" | "canvas";
+    kind: "asset" | "canvas" | "resource";
     id: string;
 };
 
-export type AssistantAttachmentPurpose = "analysis" | "character" | "scene" | "style" | "motion" | "first-frame" | "last-frame" | "rhythm" | "sound";
+export type AssistantAttachmentPurpose = "analysis" | "reference" | "character" | "scene" | "style" | "motion" | "first-frame" | "last-frame" | "rhythm" | "sound";
 export type AssistantAttachment = {
     resourceId: string;
-    kind: "image" | "video" | "audio";
+    kind: "image" | "video" | "audio" | "file";
     name: string;
     mimeType: string;
     bytes: number;

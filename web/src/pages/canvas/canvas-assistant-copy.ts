@@ -65,6 +65,20 @@ export function assistantActionLabel(tool: string | undefined): string {
             return "准备生成";
         case "canvas.generation.submit":
             return "生成素材";
+        case "canvas.generation.regenerate":
+            return "原地重做素材";
+        case "canvas.create":
+            return "新建画布";
+        case "task.cancel":
+            return "取消任务";
+        case "file.read":
+        case "file_read":
+            return "读取文件";
+        case "business.list":
+        case "business_list":
+        case "business.call":
+        case "business_call":
+            return "调用工作区接口";
         case "canvas.project.export":
             return "导出工程";
         case "skill.script.run":
@@ -219,6 +233,7 @@ export function assistantProductionScope(proposal: AssistantGenerationProposal):
 }
 
 export function assistantProposalConfirmLabel(proposal: AssistantGenerationProposal): string {
+    if (proposal.regenerate) return "确认并原地重做";
     const scope = assistantProductionScope(proposal);
     if (scope === "full-production") return "确认并制作整片";
     if (scope === "staged-plan") return "确认制作方案";
@@ -253,9 +268,14 @@ export function assistantProductionProposalParts(
         return { scope, header, summaryLabel: `查看 ${targetLines.length} 项镜头与提示词明细`, targetLines, footer };
     }
     const countSummary = formatPresentKindCounts(images, videos.length, audio.length);
-    const header = `${scope === "staged-plan" ? "分步生成方案" : "生成方案"}：${countSummary}${priceSummary ? `\n${priceSummary}` : ""}`;
+    const titlePrefix = proposal.regenerate
+        ? "原地重做方案"
+        : scope === "staged-plan"
+            ? "分步生成方案"
+            : "生成方案";
+    const header = `${titlePrefix}：${countSummary}${priceSummary ? `\n${priceSummary}` : ""}`;
     const footer = awaitingConfirmation
-        ? `${scope === "staged-plan" ? "确认后按依赖顺序依次生成素材" : "确认后按此方案生成素材"}（请点击下方按钮确认开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。`
+        ? `${proposal.regenerate ? "确认后将在原节点重新生成上述素材（原有结果会保留在素材库，" : scope === "staged-plan" ? "确认后按依赖顺序依次生成素材（" : "确认后按此方案生成素材（"}请点击下方按钮确认开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。`
         : "";
     return { scope, header, summaryLabel: `查看 ${targetLines.length} 项生成明细`, targetLines, footer };
 }
@@ -274,9 +294,14 @@ export function assistantProposalText(
     }
     const target = proposal.kind === "video" ? "视频" : proposal.kind === "audio" ? "音频" : "图片";
     const modelLabel = modelDisplayLabel?.trim() || proposal.model;
-    const title = `为 ${count} 个节点生成${target} · ${modelLabel}`;
+    const title = proposal.regenerate
+        ? `在原节点重新生成 ${count} 个${target} · ${modelLabel}`
+        : `为 ${count} 个节点生成${target} · ${modelLabel}`;
     const prices = proposal.estimate?.text ? [proposal.estimate.text] : priceLines;
-    return awaitingConfirmation ? `${title}\n${prices.length ? prices.join("\n") + "\n" : ""}确认后开始，按所选渠道计费。` : title;
+    const confirmNote = proposal.regenerate
+        ? "确认后开始，按所选渠道计费；原有结果会保留在素材库。"
+        : "确认后开始，按所选渠道计费。";
+    return awaitingConfirmation ? `${title}\n${prices.length ? prices.join("\n") + "\n" : ""}${confirmNote}` : title;
 }
 
 /** Match the submitted proposal, including fan-out images; old results on the source node are not receipts. */

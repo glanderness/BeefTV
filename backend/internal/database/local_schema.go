@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 31
+const CurrentSchemaVersion int64 = 32
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -206,6 +206,7 @@ func canonicalLocalMigrations() []localMigration {
 				bindMarkerPattern,
 			).Error
 		}},
+		{version: 32, name: "assistant-referenced-resources", apply: migrateAssistantReferencedResources},
 	}
 }
 
@@ -683,6 +684,11 @@ func requireReconciledSchema(db *gorm.DB) error {
 		}
 		if !validIdentity {
 			return fmt.Errorf("本地任务副作用唯一索引 idx_task_effects_identity 缺失或定义不完整")
+		}
+	}
+	if version >= 32 {
+		if err := requireAssistantReferencedResources(db); err != nil {
+			return err
 		}
 	}
 	return nil

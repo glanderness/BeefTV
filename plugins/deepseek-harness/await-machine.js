@@ -2,7 +2,8 @@
 // transition(state, event) 不调用 DSH、不读盘、不设定时器；它只返回下一份状态和要执行的动作。
 // 真正的 followup/inject、inbox 撤回、task.wait 轮询与 awaiting.json 落盘都在 await-runner.js。
 
-export const maximumWakesPerSession = 3
+// 0 表示不限制连续自动唤醒次数；失败投递、断线或用户停止仍走既有的补投/离开账本保护。
+export const maximumWakesPerSession = 0
 const maximumDeferredOutcomes = 50
 
 export function createAwaitState({ autoContinue = true } = {}) {
@@ -369,7 +370,7 @@ export function transition(state, event) {
       if (workspaceId !== target) {
         // 等待属于另一个工作区：不能投到当前会话，留给下次连回原工作区时核对。
         addAway(next, workspaceId, outcomes.map(outcome => outcome.taskId))
-      } else if (session.wakeCount >= maximumWakesPerSession) {
+      } else if (maximumWakesPerSession > 0 && session.wakeCount >= maximumWakesPerSession) {
         if (defer(next, event.sessionId, outcomes, workspaceId)) out.persist = true
       } else {
         actions.push({

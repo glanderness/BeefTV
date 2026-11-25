@@ -28,6 +28,7 @@ export function createStepLimit() {
       state.started = Math.max(0, (state.started || 0) - 1)
       state.count += 1
       if (beefTV) state.beefTV = true
+      if (!Number.isInteger(limit) || limit <= 0) return
       if (!state.stop && state.beefTV && state.count >= limit) {
         state.stop = true
         state.limit = limit
@@ -54,6 +55,10 @@ export function createStepLimit() {
       const state = sessionOf(sessionId)
       if (!state) return null
       if (beefTV) state.beefTV = true
+      if (!Number.isInteger(limit) || limit <= 0) {
+        state.started = (state.started || 0) + 1
+        return null
+      }
       const used = state.count + (state.started || 0)
       if (state.stop || (state.beefTV && used >= limit)) {
         state.stop = true

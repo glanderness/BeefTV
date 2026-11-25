@@ -109,8 +109,10 @@ export function CanvasAssistantSidebar(props: Props) {
         try {
             const attachment = await uploadAssistantAttachment(file, id);
             if (generation !== inputGeneration.current) return;
-            void appQueryClient.invalidateQueries({ queryKey: assetLibraryQueryKey() });
-            void appQueryClient.invalidateQueries({ queryKey: assetPickerQueryKey() });
+            if (attachment.kind !== "file") {
+                void appQueryClient.invalidateQueries({ queryKey: assetLibraryQueryKey() });
+                void appQueryClient.invalidateQueries({ queryKey: assetPickerQueryKey() });
+            }
             setAttachments(items => [...items, attachment]); setUploads(items => items.filter(item => item.id !== id));
         } catch (error) {
             if (generation !== inputGeneration.current) return;
@@ -120,7 +122,7 @@ export function CanvasAssistantSidebar(props: Props) {
 
     const addFiles = useCallback((files: File[]) => {
         if (readOnly || !draftLoaded || loadedDraftIdentity !== draftIdentity) return;
-        if (attachmentCount.current + files.length > 8) { setInputError("一次最多添加 8 份参考素材"); return; }
+        if (attachmentCount.current + files.length > 16) { setInputError("一次最多添加 16 个文件或素材"); return; }
         setInputError("");
         attachmentCount.current += files.length;
         const entries = files.map(file => ({ id: createClientId(), file, busy: true }));
@@ -179,7 +181,9 @@ export function CanvasAssistantSidebar(props: Props) {
         // 模型不能自己声明要读哪些素材。
         const assetReferences = [...new Set([...referencedAssetIdsInPrompt(text), ...attachments.flatMap(item => item.assetId ? [item.assetId] : [])])]
             .map((id) => ({ kind: "asset" as const, id }));
-        void assistant.send(text, assistant.streaming ? [] : attachedIds, assetReferences, { attachments, skills: selectedSkills });
+        const resourceReferences = [...new Set(attachments.flatMap(item => item.kind === "file" && item.resourceId ? [item.resourceId] : []))]
+            .map((id) => ({ kind: "resource" as const, id }));
+        void assistant.send(text, assistant.streaming ? [] : attachedIds, [...assetReferences, ...resourceReferences], { attachments, skills: selectedSkills });
     }, [assistant, attachedIds, attachments, draft, draftIdentity, draftLoaded, loadedDraftIdentity, readOnly, selectedSkills, uploads.length]);
 
     const startResize = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {

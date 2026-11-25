@@ -61,10 +61,11 @@ type GenerationAuthorization struct {
 	SourceTurnID string             `json:"sourceTurnId"`
 	ProposalID   string             `json:"proposalId"`
 	Targets      []GenerationTarget `json:"targets"`
+	Regenerate   bool               `json:"regenerate,omitempty"`
 }
 
 func (a GenerationAuthorization) SamePlan(other GenerationAuthorization) bool {
-	return a.SourceTurnID == other.SourceTurnID && a.ProposalID == other.ProposalID && GenerationTargetsEqual(a.Targets, other.Targets)
+	return a.SourceTurnID == other.SourceTurnID && a.ProposalID == other.ProposalID && a.Regenerate == other.Regenerate && GenerationTargetsEqual(a.Targets, other.Targets)
 }
 
 type GenerationOrderStatus string
@@ -135,6 +136,10 @@ func (o GenerationOrder) IsOwnerConfirmed() bool {
 
 type AuthorizedGenerationAdmission interface {
 	SubmitAuthorizedGeneration(userID, turnID, canvasID string, targets []GenerationTarget) (any, error)
+}
+
+type AuthorizedGenerationRegenerator interface {
+	RegenerateAuthorizedGeneration(userID, turnID, canvasID string, targets []GenerationTarget) (any, error)
 }
 
 // External clients own execution approval; they still use the same task admission.
@@ -407,6 +412,13 @@ func admitGeneration(ctx *Context, raw json.RawMessage, mode generationAdmission
 			}
 		}
 		return out, nil
+	}
+	if mode == generationRegenerate {
+		port, ok := ctx.Domain.(AuthorizedGenerationRegenerator)
+		if !ok {
+			return nil, Unsupported("generation_unavailable", "当前工作区不能自动原地重做")
+		}
+		return port.RegenerateAuthorizedGeneration(ctx.UserID, ctx.TurnID, args.CanvasID, targets)
 	}
 	port, ok := ctx.Domain.(AuthorizedGenerationAdmission)
 	if !ok {

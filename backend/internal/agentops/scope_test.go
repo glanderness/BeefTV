@@ -12,10 +12,11 @@ import (
 // 额外画布只读，跨画布写一律拒绝。模型自报的参数无法越过这里。
 func TestAssistantScopeAllowsOnlyVerifiedResources(t *testing.T) {
 	scope := &agentops.AssistantScope{
-		CanvasID:  "canvas-a",
-		AssetIDs:  map[string]bool{"asset-ref": true},
-		CanvasIDs: map[string]bool{"canvas-b": true},
-		TaskIDs:   map[string]bool{"task-1": true},
+		CanvasID:    "canvas-a",
+		AssetIDs:    map[string]bool{"asset-ref": true},
+		CanvasIDs:   map[string]bool{"canvas-b": true},
+		ResourceIDs: map[string]bool{"res-doc": true},
+		TaskIDs:     map[string]bool{"task-1": true},
 	}
 	cases := []struct {
 		name   string
@@ -53,9 +54,19 @@ func TestAssistantScopeAllowsOnlyVerifiedResources(t *testing.T) {
 		{"审片来源不可缺失", "media.review", `{"canvasId":"canvas-a"}`, true},
 		{"关联任务可读", "task.get", `{"taskId":"task-1"}`, false},
 		{"无关任务不可读", "task.get", `{"taskId":"task-2"}`, true},
+		{"关联任务可取消", "task.cancel", `{"taskId":"task-1"}`, false},
+		{"无关任务不可取消", "task.cancel", `{"taskId":"task-2"}`, true},
+		{"关联任务可等待", "task.wait", `{"taskIds":["task-1"]}`, false},
+		{"含无关任务不可等待", "task.wait", `{"taskIds":["task-1","task-2"]}`, true},
+		{"附带文件可读", "file.read", `{"resourceId":"res-doc"}`, false},
+		{"未附带文件不可读", "file.read", `{"resourceId":"res-other"}`, true},
+		{"当前画布允许原地重做提议校验", "canvas.generation.regenerate", `{"canvasId":"canvas-a","nodeIds":["n1"]}`, false},
+		{"额外画布不可原地重做", "canvas.generation.regenerate", `{"canvasId":"canvas-b","nodeIds":["n1"]}`, true},
 		{"工作区级列举不可用", "asset.list", `{}`, true},
 		{"整页文档提交不可用", "canvas.document.commit", `{"canvasId":"canvas-a"}`, true},
-		{"外部新建画布对内置助手不可用", "canvas.create", `{"title":"x"}`, true},
+		{"画布模式新建画布不可用", "canvas.create", `{"title":"x"}`, true},
+		{"画布模式底层接口列举不可用", "business.list", `{}`, true},
+		{"画布模式底层接口调用不可用", "business.call", `{"tool":"business_get_assets"}`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,6 +97,7 @@ func registeredScopeOp(t *testing.T, id string) *agentops.Op {
 	}
 	op := &agentops.Op{ID: id, ReadOnly: descriptor.ReadOnly, Scope: descriptor.Scope}
 	hasReadOnly := false
+	hasFullAccess := false
 	for _, mode := range descriptor.AssistantModes {
 		if mode == "canvas" {
 			op.AssistantCanvas = true
@@ -93,11 +105,17 @@ func registeredScopeOp(t *testing.T, id string) *agentops.Op {
 		if mode == "read-only" {
 			hasReadOnly = true
 		}
+		if mode == "full-access" {
+			hasFullAccess = true
+		}
 	}
 	if len(descriptor.AssistantModes) == 0 && descriptor.Scope != operations.ScopeConversation {
 		op.ExternalOnly = true
 	}
-	if descriptor.ReadOnly && !hasReadOnly {
+	if len(descriptor.AssistantModes) == 1 && hasFullAccess && !op.AssistantCanvas && !hasReadOnly {
+		op.FullAccessOnly = true
+	}
+	if descriptor.ReadOnly && !hasReadOnly && !op.FullAccessOnly {
 		op.AssistantProposal = true
 	}
 	return op
@@ -120,17 +138,17 @@ func TestAssistantVisibleSetExcludesWorkspaceWideOps(t *testing.T) {
 		visible[descriptor.ID] = true
 	}
 	for _, id := range []string{"canvas.get", "canvas.node.update", "canvas.nodes.create", "canvas.edge.create",
-		"canvas.generation.propose", "canvas.task.bind", "asset.get", "task.get"} {
+		"canvas.generation.propose", "canvas.generation.regenerate", "canvas.task.bind", "asset.get", "task.get", "task.cancel", "file.read"} {
 		if !visible[id] {
 			t.Fatalf("助手应能看到 %s: %v", id, visible)
 		}
 	}
-	for _, id := range []string{"asset.list", "canvas.search", "canvas.create", "canvas.document.commit", "conversation.message.attach", "task.wait"} {
+	for _, id := range []string{"asset.list", "canvas.search", "canvas.create", "canvas.document.commit", "conversation.message.attach", "business.list", "business.call"} {
 		if visible[id] {
-			t.Fatalf("工作区级或整页写操作 %s 不应暴露给助手", id)
+			t.Fatalf("工作区级或整页写操作 %s 不应暴露给 canvas 模式助手", id)
 		}
 	}
-	// 外部客户端（不带助手范围）仍然能看到完整工作区能力。
+	// 外部客户端（不带助手范围）仍然能看到完整工作区能力，但不重复暴露仅给内置助手的 business.list/call。
 	full := registry.List(agentops.Caller{})
 	if len(full) <= len(visible) {
 		t.Fatalf("外部客户端应看到完整能力集: %d <= %d", len(full), len(visible))
@@ -140,21 +158,33 @@ func TestAssistantVisibleSetExcludesWorkspaceWideOps(t *testing.T) {
 		if descriptor.ID == "task.wait" {
 			foundWait = true
 		}
+		if descriptor.ID == "business.list" || descriptor.ID == "business.call" {
+			t.Fatalf("外部客户端不应重复暴露内置助手专用操作 %s", descriptor.ID)
+		}
 	}
 	if !foundWait {
 		t.Fatalf("外部客户端应能看到 task.wait: %v", visible)
 	}
 }
 
-// 等待生成任务只在宿主迁移完成后才对内置模型开放；现在任何权限模式都不应看到。
-func TestTaskWaitStaysExternalOnly(t *testing.T) {
+// full-access 模式可以看到 canvas.create、business.list 和 business.call；canvas/read-only 看不到。
+func TestFullAccessAssistantSeesCreateAndBusinessGateway(t *testing.T) {
 	registry := agentops.NewRegistry(nil, nil)
 	agentops.RegisterDefaultOps(registry)
-	for _, mode := range []string{"canvas", "read-only", "full-access"} {
+	for _, mode := range []string{"canvas", "read-only"} {
 		for _, descriptor := range registry.List(agentops.AssistantCaller(&agentops.AssistantScope{PermissionMode: mode}, false)) {
-			if descriptor.ID == "task.wait" {
-				t.Fatalf("%s 模式不应看到 task.wait", mode)
+			if descriptor.ID == "canvas.create" || descriptor.ID == "business.list" || descriptor.ID == "business.call" {
+				t.Fatalf("%s 模式不应看到 %s", mode, descriptor.ID)
 			}
+		}
+	}
+	fullVisible := map[string]bool{}
+	for _, descriptor := range registry.List(agentops.AssistantCaller(&agentops.AssistantScope{PermissionMode: "full-access"}, false)) {
+		fullVisible[descriptor.ID] = true
+	}
+	for _, id := range []string{"canvas.create", "business.list", "business.call", "file.read", "task.cancel", "task.wait", "canvas.generation.regenerate"} {
+		if !fullVisible[id] {
+			t.Fatalf("full-access 模式应能看到 %s", id)
 		}
 	}
 }
@@ -164,11 +194,11 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 	agentops.RegisterDefaultOps(registry)
 	var typedNil *agentops.AssistantScope
 	listed := registry.List(agentops.Caller{Kind: agentops.CallerManual, Scope: typedNil})
-	if len(listed) != 55 {
+	if len(listed) != 56 {
 		t.Fatalf("空指针范围不应收窄目录，得到 %d", len(listed))
 	}
 	empty := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{}, false))
-	if len(empty) != 40 {
+	if len(empty) != 44 {
 		t.Fatalf("空助手范围应只露出助手集合，得到 %d", len(empty))
 	}
 	if got := registry.List(agentops.AssistantCaller(nil, false)); len(got) != 0 {
@@ -179,7 +209,7 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 func TestReferenceBindingCatalogPermissionModes(t *testing.T) {
 	registry := agentops.NewRegistry(nil, nil)
 	agentops.RegisterDefaultOps(registry)
-	for mode, want := range map[string]int{"read-only": 21, "canvas": 40, "full-access": 44} {
+	for mode, want := range map[string]int{"read-only": 23, "canvas": 44, "full-access": 51} {
 		descriptors := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{PermissionMode: mode}, false))
 		if len(descriptors) != want {
 			t.Fatalf("%s catalog=%d want=%d", mode, len(descriptors), want)

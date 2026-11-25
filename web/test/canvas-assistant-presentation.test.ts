@@ -9,6 +9,7 @@ import {
     assistantLifecycleText,
     assistantTurnCanContinue,
     assistantFailedActionText,
+    assistantProposalConfirmLabel,
     assistantProposalText,
     assistantProposalProgress,
     appendAssistantDraft,
@@ -83,6 +84,13 @@ describe("工具调用翻译成做了什么", () => {
         expect(assistantActionLabel("media.overview")).toBe("浏览素材");
         expect(assistantActionLabel("media.inspect")).toBe("查看和听取素材");
         expect(assistantActionLabel("media.check")).toBe("检查媒体文件");
+        expect(assistantActionLabel("file.read")).toBe("读取文件");
+        expect(assistantActionLabel("file_read")).toBe("读取文件");
+        expect(assistantActionLabel("task.cancel")).toBe("取消任务");
+        expect(assistantActionLabel("canvas.create")).toBe("新建画布");
+        expect(assistantActionLabel("canvas.generation.regenerate")).toBe("原地重做素材");
+        expect(assistantActionLabel("business.list")).toBe("调用工作区接口");
+        expect(assistantActionLabel("business_call")).toBe("调用工作区接口");
     });
 
     test("没见过的操作也不把内部名字露出去", () => {
@@ -192,6 +200,14 @@ describe("付费生成确认", () => {
         );
         expect(text).toContain("为 1 个节点生成视频 · Seedance 2.0");
         expect(text).not.toContain("seedance-2.0");
+    });
+
+    test("原地重做提议在按钮和说明中明确提示在原节点重新生成并保留旧素材", () => {
+        const proposal = { proposalId: "regen-1", kind: "image" as const, nodeIds: ["n1"], model: "seedream-4", modelKey: "ch::seedream-4", regenerate: true };
+        expect(assistantProposalConfirmLabel(proposal)).toBe("确认并原地重做");
+        const text = assistantProposalText(proposal);
+        expect(text).toContain("在原节点重新生成 1 个图片 · seedream-4");
+        expect(text).toContain("原有结果会保留在素材库");
     });
 });
 

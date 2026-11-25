@@ -154,7 +154,7 @@ function pushUpdatedNodeIds(turn, ids) {
 
 export function collectTurnEffects(turn, opID, result, operationId) {
   if (!turn || !result || typeof result !== 'object') return turn;
-  if (opID==='canvas.timeline.render') return turn;
+  if (opID === 'canvas.timeline.render' || opID === 'canvas.create' || opID === 'task.cancel' || opID === 'business.call') return turn;
   if (turn.canvasId && result.canvasId && typeof result.revision==='number') {
     turn.canvasChanges ||= {};
     const target=turn.canvasChanges[result.canvasId] ||= {...newTurnAccumulator(),revisionBefore:result.canvasId===turn.canvasId ? turn.revisionBefore : result.revision-1};
@@ -222,6 +222,7 @@ export function collectTurnEffects(turn, opID, result, operationId) {
           ...(Array.isArray(result.targets) ? { targets: result.targets } : {}),
           ...(result.estimate ? { estimate: result.estimate } : {}),
           ...(result.production ? { production: result.production } : {}),
+          ...(result.regenerate ? { regenerate: true } : {}),
           ...(result.source ? { source: { canvasId: result.source.canvasId,
             canvasRevision: result.source.canvasRevision, modelConfigRevision: result.source.modelConfigRevision } } : {}) });
       }

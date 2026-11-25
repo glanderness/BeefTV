@@ -71,7 +71,7 @@ export function CanvasAssistantComposer({
         <footer className="canvas-assistant-composer" onDragOver={event => { if (onFiles && !disabled && event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.stopPropagation(); } }}
             onDrop={event => { if (onFiles && !disabled && event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); onFiles([...event.dataTransfer.files]); } }}
             onPasteCapture={event => { const files = [...event.clipboardData.files]; if (onFiles && !disabled && files.length) { event.preventDefault(); event.stopPropagation(); onFiles(files); const text = event.clipboardData.getData("text/plain"); if (text) onChange(value + text); } }}>
-            <input ref={fileInput} type="file" accept="image/*,video/*,audio/*" multiple hidden aria-label="添加参考素材文件" onChange={event => { onFiles?.([...event.target.files || []]); event.target.value = ""; }} />
+            <input ref={fileInput} type="file" multiple hidden aria-label="添加文件或素材" onChange={event => { onFiles?.([...event.target.files || []]); event.target.value = ""; }} />
             {!streaming && selectionAttached && selectedCount > 0 ? <div className="canvas-assistant-chips">
                     <span className="canvas-assistant-chip">
                         已选 {selectedCount} 个节点
@@ -102,7 +102,7 @@ export function CanvasAssistantComposer({
             {disabled && disabledReason ? <span className="canvas-assistant-meta">{disabledReason}</span> : null}
 
             <div className="canvas-assistant-composer-tools">
-                {onFiles ? <Tooltip title="添加参考素材"><Button type="text" size="small" aria-label="添加参考素材" disabled={disabled || inputBusy} icon={<Paperclip size={15} />} onClick={() => fileInput.current?.click()} /></Tooltip> : null}
+                {onFiles ? <Tooltip title="添加文件或素材"><Button type="text" size="small" aria-label="添加文件或素材" disabled={disabled || inputBusy} icon={<Paperclip size={15} />} onClick={() => fileInput.current?.click()} /></Tooltip> : null}
                 {onOpenSkills ? <Tooltip title="选择技能"><Button type="text" size="small" aria-label="选择技能" disabled={disabled} icon={<Sparkles size={15} />} onClick={onOpenSkills} /></Tooltip> : null}
                 {onOpenReferences ? <Button type="text" size="small" disabled={disabled} onClick={onOpenReferences}>画布素材</Button> : null}
             </div>

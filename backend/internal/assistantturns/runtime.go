@@ -64,6 +64,7 @@ func (s *Service) Extend(userID, canvasID, turnID string, input Input) error {
 		}
 		rec.ReferencedAssetIDs = uniqueSorted(append(rec.ReferencedAssetIDs, input.AssetIDs...))
 		rec.ReferencedCanvasIDs = uniqueSorted(append(rec.ReferencedCanvasIDs, input.CanvasIDs...))
+		rec.ReferencedResourceIDs = uniqueSorted(append(rec.ReferencedResourceIDs, input.ResourceIDs...))
 		for _, pin := range input.SkillPins {
 			found := false
 			for _, existing := range rec.SkillPins {

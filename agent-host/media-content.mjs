@@ -266,6 +266,20 @@ export function adaptMediaRequest(payload, { api, modelId, nativePartStore, unpi
 export async function attachmentContent(body, turnId, opsRequest) {
   const content = [{type:'text',text:body.message || '请分析所提供的素材，并说明适合如何使用。'}];
   for (const attachment of body.attachments || []) {
+    if (attachment.kind === 'file') {
+      const meta = {
+        resourceId: attachment.resourceId,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        bytes: attachment.bytes,
+        purpose: attachment.purpose,
+      };
+      content.push({
+        type: 'text',
+        text: `用户附带文件：${JSON.stringify(meta)}。请按需调用 file_read（传 resourceId，可选 offset/limit 分页）读取文档内容后再分析或执行，不要根据文件名猜测内容。`,
+      });
+      continue;
+    }
     if (attachment.kind !== 'image') {
       content.push({type:'text',text:`用户提供素材：${JSON.stringify(attachment)}。请先调用 media_overview 获取 source.version 与时长，再携带 expectedVersion（填 source.version）使用 media_inspect（或按本轮媒体能力使用 media_review）读取实际画面或音频后再判断；片段秒数转换为 startMs/endMs。`});
       continue;

@@ -12,7 +12,7 @@ import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-refer
 import type { AssistantAttachment, AssistantAttachmentPurpose, AssistantSkillSelection } from "@/services/api/agent-assistant";
 
 export const ASSISTANT_ATTACHMENT_PURPOSES: { value: AssistantAttachmentPurpose; label: string }[] = [
-    { value: "analysis", label: "仅分析" }, { value: "character", label: "人物参考" }, { value: "scene", label: "场景参考" },
+    { value: "analysis", label: "仅分析" }, { value: "reference", label: "参考资料" }, { value: "character", label: "人物参考" }, { value: "scene", label: "场景参考" },
     { value: "style", label: "风格参考" }, { value: "motion", label: "运镜参考" }, { value: "first-frame", label: "首帧" },
     { value: "last-frame", label: "尾帧" }, { value: "rhythm", label: "节奏参考" }, { value: "sound", label: "声音参考" },
 ];
@@ -21,13 +21,19 @@ export function assistantAttachmentPurposes(kind: AssistantAttachment["kind"]) {
         image: ["analysis", "character", "scene", "style", "first-frame", "last-frame"],
         video: ["analysis", "character", "scene", "style", "motion", "rhythm"],
         audio: ["analysis", "rhythm", "sound"],
+        file: ["analysis", "reference"],
     };
     return ASSISTANT_ATTACHMENT_PURPOSES.filter(item => allowed[kind].includes(item.value));
 }
-export function attachmentKind(mimeType: string): AssistantAttachment["kind"] | null {
-    return mimeType.startsWith("image/") ? "image" : mimeType.startsWith("video/") ? "video" : mimeType.startsWith("audio/") ? "audio" : null;
+export function attachmentKind(mimeType: string): AssistantAttachment["kind"] {
+    const normalized = (mimeType || "").trim().toLowerCase();
+    if (normalized.startsWith("image/")) return "image";
+    if (normalized.startsWith("video/")) return "video";
+    if (normalized.startsWith("audio/")) return "audio";
+    return "file";
 }
 export function attachmentRangeError(attachment: AssistantAttachment): string | null {
+    if (attachment.kind === "file" || attachment.kind === "image") return null;
     if (attachment.start === undefined && attachment.end === undefined) return null;
     const start = attachment.start ?? 0, end = attachment.end;
     if (!Number.isFinite(start) || start < 0 || end === undefined || !Number.isFinite(end) || end <= start) return "请填写有效的起止时间（秒）";
@@ -36,7 +42,18 @@ export function attachmentRangeError(attachment: AssistantAttachment): string | 
 }
 export async function uploadAssistantAttachment(file: File, identity = nanoid()): Promise<AssistantAttachment> {
     const kind = attachmentKind(file.type);
-    if (!kind) throw new Error("请选择图片、视频或音频文件");
+    if (kind === "file") {
+        const resource = await uploadResourceFile(file, "file", { fileName: file.name, idempotencyKey: `assistant:${identity}` });
+        if (!resource.id || resource.status !== "ready") throw new Error("文件尚未保存成功，请重试上传");
+        return {
+            resourceId: resource.id,
+            kind: "file",
+            name: file.name,
+            mimeType: resource.mimeType || file.type || "application/octet-stream",
+            bytes: resource.size || file.size,
+            purpose: "analysis",
+        };
+    }
     const metadata: MediaMetadata | undefined = kind === "image" ? await readUploadImageSize(file) : await probeMediaMetadata(file);
     const resource = await uploadResourceFile(file, kind, { ...metadata, fileName: file.name, idempotencyKey: `assistant:${identity}` });
     if (!resource.id || resource.status !== "ready") throw new Error("素材文件尚未保存成功，请重试上传");

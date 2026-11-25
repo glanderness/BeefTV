@@ -86,14 +86,18 @@ func TestAgentTaskAndWriteOpsStayOutOfAssistantCatalog(t *testing.T) {
 	for _, descriptor := range h.registry.List(h.assistant()) {
 		visible[descriptor.ID] = true
 	}
-	for _, id := range []string{"task.cancel", "canvas.generation.orders", "canvas.external.write.list", "canvas.external.write.undo"} {
+	for _, id := range []string{"canvas.generation.orders", "canvas.external.write.list", "canvas.external.write.undo"} {
 		if visible[id] {
 			t.Fatalf("内置助手不应看到外部 Agent 操作 %s", id)
 		}
 	}
-	_, err := h.execute(t, h.assistant(), "task.cancel", "assistant-cancel", map[string]any{"taskId": "anything"})
+	if !visible["task.cancel"] {
+		t.Fatalf("内置助手应能看到 task.cancel: %v", visible)
+	}
+	// canvas 模式下，未关联到当前画布的任务仍必须被范围拒绝。
+	_, err := h.execute(t, h.assistant(), "task.cancel", "assistant-cancel-denied", map[string]any{"taskId": "unrelated-task"})
 	if got := opErr(t, err); got.Code != operations.CodePermissionDenied || got.Reason != "scope_denied" {
-		t.Fatalf("assistant cancel must be denied, got %+v", got)
+		t.Fatalf("assistant cancel of unrelated task must be denied, got %+v", got)
 	}
 }
 

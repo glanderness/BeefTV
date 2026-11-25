@@ -3,6 +3,7 @@ package operations
 import (
 	"encoding/json"
 	"os"
+	"sort"
 	"testing"
 )
 
@@ -10,7 +11,11 @@ import (
 func TestHostPolicyContract(t *testing.T) {
 	registry := NewRegistry(nil, nil)
 	RegisterDefaultOps(registry)
-	descriptors := registry.List(Caller{Kind: CallerManual})
+	descriptors := make([]Descriptor, 0, len(registry.ops))
+	for _, op := range registry.ops {
+		descriptors = append(descriptors, op.Descriptor())
+	}
+	sort.Slice(descriptors, func(i, j int) bool { return descriptors[i].ID < descriptors[j].ID })
 	raw, err := json.MarshalIndent(descriptors, "", "  ")
 	if err != nil {
 		t.Fatal(err)

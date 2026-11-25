@@ -244,6 +244,8 @@ func registerAgentProxyTurnRoutes(
 		for _, attachment := range payload.Attachments {
 			if attachment.AssetID != "" {
 				payload.References = append(payload.References, assistantReference{Kind: "asset", ID: attachment.AssetID})
+			} else if attachment.Kind == "file" && strings.TrimSpace(attachment.ResourceID) != "" {
+				payload.References = append(payload.References, assistantReference{Kind: "resource", ID: strings.TrimSpace(attachment.ResourceID)})
 			}
 		}
 		// 额外素材/画布引用必须由界面明确请求：这里校验归属，校验不过就整轮拒绝，
@@ -507,6 +509,8 @@ func registerAgentProxyTurnRoutes(
 		for _, a := range payload.Attachments {
 			if a.AssetID != "" {
 				payload.References = append(payload.References, assistantReference{Kind: "asset", ID: a.AssetID})
+			} else if a.Kind == "file" && strings.TrimSpace(a.ResourceID) != "" {
+				payload.References = append(payload.References, assistantReference{Kind: "resource", ID: strings.TrimSpace(a.ResourceID)})
 			}
 		}
 		refs, err := normalizeAssistantReferences(svc, c.GetString("agentUserId"), payload.References)

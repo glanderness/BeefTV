@@ -34,7 +34,7 @@ func (s *Service) lockOpenTurn(tx *gorm.DB, userID, turnID, canvasID string) (Re
 		}
 		rec = decoded
 	}
-	if rec.UserID != userID || (rec.CanvasID != canvasID && Mode(rec.PermissionMode) != PermissionFullAccess) || rec.Undone || rec.effectiveState() != StateOpen {
+	if rec.UserID != userID || (canvasID != "" && rec.CanvasID != canvasID && Mode(rec.PermissionMode) != PermissionFullAccess) || rec.Undone || rec.effectiveState() != StateOpen {
 		return Record{}, &Error{Reason: ReasonNotOpen, Message: "这一轮不存在或已结束"}
 	}
 	if err := s.continuationTurnAllowed(tx, id); err != nil {

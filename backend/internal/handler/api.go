@@ -112,7 +112,10 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc CanvasAPIService, depend
 	// 统一操作层：CLI、MCP 与内置 pi 共用同一组操作与校验，连同一个运行中的工作区。
 	if svc != nil {
 		if db := svc.Database(); db != nil {
-			RegisterAgentOpsRoutes(api, svc, agentops.NewStore(db), clients)
+			opsRegistry := RegisterAgentOpsRoutes(api, svc, agentops.NewStore(db), clients)
+			if dependencies.OnAgentOpsRegistry != nil {
+				dependencies.OnAgentOpsRegistry(opsRegistry)
+			}
 		}
 	}
 	// 内置创作助手：短期限 UI 会话凭据 + 可信代理；浏览器不接触 owner/宿主/模型凭据。

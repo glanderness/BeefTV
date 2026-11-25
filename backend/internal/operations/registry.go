@@ -26,10 +26,11 @@ type Context struct {
 	UserID      string
 	Caller      Caller
 	Domain      Domain
-	// Store、Binder 和 TaskControl 供复用操作记录或任务域的操作使用；业务数据仍走 Domain。
-	Store       *Store
-	Binder      DomainBinder
-	TaskControl TaskController
+	// Store、Binder、TaskControl 和 BusinessGateway 供复用操作记录、任务域或底层工作区接口的操作使用；业务数据仍走 Domain。
+	Store           *Store
+	Binder          DomainBinder
+	TaskControl     TaskController
+	BusinessGateway BusinessGateway
 }
 
 // Handler 实现一个操作；返回值必须是可 JSON 序列化的业务结果。
@@ -49,6 +50,9 @@ type Op struct {
 	ProjectReplay     ReplayProjection
 	AssistantCanvas   bool
 	AssistantProposal bool
+	AssistantOnly     bool
+	FullAccessOnly    bool
+	NoTurnCanvas      bool
 	ExternalOnly      bool
 	SubmitsGeneration bool // 执行一次会创建付费生成任务。
 	ReplaySafe        bool
@@ -69,13 +73,20 @@ type Descriptor struct {
 
 // Registry 持有全部操作定义；写操作必须在事务里执行，保证与操作记录同提交。
 type Registry struct {
-	binder DomainBinder
-	store  *Store
-	ops    map[string]*Op
+	binder          DomainBinder
+	store           *Store
+	ops             map[string]*Op
+	businessGateway BusinessGateway
 }
 
 func NewRegistry(binder DomainBinder, store *Store) *Registry {
 	return &Registry{binder: binder, store: store, ops: map[string]*Op{}}
+}
+
+func (r *Registry) SetBusinessGateway(gateway BusinessGateway) {
+	if r != nil {
+		r.businessGateway = gateway
+	}
 }
 
 func (r *Registry) Register(op Op) {
@@ -95,6 +106,9 @@ func (r *Registry) List(caller Caller) []Descriptor {
 	}
 	out := make([]Descriptor, 0, len(r.ops))
 	for _, op := range r.ops {
+		if op.AssistantOnly && caller.Kind != CallerAssistant {
+			continue
+		}
 		if caller.ReadOnly && !op.ReadOnly {
 			continue
 		}
@@ -132,6 +146,9 @@ func (op *Op) Descriptor() Descriptor {
 func (op *Op) assistantModes() []string {
 	if op.ExternalOnly {
 		return []string{}
+	}
+	if op.FullAccessOnly {
+		return []string{"full-access"}
 	}
 	modes := []string{}
 	if op.Scope != ScopeConversation {
@@ -207,6 +224,9 @@ func (r *Registry) Execute(req Request) (Result, error) {
 	}
 	if op.ExternalOnly && caller.Kind == CallerAssistant {
 		return Result{}, PermissionDenied("scope_denied", "本轮助手权限不允许该操作")
+	}
+	if op.AssistantOnly && caller.Kind != CallerAssistant {
+		return Result{}, PermissionDenied("scope_denied", "该操作仅供内置助手使用")
 	}
 	if caller.ReadOnly && !op.ReadOnly {
 		return Result{}, newError(CodeReadOnly, "read_only_client", "该客户端为只读模式，不能执行写操作: "+op.ID, nil)
@@ -292,9 +312,14 @@ func (r *Registry) Execute(req Request) (Result, error) {
 	}
 	if !op.ReadOnly {
 		_ = json.Unmarshal(params, &target)
-		if strings.TrimSpace(req.TurnID) != "" && strings.TrimSpace(target.CanvasID) == "" {
+		requiresTurnCanvas := op.Scope == ScopeCanvas && !op.NoTurnCanvas && op.ID != "skill.script.run"
+		if strings.TrimSpace(req.TurnID) != "" && requiresTurnCanvas && strings.TrimSpace(target.CanvasID) == "" {
 			return Result{}, InvalidArg("missing_turn_canvas", "助手写入必须指定当前画布")
 		}
+	}
+	turnCanvasID := target.CanvasID
+	if op.NoTurnCanvas {
+		turnCanvasID = ""
 	}
 	var beforeCanvasRaw []byte
 	var pendingWrite *ExternalCanvasWrite
@@ -306,7 +331,7 @@ func (r *Registry) Execute(req Request) (Result, error) {
 		PayloadHash:          canonicalHash,
 		AlternatePayloadHash: alternateHash,
 		TurnID:               req.TurnID,
-		CanvasID:             target.CanvasID,
+		CanvasID:             turnCanvasID,
 		CallerKind:           string(caller.Kind),
 		ClientID:             strings.TrimSpace(caller.ClientID),
 		ClientLabel:          caller.EffectiveClientLabel(),
@@ -331,7 +356,7 @@ func (r *Registry) Execute(req Request) (Result, error) {
 		if trackCanvasWrite {
 			beforeCanvasRaw, _ = domain.UserCanvasProject(req.UserID, target.CanvasID)
 		}
-		execCtx := &Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain, OperationID: opID, TurnID: req.TurnID, Store: r.store, Binder: r.binder}
+		execCtx := &Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain, OperationID: opID, TurnID: req.TurnID, Store: r.store, Binder: r.binder, BusinessGateway: r.businessGateway}
 		if controller, ok := r.binder.(TaskController); ok {
 			execCtx.TaskControl = controller
 		}
