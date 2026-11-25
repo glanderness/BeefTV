@@ -1126,6 +1126,44 @@ func TestStreamResponseToFileLimitsIdleTimeoutCancelAndCleanup(t *testing.T) {
 		}
 	})
 
+	t.Run("idle stall still unblocks even when Cancel callback does not abort request", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("partial"))
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		}))
+		defer srv.Close()
+
+		dir := t.TempDir()
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/stall-noop-cancel", nil)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var cancelCalled atomic.Bool
+		started := time.Now()
+		_, err = StreamResponseToFile(context.Background(), resp, StreamFileOptions{
+			Dir:         dir,
+			MaxBytes:    ExclusiveByteLimit(1 << 20),
+			IdleTimeout: 80 * time.Millisecond,
+			Cancel:      func() { cancelCalled.Store(true) },
+		})
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("stall err = %v, want DeadlineExceeded", err)
+		}
+		if !cancelCalled.Load() {
+			t.Fatal("expected Cancel callback to be invoked on idle timeout")
+		}
+		if elapsed := time.Since(started); elapsed > 2*time.Second {
+			t.Fatalf("idle watchdog took too long to unblock body read: %v", elapsed)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Fatalf("stalled stream left temp files: %v", entries)
+		}
+	})
+
 	t.Run("caller cancel returns Canceled and removes temp file", func(t *testing.T) {
 		entered := make(chan struct{})
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -117,11 +117,22 @@ func (c *MediaClient) downloadStorageToFile(ctx context.Context, path, tooMany, 
 		}
 		return "", "", 0, err
 	}
-	defer resp.Body.Close()
+	closed := false
+	closeResp := func() {
+		if !closed {
+			closed = true
+			_ = resp.Body.Close()
+		}
+	}
+	defer closeResp()
 
 	if strings.TrimSpace(destDir) != "" && isRedirectStatus(resp.StatusCode) {
 		if loc := strings.TrimSpace(resp.Header.Get("Location")); loc != "" {
 			if resolved, parseErr := req.URL.Parse(loc); parseErr == nil {
+				// Release the 3xx control-plane connection immediately before
+				// starting a potentially multi-minute 1-2 GiB storage download.
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+				closeResp()
 				targetURL := resolved.String()
 				if valErr := c.validURLContext(ctx, targetURL); valErr != nil {
 					observe = false

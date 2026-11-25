@@ -87,14 +87,16 @@ func executeVideoRequestToFile(req *http.Request) (string, string, error) {
 	return res.Path, res.MimeType, nil
 }
 
+type videoDownloadHeaderTimeoutContext struct{}
+
 func videoDownloadTimeouts(ctx context.Context) (headerTimeout, idleTimeout time.Duration) {
 	headerTimeout = 45 * time.Second
+	if customHeader, _ := ctx.Value(videoDownloadHeaderTimeoutContext{}).(time.Duration); customHeader > 0 {
+		headerTimeout = customHeader
+	}
 	idleTimeout = videoDeliveryIdleTimeout
 	if customIdle, _ := ctx.Value(videoDeliveryRequestContext{}).(time.Duration); customIdle > 0 {
 		idleTimeout = customIdle
-		if customIdle < headerTimeout && customIdle != videoDeliveryIdleTimeout {
-			headerTimeout = customIdle
-		}
 	}
 	return headerTimeout, idleTimeout
 }

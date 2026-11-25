@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"infinite-canvas/backend/internal/outbound"
+	"infinite-canvas/backend/internal/protocol"
 )
 
 func videoResultDownloader(config Config, rawURL, taskID string, renew ...videoResultURLResolver) func(context.Context) ([]byte, string, error) {
@@ -33,7 +35,9 @@ func videoResultDownloader(config Config, rawURL, taskID string, renew ...videoR
 }
 
 func getVideoBinaryWithIdleTimeout(ctx context.Context, config Config, rawURL string, idle time.Duration) ([]byte, string, error) {
-	filePath, mimeType, err := getProviderExternalVideoFile(context.WithValue(ctx, videoDeliveryRequestContext{}, idle), config, rawURL)
+	dlCtx := context.WithValue(ctx, videoDeliveryRequestContext{}, idle)
+	dlCtx = context.WithValue(dlCtx, videoDownloadHeaderTimeoutContext{}, idle)
+	filePath, mimeType, err := getProviderExternalVideoFile(dlCtx, config, rawURL)
 	if err != nil {
 		return nil, "", err
 	}
@@ -220,5 +224,50 @@ func TestVideoDeliveryFallbackFollowsBackupWithoutCredentials(t *testing.T) {
 	data, _, err := videoResultDownloader(config, server.URL+"/v1/videos/original/content", "original")(ctx)
 	if err != nil || redirected != 1 || string(data) != "original video" {
 		t.Fatalf("backup redirect: %d %v", redirected, err)
+	}
+}
+
+func TestFinishProtocolResultPersistedVideoAttachesLastFrame(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	videoBytes := unifiedVideoPayload(t)
+	lastFrameBytes := []byte("\x89PNG\r\n\x1a\nlast-frame-bytes")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/video.mp4":
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write(videoBytes)
+		case "/last-frame.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(lastFrameBytes)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	store := &recordingVideoFileStore{savedDir: t.TempDir(), savedID: "saved-video-1"}
+	ctx := WithRuntime(context.Background(), Runtime{
+		Resources: store,
+		Call:      CallMeta{UserID: "user-1", TaskID: "task-last-frame"},
+	})
+	result, err := FinishProtocolResult(ctx, Config{BaseURL: srv.URL, APIKey: "k"}, "video", "task-last-frame", &protocol.Result{
+		Videos: []protocol.MediaReference{{
+			URL:      srv.URL + "/video.mp4",
+			Metadata: map[string]any{"last_frame_url": srv.URL + "/last-frame.png"},
+		}},
+	}, DefaultVideoPollPolicy())
+	if err != nil {
+		t.Fatalf("FinishProtocolResult() error = %v", err)
+	}
+	if store.calls != 1 {
+		t.Fatalf("expected 1 PersistGeneratedVideoFile call, got %d", store.calls)
+	}
+	video, _ := result["video"].(map[string]any)
+	if video == nil || video["storageKey"] != "resource:saved-video-1" {
+		t.Fatalf("expected persisted video resource map, got %+v", video)
+	}
+	lastFrame, _ := video["lastFrame"].(map[string]any)
+	if lastFrame == nil || !strings.HasPrefix(stringField(lastFrame, "dataUrl"), "data:image/png;base64,") {
+		t.Fatalf("expected attached lastFrame PNG dataUrl on persisted video result, got %+v", video["lastFrame"])
 	}
 }

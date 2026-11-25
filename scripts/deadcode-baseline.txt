@@ -186,8 +186,6 @@ internal/generation.BeefTVAudioURL
 internal/generation.BeefTVVideoRequestBody
 internal/generation.ChannelAPIURL
 internal/generation.ChannelAPIURLForProtocol
-internal/generation.DownloadVideoResult
-internal/generation.GetBinary
 internal/generation.OfficialDeclarativeImageInterface
 internal/generation.ParseFloat
 internal/generation.ParseTextEventStream
@@ -206,7 +204,6 @@ internal/generation.isBeefTVHostFromURL
 internal/generation.loadOfficialFallbackRegistry
 internal/generation.megabytes
 internal/generation.postJSONWithSubmissionKey
-internal/generation.upscaleTaskPath
 internal/generation.withProtocolRegistry
 internal/handler.proxyCustomRelayRequest
 internal/kernel.Ptr
