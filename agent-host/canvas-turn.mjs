@@ -7,12 +7,56 @@
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all';
 
 export const SUPPORTED_APIS = ['openai-completions', 'openai-responses', 'anthropic-messages', 'google-generative-ai'];
-const CATALOG_PROVIDERS = ['opencode-go', 'opencode', 'deepseek', 'anthropic', 'openai', 'zai', 'google'];
+const QWEN_CATALOG_PROVIDERS = ['qwen-token-plan', 'qwen-token-plan-cn'];
+const CATALOG_PROVIDERS = ['opencode-go', 'opencode', 'deepseek', 'anthropic', 'openai', 'zai', 'google', ...QWEN_CATALOG_PROVIDERS];
+const QWEN_HYBRID_MODEL_RE = /^(?:qwen-?[34]|qwen-(?:plus|max|turbo|flash))(?:$|[-.])/;
+const NON_HYBRID_QWEN_VARIANT_RE = /(?:^|[-.])(instruct|coder|thinking|image|ocr|tts|asr|mt|embedding|rerank)(?:$|[-.])/;
 
-function findCatalogModel(modelId, api) {
+function normalizeModelSlug(modelId) {
+  const raw = String(modelId || '').trim().toLowerCase();
+  const slash = raw.lastIndexOf('/');
+  return slash >= 0 ? raw.slice(slash + 1) : raw;
+}
+
+function isDashScopeBaseUrl(baseUrl) {
+  try {
+    const host = new URL(String(baseUrl || '').trim()).hostname.toLowerCase();
+    return (
+      host === 'dashscope.aliyuncs.com' ||
+      host.endsWith('.dashscope.aliyuncs.com') ||
+      (host.startsWith('dashscope-') && host.endsWith('.aliyuncs.com')) ||
+      host === 'maas.aliyuncs.com' ||
+      host.endsWith('.maas.aliyuncs.com') ||
+      host === 'qianwenaiapi.com' ||
+      host.endsWith('.qianwenaiapi.com') ||
+      host === 'qwencloudapi.com' ||
+      host.endsWith('.qwencloudapi.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isNonHybridDashScopeModel(modelId) {
+  const slug = normalizeModelSlug(modelId);
+  if (!slug) return true;
+  if (slug.startsWith('qwq') || /^qwen-?[12](?:$|[-.])/.test(slug)) return true;
+  return NON_HYBRID_QWEN_VARIANT_RE.test(slug);
+}
+
+function isQwenHybridThinkingModel(modelId) {
+  const slug = normalizeModelSlug(modelId);
+  return QWEN_HYBRID_MODEL_RE.test(slug) && !NON_HYBRID_QWEN_VARIANT_RE.test(slug);
+}
+
+function findCatalogModel(modelId, api, baseUrl = '') {
   if (!modelId) return null;
+  const preferQwen = api === 'openai-completions' && (isDashScopeBaseUrl(baseUrl) || isQwenHybridThinkingModel(modelId));
+  const providers = preferQwen
+    ? [...QWEN_CATALOG_PROVIDERS, ...CATALOG_PROVIDERS.filter((p) => !QWEN_CATALOG_PROVIDERS.includes(p))]
+    : CATALOG_PROVIDERS;
   let fallback = null;
-  for (const provider of CATALOG_PROVIDERS) {
+  for (const provider of providers) {
     for (const candidate of getBuiltinModels(provider)) {
       if (candidate.id !== modelId) continue;
       if (candidate.api === api) return { model: candidate, sameApi: true };
@@ -242,18 +286,25 @@ export function turnContextPrefix({ canvasId, selectedNodeIds = [], references =
 // 从官方 pi-ai 模型目录继承 reasoning、thinkingLevelMap、compat 与 input，再用宿主环境变量覆盖。
 // OpenAI 兼容网关启用 prompt_cache_key 亲和性，由宿主在请求钩子里写入会话 ID。
 export function providerRegistration({ api, baseUrl, modelId, maxTokens, contextWindow }) {
-  const catalog = findCatalogModel(modelId, api);
+  const catalog = findCatalogModel(modelId, api, baseUrl);
   const catalogModel = catalog?.model;
   const catalogCompat = catalog?.sameApi && catalogModel?.compat ? catalogModel.compat : undefined;
+  const needsQwenThinkingFallback = api === 'openai-completions' &&
+    !catalogCompat?.thinkingFormat &&
+    (isQwenHybridThinkingModel(modelId) || (isDashScopeBaseUrl(baseUrl) && !isNonHybridDashScopeModel(modelId)));
   const compat = api === 'openai-completions'
-    ? { ...catalogCompat, promptCacheKeyMode: 'enabled' }
+    ? {
+        ...catalogCompat,
+        ...(needsQwenThinkingFallback ? { thinkingFormat: 'qwen', supportsReasoningEffort: false } : {}),
+        promptCacheKeyMode: 'enabled',
+      }
     : catalogCompat ? { ...catalogCompat } : undefined;
   return {
     name: 'BeefTV', baseUrl, apiKey: '$BEEFTV_AGENT_API_KEY', api,
     models: [{
       id: modelId,
       name: modelId,
-      reasoning: catalogModel ? Boolean(catalogModel.reasoning) : api === 'anthropic-messages',
+      reasoning: catalogModel ? Boolean(catalogModel.reasoning) : (api === 'anthropic-messages' || needsQwenThinkingFallback),
       ...(catalogModel?.thinkingLevelMap ? { thinkingLevelMap: structuredClone(catalogModel.thinkingLevelMap) } : {}),
       ...(compat ? { compat } : {}),
       input: Array.isArray(catalogModel?.input) ? [...catalogModel.input] : ['text', 'image'],
