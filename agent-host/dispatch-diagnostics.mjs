@@ -8,8 +8,12 @@ const safe = value => typeof value === 'string' && /^[A-Za-z0-9_-][A-Za-z0-9._:@
   && !/secret|token|password|bearer|api.?key|sk-|:\/\//i.test(value) ? value : undefined;
 
 const OUTCOME_STATUSES = new Set(['ok', 'error']);
+const outcomeReasonsPath = [
+  new URL('./model-outcome-reasons.json', import.meta.url),
+  new URL('../backend/internal/assistantdiagnostics/model_outcome_reasons.json', import.meta.url),
+].find(candidate => fs.existsSync(candidate));
 export const MODEL_OUTCOME_REASONS = Object.freeze(
-  JSON.parse(fs.readFileSync(new URL('./model-outcome-reasons.json', import.meta.url), 'utf8')),
+  JSON.parse(fs.readFileSync(outcomeReasonsPath, 'utf8')),
 );
 const OUTCOME_REASONS = new Set(MODEL_OUTCOME_REASONS);
 

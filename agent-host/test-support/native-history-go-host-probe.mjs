@@ -176,6 +176,6 @@ try {
   await api('/chat',{canvasId:config.canvasId,sessionId:history.sessionId,turnId:config.invalidTurnId,message:'继续',revisionBefore:1});
   await until(async()=>{history=await(await api('/history?canvasId='+config.canvasId)).json();return history.turns?.length===3});
   assert.match(history.turns[2].error,/历史音频.*重新添加/);assert.doesNotMatch(history.turns[2].error,/Connection error/);assert.equal(mainCalls,config.failAfterMedia ? 6 : 7,'SDK deterministic history failure must not dispatch or retry provider');
-  const ledger=fs.readFileSync(path.join(config.directory,'agent-requests.jsonl'),'utf8').trim().split('\n');assert.equal(ledger.length,config.failAfterMedia ? 6 : 7);
+  const ledger=fs.readFileSync(path.join(config.directory,'agent-requests.jsonl'),'utf8').trim().split('\n').map(JSON.parse);assert.equal(ledger.filter(row=>!row.status).length,config.failAfterMedia ? 6 : 7);
   fs.writeFileSync(path.join(config.directory, 'host-result.json'), JSON.stringify({ modelCalls, mainCalls, continuationCalls, audioSteer:true, summarizations, sessionId:history.sessionId, captured,historyError:history.turns[2].error,noFailureDispatch:true, passed:true }));
 } finally { releaseContinuation?.(); await kill('SIGTERM'); provider.closeAllConnections(); await new Promise((resolve) => provider.close(resolve)); }

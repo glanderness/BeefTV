@@ -103,7 +103,6 @@ async function initializeModel() {
 
 const ledgerPath = path.join(DATA_DIR, 'agent-requests.jsonl');
 const dispatchDiagnostics = createDispatchDiagnostics(ledgerPath, RUN_ID);
-const outcomeDiagnostics = createDispatchDiagnostics(path.join(DATA_DIR, 'agent-model-outcomes.jsonl'), RUN_ID);
 
 const lifetimeBudgetPath = path.join(DATA_DIR, 'agent-request-budget.json');
 const lifetimeBudget = createDurableRequestBudget({ limit: LIFETIME_REQUEST_BUDGET, file: lifetimeBudgetPath });
@@ -120,7 +119,6 @@ const { outbound, getDispatched } = installModelFetchProxy({
   nativePartStore,
   lifetimeBudget,
   dispatchDiagnostics,
-  outcomeDiagnostics,
   getOps: () => ops,
 });
 

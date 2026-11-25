@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { classifyModelFetchError, classifyModelHttpStatus, createDispatchDiagnostics } from './dispatch-diagnostics.mjs';
+import { classifyModelFetchError, classifyModelHttpStatus, createDispatchDiagnostics, MODEL_OUTCOME_REASONS } from './dispatch-diagnostics.mjs';
 import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
 
 test('dispatch evidence survives reopen with exact identities and no request payload', t => {
@@ -47,7 +47,7 @@ test('model outcome classification and ledger keep only allowlisted machine code
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'outcome-evidence-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const file = path.join(dir, 'agent-model-outcomes.jsonl');
+  const file = path.join(dir, 'agent-requests.jsonl');
   const recorder = createDispatchDiagnostics(file, 'launch-1');
   assert.equal(recorder.record({
     turnId: '1122334455667788', canvasId: 'canvas-1', sessionId: 'durable:11111111-2222-3333-4444-555555555555',
@@ -144,26 +144,23 @@ test('SSE stream stall and premature EOF settle outcome as error rather than htt
   assert.equal(truncated[0].ok, false);
   assert.equal(classifyModelFetchError(truncated[0].error), 'network_eof');
 
-  // 5. Non-SSE 200 body read failure settles as error instead of http_200
-  const nonSseErrs = [];
+  // 5. Non-SSE response settles immediately without wrapping Response in a synthetic stream
+  const nonSseOutcomes = [];
+  const rawResponse = new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
   const nonSseRes = await fetchModelWithProgressIdle('https://model.invalid/v1/chat/completions', {
     method: 'POST',
     body: JSON.stringify({ model: 'deepseek-v4.1-flash', stream: false, messages: [{ role: 'user', content: 'hi' }] }),
   }, {
-    fetch: async () => new Response(new ReadableStream({
-      pull(ctrl) { ctrl.error(new TypeError('terminated')); },
-    }), { status: 200, headers: { 'content-type': 'application/json' } }),
-    onSettled: info => nonSseErrs.push(info),
+    fetch: async () => rawResponse,
+    onSettled: info => nonSseOutcomes.push(info),
   });
-  assert.equal(nonSseErrs.length, 0);
-  await assert.rejects(() => nonSseRes.text());
-  assert.equal(nonSseErrs.length, 1);
-  assert.equal(nonSseErrs[0].ok, false);
-  assert.equal(classifyModelFetchError(nonSseErrs[0].error), 'network_eof');
+  assert.equal(nonSseRes, rawResponse);
+  assert.equal(nonSseOutcomes.length, 1);
+  assert.equal(nonSseOutcomes[0].ok, true);
+  assert.equal(classifyModelHttpStatus(nonSseOutcomes[0].httpStatus), 'http_200');
 });
 
-test('model-outcome-reasons.json loads as a non-empty allowlist', () => {
-  const jsReasons = JSON.parse(fs.readFileSync(new URL('./model-outcome-reasons.json', import.meta.url), 'utf8'));
-  assert.ok(Array.isArray(jsReasons) && jsReasons.length >= 10);
-  assert.ok(jsReasons.includes('http_200') && jsReasons.includes('stream_idle_timeout') && jsReasons.includes('network_eof'));
+test('MODEL_OUTCOME_REASONS loads from the single-source allowlist', () => {
+  assert.ok(Array.isArray(MODEL_OUTCOME_REASONS) && MODEL_OUTCOME_REASONS.length >= 10);
+  assert.ok(MODEL_OUTCOME_REASONS.includes('http_200') && MODEL_OUTCOME_REASONS.includes('stream_idle_timeout') && MODEL_OUTCOME_REASONS.includes('network_eof'));
 });

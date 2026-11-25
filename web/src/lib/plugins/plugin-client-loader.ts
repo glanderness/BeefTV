@@ -28,12 +28,6 @@ const activeCleanups = new Map<string, () => void>();
 const activatingPromises = new Map<string, Promise<boolean>>();
 /** 每个已激活插件加载的入口地址；从文件夹重新安装后地址变了，就要换成新代码。 */
 const loadedEntries = new Map<string, string>();
-/** 加载或激活失败的入口签名；同版本内停止自动重试，直到版本变更或用户手动重新启用/重试。 */
-const failedEntries = new Map<string, string>();
-
-function failedEntryKeyFor(pluginId: string, manifest?: PluginManifest | PluginManifestV2): string {
-    return clientEntryFor(pluginId, manifest) ?? `setup:${(manifest?.revision || manifest?.version || "").trim()}`;
-}
 
 function markClientPluginInvalid(
     pluginId: string,
@@ -45,7 +39,6 @@ function markClientPluginInvalid(
     disposePluginContributions(pluginId);
     activeCleanups.delete(pluginId);
     loadedEntries.delete(pluginId);
-    failedEntries.set(pluginId, failedEntryKeyFor(pluginId, manifest));
     const store = usePluginStore.getState();
     store.setError(pluginId, message);
     if (store.runtimeStatuses[pluginId] !== "invalid") {
@@ -149,7 +142,6 @@ export function recoverIfRevisionChanged(
         return;
     }
     const store = usePluginStore.getState();
-    failedEntries.delete(pluginId);
     store.setError(pluginId, undefined);
     store.setRuntimeStatuses({
         ...store.runtimeStatuses,
@@ -210,7 +202,6 @@ export async function activateClientPluginModule(
                 disposePluginContributions(pluginId);
             }
         });
-        failedEntries.delete(pluginId);
         usePluginStore.getState().setError(pluginId, undefined);
         return true;
     } catch (err) {
@@ -236,13 +227,12 @@ export async function loadAndActivateClientPlugin(
     if (activeCleanups.has(pluginId)) return true;
     const existingPromise = activatingPromises.get(pluginId);
     if (existingPromise) return existingPromise;
+    if (usePluginStore.getState().runtimeStatuses[pluginId] === "invalid") {
+        return false;
+    }
 
     const registered = getRegisteredPlugin(pluginId);
     const manifest = options?.manifest ?? registered?.manifest;
-    const entryKey = failedEntryKeyFor(pluginId, manifest);
-    if (failedEntries.get(pluginId) === entryKey) {
-        return false;
-    }
 
     const run = (async () => {
         if (registered?.setup) {
@@ -299,7 +289,6 @@ export function deactivateClientPlugin(pluginId: string): void {
 }
 
 export function deactivateAllClientPlugins(): void {
-    failedEntries.clear();
     for (const pluginId of Array.from(activeCleanups.keys())) {
         deactivateClientPlugin(pluginId);
     }
@@ -395,9 +384,6 @@ export function syncActiveClientPlugins(changedPluginId?: string): void {
                 deactivateClientPlugin(pluginId);
             }
             if (!activeCleanups.has(pluginId)) {
-                if (failedEntries.get(pluginId) === failedEntryKeyFor(pluginId, manifest)) {
-                    continue;
-                }
                 if (plugin?.setup) {
                     activateRegisteredSetupSync(pluginId);
                 } else if (manifest?.client) {
@@ -414,17 +400,6 @@ export function syncActiveClientPlugins(changedPluginId?: string): void {
     }
 }
 
-onPluginStoreLifecycleChange((changedPluginId, reason) => {
-    if (changedPluginId && (reason === "enable" || reason === "disable" || reason === "remove" || reason === "update")) {
-        failedEntries.delete(changedPluginId);
-    } else if (!changedPluginId && reason === "sync") {
-        // Keep failedEntries in lockstep with store runtimeStatuses when backend sync clears "invalid".
-        const runtimeStatuses = usePluginStore.getState().runtimeStatuses;
-        for (const pluginId of failedEntries.keys()) {
-            if (runtimeStatuses[pluginId] !== "invalid") {
-                failedEntries.delete(pluginId);
-            }
-        }
-    }
+onPluginStoreLifecycleChange((changedPluginId) => {
     syncActiveClientPlugins(changedPluginId);
 });

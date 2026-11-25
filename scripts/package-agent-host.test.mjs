@@ -114,6 +114,9 @@ test('bundled runtime, locked dependencies, and paths with spaces', () => {
     expect(existsSync(path.join(destination, 'business-progress.mjs'))).toBe(true);
     expect(existsSync(path.join(destination, 'canvas-write-view.mjs'))).toBe(true);
     expect(existsSync(path.join(destination, 'model-outcome-reasons.json'))).toBe(true);
+    expect(JSON.parse(readFileSync(path.join(destination, 'model-outcome-reasons.json'), 'utf8'))).toEqual(
+      JSON.parse(readFileSync(new URL('../backend/internal/assistantdiagnostics/model_outcome_reasons.json', import.meta.url), 'utf8')),
+    );
     expect(existsSync(path.join(destination, 'node_modules/@earendil-works/pi-coding-agent/package.json'))).toBe(true);
     expect(existsSync(path.join(destination, 'run-agent-host.sh'))).toBe(false);
     const result = spawnSync(bundled, ['-p', 'process.versions.node'], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
@@ -221,9 +224,3 @@ test('packaged server starts with local imports and makes zero model requests', 
     rmSync(scratch, { recursive: true, force: true });
   }
 }, 240000);
-
-test('model outcome reason allowlist stays identical across agent-host and backend', () => {
-  const jsReasons = JSON.parse(readFileSync(new URL('../agent-host/model-outcome-reasons.json', import.meta.url), 'utf8'));
-  const goReasons = JSON.parse(readFileSync(new URL('../backend/internal/assistantdiagnostics/model_outcome_reasons.json', import.meta.url), 'utf8'));
-  expect(jsReasons).toEqual(goReasons);
-});

@@ -19,7 +19,7 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 	if err := tx.First(&source, "turn_id = ? AND user_id = ?", receipt.SourceTurnID, receipt.UserID).Error; err != nil {
 		return false, err
 	}
-	plan, _, err := operations.LookupConfirmedOrderPlanInTx(tx, receipt.UserID, receipt.CanvasID, receipt.SourceTurnID, receipt.ProposalID, source.GenerationAuthorizationJSON)
+	plan, err := operations.LookupConfirmedOrderPlanInTx(tx, receipt.UserID, receipt.CanvasID, receipt.SourceTurnID, receipt.ProposalID)
 	if err != nil {
 		return false, err
 	}

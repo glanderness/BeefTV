@@ -45,7 +45,7 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		if err = tx.First(&source, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, input.CanvasID).Error; err != nil {
 			return err
 		}
-		expectedTargets, err := operations.ResolveProposalTargetsForConfirmInTx(tx, userID, input.CanvasID, turnID, input.ProposalID, input.Targets, source.GenerationAuthorizationJSON)
+		expectedTargets, err := operations.ResolveProposalTargetsForConfirmInTx(tx, userID, input.CanvasID, turnID, input.ProposalID, input.Targets)
 		if err != nil {
 			return err
 		}
@@ -68,7 +68,7 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 			return operations.PreconditionFailed("production_revoked", "这次制作授权已停止，请重新确认", nil)
 		}
 		plan := operations.GenerationAuthorization{SourceTurnID: turnID, ProposalID: input.ProposalID, Targets: current}
-		if err = operations.ValidateTurnOrderConflictInTx(tx, userID, input.CanvasID, turnID, source.GenerationAuthorizationJSON, plan); err != nil {
+		if err = operations.ValidateTurnOrderConflictInTx(tx, userID, input.CanvasID, turnID, plan); err != nil {
 			return err
 		}
 		batch := []operations.GenerationTarget{}
@@ -157,7 +157,7 @@ func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID s
 	if err := s.tx.First(&source, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, canvasID).Error; err != nil {
 		return nil, err
 	}
-	plan, fromLegacy, err := operations.ResolveAuthorizedOrderForTurnInTx(s.tx, userID, canvasID, turnID, source.GenerationAuthorizationJSON)
+	plan, err := operations.ResolveAuthorizedOrderForTurnInTx(s.tx, userID, canvasID, turnID)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +170,7 @@ func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID s
 	if err := s.tx.First(&owner, "turn_id = ? AND user_id = ? AND canvas_id = ?", plan.SourceTurnID, userID, canvasID).Error; err != nil {
 		return nil, err
 	}
-	if source.Undone || source.ContinuationInvalidated || owner.Undone || owner.ContinuationInvalidated || owner.DurableSessionID != source.DurableSessionID || (fromLegacy && (owner.GenerationAuthorizationJSON == "" || (source.GenerationAuthorizationJSON != "" && owner.GenerationAuthorizationJSON != source.GenerationAuthorizationJSON))) {
+	if source.Undone || source.ContinuationInvalidated || owner.Undone || owner.ContinuationInvalidated || owner.DurableSessionID != source.DurableSessionID {
 		return nil, operations.PreconditionFailed("production_revoked", "本次制作授权已停止", nil)
 	}
 	approved := map[string]operations.GenerationTarget{}

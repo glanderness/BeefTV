@@ -11,6 +11,7 @@ import (
 // PathError separates the path and cause with a colon; spaces are legal in paths.
 // Without a reliable delimiter, conservatively hide the remaining suffix too.
 var diagnosticLocalPathScan = regexp.MustCompile(`(?i)(file://[^\r\n"'<>]+)|([a-z]:[\\/][^\r\n:"'<>]+)|(\\\\[^\r\n:"'<>]+)|(/+(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc|data|app|workspace|usr|proc|sys|dev|lib|bin|sbin)/[^\r\n:"'<>]+)`)
+var httpMethodPrefix = regexp.MustCompile(`(?i)(?:^|[ \t\r\n"'(\[])(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)[ \t]+$`)
 var safeAppAPIRoute = regexp.MustCompile(`(?i)^/workspace/(?:bootstrap|model-config(?:/capability)?)(?:$|\s|[）),;\]])`)
 var diagnosticTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$`)
 
@@ -22,37 +23,6 @@ func isUnixPathPrefixBlocked(b byte) bool {
 	return isASCIILetter(b) || (b >= '0' && b <= '9') || b == '.' || b == '_' || b == '-'
 }
 
-func isMethodBoundary(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\r' || b == '\n' || b == '"' || b == '\'' || b == '(' || b == '['
-}
-
-func hasHTTPMethodPrefix(value string, offset int) bool {
-	i := offset - 1
-	for i >= 0 && (value[i] == ' ' || value[i] == '\t') {
-		i--
-	}
-	if i == offset-1 || i < 0 {
-		return false
-	}
-	methodEnd := i + 1
-	for i >= 0 && isASCIILetter(value[i]) {
-		i--
-	}
-	methodStart := i + 1
-	if methodStart == methodEnd {
-		return false
-	}
-	if methodStart > 0 && !isMethodBoundary(value[methodStart-1]) {
-		return false
-	}
-	switch strings.ToUpper(value[methodStart:methodEnd]) {
-	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
-		return true
-	default:
-		return false
-	}
-}
-
 func isValidLocalPathMatch(value string, loc []int) bool {
 	start, end := loc[0], loc[1]
 	if loc[4] >= 0 {
@@ -62,7 +32,7 @@ func isValidLocalPathMatch(value string, loc []int) bool {
 		if start > 0 && isUnixPathPrefixBlocked(value[start-1]) {
 			return false
 		}
-		if safeAppAPIRoute.MatchString(value[start:end]) && hasHTTPMethodPrefix(value, start) {
+		if safeAppAPIRoute.MatchString(value[start:end]) && httpMethodPrefix.MatchString(value[:start]) {
 			return false
 		}
 	}

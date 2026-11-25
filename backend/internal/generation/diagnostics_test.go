@@ -45,3 +45,101 @@ func TestDiagnosticSummaryDoesNotMangleHTTPURLsAsLocalPaths(t *testing.T) {
 		t.Fatalf("escaped windows path = %q", got)
 	}
 }
+
+func TestRedactLocalPathsHTTPMethodPrefixBoundaries(t *testing.T) {
+	cases := []struct {
+		name      string
+		input     string
+		want      string
+		wantLocal bool
+	}{
+		{
+			name:      "simple GET safe route preserved",
+			input:     "GET /workspace/bootstrap",
+			want:      "GET /workspace/bootstrap",
+			wantLocal: false,
+		},
+		{
+			name:      "many spaces between method and safe route preserved",
+			input:     "GET" + strings.Repeat(" ", 20) + "/workspace/bootstrap",
+			want:      "GET" + strings.Repeat(" ", 20) + "/workspace/bootstrap",
+			wantLocal: false,
+		},
+		{
+			name:      "tab separator preserved",
+			input:     "POST\t/workspace/model-config",
+			want:      "POST\t/workspace/model-config",
+			wantLocal: false,
+		},
+		{
+			name:      "quote and paren boundaries with lowercase method preserved",
+			input:     `("patch /workspace/model-config/capability")`,
+			want:      `("patch /workspace/model-config/capability")`,
+			wantLocal: false,
+		},
+		{
+			name:      "bracket boundary preserved",
+			input:     "[OPTIONS /workspace/bootstrap]",
+			want:      "[OPTIONS /workspace/bootstrap]",
+			wantLocal: false,
+		},
+		{
+			name:      "newline boundary preserved",
+			input:     "request:\nDELETE /workspace/bootstrap",
+			want:      "request:\nDELETE /workspace/bootstrap",
+			wantLocal: false,
+		},
+		{
+			name:      "prefixed non-boundary method redacted",
+			input:     "aGET /workspace/bootstrap",
+			want:      "aGET [路径已隐藏]",
+			wantLocal: true,
+		},
+		{
+			name:      "prefixed non-boundary method with many spaces redacted",
+			input:     "aGET" + strings.Repeat(" ", 12) + "/workspace/bootstrap",
+			want:      "aGET" + strings.Repeat(" ", 12) + "[路径已隐藏]",
+			wantLocal: true,
+		},
+		{
+			name:      "newline instead of horizontal whitespace redacted",
+			input:     "GET\n/workspace/bootstrap",
+			want:      "GET\n[路径已隐藏]",
+			wantLocal: true,
+		},
+		{
+			name:      "colon separator instead of horizontal whitespace redacted",
+			input:     "GET:/workspace/bootstrap",
+			want:      "GET:[路径已隐藏]",
+			wantLocal: true,
+		},
+		{
+			name:      "alphanumeric prefix before slash ignored as non-root segment",
+			input:     "GET/workspace/bootstrap",
+			want:      "GET/workspace/bootstrap",
+			wantLocal: false,
+		},
+		{
+			name:      "non-HTTP verb before safe route path redacted",
+			input:     "open /workspace/bootstrap: permission denied",
+			want:      "open [路径已隐藏]: permission denied",
+			wantLocal: true,
+		},
+		{
+			name:      "HTTP method before non-allowlisted workspace file redacted",
+			input:     "GET /workspace/secret/key.json",
+			want:      "GET [路径已隐藏]",
+			wantLocal: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RedactLocalPaths(tc.input, "[路径已隐藏]"); got != tc.want {
+				t.Fatalf("RedactLocalPaths(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+			if got := HasLocalPath(tc.input); got != tc.wantLocal {
+				t.Fatalf("HasLocalPath(%q) = %v, want %v", tc.input, got, tc.wantLocal)
+			}
+		})
+	}
+}
