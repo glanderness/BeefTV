@@ -266,8 +266,11 @@ export function adaptMediaRequest(payload, { api, modelId, nativePartStore, unpi
 export async function attachmentContent(body, turnId, opsRequest) {
   const content = [{type:'text',text:body.message || '请分析所提供的素材，并说明适合如何使用。'}];
   for (const attachment of body.attachments || []) {
-    content.push({type:'text',text:`用户提供素材：${JSON.stringify(attachment)}。使用 media.inspect 读取实际画面或音频后再判断；片段秒数转换为 startMs/endMs。`});
-    if (attachment.kind !== 'image') continue;
+    if (attachment.kind !== 'image') {
+      content.push({type:'text',text:`用户提供素材：${JSON.stringify(attachment)}。请先调用 media_overview 获取 source.version 与时长，再携带 expectedVersion（填 source.version）使用 media_inspect（或按本轮媒体能力使用 media_review）读取实际画面或音频后再判断；片段秒数转换为 startMs/endMs。`});
+      continue;
+    }
+    content.push({type:'text',text:`用户提供素材：${JSON.stringify(attachment)}。如需局部放大检查，请使用 media_inspect（携带下方 source.version）后再判断；片段秒数转换为 startMs/endMs。`});
     const reference = {canvasId:body.canvasId,
       ...(attachment.nodeId ? {nodeId:attachment.nodeId}:{assetId:attachment.assetId}),resourceId:attachment.resourceId};
     try {

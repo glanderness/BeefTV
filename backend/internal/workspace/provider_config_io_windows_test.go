@@ -19,6 +19,12 @@ func TestWindowsConfigReplaceErrorClassification(t *testing.T) {
 	if !configFileInUse(windows.ERROR_LOCK_VIOLATION) {
 		t.Fatal("expected ERROR_LOCK_VIOLATION to be treated as in-use")
 	}
+	if !configFileInUse(windows.ERROR_USER_MAPPED_FILE) {
+		t.Fatal("expected ERROR_USER_MAPPED_FILE to be treated as in-use")
+	}
+	if !configPermissionError(windows.ERROR_ACCESS_DENIED) {
+		t.Fatal("expected ERROR_ACCESS_DENIED to be treated as permission error")
+	}
 	if !retryableConfigReplaceError(windows.ERROR_ACCESS_DENIED) {
 		t.Fatal("expected ERROR_ACCESS_DENIED to be retryable on Windows rename")
 	}

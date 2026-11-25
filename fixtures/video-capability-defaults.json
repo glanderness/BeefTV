@@ -117,5 +117,275 @@
       "operations": ["text_to_video", "image_to_video", "reference_to_video"],
       "defaultOperation": "text_to_video"
     }
+  },
+  {
+    "protocol": "vllm-omni-videos",
+    "model": "minimax-h3-fl2va",
+    "config": {
+      "references": {
+        "promptMaxChars": 0,
+        "minImages": 0,
+        "maxImages": 9,
+        "maxImageBytes": 31457280,
+        "maxVideos": 3,
+        "maxVideoBytes": 209715200,
+        "maxVideoDurationSeconds": 15,
+        "maxAudios": 3,
+        "maxAudioBytes": 15728640,
+        "maxAudioDurationSeconds": 15
+      },
+      "duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+      "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "defaultRatio": "16:9",
+      "resolutions": ["480p", "720p", "768p", "1080p", "1440p"],
+      "defaultResolution": "768p",
+      "generateAudio": { "supported": false, "default": false },
+      "watermark": { "supported": false, "default": false },
+      "operations": ["text_to_video", "image_to_video", "reference_to_video"],
+      "defaultOperation": "text_to_video"
+    }
+  },
+  {
+    "protocol": "openai-videos-media-json",
+    "model": "minimax/h3",
+    "config": {
+      "references": {
+        "promptMaxChars": 0,
+        "minImages": 0,
+        "maxImages": 9,
+        "maxImageBytes": 31457280,
+        "maxVideos": 3,
+        "maxVideoBytes": 209715200,
+        "maxVideoDurationSeconds": 15,
+        "maxAudios": 3,
+        "maxAudioBytes": 15728640,
+        "maxAudioDurationSeconds": 15
+      },
+      "duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+      "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "defaultRatio": "16:9",
+      "resolutions": ["768P"],
+      "defaultResolution": "768P",
+      "generateAudio": { "supported": false, "default": false },
+      "watermark": { "supported": false, "default": false },
+      "operations": ["text_to_video", "image_to_video", "reference_to_video"],
+      "defaultOperation": "text_to_video"
+    }
+  },
+  {
+    "protocol": "dashscope-wan-video",
+    "model": "wan2.1-t2v-turbo",
+    "config": {
+      "references": {
+        "promptMaxChars": 0,
+        "minImages": 0,
+        "maxImages": 0,
+        "maxImageBytes": 31457280,
+        "maxVideos": 0,
+        "maxVideoBytes": 0,
+        "maxVideoDurationSeconds": 0,
+        "maxAudios": 0,
+        "maxAudioBytes": 0,
+        "maxAudioDurationSeconds": 0
+      },
+      "duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+      "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "defaultRatio": "16:9",
+      "resolutions": ["480p", "720p", "1080p"],
+      "defaultResolution": "720p",
+      "generateAudio": { "supported": false, "default": false },
+      "watermark": { "supported": true, "default": false },
+      "operations": ["text_to_video"],
+      "defaultOperation": "text_to_video"
+    }
+  },
+  {
+    "protocol": "dashscope-wan-video",
+    "model": "wan2.6-i2v",
+    "config": {
+      "references": {
+        "promptMaxChars": 0,
+        "minImages": 0,
+        "maxImages": 9,
+        "maxImageBytes": 31457280,
+        "maxVideos": 0,
+        "maxVideoBytes": 0,
+        "maxVideoDurationSeconds": 0,
+        "maxAudios": 0,
+        "maxAudioBytes": 0,
+        "maxAudioDurationSeconds": 0
+      },
+      "duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+      "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "defaultRatio": "16:9",
+      "resolutions": ["480p", "720p", "1080p"],
+      "defaultResolution": "720p",
+      "generateAudio": { "supported": false, "default": false },
+      "watermark": { "supported": true, "default": false },
+      "operations": ["text_to_video", "image_to_video"],
+      "defaultOperation": "text_to_video"
+    }
+  },
+  {
+    "protocol": "dashscope-wan-video",
+    "model": "wan2.6-r2v",
+    "config": {
+      "references": {
+        "promptMaxChars": 0,
+        "minImages": 0,
+        "maxImages": 9,
+        "maxImageBytes": 31457280,
+        "maxVideos": 3,
+        "maxVideoBytes": 209715200,
+        "maxVideoDurationSeconds": 15,
+        "maxAudios": 3,
+        "maxAudioBytes": 15728640,
+        "maxAudioDurationSeconds": 15
+      },
+      "duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+      "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "defaultRatio": "16:9",
+      "resolutions": ["480p", "720p", "1080p"],
+      "defaultResolution": "720p",
+      "generateAudio": { "supported": true, "default": false },
+      "watermark": { "supported": true, "default": false },
+      "operations": ["text_to_video", "image_to_video", "reference_to_video"],
+      "defaultOperation": "text_to_video"
+    }
+  },
+  {
+    "protocol": "dashscope-wan-video",
+    "model": "wan2.7",
+    "config": {
+      "references": {
+        "promptMaxChars": 0,
+        "minImages": 0,
+        "maxImages": 9,
+        "maxImageBytes": 31457280,
+        "maxVideos": 3,
+        "maxVideoBytes": 209715200,
+        "maxVideoDurationSeconds": 15,
+        "maxAudios": 3,
+        "maxAudioBytes": 15728640,
+        "maxAudioDurationSeconds": 15
+      },
+      "duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+      "ratios": ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "defaultRatio": "16:9",
+      "resolutions": ["480p", "720p", "1080p"],
+      "defaultResolution": "720p",
+      "generateAudio": { "supported": true, "default": false },
+      "watermark": { "supported": true, "default": false },
+      "operations": ["text_to_video", "image_to_video", "reference_to_video"],
+      "defaultOperation": "text_to_video"
+    }
+  },
+  {
+    "protocol": "dashscope-wan-video",
+    "model": "wan2.7-r2v-2026-06-12",
+    "config": {
+      "references": {
+        "promptMaxChars": 0,
+        "minImages": 0,
+        "maxImages": 9,
+        "maxImageBytes": 31457280,
+        "maxVideos": 3,
+        "maxVideoBytes": 209715200,
+        "maxVideoDurationSeconds": 15,
+        "maxAudios": 3,
+        "maxAudioBytes": 15728640,
+        "maxAudioDurationSeconds": 15
+      },
+      "duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+      "ratios": ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "defaultRatio": "16:9",
+      "resolutions": ["480p", "720p", "1080p"],
+      "defaultResolution": "720p",
+      "generateAudio": { "supported": true, "default": false },
+      "watermark": { "supported": true, "default": false },
+      "operations": ["text_to_video", "image_to_video", "reference_to_video"],
+      "defaultOperation": "text_to_video"
+    }
+  },
+  {
+    "protocol": "dashscope-wan-video",
+    "model": "wan2.7-t2v-2026-06-12",
+    "config": {
+      "references": {
+        "promptMaxChars": 0,
+        "minImages": 0,
+        "maxImages": 0,
+        "maxImageBytes": 31457280,
+        "maxVideos": 0,
+        "maxVideoBytes": 0,
+        "maxVideoDurationSeconds": 0,
+        "maxAudios": 0,
+        "maxAudioBytes": 0,
+        "maxAudioDurationSeconds": 0
+      },
+      "duration": { "selection": "range", "min": 1, "max": 15, "step": 1, "default": 5 },
+      "ratios": ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "defaultRatio": "16:9",
+      "resolutions": ["480p", "720p", "1080p"],
+      "defaultResolution": "720p",
+      "generateAudio": { "supported": false, "default": false },
+      "watermark": { "supported": true, "default": false },
+      "operations": ["text_to_video"],
+      "defaultOperation": "text_to_video"
+    }
+  },
+  {
+    "protocol": "dashscope-wan-video",
+    "model": "wan3.0-t2v",
+    "config": {
+      "references": {
+        "promptMaxChars": 0,
+        "minImages": 0,
+        "maxImages": 0,
+        "maxImageBytes": 31457280,
+        "maxVideos": 0,
+        "maxVideoBytes": 0,
+        "maxVideoDurationSeconds": 0,
+        "maxAudios": 0,
+        "maxAudioBytes": 0,
+        "maxAudioDurationSeconds": 0
+      },
+      "duration": { "selection": "range", "min": 2, "max": 30, "step": 1, "default": 5 },
+      "ratios": ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "defaultRatio": "16:9",
+      "resolutions": ["480p", "720p", "1080p"],
+      "defaultResolution": "720p",
+      "generateAudio": { "supported": false, "default": false },
+      "watermark": { "supported": true, "default": false },
+      "operations": ["text_to_video"],
+      "defaultOperation": "text_to_video"
+    }
+  },
+  {
+    "protocol": "dashscope-wan-video",
+    "model": "wan3.0-video",
+    "config": {
+      "references": {
+        "promptMaxChars": 0,
+        "minImages": 0,
+        "maxImages": 9,
+        "maxImageBytes": 31457280,
+        "maxVideos": 3,
+        "maxVideoBytes": 209715200,
+        "maxVideoDurationSeconds": 15,
+        "maxAudios": 3,
+        "maxAudioBytes": 15728640,
+        "maxAudioDurationSeconds": 15
+      },
+      "duration": { "selection": "range", "min": 2, "max": 30, "step": 1, "default": 5 },
+      "ratios": ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "defaultRatio": "16:9",
+      "resolutions": ["480p", "720p", "1080p"],
+      "defaultResolution": "720p",
+      "generateAudio": { "supported": true, "default": false },
+      "watermark": { "supported": true, "default": false },
+      "operations": ["text_to_video", "image_to_video", "reference_to_video"],
+      "defaultOperation": "text_to_video"
+    }
   }
 ]

@@ -1,0 +1,989 @@
+# vLLM-Omni Videos · multipart 接口字段
+
+## 协议身份
+
+- 插件 ID：`vllm-omni-videos`。
+- Provider ID：`vllm-omni-videos`。
+- 能力：`video`。
+- 默认 Base URL：`http://127.0.0.1:8000`（支持本地或局域网自建服务地址）。
+- 鉴权驱动：`bearer`（`apiKey` 为可选字段；若服务端开启 `--api-key` 则填入对应密钥）。
+- 创建：`POST /v1/videos`（`multipart/form-data`）。
+- 查询：`GET /v1/videos/{{taskId}}`。
+- 取消：`DELETE /v1/videos/{{taskId}}`。
+- 结果下载：`GET /v1/videos/{{taskId}}/content`（`Accept: video/mp4`）。
+
+## 配置字段
+
+| 字段 | 类型 | 必填 | 含义 |
+| --- | --- | --- | --- |
+| `apiKey` | secret | 否 | API Key（本地未启用鉴权时可留空） |
+
+## 统一字段映射
+
+| 统一字段 | 类型 | 必填 | 上游映射 | 说明 |
+| --- | --- | --- | --- | --- |
+| `model` | string | 是 | `model` | vLLM-Omni 服务端暴露的模型名称（如 `minimax-h3-fl2va`、`MiniMaxAI/MiniMax-H3`、`FastH3`）。 |
+| `prompt` | string | 是 | `prompt` | 视频提示词。 |
+| `images` | media[] | 否 | `input_reference` / `input_references` | 单图图生通过 `input_reference` 上传；首尾帧或多参考按顺序通过重复 `input_references` 部件上传。 |
+| `videos` | media[] | 否 | `input_reference` / `input_references` | 参考视频文件部件。 |
+| `audios` | media[] | 否 | `audio_reference` | JSON 字符串 `{"audio_url": "..."}`，支持 URL 或 Base64 Data URL。 |
+| `duration` | integer | 否 | `extra_params.duration` | 时长秒数，随 `extra_params` JSON 字符串下发。 |
+| `aspectRatio` | string | 否 | `width`、`height`、`aspect_ratio` | 按分辨率档位换算为 32 的倍数像素尺寸，同时透传标准画幅比例；直接传入 `WIDTHxHEIGHT` 时原样拆分。 |
+| `resolution` | string | 否 | `width`、`height` | 按目标短边 × 画幅比并向 32 像素对齐：`480p`/`576p` 对应 576 短边（16:9 为 `1024x576`），`720p`/`768p` 对应 768 短边（16:9 为 `1376x768`），`1080p` 对应 1080 短边（16:9 为 `1920x1088`），`1440p`/`2k` 对应 1440 短边（16:9 为 `2560x1440`）。 |
+| `providerOptions` | object | 否 | `fps`、`num_frames`、`num_inference_steps`、`guidance_scale`、`guidance_scale_2`、`flow_shift`、`seed`、`negative_prompt`、`lora`、`seconds`、`extra_params`、`task`、`audio_flow_shift` | 插件命名空间 `providerOptions.vllm-omni-videos` 下的扩展采样与任务参数。 |
+
+## 响应与错误
+
+创建响应读取 `id` 与 `status`（`queued` / `in_progress` / `completed` / `failed`）。轮询完成后，若响应未直接给出 `video_url`/`url`，宿主自动调用 `GET /v1/videos/{{taskId}}/content` 下载成片并持久化。HTTP 错误、`error.code`/`error.message` 以及 FastAPI 返回的 `detail` 字段均保持失败语义，不包装成成功。
+
+## 兼容边界
+
+- 遵循 vLLM-Omni Videos API 公开规范（`POST /v1/videos` 必须使用 `multipart/form-data`，不发送非标准的 `size=16:9`、`resolution_name` 或 `generate_audio` 字段）。
+- `extra_params` 会根据输入自动设置 `task`（无媒体为 `t2va`、仅图片/首尾帧为 `fl2va`、带参考图/视频/音频或 `reference_to_video` 为 `ref2va`），亦可通过 `providerOptions.vllm-omni-videos.task` 与 `providerOptions.vllm-omni-videos.extra_params` 显式覆盖。
+
+<!-- BEEFTV_PLUGIN_MANIFEST_START -->
+## Manifest 完整接口定义
+
+以下 JSON 与插件包内实际 `manifest.json` 逐字段一致，覆盖插件身份、权限、配置、鉴权、参数、校验、创建、Agent、查询、取消、结果下载、响应和 Agent 响应映射。`documentation` 字段的值就是当前完整文档；为避免文档在自身内部无限递归，JSON 中仅用等义占位文本表示正文。
+
+```json
+{
+  "apiVersion": "beeftv.plugin/v3",
+  "id": "vllm-omni-videos",
+  "name": "vLLM-Omni Videos · multipart",
+  "version": "1.0.0",
+  "author": "BeefTV Contributors",
+  "description": "vLLM-Omni /v1/videos multipart 异步视频生成协议插件（支持 width/height/aspect_ratio、extra_params、input_references 与 /content 下载）。",
+  "permissions": [
+    "generation.run",
+    "media.read"
+  ],
+  "configuration": {
+    "fields": [
+      {
+        "name": "apiKey",
+        "type": "secret",
+        "label": "API Key",
+        "required": false
+      }
+    ]
+  },
+  "contributes": {
+    "providers": [
+      {
+        "id": "vllm-omni-videos",
+        "label": "vLLM-Omni Videos · multipart",
+        "capabilities": [
+          "video"
+        ],
+        "scopes": [
+          "admin.system-channel",
+          "user.custom-channel",
+          "canvas",
+          "creation",
+          "agent"
+        ],
+        "baseUrl": "http://127.0.0.1:8000",
+        "requiresPublicMediaUrls": false,
+        "auth": {
+          "type": "bearer",
+          "field": "apiKey"
+        },
+        "parameters": [
+          {
+            "name": "model",
+            "type": "string",
+            "required": true,
+            "mapping": "model",
+            "description": "vLLM-Omni 服务端模型 ID（如 minimax-h3-fl2va）。"
+          },
+          {
+            "name": "prompt",
+            "type": "string",
+            "required": true,
+            "mapping": "prompt",
+            "description": "视频提示词。"
+          },
+          {
+            "name": "images",
+            "type": "media[]",
+            "required": false,
+            "mapping": "input_reference / input_references",
+            "description": "单图或首尾帧/多参考图片文件上传。"
+          },
+          {
+            "name": "videos",
+            "type": "media[]",
+            "required": false,
+            "mapping": "input_reference / input_references",
+            "description": "参考视频文件上传。"
+          },
+          {
+            "name": "audios",
+            "type": "media[]",
+            "required": false,
+            "mapping": "audio_reference",
+            "description": "参考音频 JSON 引用（audio_url）。"
+          },
+          {
+            "name": "duration",
+            "type": "integer",
+            "required": false,
+            "mapping": "extra_params.duration",
+            "description": "输出时长秒数。"
+          },
+          {
+            "name": "aspectRatio",
+            "type": "string",
+            "required": false,
+            "mapping": "width / height / aspect_ratio",
+            "description": "画幅比例或 WIDTHxHEIGHT 像素尺寸。"
+          },
+          {
+            "name": "resolution",
+            "type": "string",
+            "required": false,
+            "mapping": "width / height",
+            "description": "输出分辨率档位（480p/576p/720p/768p/1080p/1440p）。"
+          },
+          {
+            "name": "providerOptions",
+            "type": "object",
+            "required": false,
+            "mapping": "fps / num_inference_steps / flow_shift / seed / extra_params",
+            "description": "插件命名空间内的扩展采样与任务参数。"
+          }
+        ],
+        "variables": [
+          {
+            "name": "resNorm",
+            "value": {
+              "$lower": {
+                "$trim": {
+                  "$ref": "request.resolution"
+                }
+              }
+            }
+          },
+          {
+            "name": "ratioNorm",
+            "value": {
+              "$lower": {
+                "$trim": {
+                  "$ref": "request.aspectRatio"
+                }
+              }
+            }
+          },
+          {
+            "name": "sizeParts",
+            "value": {
+              "$split": [
+                {
+                  "$ref": "vars.ratioNorm"
+                },
+                "x"
+              ]
+            }
+          },
+          {
+            "name": "isWxH",
+            "value": {
+              "$eq": [
+                {
+                  "$len": {
+                    "$ref": "vars.sizeParts"
+                  }
+                },
+                2
+              ]
+            }
+          },
+          {
+            "name": "normalizedRatio",
+            "value": {
+              "$switch": {
+                "cases": [
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.ratioNorm"
+                        },
+                        [
+                          "16:9",
+                          "landscape"
+                        ]
+                      ]
+                    },
+                    "then": "16:9"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.ratioNorm"
+                        },
+                        [
+                          "9:16",
+                          "portrait"
+                        ]
+                      ]
+                    },
+                    "then": "9:16"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.ratioNorm"
+                        },
+                        [
+                          "1:1",
+                          "square"
+                        ]
+                      ]
+                    },
+                    "then": "1:1"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.ratioNorm"
+                        },
+                        [
+                          "4:3",
+                          "3:4",
+                          "21:9"
+                        ]
+                      ]
+                    },
+                    "then": {
+                      "$ref": "vars.ratioNorm"
+                    }
+                  }
+                ],
+                "default": null
+              }
+            }
+          },
+          {
+            "name": "ratioField",
+            "value": {
+              "$coalesce": [
+                {
+                  "$ref": "request.providerOptions.vllm-omni-videos.aspect_ratio"
+                },
+                {
+                  "$ref": "vars.normalizedRatio"
+                }
+              ]
+            }
+          },
+          {
+            "name": "targetShort",
+            "value": {
+              "$switch": {
+                "cases": [
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.resNorm"
+                        },
+                        [
+                          "480",
+                          "480p",
+                          "540",
+                          "540p",
+                          "576",
+                          "576p"
+                        ]
+                      ]
+                    },
+                    "then": 576
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.resNorm"
+                        },
+                        [
+                          "1080",
+                          "1080p"
+                        ]
+                      ]
+                    },
+                    "then": 1080
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$ref": "vars.resNorm"
+                        },
+                        [
+                          "1440",
+                          "1440p",
+                          "2k"
+                        ]
+                      ]
+                    },
+                    "then": 1440
+                  }
+                ],
+                "default": 768
+              }
+            }
+          },
+          {
+            "name": "ratioParts",
+            "value": {
+              "$if": {
+                "condition": {
+                  "$ref": "vars.normalizedRatio"
+                },
+                "then": {
+                  "$split": [
+                    {
+                      "$ref": "vars.normalizedRatio"
+                    },
+                    ":"
+                  ]
+                },
+                "else": [
+                  1,
+                  1
+                ]
+              }
+            }
+          },
+          {
+            "name": "ratioW",
+            "value": {
+              "$toFloat": {
+                "$at": [
+                  {
+                    "$ref": "vars.ratioParts"
+                  },
+                  0
+                ]
+              }
+            }
+          },
+          {
+            "name": "ratioH",
+            "value": {
+              "$toFloat": {
+                "$at": [
+                  {
+                    "$ref": "vars.ratioParts"
+                  },
+                  1
+                ]
+              }
+            }
+          },
+          {
+            "name": "ratioMin",
+            "value": {
+              "$min": [
+                {
+                  "$ref": "vars.ratioW"
+                },
+                {
+                  "$ref": "vars.ratioH"
+                }
+              ]
+            }
+          },
+          {
+            "name": "inferredWidth",
+            "value": {
+              "$if": {
+                "condition": {
+                  "$ref": "vars.isWxH"
+                },
+                "then": {
+                  "$toInt": {
+                    "$at": [
+                      {
+                        "$ref": "vars.sizeParts"
+                      },
+                      0
+                    ]
+                  }
+                },
+                "else": {
+                  "$if": {
+                    "condition": {
+                      "$ref": "vars.normalizedRatio"
+                    },
+                    "then": {
+                      "$ceilStep": [
+                        {
+                          "$divide": [
+                            {
+                              "$multiply": [
+                                {
+                                  "$ref": "vars.targetShort"
+                                },
+                                {
+                                  "$ref": "vars.ratioW"
+                                }
+                              ]
+                            },
+                            {
+                              "$ref": "vars.ratioMin"
+                            }
+                          ]
+                        },
+                        32
+                      ]
+                    },
+                    "else": null
+                  }
+                }
+              }
+            }
+          },
+          {
+            "name": "inferredHeight",
+            "value": {
+              "$if": {
+                "condition": {
+                  "$ref": "vars.isWxH"
+                },
+                "then": {
+                  "$toInt": {
+                    "$at": [
+                      {
+                        "$ref": "vars.sizeParts"
+                      },
+                      1
+                    ]
+                  }
+                },
+                "else": {
+                  "$if": {
+                    "condition": {
+                      "$ref": "vars.normalizedRatio"
+                    },
+                    "then": {
+                      "$ceilStep": [
+                        {
+                          "$divide": [
+                            {
+                              "$multiply": [
+                                {
+                                  "$ref": "vars.targetShort"
+                                },
+                                {
+                                  "$ref": "vars.ratioH"
+                                }
+                              ]
+                            },
+                            {
+                              "$ref": "vars.ratioMin"
+                            }
+                          ]
+                        },
+                        32
+                      ]
+                    },
+                    "else": null
+                  }
+                }
+              }
+            }
+          },
+          {
+            "name": "orderedVisualRefs",
+            "value": {
+              "$concatArrays": [
+                {
+                  "$sortByOrder": {
+                    "$ref": "request.images"
+                  }
+                },
+                {
+                  "$sortByOrder": {
+                    "$ref": "request.videos"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "useMultiRefs",
+            "value": {
+              "$or": [
+                {
+                  "$gt": [
+                    {
+                      "$len": {
+                        "$ref": "vars.orderedVisualRefs"
+                      }
+                    },
+                    1
+                  ]
+                },
+                {
+                  "$and": [
+                    {
+                      "$eq": [
+                        {
+                          "$len": {
+                            "$ref": "vars.orderedVisualRefs"
+                          }
+                        },
+                        1
+                      ]
+                    },
+                    {
+                      "$or": [
+                        {
+                          "$gt": [
+                            {
+                              "$len": {
+                                "$ref": "request.audios"
+                              }
+                            },
+                            0
+                          ]
+                        },
+                        {
+                          "$eq": [
+                            {
+                              "$ref": "request.operation"
+                            },
+                            "reference_to_video"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "name": "taskType",
+            "value": {
+              "$coalesce": [
+                {
+                  "$ref": "request.providerOptions.vllm-omni-videos.task"
+                },
+                {
+                  "$switch": {
+                    "cases": [
+                      {
+                        "when": {
+                          "$or": [
+                            {
+                              "$gt": [
+                                {
+                                  "$len": {
+                                    "$ref": "request.videos"
+                                  }
+                                },
+                                0
+                              ]
+                            },
+                            {
+                              "$gt": [
+                                {
+                                  "$len": {
+                                    "$ref": "request.audios"
+                                  }
+                                },
+                                0
+                              ]
+                            },
+                            {
+                              "$eq": [
+                                {
+                                  "$ref": "request.operation"
+                                },
+                                "reference_to_video"
+                              ]
+                            },
+                            {
+                              "$gt": [
+                                {
+                                  "$len": {
+                                    "$filter": {
+                                      "from": {
+                                        "$ref": "request.images"
+                                      },
+                                      "as": "media",
+                                      "where": {
+                                        "$in": [
+                                          {
+                                            "$ref": "media.role"
+                                          },
+                                          [
+                                            "reference_image",
+                                            "subject_reference",
+                                            "style_reference"
+                                          ]
+                                        ]
+                                      }
+                                    }
+                                  }
+                                },
+                                0
+                              ]
+                            }
+                          ]
+                        },
+                        "then": "ref2va"
+                      },
+                      {
+                        "when": {
+                          "$gt": [
+                            {
+                              "$len": {
+                                "$ref": "request.images"
+                              }
+                            },
+                            0
+                          ]
+                        },
+                        "then": "fl2va"
+                      }
+                    ],
+                    "default": "t2va"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "extraParamsObj",
+            "value": {
+              "$merge": [
+                {
+                  "task": {
+                    "$ref": "vars.taskType"
+                  },
+                  "duration": {
+                    "$if": {
+                      "condition": {
+                        "$gt": [
+                          {
+                            "$ref": "request.duration"
+                          },
+                          0
+                        ]
+                      },
+                      "then": {
+                        "$ref": "request.duration"
+                      },
+                      "else": null
+                    }
+                  },
+                  "audio_flow_shift": {
+                    "$omitEmpty": {
+                      "$ref": "request.providerOptions.vllm-omni-videos.audio_flow_shift"
+                    }
+                  }
+                },
+                {
+                  "$coalesce": [
+                    {
+                      "$ref": "request.providerOptions.vllm-omni-videos.extra_params"
+                    },
+                    {}
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "create": {
+          "method": "POST",
+          "path": "/v1/videos",
+          "contentType": "multipart/form-data",
+          "body": {
+            "model": {
+              "$ref": "request.model"
+            },
+            "prompt": {
+              "$ref": "request.prompt"
+            },
+            "width": {
+              "$omitEmpty": {
+                "$coalesce": [
+                  {
+                    "$ref": "request.providerOptions.vllm-omni-videos.width"
+                  },
+                  {
+                    "$ref": "vars.inferredWidth"
+                  }
+                ]
+              }
+            },
+            "height": {
+              "$omitEmpty": {
+                "$coalesce": [
+                  {
+                    "$ref": "request.providerOptions.vllm-omni-videos.height"
+                  },
+                  {
+                    "$ref": "vars.inferredHeight"
+                  }
+                ]
+              }
+            },
+            "aspect_ratio": {
+              "$omitEmpty": {
+                "$ref": "vars.ratioField"
+              }
+            },
+            "seconds": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.vllm-omni-videos.seconds"
+              }
+            },
+            "fps": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.vllm-omni-videos.fps"
+              }
+            },
+            "num_frames": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.vllm-omni-videos.num_frames"
+              }
+            },
+            "num_inference_steps": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.vllm-omni-videos.num_inference_steps"
+              }
+            },
+            "guidance_scale": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.vllm-omni-videos.guidance_scale"
+              }
+            },
+            "guidance_scale_2": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.vllm-omni-videos.guidance_scale_2"
+              }
+            },
+            "flow_shift": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.vllm-omni-videos.flow_shift"
+              }
+            },
+            "seed": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.vllm-omni-videos.seed"
+              }
+            },
+            "negative_prompt": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.vllm-omni-videos.negative_prompt"
+              }
+            },
+            "lora": {
+              "$omitEmpty": {
+                "$if": {
+                  "condition": {
+                    "$ref": "request.providerOptions.vllm-omni-videos.lora"
+                  },
+                  "then": {
+                    "$json": {
+                      "$ref": "request.providerOptions.vllm-omni-videos.lora"
+                    }
+                  },
+                  "else": null
+                }
+              }
+            },
+            "audio_reference": {
+              "$omitEmpty": {
+                "$if": {
+                  "condition": {
+                    "$gt": [
+                      {
+                        "$len": {
+                          "$ref": "request.audios"
+                        }
+                      },
+                      0
+                    ]
+                  },
+                  "then": {
+                    "$json": {
+                      "audio_url": {
+                        "$first": {
+                          "$map": {
+                            "from": {
+                              "$sortByOrder": {
+                                "$ref": "request.audios"
+                              }
+                            },
+                            "as": "media",
+                            "in": {
+                              "$ref": "media.value"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "else": null
+                }
+              }
+            },
+            "extra_params": {
+              "$if": {
+                "condition": {
+                  "$gt": [
+                    {
+                      "$len": {
+                        "$ref": "vars.extraParamsObj"
+                      }
+                    },
+                    0
+                  ]
+                },
+                "then": {
+                  "$json": {
+                    "$ref": "vars.extraParamsObj"
+                  }
+                },
+                "else": null
+              }
+            }
+          },
+          "files": [
+            {
+              "name": "input_reference",
+              "source": {
+                "$if": {
+                  "condition": {
+                    "$and": [
+                      {
+                        "$eq": [
+                          {
+                            "$len": {
+                              "$ref": "vars.orderedVisualRefs"
+                            }
+                          },
+                          1
+                        ]
+                      },
+                      {
+                        "$not": {
+                          "$ref": "vars.useMultiRefs"
+                        }
+                      }
+                    ]
+                  },
+                  "then": {
+                    "$first": {
+                      "$ref": "vars.orderedVisualRefs"
+                    }
+                  },
+                  "else": null
+                }
+              }
+            },
+            {
+              "name": "input_references",
+              "source": {
+                "$if": {
+                  "condition": {
+                    "$ref": "vars.useMultiRefs"
+                  },
+                  "then": {
+                    "$ref": "vars.orderedVisualRefs"
+                  },
+                  "else": null
+                }
+              }
+            }
+          ]
+        },
+        "poll": {
+          "method": "GET",
+          "path": "/v1/videos/{{taskId}}"
+        },
+        "cancel": {
+          "method": "DELETE",
+          "path": "/v1/videos/{{taskId}}"
+        },
+        "result": {
+          "method": "GET",
+          "path": "/v1/videos/{{taskId}}/content",
+          "headers": {
+            "Accept": "video/mp4"
+          }
+        },
+        "response": {
+          "taskId": {
+            "$coalesce": [
+              {
+                "$ref": "response.id"
+              },
+              {
+                "$ref": "response.task_id"
+              },
+              {
+                "$ref": "taskId"
+              }
+            ]
+          },
+          "status": {
+            "$coalesce": [
+              {
+                "$ref": "response.status"
+              },
+              "pending"
+            ]
+          },
+          "message": {
+            "$coalesce": [
+              {
+                "$ref": "response.error.message"
+              },
+              {
+                "$ref": "response.detail"
+              },
+              {
+                "$ref": "response.message"
+              }
+            ]
+          },
+          "videos": {
+            "$coalesce": [
+              {
+                "$ref": "response.video_url"
+              },
+              {
+                "$ref": "response.url"
+              }
+            ]
+          },
+          "errorPaths": [
+            "error.code",
+            "error.message"
+          ],
+          "messagePaths": [
+            "error.message",
+            "detail",
+            "message"
+          ],
+          "resultEphemeral": true
+        }
+      }
+    ]
+  },
+  "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>"
+}
+```
+<!-- BEEFTV_PLUGIN_MANIFEST_END -->

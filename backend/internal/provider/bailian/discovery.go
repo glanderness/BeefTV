@@ -106,6 +106,36 @@ func (d *Discovery) getExtendedModels() []provider.Model {
 
 		// Wan 系列视频生成模型
 		{
+			ID:                     "wan3.0-video",
+			DisplayName:            "万相 3.0 视频生成",
+			Provider:               "bailian",
+			Capability:             []string{"video"},
+			SupportedEndpointTypes: []string{"video"},
+			APIPath:                "/api/v1/services/aigc/video-generation/video-synthesis",
+			Metadata: map[string]any{
+				"source":           "extended",
+				"model_type":       "video_generation",
+				"resolution":       "480P-1080P",
+				"duration":         "2-30s",
+				"generation_modes": []string{"text_to_video", "image_to_video", "reference_to_video"},
+			},
+		},
+		{
+			ID:                     "wan3.0-video-prime",
+			DisplayName:            "万相 3.0 Prime 视频生成",
+			Provider:               "bailian",
+			Capability:             []string{"video"},
+			SupportedEndpointTypes: []string{"video"},
+			APIPath:                "/api/v1/services/aigc/video-generation/video-synthesis",
+			Metadata: map[string]any{
+				"source":           "extended",
+				"model_type":       "video_generation",
+				"resolution":       "480P-1080P",
+				"duration":         "2-30s",
+				"generation_modes": []string{"text_to_video", "image_to_video", "reference_to_video"},
+			},
+		},
+		{
 			ID:                     "wan2.7-t2v-2026-06-12",
 			DisplayName:            "万相 2.7 文生视频",
 			Provider:               "bailian",
@@ -317,6 +347,30 @@ func (d *Discovery) getExtendedModels() []provider.Model {
 		{
 			ID:                     "qwen-image-3.0-pro",
 			DisplayName:            "通义千问图像 3.0 Pro",
+			Provider:               "bailian",
+			Capability:             []string{"image"},
+			SupportedEndpointTypes: []string{"image"},
+			APIPath:                "/api/v1/services/aigc/multimodal-generation/generation",
+			Metadata: map[string]any{
+				"source":     "extended",
+				"model_type": "image_generation",
+			},
+		},
+		{
+			ID:                     "qwen-image-2.1-pro",
+			DisplayName:            "通义千问图像 2.1 Pro",
+			Provider:               "bailian",
+			Capability:             []string{"image"},
+			SupportedEndpointTypes: []string{"image"},
+			APIPath:                "/api/v1/services/aigc/multimodal-generation/generation",
+			Metadata: map[string]any{
+				"source":     "extended",
+				"model_type": "image_generation",
+			},
+		},
+		{
+			ID:                     "qwen-image-2.1-turbo",
+			DisplayName:            "通义千问图像 2.1 Turbo",
 			Provider:               "bailian",
 			Capability:             []string{"image"},
 			SupportedEndpointTypes: []string{"image"},

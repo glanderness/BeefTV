@@ -68,6 +68,10 @@ func OfficialDeclarativeVideoInterface(interfaceType string) (string, bool) {
 		return "NewAPI Video Generations", true
 	case "video-generations-json":
 		return "视频生成 JSON", true
+	case "openai-videos-media-json":
+		return "Videos JSON · media 数组", true
+	case "vllm-omni-videos":
+		return "vLLM-Omni Videos", true
 	case string(model.ChannelInterfaceNewAPIChannel1):
 		return "NewAPI 媒体任务", true
 	case string(model.ChannelInterfaceXAIVideo):

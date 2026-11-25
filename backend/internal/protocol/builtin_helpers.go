@@ -199,7 +199,7 @@ func normalizeStatus(raw string) Status {
 		return StatusSucceeded
 	case "cancelled", "canceled", "aborted":
 		return StatusCancelled
-	case "failed", "fail", "failure", "error", "expired", "task_status_fail":
+	case "failed", "fail", "failure", "error", "expired", "task_status_fail", "unknown", "suspended":
 		return StatusFailed
 	default:
 		return ""

@@ -112,6 +112,8 @@ test("video prompt defaults do not invent local ceilings", () => {
     for (const [protocol, model] of [
         ["minimax-video", "MiniMax-H3"],
         ["minimax-video", "MiniMax-Hailuo-2.3"],
+        ["vllm-omni-videos", "minimax-h3-fl2va"],
+        ["openai-videos-media-json", "minimax/h3"],
         ["dashscope-wan-video", "wan2.1-t2v-turbo"],
         ["dashscope-wan-video", "wan2.6-i2v"],
         ["dashscope-wan-video", "wan2.7-r2v"],

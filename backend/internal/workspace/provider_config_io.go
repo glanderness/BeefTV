@@ -22,6 +22,7 @@ var (
 	renameConfigFile              = os.Rename
 	isRetryableConfigReplaceError = retryableConfigReplaceError
 	isConfigFileInUse             = configFileInUse
+	isConfigPermissionError       = configPermissionError
 	sleepConfigRetry              = time.Sleep
 	nowConfigUTC                  = func() time.Time { return time.Now().UTC() }
 )
@@ -69,7 +70,7 @@ func (s *ProviderConfig) rotateBackup() error {
 	}
 	document, _, err := s.decodeStoredDocument(source)
 	if err != nil {
-		if errors.Is(err, ErrProviderConfigKeyUnavailable) && !errors.Is(err, localcrypto.ErrDecryptFailed) {
+		if isNonCorruptPrimaryDecodeError(err) {
 			return err
 		}
 		// 主文件已损坏：不要用坏内容覆盖有效备份，先隔离原文件留证再由新写入恢复主文件。
@@ -198,11 +199,45 @@ func wrapConfigIOError(prefix string, err error) error {
 		return fmt.Errorf("%s: %w", prefix, err)
 	case isConfigFileInUse(err):
 		return fmt.Errorf("%s: %w: %w", prefix, ErrProviderConfigLocked, err)
-	case errors.Is(err, os.ErrPermission):
+	case errors.Is(err, ErrProviderConfigPermission):
+		return fmt.Errorf("%s: %w", prefix, err)
+	case isConfigPermissionError(err):
 		return fmt.Errorf("%s: %w: %w", prefix, ErrProviderConfigPermission, err)
 	default:
 		return fmt.Errorf("%s: %w", prefix, err)
 	}
+}
+
+func wrapConfigKeyError(prefix string, err error) error {
+	if err == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(err, ErrProviderConfigLocked):
+		return fmt.Errorf("%s: %w", prefix, err)
+	case isConfigFileInUse(err):
+		return fmt.Errorf("%s: %w: %w", prefix, ErrProviderConfigLocked, err)
+	case errors.Is(err, ErrProviderConfigPermission):
+		return fmt.Errorf("%s: %w", prefix, err)
+	case isConfigPermissionError(err):
+		return fmt.Errorf("%s: %w: %w", prefix, ErrProviderConfigPermission, err)
+	case errors.Is(err, ErrProviderConfigKeyUnavailable):
+		return fmt.Errorf("%s: %w", prefix, err)
+	default:
+		return fmt.Errorf("%s: %w: %w", prefix, ErrProviderConfigKeyUnavailable, err)
+	}
+}
+
+func isNonCorruptBackupDecodeError(err error) bool {
+	return errors.Is(err, ErrProviderConfigKeyUnavailable) ||
+		errors.Is(err, ErrProviderConfigLocked) ||
+		errors.Is(err, ErrProviderConfigPermission)
+}
+
+func isNonCorruptPrimaryDecodeError(err error) bool {
+	return errors.Is(err, ErrProviderConfigLocked) ||
+		errors.Is(err, ErrProviderConfigPermission) ||
+		(errors.Is(err, ErrProviderConfigKeyUnavailable) && !errors.Is(err, localcrypto.ErrDecryptFailed))
 }
 
 func wrapCorruptConfigError(prefix string, err error) error {

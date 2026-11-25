@@ -388,6 +388,47 @@ test('media review exposes and forwards the selected resource with its owned tar
   }
 });
 
+test('stale_media_version surfaces details.currentVersion in the tool error message for one-step recovery', async () => {
+  const descriptor = descriptors.find(op => op.id === 'media.inspect');
+  const currentVersion = 'a'.repeat(64);
+  const server = createServer(async (req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/ops') {
+      res.end(JSON.stringify({ code: 0, data: { ops: [descriptor] } }));
+      return;
+    }
+    res.writeHead(409);
+    res.end(JSON.stringify({
+      code: 409,
+      reason: 'stale_media_version',
+      msg: '素材内容已变化，请重新读取 overview',
+      details: { currentVersion },
+    }));
+  });
+  const port = await listen(server);
+  try {
+    const bridge = createOperationBridge({ opsUrl: `http://127.0.0.1:${port}`, hostToken: 'test-only', turnBudgetContext: new AsyncLocalStorage() });
+    await bridge.loadDescriptors();
+    const log = [];
+    const tool = bridge.buildTools('canvas', log, { aborted: false }, newTurnAccumulator(), 'session')[0];
+    let caught = null;
+    try {
+      await tool.execute('inspect-stale', { nodeId: 'n1', expectedVersion: 'wrong-version', mode: 'frames' });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.reason).toBe('stale_media_version');
+    expect(caught.details).toEqual({ currentVersion });
+    expect(caught.message).toContain('stale_media_version');
+    expect(caught.message).toContain(currentVersion);
+    expect(log[0].error).toContain(currentVersion);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 const EDGE_CREATE_PARAMS = {
   type: 'object',
   properties: { canvasId: { type: 'string' }, fromNodeId: { type: 'string' }, toNodeId: { type: 'string' }, expectedRevision: { type: 'integer' } },

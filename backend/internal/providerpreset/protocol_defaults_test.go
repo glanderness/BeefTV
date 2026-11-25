@@ -56,8 +56,13 @@ func TestInferModelCapability(t *testing.T) {
 		"minimax-music-2.0": "audio",
 		"gpt-image-3":       "image",
 		"seedance-2.5":      "video",
+		"minimax-h3":        "video",
+		"minimax/h3":        "video",
+		"minimax/h3-fast":   "video",
+		"minimax/video-01":  "video",
 		"gpt-4.1-mini":      "text",
 		"minimax-m2":        "text",
+		"minimax/m2":        "text",
 	} {
 		if got := InferModelCapability(model); got != want {
 			t.Fatalf("InferModelCapability(%q) = %q want %q", model, got, want)

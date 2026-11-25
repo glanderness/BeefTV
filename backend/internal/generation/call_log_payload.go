@@ -110,7 +110,8 @@ func enrichAPICallLogPayload(logEntry *model.ApiCallLog, payload map[string]any)
 	}
 	failedCreate := logEntry.Status == model.ApiCallStatusFailed && (logEntry.RequestKind == "" || logEntry.RequestKind == "create")
 	if !failedCreate {
-		if extracted, err := firstJSONString(payload, "task_id", "taskId", "id", "request_id", "requestId", "name"); err == nil {
+		allowRequestID := logEntry.RequestKind != "poll" && logEntry.ProviderRequestID == ""
+		if extracted, err := extractProviderTaskIDFromMap(payload, allowRequestID); err == nil {
 			logEntry.ProviderRequestID = firstNonEmpty(nestedTaskID, extracted, logEntry.ProviderRequestID)
 		} else {
 			logEntry.ProviderRequestID = firstNonEmpty(nestedTaskID, logEntry.ProviderRequestID)

@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
+	"infinite-canvas/backend/internal/channelurl"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/providerpreset"
@@ -287,6 +289,10 @@ func RunChatCompletionsTextTask(ctx context.Context, input Input) (map[string]in
 }
 
 func ApplyTextThinking(body map[string]interface{}, input Input, protocol string) {
+	if protocol == "chat-completion" && usesQwenThinkingControl(input.Config) {
+		body["enable_thinking"] = input.TextOptions.Thinking
+		return
+	}
 	if !input.TextOptions.Thinking {
 		return
 	}
@@ -298,6 +304,78 @@ func ApplyTextThinking(body map[string]interface{}, input Input, protocol string
 	case "claude-api":
 		body["thinking"] = map[string]interface{}{"type": "enabled", "budget_tokens": 1024}
 	}
+}
+
+func usesQwenThinkingControl(cfg Config) bool {
+	modelID := firstNonEmpty(cfg.ProviderModelKey, cfg.Model)
+	if isQwenHybridThinkingModel(modelID) {
+		return true
+	}
+	return isDashScopeCompatibleHost(cfg.BaseURL) && !isNonHybridDashScopeModel(modelID)
+}
+
+func isDashScopeCompatibleHost(rawBaseURL string) bool {
+	cleaned := strings.TrimSpace(channelurl.CleanBase(rawBaseURL))
+	if cleaned == "" {
+		return false
+	}
+	parsed, err := url.Parse(cleaned)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	dashscopeHost := host == "dashscope.aliyuncs.com" ||
+		strings.HasSuffix(host, ".dashscope.aliyuncs.com") ||
+		(strings.HasPrefix(host, "dashscope-") && strings.HasSuffix(host, ".aliyuncs.com"))
+	return dashscopeHost ||
+		host == "maas.aliyuncs.com" || strings.HasSuffix(host, ".maas.aliyuncs.com") ||
+		host == "qianwenaiapi.com" || strings.HasSuffix(host, ".qianwenaiapi.com") ||
+		host == "qwencloudapi.com" || strings.HasSuffix(host, ".qwencloudapi.com")
+}
+
+func normalizeModelSlug(modelID string) string {
+	slug := strings.ToLower(strings.TrimSpace(modelID))
+	if idx := strings.LastIndex(slug, "/"); idx >= 0 {
+		slug = slug[idx+1:]
+	}
+	return slug
+}
+
+func hasVariantToken(slug string, tokens ...string) bool {
+	for _, segment := range strings.FieldsFunc(slug, func(r rune) bool { return r == '-' || r == '.' || r == '_' }) {
+		for _, token := range tokens {
+			if segment == token {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isNonHybridDashScopeModel(modelID string) bool {
+	slug := normalizeModelSlug(modelID)
+	if slug == "" || strings.HasPrefix(slug, "qwq") {
+		return true
+	}
+	for _, legacy := range []string{"qwen1", "qwen-1", "qwen2", "qwen-2"} {
+		if strings.HasPrefix(slug, legacy) {
+			return true
+		}
+	}
+	return hasVariantToken(slug, "instruct", "coder", "thinking", "image", "ocr", "tts", "asr", "mt", "embedding", "rerank")
+}
+
+func isQwenHybridThinkingModel(modelID string) bool {
+	slug := normalizeModelSlug(modelID)
+	if slug == "" || hasVariantToken(slug, "instruct", "coder", "thinking", "image", "ocr", "tts", "asr", "mt", "embedding", "rerank") {
+		return false
+	}
+	for _, prefix := range []string{"qwen3", "qwen-3", "qwen4", "qwen-4", "qwen-plus", "qwen-max", "qwen-turbo", "qwen-flash"} {
+		if slug == prefix || strings.HasPrefix(slug, prefix+"-") || strings.HasPrefix(slug, prefix+".") {
+			return true
+		}
+	}
+	return false
 }
 
 // Chat Completion defaults to automatic tool selection when tools are present,
