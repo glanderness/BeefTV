@@ -312,11 +312,12 @@ export function ChannelModelSettings({
                                 ) : (
                                     <>
                                         <div className="text-xs font-medium">接口格式</div>
-                                        <p className="text-xs leading-5 text-foreground/58">服务商文档里写的请求方式。常见服务选 OpenAI Chat Completions 即可。</p>
+                                        <p className="text-xs leading-5" style={{ color: "var(--user-ink-muted, var(--muted-foreground))" }}>{protocolGuidanceForCapability(activeCapability)}</p>
                                         <ModelProtocolBrowser
                                             loading={protocolLoading}
                                             error={protocolError}
                                             capability={activeCapability}
+                                            channelBaseUrl={channel.baseUrl}
                                             value={activeProtocol}
                                             protocols={availableProtocols}
                                             onChange={(nextProtocol) => {
@@ -380,6 +381,19 @@ export function ChannelModelSettings({
             </ModelEditorModal>
         </div>
     );
+}
+
+export function protocolGuidanceForCapability(capability: ModelCapabilityChoice): string {
+    switch (capability) {
+        case "image":
+            return "按服务商文档选择出图接口：中转或兼容服务优先选「常用与通用兼容」中的 OpenAI Images，官方直连选对应服务商接口；Base URL 填服务根地址即可。";
+        case "video":
+            return "视频接口因服务商差异较大，请对照请求路径选择：中转站优先看「常用与通用兼容」，官方直连选对应服务商接口；Base URL 填服务根地址即可。";
+        case "audio":
+            return "按服务商文档选择语音接口：常见兼容服务选 OpenAI Audio Speech，异步或工作流服务选对应专用接口；Base URL 填服务根地址即可。";
+        default:
+            return "按服务商文档选择对话接口：多数中转或兼容服务选 OpenAI Chat Completions 即可；Base URL 填服务根地址，无需拼接具体路径。";
+    }
 }
 
 function capabilityLabel(value: ModelProfile["capability"]) {

@@ -441,7 +441,8 @@ test("production proposal tolerates legacy null referenceNodeIds and parameters 
     expect(normalized.production?.targets[0]?.parameters).toEqual({});
 
     const text = assistantProposalText(legacyProposal);
-    expect(text).toContain("整片制作方案：1 张图片、0 段视频、0 段配音");
+    expect(text).toContain("生成方案：1 张图片");
+    expect(text).not.toContain("整片制作方案");
     expect(text).toContain("橘猫侦探定妆图 · dola-seedream-5-0-flash-260915 · 1 个");
     expect(text).toContain("赛博雨夜橘猫侦探");
 
@@ -471,7 +472,8 @@ test("production proposal tolerates legacy null referenceNodeIds and parameters 
         />,
     );
     expect(html).toContain("橘猫侦探定妆图");
-    expect(html).toContain("确认并制作整片");
+    expect(html).toContain("确认并生成");
+    expect(html).not.toContain("确认并制作整片");
 });
 
 test("production confirmation footer does not mislead users into typing confirmation in chat, and surfaces 4xx ApiError messages", () => {
@@ -484,4 +486,116 @@ test("production confirmation footer does not mislead users into typing confirma
     expect(productionConfirmationErrorMessage(new ApiError("intent changed", { status: 409, reason: "continuation_intent_changed" }))).toBe("要求已更新，请让助手重新提出生成方案。");
     expect(productionConfirmationErrorMessage(new ApiError("timeout", { status: 504 }))).toBe("暂未确认制作是否开始，请重试查询同一方案，不会重复提交已接受的素材。");
     expect(productionConfirmationErrorMessage(new Error("network down"))).toBe("暂未确认制作是否开始，请重试查询同一方案，不会重复提交已接受的素材。");
+});
+
+test("single-step and single-kind proposals do not label the confirmation button as full-film production", () => {
+    const singleImagePlan: AssistantGenerationProposal = {
+        proposalId: "gp-single-img",
+        kind: "image",
+        nodeIds: ["img-1"],
+        model: "gpt-image-2",
+        modelKey: "beeftv::gpt-image-2",
+        production: {
+            targets: [
+                {
+                    nodeId: "img-1",
+                    title: "角色定妆图",
+                    kind: "image",
+                    modelKey: "beeftv::gpt-image-2",
+                    prompt: "暖光胶片感人像",
+                    parameters: { size: "9:16", count: "1" },
+                    referenceNodeIds: [],
+                },
+            ],
+            estimate: { amount: 0.35, priced: 1, unknown: 0, text: "预计费用：¥0.35" },
+        },
+        source: { canvasId: "canvas", canvasRevision: 1, modelConfigRevision: 1 },
+    };
+
+    const singleHtml = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={{
+                turnId: "turn-single-img",
+                userText: "帮我画一张角色定妆图",
+                selectedNodeIds: [],
+                reply: "已准备好定妆图方案。",
+                toolCalls: [],
+                change: null,
+                error: null,
+                cancelled: false,
+                createdAt: "2026-11-24",
+                proposals: [singleImagePlan],
+            }}
+            handledProposals={new Set()}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(singleHtml).toContain("生成方案：1 张图片");
+    expect(singleHtml).toContain("确认并生成");
+    expect(singleHtml).not.toContain("确认并制作整片");
+    expect(singleHtml).not.toContain("整片制作方案");
+    expect(singleHtml).not.toContain("声音、字幕和剪辑");
+
+    const stagedImagesPlan: AssistantGenerationProposal = {
+        proposalId: "gp-staged-imgs",
+        kind: "image",
+        nodeIds: ["char-1"],
+        model: "gpt-image-2",
+        modelKey: "beeftv::gpt-image-2",
+        production: {
+            targets: [
+                {
+                    nodeId: "char-1",
+                    title: "主角设定",
+                    kind: "image",
+                    modelKey: "beeftv::gpt-image-2",
+                    prompt: "雨衣侦探",
+                    parameters: { size: "16:9", count: "1" },
+                    referenceNodeIds: [],
+                },
+                {
+                    nodeId: "scene-1",
+                    title: "街角场景",
+                    kind: "image",
+                    modelKey: "beeftv::gpt-image-2",
+                    prompt: "雨夜街角回头",
+                    parameters: { size: "16:9", count: "1" },
+                    referenceNodeIds: ["char-1"],
+                },
+            ],
+            estimate: { amount: 0.7, priced: 2, unknown: 0, text: "预计费用：¥0.70" },
+        },
+        source: { canvasId: "canvas", canvasRevision: 1, modelConfigRevision: 1 },
+    };
+
+    const stagedHtml = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={{
+                turnId: "turn-staged-imgs",
+                userText: "先出主角设定，再按主角出街角首帧",
+                selectedNodeIds: [],
+                reply: "已准备好分步出图方案。",
+                toolCalls: [],
+                change: null,
+                error: null,
+                cancelled: false,
+                createdAt: "2026-11-24",
+                proposals: [stagedImagesPlan],
+            }}
+            handledProposals={new Set()}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(stagedHtml).toContain("分步生成方案：2 张图片");
+    expect(stagedHtml).toContain("确认制作方案");
+    expect(stagedHtml).not.toContain("确认并制作整片");
+    expect(stagedHtml).not.toContain("声音、字幕和剪辑");
 });

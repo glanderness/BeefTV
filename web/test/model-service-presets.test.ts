@@ -174,7 +174,7 @@ test("API key is optional only when every selected protocol auth is none", () =>
     expect(serviceConnectionError(createModelChannel({ baseUrl: "https://api.example.com/v1", apiKey: "" }), { requireCredential: false })).toBe("");
     const mixed = createModelChannel({ baseUrl: "http://127.0.0.1:11434", apiKey: "", models: ["llama3", "gpt"], modelProfiles: [{ model: "llama3", capability: "text", protocol: "ollama-chat", authType: "none" }, { model: "gpt", capability: "text", protocol: "chat-completion" }] });
     expect(serviceConnectionError(mixed, { protocols: [ollama, ...protocols] })).toBe("请填写 API Key");
-    expect(modelConfigChannelStatusLabel(channel, { status: "saved", revision: 1, dirty: false, error: "" })).toBe("已保存 · 尚未测试");
+    expect(modelConfigChannelStatusLabel(channel, { status: "saved", revision: 1, dirty: false, error: "" })).toBe("已保存 · 可直接使用（未测连通）");
 });
 
 test("explicit asset origin survives channel creation and generation request assembly", () => {
@@ -186,7 +186,7 @@ test("explicit asset origin survives channel creation and generation request ass
 
 test("saved credentials do not imply tested generation and browser cache omits all credential copies", () => {
     const channel = createModelChannel({ id: "manual", apiKey: "synthetic-key", secretKey: "synthetic-secret", headers: [{ name: "X-Key", value: "synthetic-header" }] });
-    expect(modelConfigChannelStatusLabel(channel, { status: "saved", revision: 1, dirty: false, error: "" })).toBe("已保存 · 尚未测试");
+    expect(modelConfigChannelStatusLabel(channel, { status: "saved", revision: 1, dirty: false, error: "" })).toBe("已保存 · 可直接使用（未测连通）");
     const config = { ...defaultConfig, apiKey: "synthetic-root", channels: [channel] };
     expect(JSON.stringify(configWithoutCachedSecrets(config))).not.toContain("synthetic-");
     expect(config.channels[0].apiKey).toBe("synthetic-key");

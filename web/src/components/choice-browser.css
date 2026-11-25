@@ -19,6 +19,31 @@
     padding: 4px;
     scrollbar-gutter: stable;
 }
+.choice-browser-group + .choice-browser-group {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--workspace-border);
+}
+.choice-browser-group-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 2px 8px;
+    padding: 4px 10px;
+}
+.choice-browser-group-header > span {
+    font-size: var(--fs-caption);
+    line-height: 18px;
+    font-weight: 500;
+    color: var(--user-ink, var(--foreground));
+}
+.choice-browser-group-header > small {
+    font-size: var(--fs-caption);
+    line-height: 18px;
+    font-weight: 400;
+    color: var(--user-ink-muted, var(--muted-foreground));
+}
 .choice-browser-option {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 120px) 16px;
@@ -75,23 +100,43 @@
     max-height: 248px;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 16px;
+    padding: 12px 14px;
     border-left: 1px solid var(--workspace-border);
 }
 .choice-browser-detail > span {
     display: block;
     margin-bottom: 4px;
-    color: var(--muted-foreground);
-    font-size: var(--fs-label);
+    color: var(--user-ink-muted, var(--muted-foreground));
+    font-size: var(--fs-caption);
+    line-height: 18px;
 }
 .choice-browser-detail > strong {
+    display: block;
+    font-size: var(--fs-body);
+    line-height: 20px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+}
+.choice-browser-description {
+    margin: 4px 0 0;
     font-size: var(--fs-caption);
+    line-height: 18px;
+    color: var(--user-ink-muted, var(--muted-foreground));
+    overflow-wrap: anywhere;
+}
+.choice-browser-hint {
+    margin: 8px 0 0;
+    padding-top: 8px;
+    border-top: 1px solid var(--workspace-border);
+    font-size: var(--fs-caption);
+    line-height: 18px;
+    color: var(--user-ink-muted, var(--muted-foreground));
     overflow-wrap: anywhere;
 }
 .choice-browser-detail dl {
     display: grid;
-    gap: 8px;
-    margin-top: 12px;
+    gap: 6px;
+    margin-top: 8px;
     font-size: var(--fs-caption);
 }
 .choice-browser-detail dl > div {

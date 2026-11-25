@@ -17,6 +17,7 @@ type ProviderCatalogItem struct {
 	Version           string                      `json:"version"`
 	Name              string                      `json:"name"`
 	Vendor            string                      `json:"vendor"`
+	Description       string                      `json:"description,omitempty"`
 	Categories        []protocol.Capability       `json:"categories"`
 	Scopes            []protocol.Surface          `json:"scopes"`
 	Create            string                      `json:"create,omitempty"`
@@ -53,7 +54,8 @@ func (s *Service) ProviderCatalog(scope, capability string, includeUnavailable b
 			}
 			item := ProviderCatalogItem{
 				ID: provider.ID, Aliases: provider.LegacyAliases, Presets: provider.Presets, Version: plugin.Manifest.Version, Name: provider.Label, Vendor: plugin.Manifest.Author,
-				Categories: provider.Capabilities, Scopes: provider.Scopes, BaseURL: provider.BaseURL,
+				Description: strings.TrimSpace(plugin.Manifest.Description),
+				Categories:  provider.Capabilities, Scopes: provider.Scopes, BaseURL: provider.BaseURL,
 				AuthType: provider.Auth.Type,
 				Enabled:  plugin.Status == StatusEnabled, UnavailableReason: plugin.Error,
 				Workflows:     workflowsForProvider(plugin.Manifest.Contributes.Workflows, provider.ID, provider.Capabilities, wantCapability),
@@ -65,6 +67,9 @@ func (s *Service) ProviderCatalog(scope, capability string, includeUnavailable b
 				if adapter, ok := registry.Resolve(provider.ID); ok {
 					metadata := adapter.Metadata()
 					item.Create, item.Poll, item.ContentType = metadata.Create, metadata.Poll, metadata.ContentType
+					if desc := strings.TrimSpace(metadata.Description); desc != "" {
+						item.Description = desc
+					}
 					_, item.Module = adapter.(protocol.ModuleProvider)
 				}
 			}

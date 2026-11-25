@@ -7,7 +7,7 @@ export type ModelProtocolWorkflow = { id: string; label: string; providerId: str
 // presets：说同一种接口的服务商（名字和默认地址），在「选择服务商」里一键带出。
 // aliases：旧版本里这个接口用过的 ID，已保存的模型可能还写着它们。
 export type ModelProtocolPreset = { id: string; label: string; baseUrl: string };
-export type ModelProtocolDefinition = { value: ModelProtocol; label: string; vendor?: string; capability: ProtocolCapability; create: string; contentType: string; poll?: string; media: string; enabled?: boolean; baseUrl?: string; authType?: string; workflows?: ModelProtocolWorkflow[]; module?: boolean; aliases?: string[]; presets?: ModelProtocolPreset[] };
+export type ModelProtocolDefinition = { value: ModelProtocol; label: string; vendor?: string; description?: string; capability: ProtocolCapability; create: string; contentType: string; poll?: string; media: string; enabled?: boolean; baseUrl?: string; authType?: string; workflows?: ModelProtocolWorkflow[]; module?: boolean; aliases?: string[]; presets?: ModelProtocolPreset[] };
 
 export function protocolGroups(protocols: ModelProtocolDefinition[]) {
     return (["text", "image", "video", "audio"] as ProtocolCapability[]).map((capability) => ({ label: { text: "文本", image: "图片", video: "视频", audio: "音频" }[capability], options: protocols.filter((item) => item.capability === capability && item.enabled !== false).map((item) => ({ label: `${item.label} · ${item.create.replace(/^POST /, "")}`, value: item.value })) }));
@@ -91,7 +91,7 @@ export function normalizeModelProtocol(value: unknown): ModelProtocol | undefine
     return protocol === "google-gemini-generate-content" ? "gemini-generate-content" : protocol;
 }
 
-const STANDARD_PROTOCOLS: Record<ProtocolCapability, ModelProtocol[]> = {
+export const STANDARD_PROTOCOLS: Record<ProtocolCapability, ModelProtocol[]> = {
     text: ["chat-completion", "openai-response"],
     image: ["openai-image"],
     video: ["newapi-channel-2", "newapi"],

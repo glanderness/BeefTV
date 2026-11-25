@@ -128,8 +128,12 @@ export function assistantUndoFailureText(failure: AssistantUndoFailure): string 
     }
 }
 
+export type AssistantProductionScope = "full-production" | "staged-plan" | "single-step";
+
 export type AssistantProductionProposalParts = {
+    scope: AssistantProductionScope;
     header: string;
+    summaryLabel: string;
     targetLines: string[];
     footer: string;
 };
@@ -196,21 +200,64 @@ export function assistantOrderTargetLines(proposal: AssistantGenerationProposal,
     return targets.map((t) => formatProposalTargetLine(t, targets, proposal.model, awaitingConfirmation));
 }
 
-/** 拆出整片方案的概览、逐项明细与确认提示，供卡片默认收起明细、按需展开。 */
+/** 区分整片制作（多模态或带后续依赖的视频管线）、单类型分步方案与单步生成，避免单图生成误显「制作整片」。 */
+export function assistantProductionScope(proposal: AssistantGenerationProposal): AssistantProductionScope | null {
+    if (!proposal.production) return null;
+    const targets = Array.isArray(proposal.production.targets) ? proposal.production.targets : [];
+    const distinctKinds = new Set(targets.map((target) => target.kind));
+    const hasVideo = distinctKinds.has("video");
+    const initialNodeIds = new Set(Array.isArray(proposal.nodeIds) ? proposal.nodeIds : []);
+    const targetNodeIds = new Set(targets.map((target) => target.nodeId));
+    const hasChainedStages = targets.some(
+        (target) =>
+            !initialNodeIds.has(target.nodeId) ||
+            (Array.isArray(target.referenceNodeIds) && target.referenceNodeIds.some((refId) => targetNodeIds.has(refId))),
+    );
+    if (distinctKinds.size > 1 || (hasVideo && hasChainedStages)) return "full-production";
+    if (hasChainedStages) return "staged-plan";
+    return "single-step";
+}
+
+export function assistantProposalConfirmLabel(proposal: AssistantGenerationProposal): string {
+    const scope = assistantProductionScope(proposal);
+    if (scope === "full-production") return "确认并制作整片";
+    if (scope === "staged-plan") return "确认制作方案";
+    if (scope === "single-step") return "确认并生成";
+    return "生成";
+}
+
+function formatPresentKindCounts(images: number, videos: number, audio: number): string {
+    const parts: string[] = [];
+    if (images > 0) parts.push(`${images} 张图片`);
+    if (videos > 0) parts.push(`${videos} 段视频`);
+    if (audio > 0) parts.push(`${audio} 段配音`);
+    return parts.join("、") || "0 项素材";
+}
+
+/** 拆出制作/生成方案的概览、逐项明细与确认提示，供卡片默认收起明细、按需展开。 */
 export function assistantProductionProposalParts(
     proposal: AssistantGenerationProposal,
     awaitingConfirmation = true,
 ): AssistantProductionProposalParts | null {
-    if (!proposal.production) return null;
+    const scope = assistantProductionScope(proposal);
+    if (!scope || !proposal.production) return null;
     const targets = Array.isArray(proposal.production.targets) ? proposal.production.targets : [];
     const images = targets.filter(t => t.kind === "image").length;
     const videos = targets.filter(t => t.kind === "video");
     const audio = targets.filter(t => t.kind === "audio");
     const priceSummary = awaitingConfirmation ? proposal.production.estimate?.text : "";
-    const header = `整片制作方案：${images} 张图片、${videos.length} 段视频、${audio.length} 段配音${priceSummary ? `\n${priceSummary}` : ""}`;
     const targetLines = targets.map((t) => formatProposalTargetLine(t, targets, proposal.model, awaitingConfirmation));
-    const footer = awaitingConfirmation ? "确认后按此方案生成素材，并自动完成声音、字幕和剪辑（请点击下方按钮确认开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。" : "";
-    return { header, targetLines, footer };
+    if (scope === "full-production") {
+        const header = `整片制作方案：${images} 张图片、${videos.length} 段视频、${audio.length} 段配音${priceSummary ? `\n${priceSummary}` : ""}`;
+        const footer = awaitingConfirmation ? "确认后按此方案生成素材，并自动完成声音、字幕和剪辑（请点击下方按钮确认开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。" : "";
+        return { scope, header, summaryLabel: `查看 ${targetLines.length} 项镜头与提示词明细`, targetLines, footer };
+    }
+    const countSummary = formatPresentKindCounts(images, videos.length, audio.length);
+    const header = `${scope === "staged-plan" ? "分步生成方案" : "生成方案"}：${countSummary}${priceSummary ? `\n${priceSummary}` : ""}`;
+    const footer = awaitingConfirmation
+        ? `${scope === "staged-plan" ? "确认后按依赖顺序依次生成素材" : "确认后按此方案生成素材"}（请点击下方按钮确认开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。`
+        : "";
+    return { scope, header, summaryLabel: `查看 ${targetLines.length} 项生成明细`, targetLines, footer };
 }
 
 /** 提议可能来自自建渠道，不能把所有费用都归到 BeefTV 官方算力。没有后端估算的旧提议仍显示渠道单价。 */
@@ -297,7 +344,8 @@ export function assistantProposalProgress(proposal: AssistantGenerationProposal,
         : pending ? `生成中，${complete}/${outputs.size + planned} 个结果已就绪。`
         : retrieving ? `${complete}/${outputs.size} 个结果已就绪，其余结果还不可用。请查看节点上的取回提示。`
         : failed ? `${complete} 个结果已就绪，${failed} 个结果因任务失败或取消而未生成。`
-        : proposal.production ? `${complete} 个素材已保存，后续制作与交付进度见助手消息。` : `${complete} 个结果已就绪，可以请助手检查。`;
+        : assistantProductionScope(proposal) === "full-production" ? `${complete} 个素材已保存，后续制作与交付进度见助手消息。`
+        : proposal.production ? `${complete} 个素材已保存，后续进度见助手消息。` : `${complete} 个结果已就绪，可以请助手检查。`;
     return { ready, text, nodeIds: [...outputs.keys()] };
 }
 

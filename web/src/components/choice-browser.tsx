@@ -8,10 +8,37 @@ export type BrowserChoice = {
     label: string;
     subtitle?: string;
     vendor?: string;
+    group?: string;
+    groupHint?: string;
+    description?: string;
+    hint?: string;
     searchText?: string;
     disabled?: boolean;
     details: Array<{ label: string; value: ReactNode }>;
 };
+
+type ChoiceGroup = {
+    name: string;
+    hint?: string;
+    options: BrowserChoice[];
+};
+
+function groupChoices(options: BrowserChoice[]): ChoiceGroup[] | null {
+    if (!options.some((option) => option.group)) return null;
+    const groups: ChoiceGroup[] = [];
+    const byName = new Map<string, ChoiceGroup>();
+    for (const option of options) {
+        const name = option.group || "其他";
+        let group = byName.get(name);
+        if (!group) {
+            group = { name, hint: option.groupHint, options: [] };
+            byName.set(name, group);
+            groups.push(group);
+        }
+        group.options.push(option);
+    }
+    return groups;
+}
 
 /** A controlled form field: searching never changes the selected value. */
 export function ChoiceBrowser({
@@ -42,8 +69,27 @@ export function ChoiceBrowser({
     const [query, setQuery] = useState("");
     const selected = options.find((option) => option.value === value);
     const normalizedQuery = query.trim().toLowerCase();
-    const visible = options.filter((option) => [option.label, option.subtitle, option.vendor, option.searchText].join(" ").toLowerCase().includes(normalizedQuery));
+    const visible = options.filter((option) =>
+        [option.label, option.subtitle, option.vendor, option.group, option.description, option.searchText]
+            .join(" ")
+            .toLowerCase()
+            .includes(normalizedQuery),
+    );
+    const grouped = groupChoices(visible);
     const unavailable = disabled || loading || Boolean(error);
+
+    const renderOption = (option: BrowserChoice) => (
+        <label key={option.value} className="choice-browser-option" data-selected={option.value === value}>
+            <span className="choice-browser-main">
+                <strong>{option.label}</strong>
+                <span title={option.subtitle}>{option.subtitle}</span>
+            </span>
+            <span className="choice-browser-vendor" title={option.vendor}>
+                {option.vendor}
+            </span>
+            <input type="radio" name={name} value={option.value} checked={option.value === value} disabled={unavailable || option.disabled} onChange={() => onChange?.(option.value)} />
+        </label>
+    );
 
     return (
         <div className="choice-browser">
@@ -55,18 +101,17 @@ export function ChoiceBrowser({
             ) : (
                 <div className="choice-browser-panels">
                     <div className="choice-browser-list" role="radiogroup" aria-label={label}>
-                        {visible.map((option) => (
-                            <label key={option.value} className="choice-browser-option" data-selected={option.value === value}>
-                                <span className="choice-browser-main">
-                                    <strong>{option.label}</strong>
-                                    <span title={option.subtitle}>{option.subtitle}</span>
-                                </span>
-                                <span className="choice-browser-vendor" title={option.vendor}>
-                                    {option.vendor}
-                                </span>
-                                <input type="radio" name={name} value={option.value} checked={option.value === value} disabled={unavailable || option.disabled} onChange={() => onChange?.(option.value)} />
-                            </label>
-                        ))}
+                        {grouped
+                            ? grouped.map((group) => (
+                                  <div key={group.name} className="choice-browser-group">
+                                      <div className="choice-browser-group-header" role="presentation">
+                                          <span>{group.name}</span>
+                                          {group.hint ? <small>{group.hint}</small> : null}
+                                      </div>
+                                      {group.options.map(renderOption)}
+                                  </div>
+                              ))
+                            : visible.map(renderOption)}
                         {!visible.length && (
                             <div className="choice-browser-state" role="status">
                                 没有匹配的选项
@@ -78,6 +123,7 @@ export function ChoiceBrowser({
                         {selected ? (
                             <>
                                 <strong>{selected.label}</strong>
+                                {selected.description ? <p className="choice-browser-description">{selected.description}</p> : null}
                                 <dl>
                                     {selected.details.map((detail) => (
                                         <div key={detail.label}>
@@ -86,9 +132,10 @@ export function ChoiceBrowser({
                                         </div>
                                     ))}
                                 </dl>
+                                {selected.hint ? <p className="choice-browser-hint">{selected.hint}</p> : null}
                             </>
                         ) : (
-                            <p>{value ? `当前配置 ${value} 不在可用目录中，请重新选择。` : "选择左侧选项查看详情"}</p>
+                            <p>{value ? `当前配置 ${value} 不在可用目录中，请重新选择。` : "选择左侧选项查看详情与接入说明"}</p>
                         )}
                     </div>
                 </div>

@@ -589,8 +589,8 @@ export function modelConfigChannelStatusLabel(channel: ModelChannel, persistence
     if (!channelHasGenerationCredential(channel) && !channelAllowsEmptyAPIKey(channel)) return "待配置";
     if (persistence.status === "saving") return "保存中";
     if (persistence.status === "error") return "保存失败";
-    if (persistence.status === "saved") return "已保存 · 尚未测试";
-    return "尚未测试";
+    if (persistence.status === "saved") return "已保存 · 可直接使用（未测连通）";
+    return "可直接使用（未测连通）";
 }
 
 
