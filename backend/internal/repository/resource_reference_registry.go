@@ -216,6 +216,14 @@ var referenceDocumentSources = []referenceDocumentSource{
 // predicates so orphaned rows whose parent record is missing can never lose
 // their underlying resource.
 func collectDirectResourceReferences(db *gorm.DB, userID string, excludingAssetID string, resourceIDs []string, includeCanvasHistory bool, stopOnFirst bool) ([]ResourceDirectReference, error) {
+	var excluded []string
+	if excludingAssetID != "" {
+		excluded = []string{excludingAssetID}
+	}
+	return collectDirectResourceReferencesExcluding(db, userID, excluded, resourceIDs, includeCanvasHistory, stopOnFirst)
+}
+
+func collectDirectResourceReferencesExcluding(db *gorm.DB, userID string, excludingAssetIDs []string, resourceIDs []string, includeCanvasHistory bool, stopOnFirst bool) ([]ResourceDirectReference, error) {
 	if len(resourceIDs) == 0 {
 		return nil, nil
 	}
@@ -282,8 +290,8 @@ func collectDirectResourceReferences(db *gorm.DB, userID string, excludingAssetI
 				Joins("LEFT JOIN asset_versions ON asset_versions.id = asset_representations.asset_version_id").
 				Joins("LEFT JOIN assets ON assets.id = asset_versions.asset_id").
 				Where("asset_representations.resource_id IN ?", resourceIDs)
-			if excludingAssetID != "" {
-				q = q.Where("(assets.id IS NULL OR assets.id <> ?)", excludingAssetID)
+			if len(excludingAssetIDs) > 0 {
+				q = q.Where("(assets.id IS NULL OR assets.id NOT IN ?)", excludingAssetIDs)
 			}
 		} else {
 			q = q.Select("asset_representations.id, '' AS title, asset_representations.resource_id").
@@ -346,6 +354,7 @@ func collectDirectResourceReferences(db *gorm.DB, userID string, excludingAssetI
 type documentScanOptions struct {
 	userID                   string
 	excludingAssetID         string
+	excludingAssetIDs        []string
 	remaining                map[string]struct{}
 	skipCompletedTaskOutputs bool
 	stopOnFirst              bool
@@ -414,8 +423,12 @@ func scanReferenceDocumentSource(db *gorm.DB, src referenceDocumentSource, opts 
 		} else {
 			q = q.Where(src.userCol+" = ?", opts.userID)
 		}
-		if src.excludeAsset && opts.excludingAssetID != "" {
-			q = q.Where("assets.id <> ?", opts.excludingAssetID)
+		if src.excludeAsset {
+			if len(opts.excludingAssetIDs) > 0 {
+				q = q.Where("assets.id NOT IN ?", opts.excludingAssetIDs)
+			} else if opts.excludingAssetID != "" {
+				q = q.Where("assets.id <> ?", opts.excludingAssetID)
+			}
 		}
 		if src.extraWhere != "" {
 			q = q.Where(src.extraWhere)
@@ -560,6 +573,14 @@ func scanReferenceDocumentSource(db *gorm.DB, src referenceDocumentSource, opts 
 }
 
 func guardReferenceDocuments(tx *gorm.DB, userID string, excludingAssetID string, resourceIDs []string, skipCompletedTaskOutputs bool) error {
+	var excluded []string
+	if excludingAssetID != "" {
+		excluded = []string{excludingAssetID}
+	}
+	return guardReferenceDocumentsExcluding(tx, userID, excluded, resourceIDs, skipCompletedTaskOutputs)
+}
+
+func guardReferenceDocumentsExcluding(tx *gorm.DB, userID string, excludingAssetIDs []string, resourceIDs []string, skipCompletedTaskOutputs bool) error {
 	if len(resourceIDs) == 0 {
 		return nil
 	}
@@ -569,28 +590,28 @@ func guardReferenceDocuments(tx *gorm.DB, userID string, excludingAssetID string
 	}
 	return scanReferenceDocuments(tx, documentScanOptions{
 		userID:                   userID,
-		excludingAssetID:         excludingAssetID,
+		excludingAssetIDs:        excludingAssetIDs,
 		remaining:                remaining,
 		skipCompletedTaskOutputs: skipCompletedTaskOutputs,
 		stopOnFirst:              true,
 	}, nil)
 }
 
-func guardAssetDeletionReferences(tx *gorm.DB, userID string, assetID string, resourceIDs []string) error {
+func guardAssetDeletionReferencesExcluding(tx *gorm.DB, userID string, excludingAssetIDs []string, resourceIDs []string) error {
 	if len(resourceIDs) == 0 {
 		return nil
 	}
 	// Canvas history references are verified right before this by
 	// RequireNoCanvasHistoryReferences so DeleteAssetAndResources keeps its
 	// dedicated ErrCanvasHistoryResourceReferenced error contract.
-	refs, err := collectDirectResourceReferences(tx, userID, assetID, resourceIDs, false, true)
+	refs, err := collectDirectResourceReferencesExcluding(tx, userID, excludingAssetIDs, resourceIDs, false, true)
 	if err != nil {
 		return err
 	}
 	if len(refs) > 0 {
 		return ErrResourceCleanupStillReferenced
 	}
-	return guardReferenceDocuments(tx, userID, assetID, resourceIDs, true)
+	return guardReferenceDocumentsExcluding(tx, userID, excludingAssetIDs, resourceIDs, true)
 }
 
 func guardAssetBusinessLinks(tx *gorm.DB, assetID string) error {

@@ -29,6 +29,7 @@ const (
 	MaterializeErrorDeliveryUnreadable = "delivery_unreadable"
 	MaterializeErrorUnsupportedShape   = "unsupported_result_shape"
 	MaterializeErrorAssetForeign       = "asset_foreign"
+	MaterializeErrorAssetDeleted       = "asset_deleted"
 )
 
 // CanonicalOutput is the durable generation product identity the backend owns
@@ -223,7 +224,7 @@ func ResultState(status model.TaskStatus, outputs []CanonicalOutput, failedRetry
 		retryable := false
 		permanent := false
 		for _, output := range outputs {
-			if output.MaterializedAssetID != "" {
+			if output.MaterializedAssetID != "" || output.MaterializationErrorCode == MaterializeErrorAssetDeleted {
 				continue
 			}
 			ready = false
@@ -307,7 +308,7 @@ func DeliveryComplete(resultJSON string, stored []CanonicalOutput, taskType stri
 
 func terminalMaterializeError(code string) bool {
 	switch code {
-	case MaterializeErrorResourceForeign, MaterializeErrorAssetForeign, MaterializeErrorUnsupportedShape:
+	case MaterializeErrorResourceForeign, MaterializeErrorAssetForeign, MaterializeErrorUnsupportedShape, MaterializeErrorAssetDeleted:
 		return true
 	default:
 		return false

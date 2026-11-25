@@ -5,6 +5,8 @@ import { parseAssetRecord } from "@/lib/asset-record";
 import { parseBackendGenerationResult, type BackendGenerationResult } from "@/services/api/generation-task";
 import { ApiError, http } from "@/services/api/request";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { parseWorkspaceAssetPayloads } from "@/lib/workspace-asset-normalize";
+import { lookupWorkspaceAssetsByIds } from "@/services/api/workspace-assets";
 import { getWorkspaceAsset } from "@/services/api/workspace-data";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
@@ -16,9 +18,10 @@ import { generationArtifactStorageKey, loadOrStoreGenerationArtifact } from "@/s
 import { createProviderNeutralGenerationTaskEffectStore } from "@/services/provider-neutral-generation-effects";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
-import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCategory, type NewAsset } from "@/stores/use-asset-store";
+import { flushAssetStorePersistence, runAssetStoreProjection, useAssetStore, type Asset, type AssetCategory, type NewAsset } from "@/stores/use-asset-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import { persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
+import { usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
 import { usesBrowserLocalResourceStore, workspaceAssetHasCanonicalMediaPersist } from "@/services/workspace-resource-storage";
 import { bindBackendConversationMessageResult, type BindBackendConversationMessageRuntime } from "@/services/conversation-generation-consumer";
 import type { StoredCreationConversation } from "@/services/creation-conversation-store";
@@ -134,10 +137,52 @@ export function ensureCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions) {
     return request;
 }
 
+async function canonicalGenerationAssetId(taskId?: string, outputIndex = 0): Promise<string | undefined> {
+    const trimmed = taskId?.trim();
+    if (!trimmed || typeof crypto === "undefined" || !crypto.subtle) return undefined;
+    const effectKey = `materialize:${trimmed}:${Math.max(0, Math.trunc(outputIndex))}`;
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKey));
+    return `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function lookupExistingBackendCanvasAsset(options: EnsureCanvasNodeAssetOptions): Promise<Asset | undefined> {
+    if (!usesWorkspaceAssetLibraryApi()) return undefined;
+    const candidateIds: string[] = [];
+    const explicitId = options.node.metadata?.assetId?.trim();
+    if (explicitId) candidateIds.push(explicitId);
+    const generationTaskId = (options.taskId || options.node.metadata?.taskId)?.trim();
+    if (generationTaskId) {
+        const canonicalId = await canonicalGenerationAssetId(generationTaskId, options.node.metadata?.taskOutputIndex ?? 0);
+        if (canonicalId && !candidateIds.includes(canonicalId)) candidateIds.push(canonicalId);
+    }
+    if (!candidateIds.length) return undefined;
+    try {
+        const result = await lookupWorkspaceAssetsByIds(candidateIds, { signal: options.signal });
+        throwIfAborted(options.signal);
+        const remoteAssets = parseWorkspaceAssetPayloads(result.assets);
+        if (!remoteAssets.length) return undefined;
+        const matched = findCanvasNodeAsset(remoteAssets, options.node, options.canvasId, options.taskId);
+        if (!matched) return undefined;
+        runAssetStoreProjection(() => {
+            useAssetStore.setState((state) => {
+                if (state.assets.some((item) => item.id === matched.id)) return state;
+                return { assets: [matched, ...state.assets] };
+            });
+        });
+        return matched;
+    } catch (error) {
+        if (options.signal?.aborted) throw error;
+        return undefined;
+    }
+}
+
 async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Promise<CanvasNodeAssetResult> {
     throwIfAborted(options.signal);
     const store = useAssetStore.getState();
     let asset = findCanvasNodeAsset(store.assets, options.node, options.canvasId, options.taskId);
+    if (!asset) {
+        asset = await lookupExistingBackendCanvasAsset(options);
+    }
     const declaredCategory = options.category || declaredCanvasNodeAssetCategory(options.node);
     let created = false;
     if (!asset) {

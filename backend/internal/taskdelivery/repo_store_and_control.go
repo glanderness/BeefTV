@@ -9,6 +9,7 @@ import (
 	"time"
 
 	localasset "infinite-canvas/backend/internal/asset"
+	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/playback"
@@ -234,6 +235,41 @@ func AttachTaskSummaryDeliveries(
 		summaries[index].Outputs = proj.Outputs
 		summaries[index].ResultState = proj.ResultState
 		summaries[index].Stage = proj.Stage
+		if task.Status == model.TaskStatusSucceeded && len(proj.Outputs) > 0 {
+			liveOutput := (*localtask.CanonicalOutput)(nil)
+			allDeleted := true
+			for i := range proj.Outputs {
+				if proj.Outputs[i].MaterializationErrorCode != localtask.MaterializeErrorAssetDeleted {
+					allDeleted = false
+					if liveOutput == nil && strings.TrimSpace(proj.Outputs[i].ResourceID) != "" {
+						liveOutput = &proj.Outputs[i]
+					}
+				}
+			}
+			if allDeleted {
+				summaries[index].PreviewURL = ""
+				summaries[index].PreviewKind = ""
+				summaries[index].PreviewPosterURL = ""
+			} else if liveOutput != nil && strings.TrimSpace(summaries[index].PreviewURL) != "" {
+				deletedReferenced := false
+				for _, out := range proj.Outputs {
+					if out.MaterializationErrorCode == localtask.MaterializeErrorAssetDeleted && strings.TrimSpace(out.ResourceID) == "" {
+						deletedReferenced = true
+						break
+					}
+				}
+				if deletedReferenced {
+					liveURL := assets.FileURL(liveOutput.ResourceID)
+					if !strings.Contains(summaries[index].PreviewURL, liveOutput.ResourceID) {
+						summaries[index].PreviewURL = liveURL
+						if liveOutput.MediaType == "image" {
+							summaries[index].PreviewKind = "image"
+							summaries[index].PreviewPosterURL = liveURL
+						}
+					}
+				}
+			}
+		}
 		if deliveryForTask != nil {
 			summaries[index].Delivery = deliveryForTask(task.ID)
 		}

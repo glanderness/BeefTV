@@ -181,6 +181,7 @@ export function AssetLibraryPickerContent({
             category: category === "all" || category === remoteQueryKind ? undefined : category,
             folderId: remoteQueryFolderId,
             status: "active",
+            personal: true,
             query: remoteKeyword,
             signal,
         }),

@@ -27,6 +27,10 @@ export type CanvasGenerationHistorySelectGate = {
     selectionEpoch: number;
 };
 
+function hasOnlyDeletedGenerationOutputs(task: GenerationTask) {
+    return Boolean(task.outputs?.length) && task.outputs!.every((output) => output.materializationErrorCode === "asset_deleted");
+}
+
 /** List filter for TaskSummary cards. Display uses previewUrl/previewKind; resultJson lives on detail. */
 export function insertableCanvasGenerationHistoryTasks(
     tasks: GenerationTask[],
@@ -38,6 +42,7 @@ export function insertableCanvasGenerationHistoryTasks(
     return tasks
         .filter((task) => task.projectId === projectId)
         .filter((task) => task.status === "succeeded")
+        .filter((task) => !hasOnlyDeletedGenerationOutputs(task))
         .filter((task) => INSERTABLE_HISTORY_MODES.has(generationTaskMode(task)))
         .filter((task) => !keyword || `${task.prompt} ${task.model || ""}`.toLocaleLowerCase().includes(keyword))
         .slice(0, 60);
@@ -103,7 +108,11 @@ export async function awaitCanvasGenerationHistoryDetailIfValid(input: {
 }
 
 function historyDetailHasInsertableMedia(task: GenerationTask) {
-    if (task.outputs?.some((output) => output.outputIndex === 0 && output.mediaType === generationTaskMode(task) && output.resourceId)) return true;
+    if (hasOnlyDeletedGenerationOutputs(task)) return false;
+    const mode = generationTaskMode(task);
+    const primaryOutput = task.outputs?.find((output) => output.outputIndex === 0 && output.mediaType === mode);
+    if (primaryOutput?.materializationErrorCode === "asset_deleted") return false;
+    if (primaryOutput?.resourceId) return true;
     if (!task.resultJson?.trim()) return false;
     try {
         const result = JSON.parse(task.resultJson) as {
@@ -112,7 +121,6 @@ function historyDetailHasInsertableMedia(task: GenerationTask) {
             audio?: { dataUrl?: string; url?: string; storageKey?: string };
         };
         if (!result || typeof result !== "object") return false;
-        const mode = generationTaskMode(task);
         const image = result.images?.[0];
         if (mode === "image") return Boolean(image?.dataUrl || image?.url || image?.storageKey);
         if (mode === "video") return Boolean(result.video?.dataUrl || result.video?.url || result.video?.storageKey);

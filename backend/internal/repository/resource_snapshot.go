@@ -29,6 +29,13 @@ type ResourceReferenceSnapshot struct {
 }
 
 func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID string, resourceIDs []string) (ResourceReferenceSnapshot, error) {
+	if excludingAssetID == "" {
+		return r.ResourceReferenceSnapshotExcluding(userID, nil, resourceIDs)
+	}
+	return r.ResourceReferenceSnapshotExcluding(userID, []string{excludingAssetID}, resourceIDs)
+}
+
+func (r *Repository) ResourceReferenceSnapshotExcluding(userID string, excludingAssetIDs []string, resourceIDs []string) (ResourceReferenceSnapshot, error) {
 	snapshot := ResourceReferenceSnapshot{
 		Documents: []ResourceReferenceDocument{},
 		Direct:    []ResourceDirectReference{},
@@ -42,9 +49,13 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 		candidateSet[resourceID] = struct{}{}
 		remaining[resourceID] = struct{}{}
 	}
-	snapshot.Watermark = r.captureSQLiteWatermark(r.db, userID, excludingAssetID, candidateSet)
+	primaryExclude := ""
+	if len(excludingAssetIDs) == 1 {
+		primaryExclude = excludingAssetIDs[0]
+	}
+	snapshot.Watermark = r.captureSQLiteWatermark(r.db, userID, primaryExclude, candidateSet)
 
-	directRefs, err := collectDirectResourceReferences(r.db, userID, excludingAssetID, resourceIDs, true, false)
+	directRefs, err := collectDirectResourceReferencesExcluding(r.db, userID, excludingAssetIDs, resourceIDs, true, false)
 	if err != nil {
 		return snapshot, err
 	}
@@ -57,9 +68,9 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 	}
 
 	if err := scanReferenceDocuments(r.db, documentScanOptions{
-		userID:           userID,
-		excludingAssetID: excludingAssetID,
-		remaining:        remaining,
+		userID:            userID,
+		excludingAssetIDs: excludingAssetIDs,
+		remaining:         remaining,
 	}, &snapshot.Documents); err != nil {
 		return snapshot, err
 	}

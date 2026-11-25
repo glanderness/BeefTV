@@ -15,7 +15,7 @@ export function usePersonalAssetLibrary(enabled = true) {
         queryFn: async ({ signal }) => {
             const assets: Asset[] = [];
             for (let page = 1; ; page += 1) {
-                const result = await loadWorkspaceAssetLibraryPage({ page, pageSize: 100, status: "active", signal });
+                const result = await loadWorkspaceAssetLibraryPage({ page, pageSize: 100, status: "active", personal: true, signal });
                 assets.push(...result.assets);
                 if (!result.hasMore) break;
             }
