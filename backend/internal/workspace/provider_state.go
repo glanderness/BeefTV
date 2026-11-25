@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"infinite-canvas/backend/internal/channelurl"
 	"infinite-canvas/backend/internal/providerpreset"
 )
 
@@ -270,10 +271,10 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 	}
 	if preset.ID == "beeftv" {
 		base, _ := local["baseUrl"].(string)
-		if base == "https://beeftv.app" {
-			result["baseUrl"] = base
+		if canonical, ok := channelurl.CanonicalBeefTVOrigin(base); ok {
+			result["baseUrl"] = canonical
 		} else if key, _ := local["apiKey"].(string); base == "" && key != "" {
-			result["baseUrl"] = "https://beeftv.app"
+			result["baseUrl"] = channelurl.BeefTVProductionOrigin
 		}
 	}
 	return result, nil

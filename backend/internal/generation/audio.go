@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/beeftv"
+	"infinite-canvas/backend/internal/channelurl"
 	"net/http"
 	"strings"
 )
@@ -71,7 +72,7 @@ func runLegacyManagedAudio(ctx context.Context, input Input) (map[string]interfa
 
 func isBeefTVHostFromURL(raw string) bool {
 	trimmed := strings.TrimSuffix(strings.TrimRight(raw, "/"), "/v1")
-	if trimmed == beeftv.ProductionOrigin {
+	if _, ok := channelurl.CanonicalBeefTVOrigin(trimmed); ok {
 		return true
 	}
 	origin, err := beeftv.CanonicalOrigin("")

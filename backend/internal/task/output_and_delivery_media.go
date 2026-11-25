@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/assets"
+	"infinite-canvas/backend/internal/channelurl"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -283,7 +284,7 @@ func PublicTaskInputJSON(raw string) string {
 		if u != nil {
 			host = strings.ToLower(u.Hostname())
 		}
-		parameters["affectedChannel"] = config["credentialRef"] == "beeftv" || host == "beeftv.app"
+		parameters["affectedChannel"] = config["credentialRef"] == "beeftv" || channelurl.IsBeefTVHost(host)
 		public["videoParameters"] = parameters
 	}
 	for _, key := range []string{"mode", "metadata", "workflowStepId", "domainProjectId", "assetVersionId", "resourceId", "mediaType", "role"} {

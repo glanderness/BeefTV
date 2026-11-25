@@ -102,12 +102,7 @@ func seedanceMaterialLibraryHost(baseURL string) bool {
 	if err != nil {
 		return false
 	}
-	switch strings.ToLower(u.Hostname()) {
-	case "beeftv.app":
-		return true
-	default:
-		return false
-	}
+	return channelurl.IsBeefTVHost(u.Hostname())
 }
 
 // 输出时长下限官方是 4 秒：2.0 为 4~15，2.5 为 4~30。

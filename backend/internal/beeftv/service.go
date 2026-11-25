@@ -187,14 +187,15 @@ func (s *Service) Origin() string {
 }
 
 // Existing encrypted credentials and pending grants remain bound to their issuer.
-// Only the production origin or this explicitly configured test origin may be restored.
+// Only official production origins (beeftv.cn or legacy beeftv.app) or this
+// explicitly configured test origin may be restored.
 func savedOrigin(state persistedState, fallback string) (string, error) {
 	candidate := state.AuthorizationOrigin
 	if candidate == "" {
 		candidate = state.ProviderBaseURL
 	}
 	if candidate == "" && state.Device != nil {
-		for _, origin := range []string{ProductionOrigin, fallback} {
+		for _, origin := range []string{ProductionOrigin, LegacyProductionOrigin, fallback} {
 			if _, err := ValidateVerificationURL(origin, state.Device.VerificationURI); err == nil {
 				candidate = origin
 				break
@@ -210,7 +211,7 @@ func savedOrigin(state persistedState, fallback string) (string, error) {
 	if candidate == "" {
 		candidate = fallback
 	}
-	if candidate != ProductionOrigin && candidate != fallback {
+	if candidate != ProductionOrigin && candidate != LegacyProductionOrigin && candidate != fallback {
 		return "", errStore
 	}
 	if state.ProviderBaseURL != "" && state.ProviderBaseURL != candidate {
@@ -484,7 +485,7 @@ func (s *Service) Disconnect(ctx context.Context) (Summary, error) {
 }
 
 func (s *Service) OpenWallet() error {
-	return s.openTrusted(WalletURL(s.origin))
+	return s.openTrusted(WalletURL(s.Origin()))
 }
 
 func (s *Service) Recover(ctx context.Context) error {
@@ -550,13 +551,14 @@ func (s *Service) PreserveWrite(incoming, existing map[string]any) {
 }
 
 func (s *Service) openTrusted(raw string) error {
+	activeOrigin := s.Origin()
 	target := strings.TrimSpace(raw)
 	if target == "" {
-		target = WalletURL(s.origin)
+		target = WalletURL(activeOrigin)
 	}
-	parsed, err := ValidateWalletURL(s.origin, target)
+	parsed, err := ValidateWalletURL(activeOrigin, target)
 	if err != nil {
-		if parsed, err = ValidateVerificationURL(s.Origin(), target); err != nil {
+		if parsed, err = ValidateVerificationURL(activeOrigin, target); err != nil {
 			return err
 		}
 	}
@@ -595,8 +597,12 @@ func (s *Service) summaryLocked() Summary {
 		CatalogSyncing:        s.startupVerifyPending || s.catalogInFlight != nil,
 	}
 	if s.state.hasCredential() {
+		walletOrigin := s.state.AuthorizationOrigin
+		if walletOrigin == "" {
+			walletOrigin = s.origin
+		}
 		summary.CredentialRef = CredentialRef
-		summary.WalletURL = WalletURL(s.origin)
+		summary.WalletURL = WalletURL(walletOrigin)
 		summary.BalanceCNY = s.state.BalanceCNY
 		if s.state.Account != nil {
 			account := *s.state.Account

@@ -144,7 +144,8 @@ export function systemProxyChannelId(baseUrl: string) {
     return "";
 }
 
-const MANAGED_GATEWAY_DOMAINS = ["beeftv.app"] as const;
+export const BEEFTV_OFFICIAL_HOSTS = ["beeftv.cn", "beeftv.app"] as const;
+const MANAGED_GATEWAY_DOMAINS = BEEFTV_OFFICIAL_HOSTS;
 
 export function isManagedGatewayEndpoint(baseUrl?: string): boolean {
     if (!baseUrl) return false;

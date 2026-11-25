@@ -3,6 +3,7 @@ package providerpreset
 import (
 	_ "embed"
 	"encoding/json"
+	"infinite-canvas/backend/internal/channelurl"
 	"net/url"
 	"strings"
 )
@@ -45,7 +46,7 @@ var videoContracts = func() []VideoContract {
 
 func IsBeefTVEndpoint(baseURL string) bool {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
-	return err == nil && u.Scheme == "https" && strings.EqualFold(u.Hostname(), "beeftv.app") && u.User == nil && (u.Port() == "" || u.Port() == "443")
+	return err == nil && u.Scheme == "https" && channelurl.IsBeefTVHost(u.Hostname()) && u.User == nil && (u.Port() == "" || u.Port() == "443")
 }
 
 func BeefTVVideoContract(model string) (VideoContract, bool) {

@@ -1,7 +1,7 @@
 {
   "id": "beeftv",
   "displayName": "BeefTV",
-  "baseUrl": "https://beeftv.app",
+  "baseUrl": "https://beeftv.cn",
   "catalogProtocol": "openai",
   "presetVersion": 1,
   "pinned": true,

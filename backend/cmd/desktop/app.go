@@ -182,7 +182,7 @@ func (a *DesktopApp) OpenBeefTVWebsite() error {
 	if err != nil {
 		return err
 	}
-	wailsruntime.BrowserOpenURL(ctx, "https://beeftv.app/")
+	wailsruntime.BrowserOpenURL(ctx, "https://beeftv.cn/")
 	return nil
 }
 

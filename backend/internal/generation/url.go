@@ -100,8 +100,7 @@ func ProviderDownloadURL(baseURL string, rawURL string) string {
 }
 
 func isBeefTVHost(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	return host == "beeftv.app"
+	return channelurl.IsBeefTVHost(host)
 }
 
 func SameProviderOrigin(baseURL string, rawURL string) bool {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"infinite-canvas/backend/internal/channelurl"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/privatefile"
 	"infinite-canvas/backend/internal/skillhub"
@@ -72,10 +73,14 @@ func readMarketJSON(file string, out any) error {
 	}
 	return json.Unmarshal(b, out)
 }
+func sameMarketEndpoint(stored, current string) bool {
+	return stored == current || channelurl.SameOfficialSkillHubEndpoint(stored, current)
+}
+
 func (s *Service) marketToken(user string, c *skillhub.Client) (string, error) {
 	var a marketAuth
 	e := readMarketJSON(filepath.Join(s.marketUserDir(user), "authorization.json"), &a)
-	if e != nil || a.AccessToken == "" || a.Endpoint != c.BaseURL() || time.Now().After(a.ExpiresAt) {
+	if e != nil || a.AccessToken == "" || !sameMarketEndpoint(a.Endpoint, c.BaseURL()) || time.Now().After(a.ExpiresAt) {
 		return "", &skillhub.Error{Status: 401, Reason: "publishing_authorization_required", Message: "请先连接技能投稿账号"}
 	}
 	return a.AccessToken, nil
@@ -107,7 +112,7 @@ func (s *Service) MarketAuthorization(ctx context.Context, user string, start bo
 		return map[string]any{"connected": true, "websiteUrl": websiteURL}, nil
 	}
 	var a marketAuth
-	if e = readMarketJSON(file, &a); e != nil || a.DeviceCode == "" || a.Endpoint != c.BaseURL() || time.Now().After(a.ExpiresAt) {
+	if e = readMarketJSON(file, &a); e != nil || a.DeviceCode == "" || !sameMarketEndpoint(a.Endpoint, c.BaseURL()) || time.Now().After(a.ExpiresAt) {
 		return map[string]any{"connected": false, "websiteUrl": websiteURL}, nil
 	}
 	var t skillhub.Token

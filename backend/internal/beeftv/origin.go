@@ -3,6 +3,7 @@ package beeftv
 import (
 	"encoding/json"
 	"fmt"
+	"infinite-canvas/backend/internal/channelurl"
 	"net"
 	"net/url"
 	"os"
@@ -10,24 +11,29 @@ import (
 )
 
 const (
-	ProductionOrigin = "https://beeftv.app"
-	PreviewLocalHost = "enterprise.localhost"
-	ClientID         = "beeftv-enterprise-v1"
-	ClientScope      = "inference"
-	CredentialRef    = "beeftv"
-	ChannelID        = "beeftv"
-	TestOriginEnv    = "BEEFTV_ENTERPRISE_TEST_ORIGIN"
-	WalletPath       = "/console/topup"
+	ProductionOrigin       = channelurl.BeefTVProductionOrigin
+	LegacyProductionOrigin = channelurl.BeefTVLegacyOrigin
+	PreviewLocalHost       = "enterprise.localhost"
+	ClientID               = "beeftv-enterprise-v1"
+	ClientScope            = "inference"
+	CredentialRef          = "beeftv"
+	ChannelID              = "beeftv"
+	TestOriginEnv          = "BEEFTV_ENTERPRISE_TEST_ORIGIN"
+	WalletPath             = "/console/topup"
 )
 
-// CanonicalOrigin defaults to BeefTV and only accepts an explicit loopback test origin.
+// CanonicalOrigin defaults to BeefTV (beeftv.cn), accepts the legacy beeftv.app
+// production origin for existing connections, or an explicit loopback test origin.
 func CanonicalOrigin(explicit string) (string, error) {
 	candidate := strings.TrimRight(strings.TrimSpace(explicit), "/")
 	if candidate == "" {
 		candidate = strings.TrimRight(strings.TrimSpace(os.Getenv(TestOriginEnv)), "/")
 	}
-	if candidate == "" || strings.EqualFold(candidate, ProductionOrigin) {
+	if candidate == "" {
 		return ProductionOrigin, nil
+	}
+	if official, ok := channelurl.CanonicalBeefTVOrigin(candidate); ok {
+		return official, nil
 	}
 	origin, err := parseSafeTestOrigin(candidate)
 	if err != nil {
@@ -142,7 +148,8 @@ func IsManagedTaskInput(inputJSON string) bool {
 }
 
 // IsManagedBaseURL reports whether baseURL targets BeefTV's official managed
-// host (beeftv.app / *.beeftv.app, preview localhost, or configured test origin).
+// host (beeftv.cn / *.beeftv.cn, legacy beeftv.app / *.beeftv.app, preview
+// localhost, or configured test origin).
 func IsManagedBaseURL(baseURL string) bool {
 	trimmed := strings.TrimSpace(baseURL)
 	if trimmed == "" {
@@ -156,7 +163,7 @@ func IsManagedBaseURL(baseURL string) bool {
 	if host == "" {
 		return false
 	}
-	if host == "beeftv.app" || strings.HasSuffix(host, ".beeftv.app") || host == PreviewLocalHost {
+	if channelurl.IsBeefTVManagedDomain(host) || host == PreviewLocalHost {
 		return true
 	}
 	if rawTestOrigin := strings.TrimSpace(os.Getenv(TestOriginEnv)); rawTestOrigin != "" {

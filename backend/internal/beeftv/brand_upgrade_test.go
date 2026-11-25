@@ -14,7 +14,7 @@ type brandTransport func(*http.Request) (*http.Response, error)
 func (f brandTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestBrandUpgradePreservesEncryptedIssuerAndRedactsUI(t *testing.T) {
-	for _, origin := range []string{ProductionOrigin} {
+	for _, origin := range []string{ProductionOrigin, LegacyProductionOrigin} {
 		t.Run(origin, func(t *testing.T) {
 			t.Setenv(TestOriginEnv, "")
 			dir := t.TempDir()
@@ -59,8 +59,11 @@ func TestBrandUpgradePreservesEncryptedIssuerAndRedactsUI(t *testing.T) {
 			if err := svc.OpenWallet(); err != nil {
 				t.Fatal(err)
 			}
-			if opened != ProductionOrigin+WalletPath {
+			if opened != origin+WalletPath {
 				t.Fatalf("wallet = %s", opened)
+			}
+			if gotSummaryWallet := svc.Status().WalletURL; gotSummaryWallet != origin+WalletPath {
+				t.Fatalf("summary wallet = %s, want %s", gotSummaryWallet, origin+WalletPath)
 			}
 			reloaded, err := loadState(dir)
 			if err != nil || reloaded.EncryptedAPIKey != encrypted {
@@ -82,7 +85,7 @@ func TestBrandUpgradePreservesEncryptedIssuerAndRedactsUI(t *testing.T) {
 }
 
 func TestSavedOriginsRejectCrossOriginAndRestoreLegacyPending(t *testing.T) {
-	for _, origin := range []string{ProductionOrigin} {
+	for _, origin := range []string{ProductionOrigin, LegacyProductionOrigin} {
 		if got, err := savedOrigin(persistedState{Device: &persistedDevice{VerificationURI: origin + "/desktop-auth"}}, ProductionOrigin); err != nil || got != origin {
 			t.Fatalf("pending origin = %s %v", got, err)
 		}
