@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { nanoid } from "nanoid";
 import { beefTVImageContract } from "@/lib/beeftv-image-contracts";
+import { survivingGenerationHistoryImageOutputs } from "@/lib/canvas/canvas-generation-history";
 
 import { getNodeSpec } from "@/constant/canvas";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
@@ -171,9 +172,12 @@ export async function insertCanvasGenerationHistoryTask(input: {
     const nodeType = mode === "video" ? CanvasNodeType.Video : mode === "audio" ? CanvasNodeType.Audio : CanvasNodeType.Image;
     const declaredOutputs = input.task.outputs?.length ? Math.max(...input.task.outputs.map((item) => (item.outputIndex ?? 0) + 1), input.task.outputs.length) : 0;
     const count = mode === "image" ? (beefTVImageContract(input.task.model || "")?.fixedOutputs || declaredOutputs || 1) : 1;
+    const surviving = mode === "image" ? survivingGenerationHistoryImageOutputs(input.task) : undefined;
+    const outputIndexes = surviving?.map((output) => output.outputIndex) ?? Array.from({ length: count }, (_, index) => index);
+    if (!outputIndexes.length) throw new Error("该任务没有可插入的生成结果");
     const insertedNodes: CanvasNodeData[] = [];
-    for (let index = 0; index < count; index++) {
-        const node = createCanvasNode(nodeType, { x: input.center.x + (index % 2) * 400, y: input.center.y + Math.floor(index / 2) * 400 }, {
+    for (const [position, index] of outputIndexes.entries()) {
+        const node = createCanvasNode(nodeType, { x: input.center.x + (position % 2) * 400, y: input.center.y + Math.floor(position / 2) * 400 }, {
             prompt: input.task.prompt,
             composerContent: input.task.prompt,
             status: "loading",
@@ -184,7 +188,7 @@ export async function insertCanvasGenerationHistoryTask(input: {
             taskCreatedAt: input.task.createdAt,
             taskCompletedAt: input.task.completedAt,
             model: input.task.model,
-            ...(count > 1 ? { taskOutputIndex: index } : {}),
+            ...(outputIndexes.length > 1 || index !== 0 ? { taskOutputIndex: index } : {}),
         });
         node.title = mode === "video" ? "历史视频" : mode === "audio" ? "历史音频" : "历史图片";
         const output = input.task.outputs?.find((output) => output.outputIndex === index && output.materializedAssetId);
