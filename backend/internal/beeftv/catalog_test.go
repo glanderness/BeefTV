@@ -14,16 +14,35 @@ import (
 )
 
 func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string, authorizationID string) error {
-	_, err := applyCatalogWithOptions(store, models, previousAccountID, nextAccountID, authorizationID, false)
+	_, _, err := applyCatalogSnapshot(store, models, previousAccountID, nextAccountID, authorizationID)
 	return err
 }
 
 func (s *Service) fetchModels(apiKey string) ([]CatalogModel, error) {
-	res, err := s.fetchModelsConditional(s.lifecycle, apiKey, "", "", false)
+	res, err := s.fetchModelsConditional(s.lifecycle, apiKey, "")
 	if err != nil {
 		return nil, err
 	}
 	return res.Models, nil
+}
+
+func channelModelIDs(raw any) []string {
+	var ids []string
+	switch items := raw.(type) {
+	case []any:
+		for _, item := range items {
+			if id, ok := item.(string); ok && id != "" {
+				ids = append(ids, id)
+			}
+		}
+	case []string:
+		for _, id := range items {
+			if id != "" {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
 }
 
 func TestGeminiAppliedCatalogResolvesBundledProvider(t *testing.T) {

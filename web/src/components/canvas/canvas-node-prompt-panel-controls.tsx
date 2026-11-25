@@ -92,9 +92,9 @@ export function useCanvasNodeGenerationPreview({
         }),
         [config, mode, prompt, requirements.input?.characterCount, requirements.input?.imageCount, requirements.input?.videoCount],
     );
-    const catalogRevision = useOptionalBeefTVConnection()?.catalogRevision ?? 0;
+    const catalogConfigRevision = useOptionalBeefTVConnection()?.catalogConfigRevision ?? 0;
     const { estimate, previousEstimate } = useGenerationCostEstimateState(costTarget, {
-        refreshKey: `${priceChannel.modelProfiles?.length || 0}:${catalogRevision}`,
+        refreshKey: `${priceChannel.modelProfiles?.length || 0}:${catalogConfigRevision}`,
     });
     const previousImagePrice = mode === "image" ? previousEstimate : null;
     const costRefreshing = Boolean(previousImagePrice?.label);

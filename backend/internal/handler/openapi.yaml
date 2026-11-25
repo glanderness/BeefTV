@@ -164,7 +164,7 @@ paths:
       description: 用于桌面切回前台或恢复联网时的轻量后台核对；未变更或冷却期内直接返回当前连接摘要。
       responses:
         "200":
-          description: 信封 data 为最新连接摘要（含 catalogRevision 与 catalogSyncedAt）
+          description: 信封 data 为最新连接摘要（含 catalogConfigRevision 与 catalogSyncing）
   /beeftv/connection/cancel:
     post:
       tags: [beeftv]

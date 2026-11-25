@@ -18,7 +18,3 @@ func NormalizeVersionedVideoCapability(raw json.RawMessage, version string) (map
 func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool) {
 	return modelcatalog.NormalizeCatalogVideoCapability(raw)
 }
-
-func normalizeCatalogDuration(input map[string]any) (map[string]any, bool) {
-	return modelcatalog.NormalizeCatalogDuration(input)
-}

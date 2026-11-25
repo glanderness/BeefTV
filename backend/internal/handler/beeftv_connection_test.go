@@ -222,14 +222,14 @@ func TestBeefTVTopUpAndRefreshErrorStatusMapping(t *testing.T) {
 	var syncEnv struct {
 		Code int `json:"code"`
 		Data struct {
-			State           string `json:"state"`
-			CatalogRevision int64  `json:"catalogRevision"`
+			State                 string `json:"state"`
+			CatalogConfigRevision int64  `json:"catalogConfigRevision"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncEnv); err != nil {
 		t.Fatalf("unmarshal sync response: %v", err)
 	}
-	if syncEnv.Code != 0 || syncEnv.Data.State != beeftv.StateConnected || syncEnv.Data.CatalogRevision == 0 {
+	if syncEnv.Code != 0 || syncEnv.Data.State != beeftv.StateConnected || syncEnv.Data.CatalogConfigRevision == 0 {
 		t.Fatalf("unexpected sync summary: %+v", syncEnv)
 	}
 }

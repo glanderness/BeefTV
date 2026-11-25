@@ -12,12 +12,12 @@ import (
 
 // DefaultManagedAssistantModel 是 BeefTV 连接授权后写入的助手模型：按 10-26
 // 会议结论改用成本最低的 DeepSeek Flash，跑通助手的基础流程。它只用于初始化，
-// 已经保存过助手模型的用户不会被改写（见 SaveCatalogWithAssistantDefault）。
+// 已经保存过助手模型的用户不会被改写（见 UpdateCatalog）。
 const DefaultManagedAssistantModel = "deepseek-v4.1-flash"
 
-func applyCatalogWithOptions(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string, authorizationID string, preserveExistingPricing bool) (int64, error) {
+func applyCatalogSnapshot(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID, authorizationID string) (int64, bool, error) {
 	if store == nil {
-		return 0, nil
+		return 0, false, nil
 	}
 	return store.UpdateCatalog(authorizationID, func(config map[string]any) (string, error) {
 		// Reconnecting replaces the official channel saved under the pre-rename ID.
@@ -57,7 +57,7 @@ func applyCatalogWithOptions(store *workspace.ProviderConfig, models []CatalogMo
 			}
 			if table, ok := pricing.Normalize(model.Pricing); ok {
 				profile["pricing"] = table
-			} else if !preserveExistingPricing || replaceModels {
+			} else {
 				profile["pricing"] = nil
 			}
 			if model.DisplayName != "" {
@@ -165,9 +165,9 @@ func applyCatalogWithOptions(store *workspace.ProviderConfig, models []CatalogMo
 	})
 }
 
-func clearBeefTVModels(store *workspace.ProviderConfig) (int64, error) {
+func clearBeefTVModels(store *workspace.ProviderConfig) (int64, bool, error) {
 	if store == nil {
-		return 0, nil
+		return 0, false, nil
 	}
 	return store.UpdateCatalog("", func(config map[string]any) (string, error) {
 		channels, _ := config["channels"].([]any)
@@ -345,34 +345,6 @@ func containsAnyString(values, candidates []string) bool {
 		}
 	}
 	return false
-}
-
-func mergeModelIDs(existing any, incoming []any) []any {
-	seen := map[string]bool{}
-	result := make([]any, 0)
-	appendID := func(value any) {
-		id, _ := value.(string)
-		id = strings.TrimSpace(id)
-		if id == "" || seen[id] {
-			return
-		}
-		seen[id] = true
-		result = append(result, id)
-	}
-	switch items := existing.(type) {
-	case []any:
-		for _, item := range items {
-			appendID(item)
-		}
-	case []string:
-		for _, item := range items {
-			appendID(item)
-		}
-	}
-	for _, item := range incoming {
-		appendID(item)
-	}
-	return result
 }
 
 func mergeProfiles(existing any, incoming []any) []any {

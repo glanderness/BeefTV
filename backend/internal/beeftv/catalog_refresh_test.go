@@ -104,7 +104,7 @@ func TestSameAccountRefreshRemovesUnavailableModels(t *testing.T) {
 			t.Fatal(err)
 		}
 		channel := findChannel(current.Config["channels"].([]any), ChannelID)
-		ids := mergeModelIDs(channel["models"], nil)
+		ids := channelModelIDs(channel["models"])
 		if len(ids) != len(next) || refreshTestProfile(channel, "grok-imagine-video-1.5") != nil {
 			t.Fatalf("refresh kept unavailable models: %v", ids)
 		}
@@ -180,25 +180,26 @@ func refreshTestProfile(channel map[string]any, id string) map[string]any {
 	return nil
 }
 
-// The desktop runtime reads the model list through an injected catalog reader.
-func TestInjectedCatalogReaderStillReceivesPublishedPrices(t *testing.T) {
-	fake := &fakeEnterprise{prices: `{"success":true,"data":{"currency":"CNY","models":[{"model_name":"gpt-image-2","mode":"per_request","per_request_cny":0.35,"display_kind":"image","image_price_table":{"output":{"low":{"1K":0.35}},"default_quality":"low","default_size":"1K"}}]}}`}
-	svc, store, _ := testService(t, fake, func(options *Options) {
-		options.FetchCatalog = func(string, string) ([]CatalogModel, error) {
-			return []CatalogModel{{ID: "gpt-image-2", ModelType: "image", SupportedEndpointTypes: []string{"image-generation"}}}, nil
-		}
-	})
-	if _, err := svc.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	waitState(t, svc, StateConnected)
-	if table, ok := catalogProfile(t, store, "gpt-image-2")["pricing"].(map[string]any); !ok || table["mode"] != "per_request" {
-		t.Fatalf("price row was not stored: %#v", catalogProfile(t, store, "gpt-image-2"))
-	}
-}
-
-func TestRefreshCatalogStoresPublishedPriceRows(t *testing.T) {
-	fake := &fakeEnterprise{prices: `{"success":true,"data":{"currency":"CNY","models":[{"model_name":"gpt-image-2","mode":"per_request","per_request_cny":0.35,"display_kind":"image","image_price_table":{"output":{"low":{"1K":0.35}},"reference":0.15,"default_quality":"low","default_size":"1K"}}]}}`}
+func TestRefreshCatalogStoresInlinePriceRows(t *testing.T) {
+	fake := &fakeEnterprise{models: []map[string]any{
+		{"id": "gpt-test", "supported_endpoint_types": []string{"openai"}},
+		{
+			"id":                       "gpt-image-2",
+			"supported_endpoint_types": []string{"image-generation"},
+			"pricing": map[string]any{
+				"model_name":      "gpt-image-2",
+				"mode":            "per_request",
+				"per_request_cny": 0.35,
+				"display_kind":    "image",
+				"image_price_table": map[string]any{
+					"output":          map[string]any{"low": map[string]any{"1K": 0.35}},
+					"reference":       0.15,
+					"default_quality": "low",
+					"default_size":    "1K",
+				},
+			},
+		},
+	}}
 	svc, store, _ := testService(t, fake)
 	if _, err := svc.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -213,12 +214,15 @@ func TestRefreshCatalogStoresPublishedPriceRows(t *testing.T) {
 	}
 
 	fake.mu.Lock()
-	fake.prices = ""
+	fake.models = []map[string]any{
+		{"id": "gpt-test", "supported_endpoint_types": []string{"openai"}},
+		{"id": "gpt-image-2", "supported_endpoint_types": []string{"image-generation"}},
+	}
 	fake.mu.Unlock()
 	if _, err := svc.RefreshCatalog(context.Background()); err != nil {
-		t.Fatalf("an unreadable price catalog failed the refresh: %v", err)
+		t.Fatalf("refresh without inline pricing failed: %v", err)
 	}
 	if catalogProfile(t, store, "gpt-image-2")["pricing"] != nil {
-		t.Fatal("a stale price survived a refresh without the price catalog")
+		t.Fatal("a stale price survived a refresh without inline pricing")
 	}
 }

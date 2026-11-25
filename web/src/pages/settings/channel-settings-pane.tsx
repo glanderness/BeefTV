@@ -21,7 +21,6 @@ import { getBuiltinPresetsVersion, getPartnerIndicatorVersion, livePartnerSyncIs
 import { MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, channelAllowsEmptyAPIKey, mergeSavedServiceChannel, pluginServices, servicePresetFor } from "@/lib/model-service-presets";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { localWorkspaceConfig } from "@/lib/user-session";
-import { getBeefTVConnection } from "@/services/api/beeftv-connection";
 import { getLocalModelConfig } from "@/services/api/workspace";
 import { acceptExternalModelConfig, commitModelConfig, flushModelConfig, getModelConfigPersistenceState, subscribeModelConfigPersistence, withoutModelConfigAutosave, type ModelConfigPersistenceState } from "@/services/model-config-repository";
 import { createChannelCatalogRequests } from "@/services/channel-catalog-requests";
@@ -54,7 +53,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
     const [newChannelId, setNewChannelId] = useState<string | null>(null);
     const [serviceEditor, setServiceEditor] = useState<ModelChannel | null | undefined>(undefined);
     const [pluginServiceIds, setPluginServiceIds] = useState<ReadonlySet<string>>(() => new Set());
-    const { connection: beefConnection, busy: beefBusy, catalogSyncFailed, connect, cancel, disconnect, retryCatalog, openAccount, noteCatalogRevision } = useBeefTVConnection();
+    const { connection: beefConnection, busy: beefBusy, catalogSyncFailed, connect, cancel, disconnect, retryCatalog, openAccount, noteCatalogConfigRevision } = useBeefTVConnection();
     const requests = useRef(createChannelCatalogRequests());
     const deleting = useRef(new Set<string>());
     const [deleteFailures, setDeleteFailures] = useState<Record<string, string>>({});
@@ -192,7 +191,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                 return;
             }
             if (localMode && isBuiltinBeefTVChannel(latestChannel)) {
-                const [server, summary] = await Promise.all([getLocalModelConfig(), getBeefTVConnection()]);
+                const server = await getLocalModelConfig();
                 if (!requests.current.current(channel.id, request)) return;
                 const current = useConfigStore.getState().config;
                 const nextConfig = localWorkspaceConfig(normalizeConfigSnapshot({
@@ -202,9 +201,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                     replaceConfig(nextConfig);
                 });
                 acceptExternalModelConfig(nextConfig, server.revision);
-                if (typeof summary.catalogRevision === "number") {
-                    noteCatalogRevision(summary.catalogRevision);
-                }
+                noteCatalogConfigRevision(server.revision);
             } else {
                 updateChannels(
                     latestConfig.channels.map((item) => (item.id === channel.id ? applyFetchedChannelModelCatalog(item, result) : item)),
@@ -283,7 +280,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels }: Channel
                         replaceConfig(nextConfig);
                         await flushModelConfig();
                     }
-                    noteCatalogRevision(server.revision);
+                    noteCatalogConfigRevision(server.revision);
                 } else {
                     replaceConfig(updated);
                     await flushModelConfig();
