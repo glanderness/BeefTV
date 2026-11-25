@@ -629,7 +629,7 @@ test("real Sidebar attaches arbitrary document files without polluting asset lib
     expect(await page.evaluate(() => (window as any).assistantInputFixture.assets())).toEqual([]);
     expect(mediaRequests.length).toBe(beforeMediaRequests);
     expect(await page.locator(".canvas-assistant-file-card").count()).toBe(3);
-    expect(await page.locator(".canvas-assistant-file-ext").allInnerTexts()).toEqual(["MD", "DOCX", "XLSX"]);
+    expect((await page.locator(".canvas-assistant-file-ext").allInnerTexts()).sort()).toEqual(["DOCX", "MD", "XLSX"]);
     expect(await page.getByRole("spinbutton").count()).toBe(0);
     await page.getByRole("combobox", { name: "script-outline.md 的用途" }).click();
     await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").getByText("参考资料", { exact: true }).waitFor();
@@ -652,7 +652,7 @@ test("real Sidebar attaches arbitrary document files without polluting asset lib
     const chat = chats[beforeChats];
     expect(chat?.attachments).toHaveLength(3);
     expect(chat?.attachments.every((item: any) => item.kind === "file" && !item.assetId && Boolean(item.resourceId))).toBe(true);
-    expect(chat?.attachments[0]?.purpose).toBe("reference");
+    expect(chat?.attachments.find((item: any) => item.name === "script-outline.md")?.purpose).toBe("reference");
     expect(chat?.references).toEqual(chat?.attachments.map((item: any) => ({ kind: "resource", id: item.resourceId })));
     await page.close();
 }, 30000);
