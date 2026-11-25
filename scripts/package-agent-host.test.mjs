@@ -203,7 +203,7 @@ test('packaged server starts with local imports and makes zero model requests', 
     expect(health.api).toBe('openai-completions');
     expect(health.baseUrl).toBe(providerURL);
     expect(health.operations).toBe(1);
-    expect(health.requests).toEqual({ dispatched: 0, perTurnRequests: 40, perTurnToolSteps: 40, lifetimeBudget: 0, lifetimeUsed: 0 });
+    expect(health.requests).toEqual({ dispatched: 0, perTurnRequests: 0, perTurnToolSteps: 0, lifetimeBudget: 0, lifetimeUsed: 0 });
     expect(modelRequests).toBe(0);
     expect(requests).toEqual([
       { method: 'GET', path: '/api/ops', host: 'test-host' },
