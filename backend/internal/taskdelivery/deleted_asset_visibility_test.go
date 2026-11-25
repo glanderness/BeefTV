@@ -2,6 +2,9 @@ package taskdelivery
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -41,7 +44,7 @@ func (deletedVisibilityNopLifecycle) RunBackground(fn func())                   
 func (deletedVisibilityNopLifecycle) DeleteUserAsset(string, string) error             { return nil }
 func (deletedVisibilityNopLifecycle) WithStorageLock(fn func() error) error            { return fn() }
 
-func newDeletedAssetVisibilityFixture(t *testing.T) (*gorm.DB, *repository.Repository, *localasset.Service, *Deliverer) {
+func newDeletedAssetVisibilityFixture(t *testing.T) (*gorm.DB, *repository.Repository, *localasset.Service, *Deliverer, string) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+kernel.NewID()+"?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
 	if err != nil {
@@ -50,19 +53,32 @@ func newDeletedAssetVisibilityFixture(t *testing.T) (*gorm.DB, *repository.Repos
 	if err := database.MigrateLocalSchema(db); err != nil {
 		t.Fatal(err)
 	}
+	dataDir := t.TempDir()
 	repo := repository.New(db)
 	assetSvc := localasset.NewService(localasset.Dependencies{
 		Repository: localasset.NewRepository(repo),
-		Blobs:      localasset.NewFileStore(t.TempDir()),
+		Blobs:      localasset.NewFileStore(dataDir),
 		Quota:      deletedVisibilityNopQuota{},
 		Lifecycle:  deletedVisibilityNopLifecycle{},
 	})
 	deliverer := New(NewRepoStore(repo, localtask.PublicTaskInputJSON), nil)
-	return db, repo, assetSvc, deliverer
+	return db, repo, assetSvc, deliverer, dataDir
+}
+
+func writeResourceBlob(t *testing.T, dataDir string, objectKey string) string {
+	t.Helper()
+	fullPath := filepath.Join(dataDir, "resources", filepath.FromSlash(objectKey))
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fullPath, []byte("media-bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	return fullPath
 }
 
 func TestDeletePersonalCopyRemovesTwinGeneratedHistoryAndTombstonesTaskOutput(t *testing.T) {
-	db, repo, assetSvc, deliverer := newDeletedAssetVisibilityFixture(t)
+	db, repo, assetSvc, deliverer, dataDir := newDeletedAssetVisibilityFixture(t)
 	const userID = "user-573"
 	const projectID = "canvas-573"
 	const resourceID = "res-image-573"
@@ -80,6 +96,7 @@ func TestDeletePersonalCopyRemovesTwinGeneratedHistoryAndTombstonesTaskOutput(t 
 		ResultJSON: `{"mode":"image","images":[{"storageKey":"resource:res-image-573","url":"/api/resources/res-image-573/file","width":1024,"height":1024}]}`,
 		CreatedAt:  now, UpdatedAt: now,
 	}
+	blobPath := writeResourceBlob(t, dataDir, resource.ObjectKey)
 	for _, row := range []any{&resource, &taskRow} {
 		if err := db.Create(row).Error; err != nil {
 			t.Fatal(err)
@@ -121,6 +138,22 @@ func TestDeletePersonalCopyRemovesTwinGeneratedHistoryAndTombstonesTaskOutput(t 
 	// Delete the personal asset from main Assets menu.
 	if err := assetSvc.DeleteUserAssetWithResources(userID, personalAsset.ID); err != nil {
 		t.Fatalf("DeleteUserAssetWithResources() error = %v", err)
+	}
+
+	// Sole task's unreferenced resource and physical file must be cleaned up normally.
+	var resCount, jobCount int64
+	if err := db.Model(&model.Resource{}).Where("id = ?", resourceID).Count(&resCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ResourceDeletionJob{}).Where("resource_id = ?", resourceID).Count(&jobCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if resCount != 0 || jobCount != 1 {
+		t.Fatalf("sole task resource cleanup failed: resource=%d deletionJobs=%d", resCount, jobCount)
+	}
+	assetSvc.DrainDeletionJobs(10)
+	if _, err := os.Stat(blobPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected sole task physical file to be removed, stat err = %v", err)
 	}
 
 	personalRows, personalTotal, err := repo.UserAssetsPage(userID, 1, 20, repository.UserAssetPageFilter{Status: "active", Personal: true})
@@ -193,7 +226,7 @@ func TestDeletePersonalCopyRemovesTwinGeneratedHistoryAndTombstonesTaskOutput(t 
 }
 
 func TestDeleteGeneratedVideoDirectRemovesHistoryAndKeepsLiveCanvasResource(t *testing.T) {
-	db, repo, assetSvc, deliverer := newDeletedAssetVisibilityFixture(t)
+	db, repo, assetSvc, deliverer, _ := newDeletedAssetVisibilityFixture(t)
 	const userID = "user-573-vid"
 	const projectID = "canvas-573-vid"
 	const resourceID = "res-video-573"
@@ -283,7 +316,7 @@ func TestDeleteGeneratedVideoDirectRemovesHistoryAndKeepsLiveCanvasResource(t *t
 }
 
 func TestDeleteAssetDoesNotDeleteOrTombstoneUnrelatedTaskSharingSameResource(t *testing.T) {
-	db, repo, assetSvc, deliverer := newDeletedAssetVisibilityFixture(t)
+	db, repo, assetSvc, deliverer, _ := newDeletedAssetVisibilityFixture(t)
 	const userID = "user-573-shared"
 	const projectID = "canvas-573-shared"
 	const sharedResourceID = "res-shared-573"
@@ -401,7 +434,7 @@ func TestDeleteAssetDoesNotDeleteOrTombstoneUnrelatedTaskSharingSameResource(t *
 }
 
 func TestDeleteAssetDoesNotTombstoneResultOnlyUnrelatedTaskSharingSameResource(t *testing.T) {
-	db, _, assetSvc, deliverer := newDeletedAssetVisibilityFixture(t)
+	db, repo, assetSvc, deliverer, dataDir := newDeletedAssetVisibilityFixture(t)
 	const userID = "user-573-result-only"
 	const projectID = "canvas-573-result-only"
 	const sharedResourceID = "res-shared-result-only"
@@ -414,6 +447,7 @@ func TestDeleteAssetDoesNotTombstoneResultOnlyUnrelatedTaskSharingSameResource(t
 		ObjectKey: "users/user-573-result-only/image/shared.png", MimeType: "image/png", Size: 1024,
 		Status: model.ResourceStatusReady, CreatedAt: now, UpdatedAt: now,
 	}
+	sharedBlobPath := writeResourceBlob(t, dataDir, resource.ObjectKey)
 	taskA := model.Task{
 		ID: taskIDA, UserID: userID, ProjectID: projectID, Type: "canvas_image",
 		Status: model.TaskStatusSucceeded, Stage: "生成完成", Prompt: "任务A",
@@ -452,6 +486,38 @@ func TestDeleteAssetDoesNotTombstoneResultOnlyUnrelatedTaskSharingSameResource(t
 	if err := assetSvc.DeleteUserAssetWithResources(userID, genAssetIDA); err != nil {
 		t.Fatalf("DeleteUserAssetWithResources(genA) error = %v", err)
 	}
+	assetSvc.DrainDeletionJobs(10)
+
+	// Shared resource must survive in DB, have zero deletion jobs, and keep its physical file on disk.
+	var resCount, jobCount int64
+	if err := db.Model(&model.Resource{}).Where("id = ?", sharedResourceID).Count(&resCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ResourceDeletionJob{}).Where("resource_id = ?", sharedResourceID).Count(&jobCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if resCount != 1 {
+		t.Fatalf("shared resource referenced by result-only taskB was deleted: count=%d", resCount)
+	}
+	if jobCount != 0 {
+		t.Fatalf("unexpected deletion job scheduled for resource still referenced by taskB: count=%d", jobCount)
+	}
+	if _, err := os.Stat(sharedBlobPath); err != nil {
+		t.Fatalf("shared resource physical file was removed while taskB still references it: %v", err)
+	}
+
+	// Atomic repository TX guard must also refuse direct resource deletion while taskB's generation_output is live.
+	extraAsset := model.Asset{
+		ID: "unrelated-personal-asset", UserID: userID, Kind: "image", Status: model.AssetVersionStatusConfirmed,
+		Title: "无关个人资产", PayloadJSON: `{"data":{"storageKey":"resource:` + sharedResourceID + `"}}`,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&extraAsset).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteAssetsAndResources(userID, extraAsset.ID, nil, []string{sharedResourceID}, nil); !errors.Is(err, repository.ErrResourceCleanupStillReferenced) {
+		t.Fatalf("direct DeleteAssetsAndResources() = %v, want ErrResourceCleanupStillReferenced", err)
+	}
 
 	var refreshedA model.Result
 	if err := db.Where("user_id = ? AND task_id = ? AND kind = ?", userID, taskIDA, "generation_output").First(&refreshedA).Error; err != nil {
@@ -473,13 +539,13 @@ func TestDeleteAssetDoesNotTombstoneResultOnlyUnrelatedTaskSharingSameResource(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outB.MaterializationErrorCode != "" || outB.ResourceID != sharedResourceID {
-		t.Fatalf("result-only unrelated taskB was cross-tombstoned: %+v (url=%q)", outB, refreshedB.URL)
+	if outB.MaterializationErrorCode != "" || outB.ResourceID != sharedResourceID || refreshedB.URL != "/api/resources/"+sharedResourceID+"/file" {
+		t.Fatalf("result-only unrelated taskB was cross-tombstoned or lost URL: %+v (url=%q)", outB, refreshedB.URL)
 	}
 }
 
 func TestPurgeArchivedAssetDoesNotDeleteActiveTwinOrTombstoneLiveHistory(t *testing.T) {
-	db, repo, assetSvc, deliverer := newDeletedAssetVisibilityFixture(t)
+	db, repo, assetSvc, deliverer, _ := newDeletedAssetVisibilityFixture(t)
 	const userID = "user-573-archive"
 	const projectID = "canvas-573-archive"
 	const resourceID = "res-archive-573"

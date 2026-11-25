@@ -176,7 +176,7 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string, ex
 			skipSecondary := false
 			switch document.TaskStatus {
 			case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
-				if document.Kind == "任务日志" || document.Kind == "任务结果" {
+				if document.Kind == "任务日志" || (document.Kind == "任务结果" && !document.RetainedCompletedOutput) {
 					continue
 				}
 				if document.Kind == "任务" {
@@ -223,9 +223,16 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string, ex
 		return kernel.BadAuthRequest(message)
 	}
 
+	deletableIDSet := make(map[string]struct{}, len(ownedIDs))
+	for _, resourceID := range ownedIDs {
+		deletableIDSet[resourceID] = struct{}{}
+	}
 	physicalObjects := map[string]*model.Resource{}
 	for index := range resources {
 		resource := &resources[index]
+		if _, deletable := deletableIDSet[resource.ID]; !deletable {
+			continue
+		}
 		sharedCount, countErr := s.repo.ResourceStorageReferenceCount(resource, ownedIDs)
 		if countErr != nil {
 			return countErr

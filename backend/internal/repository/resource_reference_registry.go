@@ -358,6 +358,7 @@ type documentScanOptions struct {
 	remaining                map[string]struct{}
 	skipCompletedTaskOutputs bool
 	stopOnFirst              bool
+	deletedOutputMatcher     *deletedGenerationOutputMatcher
 }
 
 type scannedDocumentRow struct {
@@ -477,25 +478,36 @@ func scanReferenceDocumentSource(db *gorm.DB, src referenceDocumentSource, opts 
 			if err := populateMissingTaskStatusesByIDs(db, opts.userID, taskStatuses, taskIDs); err != nil {
 				return err
 			}
+			hasExcludingAsset := opts.excludingAssetID != "" || len(opts.excludingAssetIDs) > 0
 			for _, item := range matched {
 				status := taskStatuses[item.row.TaskID]
+				retainedCompletedOutput := false
+				if src.name == "results" && isCompletedTaskStatus(status) && opts.deletedOutputMatcher != nil {
+					retained, err := isRetainedCompletedGenerationOutput(db, opts.userID, item.row.Title, item.row.TaskID, item.row.SecondaryJSON, opts.deletedOutputMatcher)
+					if err != nil {
+						return err
+					}
+					retainedCompletedOutput = retained
+				}
 				if opts.stopOnFirst {
-					if !opts.skipCompletedTaskOutputs || !isCompletedTaskStatus(status) {
+					if !opts.skipCompletedTaskOutputs || !isCompletedTaskStatus(status) || retainedCompletedOutput {
 						return ErrResourceCleanupStillReferenced
 					}
 					continue
 				}
 				*out = append(*out, ResourceReferenceDocument{
-					Kind:                src.kind,
-					ID:                  item.row.ID,
-					Title:               item.row.Title,
-					PrimaryJSON:         item.row.PrimaryJSON,
-					SecondaryJSON:       item.row.SecondaryJSON,
-					PrimaryMatchedIDs:   assets.SortedIDs(item.primary),
-					SecondaryMatchedIDs: assets.SortedIDs(item.secondary),
-					TaskStatus:          status,
+					Kind:                    src.kind,
+					ID:                      item.row.ID,
+					Title:                   item.row.Title,
+					TaskID:                  item.row.TaskID,
+					PrimaryJSON:             item.row.PrimaryJSON,
+					SecondaryJSON:           item.row.SecondaryJSON,
+					PrimaryMatchedIDs:       assets.SortedIDs(item.primary),
+					SecondaryMatchedIDs:     assets.SortedIDs(item.secondary),
+					TaskStatus:              status,
+					RetainedCompletedOutput: retainedCompletedOutput,
 				})
-				if opts.excludingAssetID == "" || !isCompletedTaskStatus(status) {
+				if !hasExcludingAsset || !isCompletedTaskStatus(status) || retainedCompletedOutput {
 					for id := range item.primary {
 						delete(opts.remaining, id)
 					}
@@ -507,6 +519,7 @@ func scanReferenceDocumentSource(db *gorm.DB, src referenceDocumentSource, opts 
 			return nil
 		}
 
+		hasExcludingAsset := opts.excludingAssetID != "" || len(opts.excludingAssetIDs) > 0
 		for _, row := range rows {
 			if src.isTaskTable {
 				taskStatuses[row.ID] = row.TaskStatus
@@ -535,7 +548,7 @@ func scanReferenceDocumentSource(db *gorm.DB, src referenceDocumentSource, opts 
 			for id := range primary {
 				delete(opts.remaining, id)
 			}
-			if !src.isTaskTable || opts.excludingAssetID == "" || !isCompletedTaskStatus(row.TaskStatus) {
+			if !src.isTaskTable || !hasExcludingAsset || !isCompletedTaskStatus(row.TaskStatus) {
 				for id := range secondary {
 					delete(opts.remaining, id)
 				}
@@ -577,10 +590,10 @@ func guardReferenceDocuments(tx *gorm.DB, userID string, excludingAssetID string
 	if excludingAssetID != "" {
 		excluded = []string{excludingAssetID}
 	}
-	return guardReferenceDocumentsExcluding(tx, userID, excluded, resourceIDs, skipCompletedTaskOutputs)
+	return guardReferenceDocumentsExcluding(tx, userID, excluded, nil, resourceIDs, skipCompletedTaskOutputs)
 }
 
-func guardReferenceDocumentsExcluding(tx *gorm.DB, userID string, excludingAssetIDs []string, resourceIDs []string, skipCompletedTaskOutputs bool) error {
+func guardReferenceDocumentsExcluding(tx *gorm.DB, userID string, excludingAssetIDs []string, deletedAssets []model.Asset, resourceIDs []string, skipCompletedTaskOutputs bool) error {
 	if len(resourceIDs) == 0 {
 		return nil
 	}
@@ -588,16 +601,21 @@ func guardReferenceDocumentsExcluding(tx *gorm.DB, userID string, excludingAsset
 	for _, id := range resourceIDs {
 		remaining[id] = struct{}{}
 	}
+	var outputMatcher *deletedGenerationOutputMatcher
+	if len(deletedAssets) > 0 {
+		outputMatcher = newDeletedGenerationOutputMatcher(deletedAssets)
+	}
 	return scanReferenceDocuments(tx, documentScanOptions{
 		userID:                   userID,
 		excludingAssetIDs:        excludingAssetIDs,
 		remaining:                remaining,
 		skipCompletedTaskOutputs: skipCompletedTaskOutputs,
 		stopOnFirst:              true,
+		deletedOutputMatcher:     outputMatcher,
 	}, nil)
 }
 
-func guardAssetDeletionReferencesExcluding(tx *gorm.DB, userID string, excludingAssetIDs []string, resourceIDs []string) error {
+func guardAssetDeletionReferencesExcluding(tx *gorm.DB, userID string, excludingAssetIDs []string, deletedAssets []model.Asset, resourceIDs []string) error {
 	if len(resourceIDs) == 0 {
 		return nil
 	}
@@ -611,7 +629,7 @@ func guardAssetDeletionReferencesExcluding(tx *gorm.DB, userID string, excluding
 	if len(refs) > 0 {
 		return ErrResourceCleanupStillReferenced
 	}
-	return guardReferenceDocumentsExcluding(tx, userID, excludingAssetIDs, resourceIDs, true)
+	return guardReferenceDocumentsExcluding(tx, userID, excludingAssetIDs, deletedAssets, resourceIDs, true)
 }
 
 func guardAssetBusinessLinks(tx *gorm.DB, assetID string) error {

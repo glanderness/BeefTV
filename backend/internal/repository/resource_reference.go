@@ -356,6 +356,117 @@ type deletedTaskOutputMatcher struct {
 	resourceIDs map[string]struct{}
 }
 
+type deletedGenerationOutputMatcher struct {
+	assetIDs    map[string]struct{}
+	effectKeys  map[string]struct{}
+	taskOutputs map[string][]deletedTaskOutputMatcher
+	taskIDs     []string
+}
+
+func newDeletedGenerationOutputMatcher(deletedAssets []model.Asset) *deletedGenerationOutputMatcher {
+	m := &deletedGenerationOutputMatcher{
+		assetIDs:    make(map[string]struct{}, len(deletedAssets)),
+		effectKeys:  make(map[string]struct{}, len(deletedAssets)),
+		taskOutputs: make(map[string][]deletedTaskOutputMatcher, len(deletedAssets)),
+		taskIDs:     make([]string, 0, len(deletedAssets)),
+	}
+	seenTask := make(map[string]struct{}, len(deletedAssets))
+	for _, a := range deletedAssets {
+		if id := strings.TrimSpace(a.ID); id != "" {
+			m.assetIDs[id] = struct{}{}
+		}
+		genID := extractGenerationIdentity(a)
+		if genID.effectKey != "" {
+			m.effectKeys[genID.effectKey] = struct{}{}
+		}
+		if genID.taskID != "" {
+			if _, exists := seenTask[genID.taskID]; !exists {
+				seenTask[genID.taskID] = struct{}{}
+				m.taskIDs = append(m.taskIDs, genID.taskID)
+			}
+			refs := map[string]struct{}{}
+			if strings.TrimSpace(a.PayloadJSON) != "" {
+				_ = assets.CollectOwnedDocumentReferences(a.PayloadJSON, refs)
+			}
+			m.taskOutputs[genID.taskID] = append(m.taskOutputs[genID.taskID], deletedTaskOutputMatcher{
+				outputIndex: genID.outputIndex,
+				resourceIDs: refs,
+			})
+		}
+	}
+	return m
+}
+
+func (m *deletedGenerationOutputMatcher) matches(tx *gorm.DB, userID string, taskID string, doc map[string]any) (bool, error) {
+	if m == nil {
+		return false, nil
+	}
+	matID, _ := doc["materializedAssetId"].(string)
+	matID = strings.TrimSpace(matID)
+	effectKey, _ := doc["effectKey"].(string)
+	effectKey = strings.TrimSpace(effectKey)
+	resID, _ := doc["resourceId"].(string)
+	resID = strings.TrimSpace(resID)
+	outIdx, hasOutIdx := docOutputIndex(doc)
+
+	if matID != "" {
+		if _, ok := m.assetIDs[matID]; ok {
+			return true, nil
+		}
+		var liveAssetCount int64
+		if err := tx.Model(&model.Asset{}).Where("id = ? AND user_id = ?", matID, userID).Count(&liveAssetCount).Error; err != nil {
+			return false, err
+		}
+		if liveAssetCount > 0 {
+			return false, nil
+		}
+	}
+	if effectKey != "" {
+		if _, ok := m.effectKeys[effectKey]; ok {
+			return true, nil
+		}
+	}
+	if matchers := m.taskOutputs[strings.TrimSpace(taskID)]; len(matchers) > 0 {
+		for _, matcher := range matchers {
+			if matcher.outputIndex != nil {
+				if (hasOutIdx && *matcher.outputIndex == outIdx) || (!hasOutIdx && *matcher.outputIndex == 0) {
+					return true, nil
+				}
+				continue
+			}
+			if resID == "" || len(matcher.resourceIDs) == 0 {
+				return true, nil
+			}
+			if _, ok := matcher.resourceIDs[resID]; ok {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// isRetainedCompletedGenerationOutput reports whether a completed task's
+// generation_output result row is still live (not asset_deleted) and will NOT
+// be tombstoned by deleting the assets in matcher, so its referenced resource
+// must be retained.
+func isRetainedCompletedGenerationOutput(tx *gorm.DB, userID string, resultKind string, taskID string, payloadJSON string, matcher *deletedGenerationOutputMatcher) (bool, error) {
+	if strings.TrimSpace(resultKind) != "generation_output" || matcher == nil {
+		return false, nil
+	}
+	var doc map[string]any
+	if strings.TrimSpace(payloadJSON) == "" || json.Unmarshal([]byte(payloadJSON), &doc) != nil {
+		return false, nil
+	}
+	if code, _ := doc["materializationErrorCode"].(string); strings.TrimSpace(code) == "asset_deleted" {
+		return false, nil
+	}
+	willTombstone, err := matcher.matches(tx, userID, taskID, doc)
+	if err != nil {
+		return false, err
+	}
+	return !willTombstone, nil
+}
+
 func docOutputIndex(doc map[string]any) (int, bool) {
 	raw, ok := doc["outputIndex"]
 	if !ok || raw == nil {
@@ -375,49 +486,20 @@ func tombstoneDeletedAssetGenerationOutputs(tx *gorm.DB, userID string, deletedA
 	if !tx.Migrator().HasTable(&model.Result{}) || len(deletedAssets) == 0 {
 		return nil
 	}
-	deletedAssetSet := make(map[string]struct{}, len(deletedAssets))
-	deletedEffectKeys := make(map[string]struct{}, len(deletedAssets))
-	deletedTaskOutputs := make(map[string][]deletedTaskOutputMatcher, len(deletedAssets))
-	taskIDs := make([]string, 0, len(deletedAssets))
-	seenTask := make(map[string]struct{}, len(deletedAssets))
-
-	clauses := make([]string, 0, len(deletedAssets)*2+1)
-	args := make([]any, 0, len(deletedAssets)*2+1)
-	for _, a := range deletedAssets {
-		id := strings.TrimSpace(a.ID)
-		if id != "" {
-			if _, exists := deletedAssetSet[id]; !exists {
-				deletedAssetSet[id] = struct{}{}
-				clauses = append(clauses, "instr(payload, ?) > 0")
-				args = append(args, id)
-			}
-		}
-		genID := extractGenerationIdentity(a)
-		if genID.effectKey != "" {
-			if _, exists := deletedEffectKeys[genID.effectKey]; !exists {
-				deletedEffectKeys[genID.effectKey] = struct{}{}
-				clauses = append(clauses, "instr(payload, ?) > 0")
-				args = append(args, genID.effectKey)
-			}
-		}
-		if genID.taskID != "" {
-			if _, exists := seenTask[genID.taskID]; !exists {
-				seenTask[genID.taskID] = struct{}{}
-				taskIDs = append(taskIDs, genID.taskID)
-			}
-			refs := map[string]struct{}{}
-			if strings.TrimSpace(a.PayloadJSON) != "" {
-				_ = assets.CollectOwnedDocumentReferences(a.PayloadJSON, refs)
-			}
-			deletedTaskOutputs[genID.taskID] = append(deletedTaskOutputs[genID.taskID], deletedTaskOutputMatcher{
-				outputIndex: genID.outputIndex,
-				resourceIDs: refs,
-			})
-		}
+	matcher := newDeletedGenerationOutputMatcher(deletedAssets)
+	clauses := make([]string, 0, len(matcher.assetIDs)+len(matcher.effectKeys)+1)
+	args := make([]any, 0, len(matcher.assetIDs)+len(matcher.effectKeys)+1)
+	for id := range matcher.assetIDs {
+		clauses = append(clauses, "instr(payload, ?) > 0")
+		args = append(args, id)
 	}
-	if len(taskIDs) > 0 {
+	for effectKey := range matcher.effectKeys {
+		clauses = append(clauses, "instr(payload, ?) > 0")
+		args = append(args, effectKey)
+	}
+	if len(matcher.taskIDs) > 0 {
 		clauses = append(clauses, "task_id IN ?")
-		args = append(args, taskIDs)
+		args = append(args, matcher.taskIDs)
 	}
 	if len(clauses) == 0 {
 		return nil
@@ -433,53 +515,9 @@ func tombstoneDeletedAssetGenerationOutputs(tx *gorm.DB, userID string, deletedA
 		if strings.TrimSpace(row.Payload) == "" || json.Unmarshal([]byte(row.Payload), &doc) != nil {
 			continue
 		}
-		matID, _ := doc["materializedAssetId"].(string)
-		matID = strings.TrimSpace(matID)
-		effectKey, _ := doc["effectKey"].(string)
-		effectKey = strings.TrimSpace(effectKey)
-		resID, _ := doc["resourceId"].(string)
-		resID = strings.TrimSpace(resID)
-		outIdx, hasOutIdx := docOutputIndex(doc)
-
-		matched := false
-		if matID != "" {
-			if _, ok := deletedAssetSet[matID]; ok {
-				matched = true
-			} else {
-				var liveAssetCount int64
-				if err := tx.Model(&model.Asset{}).Where("id = ? AND user_id = ?", matID, userID).Count(&liveAssetCount).Error; err != nil {
-					return err
-				}
-				if liveAssetCount > 0 {
-					continue
-				}
-			}
-		}
-		if !matched && effectKey != "" {
-			if _, ok := deletedEffectKeys[effectKey]; ok {
-				matched = true
-			}
-		}
-		if !matched {
-			if matchers := deletedTaskOutputs[strings.TrimSpace(row.TaskID)]; len(matchers) > 0 {
-				for _, matcher := range matchers {
-					if matcher.outputIndex != nil {
-						if (hasOutIdx && *matcher.outputIndex == outIdx) || (!hasOutIdx && *matcher.outputIndex == 0) {
-							matched = true
-							break
-						}
-						continue
-					}
-					if resID == "" || len(matcher.resourceIDs) == 0 {
-						matched = true
-						break
-					}
-					if _, ok := matcher.resourceIDs[resID]; ok {
-						matched = true
-						break
-					}
-				}
-			}
+		matched, err := matcher.matches(tx, userID, row.TaskID, doc)
+		if err != nil {
+			return err
 		}
 		if !matched {
 			continue
@@ -556,7 +594,7 @@ func (r *Repository) DeleteAssetsAndResources(userID string, assetID string, twi
 			allAssetIDs = append(allAssetIDs, twinID)
 			deletedAssets = append(deletedAssets, twin)
 		}
-		if err := guardAssetDeletionReferencesExcluding(tx, userID, allAssetIDs, resourceIDs); err != nil {
+		if err := guardAssetDeletionReferencesExcluding(tx, userID, allAssetIDs, deletedAssets, resourceIDs); err != nil {
 			return err
 		}
 		if tx.Migrator().HasTable(&model.CanvasSnapshotResource{}) {
