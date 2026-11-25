@@ -246,7 +246,7 @@ func TestRegenerateAskModeRequiresOwnerApproval(t *testing.T) {
 	}
 }
 
-func TestRegenerateIsExternalWriteOnly(t *testing.T) {
+func TestRegenerateRequiresWritePermissionAndAssistantConfirmation(t *testing.T) {
 	svc, r, canvasID, _ := externalGenerationFixture(t)
 	if err := submitExternalNode(t, svc, r, canvasID, "image", "first-attempt"); err != nil {
 		t.Fatal(err)
@@ -258,25 +258,31 @@ func TestRegenerateIsExternalWriteOnly(t *testing.T) {
 		t.Fatal("read-only client regenerated a paid task")
 	}
 	descriptor, ok := r.Descriptor("canvas.generation.regenerate")
-	if !ok || len(descriptor.AssistantModes) != 0 || !descriptor.SubmitsGeneration {
+	if !ok || len(descriptor.AssistantModes) != 2 || !descriptor.SubmitsGeneration {
 		t.Fatalf("regenerate descriptor: %+v", descriptor)
 	}
+	readOnlyAssistant := operations.AssistantCaller(&agentops.AssistantScope{PermissionMode: assistantturns.PermissionReadOnly, CanvasID: canvasID}, false)
+	for _, listed := range r.List(readOnlyAssistant) {
+		if listed.ID == "canvas.generation.regenerate" {
+			t.Fatal("read-only assistant must not see canvas.generation.regenerate")
+		}
+	}
 	assistant := operations.AssistantCaller(&agentops.AssistantScope{PermissionMode: assistantturns.PermissionFullAccess, CanvasID: canvasID}, false)
-	visibleSubmit := false
+	visibleSubmit, visibleRegenerate := false, false
 	for _, listed := range r.List(assistant) {
 		if listed.ID == "canvas.generation.submit" {
 			visibleSubmit = true
 		}
 		if listed.ID == "canvas.generation.regenerate" {
-			t.Fatal("built-in assistant can see canvas.generation.regenerate")
+			visibleRegenerate = true
 		}
 	}
-	if !visibleSubmit {
-		t.Fatal("full-access assistant should still see canvas.generation.submit")
+	if !visibleSubmit || !visibleRegenerate {
+		t.Fatalf("full-access assistant should see submit=%v regenerate=%v", visibleSubmit, visibleRegenerate)
 	}
 	params, _ := json.Marshal(map[string]any{"canvasId": canvasID, "nodeIds": []string{"image"}, "expectedRevision": canvasRevisionOf(t, svc, canvasID), "expectedModelConfigRevision": 1})
-	if _, err := r.Execute(operations.Request{Op: "canvas.generation.regenerate", OpID: "assistant-regenerate", UserID: "local", Caller: assistant, TurnID: "assistant-turn", Params: params}); err == nil || operations.AsError(err).Reason != "scope_denied" {
-		t.Fatalf("built-in assistant executed regenerate: %v", err)
+	if _, err := r.Execute(operations.Request{Op: "canvas.generation.regenerate", OpID: "assistant-regenerate", UserID: "local", Caller: assistant, TurnID: "assistant-turn", Params: params}); err == nil {
+		t.Fatal("built-in assistant executed unconfirmed regenerate")
 	}
 	if count := taskCount(t, svc); count != 1 {
 		t.Fatalf("refused callers purchased a task: %d", count)
