@@ -42,11 +42,11 @@ func (w SQLiteSnapshotWatermark) covers(resources []model.Resource) bool {
 	return true
 }
 
-func (r *Repository) captureSQLiteWatermark(db *gorm.DB, userID string, excludingAssetID string, candidateSet map[string]struct{}) SQLiteSnapshotWatermark {
+func (r *Repository) captureSQLiteWatermark(db *gorm.DB, userID string, excludingAssetIDs []string, candidateSet map[string]struct{}) SQLiteSnapshotWatermark {
 	if r == nil || !r.SingleProcess() || db == nil || db.Dialector == nil || db.Dialector.Name() != "sqlite" || r.HoldsTransaction() {
 		return SQLiteSnapshotWatermark{}
 	}
-	if userID == "" || excludingAssetID != "" || len(candidateSet) == 0 {
+	if userID == "" || len(excludingAssetIDs) > 0 || len(candidateSet) == 0 {
 		return SQLiteSnapshotWatermark{}
 	}
 	sqlDB, err := db.DB()
@@ -65,7 +65,6 @@ func (r *Repository) captureSQLiteWatermark(db *gorm.DB, userID string, excludin
 		verified[id] = struct{}{}
 	}
 	wm.userID = userID
-	wm.excludingAssetID = excludingAssetID
 	wm.verifiedIDs = verified
 	return wm
 }

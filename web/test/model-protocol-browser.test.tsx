@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ModelProtocolBrowser } from "@/components/model-protocol-browser";
+import { buildProtocolBrowserOptions, ModelProtocolBrowser } from "@/components/model-protocol-browser";
 import type { ModelProtocolDefinition } from "@/lib/model-protocols";
 import { protocolGuidanceForCapability } from "@/pages/settings/channel-model-settings";
 
@@ -189,5 +189,65 @@ describe("ModelProtocolBrowser grouping and endpoint guidance", () => {
         expect(protocolGuidanceForCapability("video")).toContain("常用与通用兼容");
         expect(protocolGuidanceForCapability("audio")).toContain("OpenAI Audio Speech");
         expect(protocolGuidanceForCapability("audio")).not.toContain("OpenAI Chat Completions");
+    });
+
+    test("classifies local loopback, presets-backed, and arbitrary-port loopback relay protocols without hardcoded ID lists or :3000 heuristics", () => {
+        const mixedProtocols: ModelProtocolDefinition[] = [
+            {
+                value: "ollama-chat",
+                label: "Ollama Chat",
+                vendor: "BeefTV Contributors",
+                capability: "text",
+                create: "POST /api/chat",
+                contentType: "application/json",
+                media: "BeefTV Contributors · 1.0.0",
+                baseUrl: "http://127.0.0.1:11434",
+                authType: "none",
+                enabled: true,
+            },
+            {
+                value: "custom-relay-8080",
+                label: "Custom Relay 8080",
+                vendor: "BeefTV Contributors",
+                capability: "text",
+                create: "POST /v1/chat/completions",
+                contentType: "application/json",
+                media: "BeefTV Contributors · 1.0.0",
+                baseUrl: "http://127.0.0.1:8080",
+                authType: "bearer",
+                enabled: true,
+            },
+            {
+                value: "custom-presets-compat",
+                label: "Custom Presets Compat",
+                vendor: "BeefTV Contributors",
+                capability: "text",
+                create: "POST /v1/chat/completions",
+                contentType: "application/json",
+                media: "BeefTV Contributors · 1.0.0",
+                baseUrl: "https://compat.example.com",
+                authType: "bearer",
+                presets: [{ id: "p1", label: "Example Compat", baseUrl: "https://compat.example.com" }],
+                enabled: true,
+            },
+        ];
+
+        const defaultOptions = buildProtocolBrowserOptions(mixedProtocols, "text");
+        const ollamaDefault = defaultOptions.find((item) => item.value === "ollama-chat");
+        const relayDefault = defaultOptions.find((item) => item.value === "custom-relay-8080");
+        const presetsDefault = defaultOptions.find((item) => item.value === "custom-presets-compat");
+
+        expect(ollamaDefault?.group).toBe("本地与工作流接口");
+        expect(ollamaDefault?.details?.some((d) => d.label === "建议地址")).toBe(true);
+        expect(relayDefault?.group).toBe("常用与通用兼容");
+        expect(relayDefault?.details?.some((d) => d.label === "建议地址")).toBe(false);
+        expect(presetsDefault?.group).toBe("常用与通用兼容");
+
+        const ollamaMatched = buildProtocolBrowserOptions(mixedProtocols, "text", "http://127.0.0.1:11434");
+        expect(ollamaMatched.find((item) => item.value === "ollama-chat")?.group).toBe("匹配当前服务地址");
+        expect(ollamaMatched.find((item) => item.value === "custom-relay-8080")?.group).toBe("常用与通用兼容");
+
+        const relayLoopbackChannel = buildProtocolBrowserOptions(mixedProtocols, "text", "http://127.0.0.1:8080");
+        expect(relayLoopbackChannel.find((item) => item.value === "custom-relay-8080")?.group).toBe("常用与通用兼容");
     });
 });

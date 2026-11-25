@@ -8,7 +8,6 @@ import (
 	"image"
 	_ "image/png"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -388,7 +387,7 @@ func ExecuteClaimedTask(deps WorkerExecuteDeps, session taskruntime.Session) tas
 			}
 		}
 		outcome := ExecutionFailureOutcome(terminal, task, err, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest, deps.ImageTaskEnded)
-		if outcome.Applied && task.Type == "canvas_image" && !task.IsUpscale() && task.RecoveryOutcome == nil && isNonRecoverableGatewayTimeout(deps.Repo, *task, decryptedInput, err) {
+		if outcome.Applied && task.Type == "canvas_image" && !task.IsUpscale() && task.RecoveryOutcome == nil && isNonRecoverableGatewayTimeout(deps.Repo, *task, decryptedInput, decryptErr, err) {
 			unrecoverable := RecoveryUnrecoverable
 			task.RecoveryOutcome = &unrecoverable
 		}
@@ -496,40 +495,23 @@ func TerminalWriteApplied(termErr, cause error) bool {
 	return cause != nil && errors.Is(termErr, cause)
 }
 
-func isNonRecoverableGatewayTimeout(repo *repository.Repository, task model.Task, decryptedInput string, err error) bool {
-	if repo == nil || err == nil {
+// isNonRecoverableGatewayTimeout is strictly fail-closed: it returns true only
+// when positive persisted evidence proves a synchronous unmanaged third-party
+// image request hit HTTP 524 with no upstream job handle, no frozen
+// ImageSubmission, and no <300 create receipt (matching mediaattempt recovery
+// semantics without bypassing managed recovery).
+func isNonRecoverableGatewayTimeout(repo *repository.Repository, task model.Task, decryptedInput string, decryptErr error, err error) bool {
+	if repo == nil || err == nil || decryptErr != nil || strings.TrimSpace(decryptedInput) == "" {
+		return false
+	}
+	if task.Type != "canvas_image" || task.IsUpscale() {
+		return false
+	}
+	if strings.TrimSpace(task.ImageJobID) != "" || strings.TrimSpace(task.ProviderRequestID) != "" {
 		return false
 	}
 	var httpErr generation.HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != 524 {
-		return false
-	}
-	if taskUsesManagedConnection(decryptedInput) {
-		return false
-	}
-	evidence, evErr := repo.ImageRecoveryEvidence([]string{task.ID})
-	if evErr != nil {
-		return false
-	}
-	ev := evidence[task.ID]
-	if ev.Submission != nil {
-		return false
-	}
-	if ev.Attempt != nil && ev.Attempt.ChannelID == beeftv.ChannelID {
-		return false
-	}
-	receipt, receiptErr := repo.ImageCreateReceipt(task.UserID, task.ID)
-	if receiptErr != nil && !errors.Is(receiptErr, gorm.ErrRecordNotFound) {
-		return false
-	}
-	if receipt != nil && receipt.StatusCode >= 200 && receipt.StatusCode < 300 {
-		return false
-	}
-	return true
-}
-
-func taskUsesManagedConnection(inputJSON string) bool {
-	if strings.TrimSpace(inputJSON) == "" {
 		return false
 	}
 	var input struct {
@@ -539,15 +521,38 @@ func taskUsesManagedConnection(inputJSON string) bool {
 			BaseURL       string `json:"baseUrl"`
 		} `json:"config"`
 	}
-	if json.Unmarshal([]byte(inputJSON), &input) != nil {
+	if json.Unmarshal([]byte(decryptedInput), &input) != nil {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(input.Config.CredentialRef), beeftv.ChannelID) ||
-		strings.EqualFold(strings.TrimSpace(input.Config.ChannelID), beeftv.ChannelID) {
-		return true
+	if strings.TrimSpace(input.Config.BaseURL) == "" && strings.TrimSpace(input.Config.ChannelID) == "" {
+		return false
 	}
-	parsed, err := url.Parse(strings.TrimSpace(input.Config.BaseURL))
-	return err == nil && parsed != nil && strings.EqualFold(parsed.Hostname(), "beeftv.app")
+	if beeftv.IsManagedTaskInput(decryptedInput) ||
+		beeftv.IsManagedChannel(input.Config.ChannelID, input.Config.CredentialRef, input.Config.BaseURL) {
+		return false
+	}
+	evidence, evErr := repo.ImageRecoveryEvidence([]string{task.ID})
+	if evErr != nil {
+		return false
+	}
+	ev := evidence[task.ID]
+	if ev.Attempt == nil || ev.Attempt.RouteRun != task.RouteRun || strings.TrimSpace(ev.Attempt.ChannelID) == "" {
+		return false
+	}
+	if beeftv.IsManagedChannel(ev.Attempt.ChannelID, "", "") {
+		return false
+	}
+	if ev.Submission != nil {
+		return false
+	}
+	receipt, receiptErr := repo.ImageCreateReceipt(task.UserID, task.ID)
+	if receiptErr != nil && !errors.Is(receiptErr, gorm.ErrRecordNotFound) {
+		return false
+	}
+	if receipt != nil && receipt.StatusCode < 300 {
+		return false
+	}
+	return true
 }
 
 func TaskUsesUpstreamReportedProgress(taskType string) bool {

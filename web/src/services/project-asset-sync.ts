@@ -11,14 +11,14 @@ import { getWorkspaceAsset } from "@/services/api/workspace-data";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
-import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
+import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, materializeEffectKey, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
 import { withGenerationArtifactCommitLock } from "@/services/generation-asset-repository";
 import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
 import { generationArtifactStorageKey, loadOrStoreGenerationArtifact } from "@/services/generation-artifact-sink";
 import { createProviderNeutralGenerationTaskEffectStore } from "@/services/provider-neutral-generation-effects";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
-import { flushAssetStorePersistence, runAssetStoreProjection, useAssetStore, type Asset, type AssetCategory, type NewAsset } from "@/stores/use-asset-store";
+import { flushAssetStorePersistence, generationAssetId, runAssetStoreProjection, useAssetStore, type Asset, type AssetCategory, type NewAsset } from "@/stores/use-asset-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import { persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
 import { usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
@@ -137,22 +137,15 @@ export function ensureCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions) {
     return request;
 }
 
-async function canonicalGenerationAssetId(taskId?: string, outputIndex = 0): Promise<string | undefined> {
-    const trimmed = taskId?.trim();
-    if (!trimmed || typeof crypto === "undefined" || !crypto.subtle) return undefined;
-    const effectKey = `materialize:${trimmed}:${Math.max(0, Math.trunc(outputIndex))}`;
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKey));
-    return `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-
 async function lookupExistingBackendCanvasAsset(options: EnsureCanvasNodeAssetOptions): Promise<Asset | undefined> {
     if (!usesWorkspaceAssetLibraryApi()) return undefined;
     const candidateIds: string[] = [];
     const explicitId = options.node.metadata?.assetId?.trim();
     if (explicitId) candidateIds.push(explicitId);
     const generationTaskId = (options.taskId || options.node.metadata?.taskId)?.trim();
-    if (generationTaskId) {
-        const canonicalId = await canonicalGenerationAssetId(generationTaskId, options.node.metadata?.taskOutputIndex ?? 0);
+    if (generationTaskId && typeof crypto !== "undefined" && crypto.subtle) {
+        const outputIndex = Math.max(0, Math.trunc(options.node.metadata?.taskOutputIndex ?? 0));
+        const canonicalId = await generationAssetId(materializeEffectKey(generationTaskId, outputIndex));
         if (canonicalId && !candidateIds.includes(canonicalId)) candidateIds.push(canonicalId);
     }
     if (!candidateIds.length) return undefined;
@@ -171,8 +164,8 @@ async function lookupExistingBackendCanvasAsset(options: EnsureCanvasNodeAssetOp
         });
         return matched;
     } catch (error) {
-        if (options.signal?.aborted) throw error;
-        return undefined;
+        if (error instanceof ApiError && (error.status === 404 || error.code === 404)) return undefined;
+        throw error;
     }
 }
 

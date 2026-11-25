@@ -49,11 +49,7 @@ func (r *Repository) ResourceReferenceSnapshotExcluding(userID string, excluding
 		candidateSet[resourceID] = struct{}{}
 		remaining[resourceID] = struct{}{}
 	}
-	primaryExclude := ""
-	if len(excludingAssetIDs) == 1 {
-		primaryExclude = excludingAssetIDs[0]
-	}
-	snapshot.Watermark = r.captureSQLiteWatermark(r.db, userID, primaryExclude, candidateSet)
+	snapshot.Watermark = r.captureSQLiteWatermark(r.db, userID, excludingAssetIDs, candidateSet)
 
 	directRefs, err := collectDirectResourceReferencesExcluding(r.db, userID, excludingAssetIDs, resourceIDs, true, false)
 	if err != nil {

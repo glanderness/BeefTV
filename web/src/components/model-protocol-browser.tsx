@@ -14,16 +14,7 @@ const GROUP_META: Record<ProtocolGroupKey, { order: number; label: string; hint:
     vendor: { order: 4, label: "官方与厂商专用接口", hint: "直连平台官方 API 时按厂商选择" },
 };
 
-const GENERIC_PROTOCOL_IDS = new Set([
-    ...Object.values(STANDARD_PROTOCOLS).flat(),
-    "responses",
-    "openai-videos",
-    "newapi-channel-1",
-    "video-generations-json",
-    "seedance-videos-compatible",
-    "full-video",
-    "async-audio",
-]);
+const STANDARD_PROTOCOL_IDS = new Set(Object.values(STANDARD_PROTOCOLS).flat());
 
 const BOILERPLATE_VENDORS = new Set([
     "影策 / Open AI Canvas contributors",
@@ -47,9 +38,24 @@ function isLoopbackHost(hostname: string): boolean {
     return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
 }
 
-function isRelayPlaceholderBaseUrl(rawUrl?: string): boolean {
+function isLoopbackBaseUrl(rawUrl?: string): boolean {
     const parsed = extractEndpointHost(rawUrl);
-    return Boolean(parsed && isLoopbackHost(parsed.hostname) && parsed.host.endsWith(":3000"));
+    return Boolean(parsed && isLoopbackHost(parsed.hostname));
+}
+
+function isStandardProtocol(protocol: ModelProtocolDefinition): boolean {
+    return STANDARD_PROTOCOL_IDS.has(protocol.value) || Boolean(protocol.aliases?.some((alias) => STANDARD_PROTOCOL_IDS.has(alias)));
+}
+
+function isLocalOrWorkflowProtocol(protocol: ModelProtocolDefinition): boolean {
+    if (protocol.module || (protocol.workflows && protocol.workflows.length > 0)) return true;
+    if (protocol.presets && protocol.presets.length > 0) return false;
+    if (isStandardProtocol(protocol)) return false;
+    return protocol.authType === "none";
+}
+
+function isLoopbackPlaceholderBaseUrl(protocol: ModelProtocolDefinition): boolean {
+    return isLoopbackBaseUrl(protocol.baseUrl) && !isLocalOrWorkflowProtocol(protocol);
 }
 
 function readableHostLabel(rawUrl?: string): string {
@@ -62,12 +68,13 @@ function readableHostLabel(rawUrl?: string): string {
 function matchesChannelBaseUrl(protocol: ModelProtocolDefinition, channelBaseUrl?: string): boolean {
     const channelHost = extractEndpointHost(channelBaseUrl);
     if (!channelHost) return false;
-    if (isLoopbackHost(channelHost.hostname) && channelHost.host.endsWith(":3000")) return false;
 
     const protocolHost = extractEndpointHost(protocol.baseUrl);
     if (protocolHost) {
-        if (isLoopbackHost(protocolHost.hostname)) {
-            if (protocolHost.host === channelHost.host) return true;
+        if (isLoopbackHost(protocolHost.hostname) || isLoopbackHost(channelHost.hostname)) {
+            if (isLocalOrWorkflowProtocol(protocol) && isLoopbackHost(protocolHost.hostname) && protocolHost.host === channelHost.host) {
+                return true;
+            }
         } else if (protocolHost.hostname === channelHost.hostname) {
             return true;
         } else {
@@ -78,6 +85,7 @@ function matchesChannelBaseUrl(protocol: ModelProtocolDefinition, channelBaseUrl
         }
     }
 
+    if (isLoopbackHost(channelHost.hostname)) return false;
     const preset = builtinPresetForProtocol(protocol.value);
     if (preset) {
         if (preset.hosts.some((host) => host.toLowerCase() === channelHost.hostname)) return true;
@@ -87,24 +95,18 @@ function matchesChannelBaseUrl(protocol: ModelProtocolDefinition, channelBaseUrl
 }
 
 function isGenericProtocol(protocol: ModelProtocolDefinition): boolean {
-    if (GENERIC_PROTOCOL_IDS.has(protocol.value)) return true;
+    if (isStandardProtocol(protocol)) return true;
     if (protocol.presets && protocol.presets.length > 0) return true;
-    if (!protocol.baseUrl?.trim() && !protocol.module && !protocol.workflows?.length) return true;
-    if (isRelayPlaceholderBaseUrl(protocol.baseUrl)) return true;
+    if (isLocalOrWorkflowProtocol(protocol)) return false;
+    if (!protocol.baseUrl?.trim()) return true;
+    if (isLoopbackPlaceholderBaseUrl(protocol)) return true;
     return false;
-}
-
-function isLocalOrWorkflowProtocol(protocol: ModelProtocolDefinition): boolean {
-    if (protocol.module || (protocol.workflows && protocol.workflows.length > 0)) return true;
-    if (protocol.authType === "none") return true;
-    const host = extractEndpointHost(protocol.baseUrl);
-    return Boolean(host && isLoopbackHost(host.hostname) && !isRelayPlaceholderBaseUrl(protocol.baseUrl));
 }
 
 function protocolGroupKey(protocol: ModelProtocolDefinition, channelBaseUrl?: string): ProtocolGroupKey {
     if (matchesChannelBaseUrl(protocol, channelBaseUrl)) return "matched";
-    if (isGenericProtocol(protocol)) return "generic";
     if (isLocalOrWorkflowProtocol(protocol)) return "local";
+    if (isGenericProtocol(protocol)) return "generic";
     if (builtinPresetForProtocol(protocol.value)) return "partner";
     return "vendor";
 }
@@ -185,7 +187,7 @@ export function buildProtocolBrowserOptions(
         const meta = GROUP_META[group];
         const preset = builtinPresetForProtocol(protocol.value);
         const authLabel = protocolAuthLabel(protocol);
-        const suggestedBaseUrl = protocol.baseUrl?.trim() && !isRelayPlaceholderBaseUrl(protocol.baseUrl) ? protocol.baseUrl.trim() : "";
+        const suggestedBaseUrl = protocol.baseUrl?.trim() && !isLoopbackPlaceholderBaseUrl(protocol) ? protocol.baseUrl.trim() : "";
         const details: BrowserChoice["details"] = [
             ...(suggestedBaseUrl ? [{ label: "建议地址", value: <code>{suggestedBaseUrl}</code> }] : []),
             { label: "请求", value: <code>{protocol.create}</code> },

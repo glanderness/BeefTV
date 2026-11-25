@@ -91,7 +91,7 @@ export type BindBackendCanvasGenerationRuntime = {
 // reporting the transient state as a canvas conflict.
 const GENERATION_MATERIALIZATION_BUDGET_MS = 15 * 60 * 1000;
 
-const PERMANENT_MATERIALIZATION_ERROR_CODES = new Set(["resource_foreign", "asset_foreign", "unsupported_result_shape"]);
+const PERMANENT_MATERIALIZATION_ERROR_CODES = new Set(["asset_deleted", "resource_foreign", "asset_foreign", "unsupported_result_shape"]);
 
 function materializationPollDelay(attempt: number) {
     const schedule = [1000, 2000, 3000, 5000];
@@ -189,7 +189,11 @@ async function pollMaterializedGenerationOutput(
             if (deliveryCode === "delivery_paused" || deliveryCode === "delivery_timed_out") {
                 throw new CanvasGenerationMaterializationError(new Error(deliveryCode === "delivery_paused" ? "已停止取回，可继续取回原结果" : "结果取回超时，可继续取回原结果"));
             }
-            if (generationTaskOutputPermanentlyFailed(task, state.outputIndex)) throw new CanvasGenerationMaterializationError(new Error(task.resultState || task.error || "生成结果下载失败"));
+            if (generationTaskOutputPermanentlyFailed(task, state.outputIndex)) {
+                throw new CanvasGenerationMaterializationError(
+                    new Error(deliveryCode === "asset_deleted" ? "生成结果已被删除" : task.resultState || task.error || "生成结果下载失败"),
+                );
+            }
         }
         await state.sleep(materializationPollDelay(attempt), state.signal);
         attempt += 1;

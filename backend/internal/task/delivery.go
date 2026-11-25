@@ -220,14 +220,19 @@ func ResultState(status model.TaskStatus, outputs []CanonicalOutput, failedRetry
 		if len(outputs) == 0 {
 			return ResultStateReady
 		}
-		ready := true
+		materialized := 0
+		deleted := 0
 		retryable := false
 		permanent := false
 		for _, output := range outputs {
-			if output.MaterializedAssetID != "" || output.MaterializationErrorCode == MaterializeErrorAssetDeleted {
+			if output.MaterializedAssetID != "" {
+				materialized++
 				continue
 			}
-			ready = false
+			if output.MaterializationErrorCode == MaterializeErrorAssetDeleted {
+				deleted++
+				continue
+			}
 			switch output.MaterializationErrorCode {
 			case MaterializeErrorResourceForeign, MaterializeErrorAssetForeign, MaterializeErrorUnsupportedShape:
 				permanent = true
@@ -239,14 +244,17 @@ func ResultState(status model.TaskStatus, outputs []CanonicalOutput, failedRetry
 				}
 			}
 		}
-		if ready {
-			return ResultStateReady
+		if retryable {
+			return ResultStateFailedRetryable
 		}
-		if permanent && !retryable {
+		if permanent {
 			return ResultStateFailedPermanent
 		}
-		if retryable || permanent {
-			return ResultStateFailedRetryable
+		if materialized+deleted == len(outputs) {
+			if materialized == 0 && deleted > 0 {
+				return ResultStateFailedPermanent
+			}
+			return ResultStateReady
 		}
 		return ResultStatePendingMaterialization
 	case model.TaskStatusFailed:

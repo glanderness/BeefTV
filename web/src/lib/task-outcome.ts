@@ -22,6 +22,7 @@ export type TaskOutcomeSource = {
     outcome?: TaskOutcome | null;
     type?: string;
     status?: string;
+    resultState?: string;
     stage?: string;
     errorCode?: string;
     error?: string;
@@ -107,6 +108,12 @@ const LEGACY_RETRIEVABLE_ERROR_CODES = new Set([
     "delivery_failed",
     "submission_uncertain",
     "results_missing",
+]);
+
+const LEGACY_PERMANENT_MATERIALIZATION_ERROR_CODES = new Set([
+    "resource_foreign",
+    "asset_foreign",
+    "unsupported_result_shape",
 ]);
 
 const LEGACY_INPUT_REJECTED_ERROR_CODES = new Set([
@@ -233,8 +240,20 @@ export function readTaskOutcome(source?: TaskOutcome | TaskOutcomeSource | null)
         return runningTaskOutcome();
     }
     if (status === "succeeded") {
+        const resultState = typeof record.resultState === "string" ? record.resultState.trim() : "";
         const outputs = Array.isArray(record.outputs) ? record.outputs : [];
         const allMaterialized = outputs.length > 0 && outputs.every((item) => Boolean(item?.materializedAssetId?.trim()));
+        const hasPermanentFailure = outputs.some(
+            (item) =>
+                !item?.materializedAssetId?.trim() &&
+                Boolean(item?.materializationErrorCode && LEGACY_PERMANENT_MATERIALIZATION_ERROR_CODES.has(item.materializationErrorCode)),
+        );
+        const allDeleted =
+            outputs.length > 0 &&
+            outputs.every((item) => !item?.materializedAssetId?.trim() && item?.materializationErrorCode === "asset_deleted");
+        if (resultState === "FAILED_PERMANENT" || hasPermanentFailure || allDeleted) {
+            return { phase: "failed", regenerate: "confirm", reason: "result_unrecoverable" };
+        }
         const pausedOutput = outputs.some((item) => item?.materializationErrorCode === "delivery_paused" || item?.materializationErrorCode === "delivery_timed_out");
         if (!allMaterialized && (stage === "delivery_paused" || stage === "delivery_timed_out" || pausedOutput)) {
             return deliveryPendingTaskOutcome();

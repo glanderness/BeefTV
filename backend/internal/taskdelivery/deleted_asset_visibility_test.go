@@ -149,11 +149,34 @@ func TestDeletePersonalCopyRemovesTwinGeneratedHistoryAndTombstonesTaskOutput(t 
 		nil,
 		nil,
 	)
+	wantDeletedOutcome := localtask.Outcome{Phase: "failed", Regenerate: "confirm", Reason: "result_unrecoverable"}
 	if summaries[0].PreviewURL != "" {
 		t.Fatalf("deleted asset still exposed PreviewURL in generation history summary: %q", summaries[0].PreviewURL)
 	}
+	if summaries[0].ResultState != localtask.ResultStateFailedPermanent {
+		t.Fatalf("deleted asset summary ResultState = %q, want %q", summaries[0].ResultState, localtask.ResultStateFailedPermanent)
+	}
+	if summaries[0].Outcome == nil || *summaries[0].Outcome != wantDeletedOutcome {
+		t.Fatalf("deleted asset summary Outcome = %+v, want %+v", summaries[0].Outcome, wantDeletedOutcome)
+	}
 	if len(summaries[0].Outputs) != 1 || summaries[0].Outputs[0].MaterializationErrorCode != "asset_deleted" || summaries[0].Outputs[0].MaterializedAssetID != "" || summaries[0].Outputs[0].ResourceID != "" {
 		t.Fatalf("generation history output was not tombstoned on delete: %+v", summaries[0].Outputs)
+	}
+
+	taskView := localtask.TaskForOutput(taskRow)
+	AttachTaskDelivery(
+		deliverer,
+		taskView,
+		nil,
+		func([]model.Task) map[string]localtask.OutcomeFacts { return map[string]localtask.OutcomeFacts{} },
+		generation.PersistedFailureBlocksRetry(taskRow.Error, taskRow.Stage, taskRow.ErrorCode),
+		nil,
+	)
+	if taskView.ResultState != localtask.ResultStateFailedPermanent || len(taskView.Outputs) != 1 || taskView.Outputs[0].MaterializationErrorCode != "asset_deleted" {
+		t.Fatalf("deleted asset task detail drifted: resultState=%q outputs=%+v", taskView.ResultState, taskView.Outputs)
+	}
+	if taskView.Outcome == nil || *taskView.Outcome != wantDeletedOutcome {
+		t.Fatalf("deleted asset task detail Outcome = %+v, want %+v", taskView.Outcome, wantDeletedOutcome)
 	}
 
 	// Recovery pass must never resurrect a deleted asset.
@@ -235,8 +258,12 @@ func TestDeleteGeneratedVideoDirectRemovesHistoryAndKeepsLiveCanvasResource(t *t
 		nil,
 		nil,
 	)
+	wantDeletedOutcome := localtask.Outcome{Phase: "failed", Regenerate: "confirm", Reason: "result_unrecoverable"}
 	if summaries[0].PreviewURL != "" {
 		t.Fatalf("deleted video still exposed PreviewURL: %q", summaries[0].PreviewURL)
+	}
+	if summaries[0].ResultState != localtask.ResultStateFailedPermanent || summaries[0].Outcome == nil || *summaries[0].Outcome != wantDeletedOutcome {
+		t.Fatalf("deleted video outcome drifted: resultState=%q outcome=%+v", summaries[0].ResultState, summaries[0].Outcome)
 	}
 	if len(summaries[0].Outputs) != 1 || summaries[0].Outputs[0].MaterializationErrorCode != "asset_deleted" {
 		t.Fatalf("video output not tombstoned: %+v", summaries[0].Outputs)
@@ -252,5 +279,123 @@ func TestDeleteGeneratedVideoDirectRemovesHistoryAndKeepsLiveCanvasResource(t *t
 	}
 	if assetCount != 0 {
 		t.Fatalf("RecoverIncomplete resurrected deleted video asset while canvas kept resource")
+	}
+}
+
+func TestDeleteAssetDoesNotDeleteOrTombstoneUnrelatedTaskSharingSameResource(t *testing.T) {
+	db, repo, assetSvc, deliverer := newDeletedAssetVisibilityFixture(t)
+	const userID = "user-573-shared"
+	const projectID = "canvas-573-shared"
+	const sharedResourceID = "res-shared-573"
+	const taskIDA = "task-shared-a"
+	const taskIDB = "task-shared-b"
+
+	now := time.Now().UTC()
+	resource := model.Resource{
+		ID: sharedResourceID, UserID: userID, Kind: "image", Provider: "local",
+		ObjectKey: "users/user-573-shared/image/shared.png", MimeType: "image/png", Size: 2048,
+		Status: model.ResourceStatusReady, CreatedAt: now, UpdatedAt: now,
+	}
+	taskA := model.Task{
+		ID: taskIDA, UserID: userID, ProjectID: projectID, Type: "canvas_image",
+		Status: model.TaskStatusSucceeded, Stage: "生成完成", Prompt: "任务A",
+		ResultJSON: `{"mode":"image","images":[{"storageKey":"resource:res-shared-573","url":"/api/resources/res-shared-573/file","width":1024,"height":1024}]}`,
+		CreatedAt:  now, UpdatedAt: now,
+	}
+	taskB := model.Task{
+		ID: taskIDB, UserID: userID, ProjectID: projectID, Type: "canvas_image",
+		Status: model.TaskStatusSucceeded, Stage: "生成完成", Prompt: "任务B",
+		ResultJSON: `{"mode":"image","images":[{"storageKey":"resource:res-shared-573","url":"/api/resources/res-shared-573/file","width":1024,"height":1024}]}`,
+		CreatedAt:  now.Add(time.Second), UpdatedAt: now.Add(time.Second),
+	}
+	for _, row := range []any{&resource, &taskA, &taskB} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, row := range []model.Task{taskA, taskB} {
+		if err := deliverer.Deliver(row); err != nil {
+			t.Fatalf("Deliver(%s) error = %v", row.ID, err)
+		}
+	}
+
+	personalAJSON, _ := json.Marshal(map[string]any{
+		"id":     "canvas-copy-a",
+		"kind":   "image",
+		"title":  "任务A副本",
+		"source": "Canvas",
+		"status": "confirmed",
+		"data":   map[string]any{"storageKey": "resource:" + sharedResourceID},
+		"metadata": map[string]any{
+			"source":      "canvas-generation",
+			"canvasId":    projectID,
+			"taskId":      taskIDA,
+			"resourceKey": "resource:" + sharedResourceID,
+		},
+	})
+	personalUnrelatedJSON, _ := json.Marshal(map[string]any{
+		"id":       "personal-upload-shared",
+		"kind":     "image",
+		"title":    "独立个人上传",
+		"source":   "本地上传",
+		"status":   "confirmed",
+		"data":     map[string]any{"storageKey": "resource:" + sharedResourceID},
+		"metadata": map[string]any{"source": "upload"},
+	})
+	for _, assetRow := range []model.Asset{
+		{ID: "canvas-copy-a", UserID: userID, Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "任务A副本", PayloadJSON: string(personalAJSON), CreatedAt: now, UpdatedAt: now},
+		{ID: "personal-upload-shared", UserID: userID, Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "独立个人上传", PayloadJSON: string(personalUnrelatedJSON), CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := db.Create(&assetRow).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Deleting taskA's personal canvas copy must remove only taskA's twin and tombstone only taskA.
+	if err := assetSvc.DeleteUserAssetWithResources(userID, "canvas-copy-a"); err != nil {
+		t.Fatalf("DeleteUserAssetWithResources(canvas-copy-a) error = %v", err)
+	}
+	// Deleting an unrelated personal upload pointing to the same resource must NOT touch taskB either.
+	if err := assetSvc.DeleteUserAssetWithResources(userID, "personal-upload-shared"); err != nil {
+		t.Fatalf("DeleteUserAssetWithResources(personal-upload-shared) error = %v", err)
+	}
+
+	genAssetIDA := localtask.MaterializedAssetID(taskIDA, 0)
+	genAssetIDB := localtask.MaterializedAssetID(taskIDB, 0)
+	generatedRows, generatedTotal, err := repo.UserAssetsPage(userID, 1, 20, repository.UserAssetPageFilter{Status: "active", Generated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generatedTotal != 1 || len(generatedRows) != 1 || generatedRows[0].ID != genAssetIDB {
+		t.Fatalf("expected only taskB generated asset %q to survive, got total=%d rows=%+v", genAssetIDB, generatedTotal, generatedRows)
+	}
+
+	var resCount int64
+	if err := db.Model(&model.Resource{}).Where("id = ?", sharedResourceID).Count(&resCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if resCount != 1 {
+		t.Fatalf("shared resource referenced by taskB was unexpectedly deleted: count=%d", resCount)
+	}
+
+	summaries := localtask.SummariesForOutput([]model.Task{taskA, taskB})
+	AttachTaskSummaryDeliveries(
+		deliverer,
+		[]model.Task{taskA, taskB},
+		summaries,
+		func([]model.Task) map[string]localtask.OutcomeFacts { return map[string]localtask.OutcomeFacts{} },
+		generation.PersistedFailureBlocksRetry,
+		nil,
+		nil,
+	)
+	if summaries[0].ResultState != localtask.ResultStateFailedPermanent || len(summaries[0].Outputs) != 1 || summaries[0].Outputs[0].MaterializationErrorCode != "asset_deleted" {
+		t.Fatalf("taskA was not tombstoned cleanly: %+v", summaries[0])
+	}
+	if summaries[1].ResultState != localtask.ResultStateReady || summaries[1].PreviewURL == "" || len(summaries[1].Outputs) != 1 || summaries[1].Outputs[0].MaterializedAssetID != genAssetIDB || summaries[1].Outputs[0].ResourceID != sharedResourceID {
+		t.Fatalf("taskB was cross-tombstoned by unrelated delete (genA=%s): %+v", genAssetIDA, summaries[1])
+	}
+	wantReady := localtask.Outcome{Phase: "ready", Regenerate: "allowed", Reason: "result_ready"}
+	if summaries[1].Outcome == nil || *summaries[1].Outcome != wantReady {
+		t.Fatalf("taskB Outcome = %+v, want %+v", summaries[1].Outcome, wantReady)
 	}
 }

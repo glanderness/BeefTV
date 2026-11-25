@@ -19,15 +19,18 @@ import {
 import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { nodeReferenceImage } from "@/lib/canvas/canvas-project-generation-metadata";
 import { explainGenerationError } from "@/lib/generation-error";
+import { readTaskOutcome } from "@/lib/task-outcome";
 import * as runtimeMode from "@/lib/runtime-mode";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { prepareBackendGenerationTask } from "@/services/api/generation-task";
 import type { AiConfig } from "@/stores/use-settings-store";
-import { apiClient } from "@/services/api/request";
+import { ApiError, apiClient } from "@/services/api/request";
 import type { GenerationTask } from "@/services/api/task-center";
+import { bindBackendCanvasGenerationResult, CanvasGenerationMaterializationError } from "@/services/canvas-generation-consumer";
+import { materializeEffectKey } from "@/services/generation-task-materializer";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { resetWorkspaceAssetReadStateForTests } from "@/services/workspace-asset-read";
-import { resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { generationAssetId, resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const spies: Array<{ mockRestore: () => void }> = [];
@@ -127,6 +130,76 @@ describe("Bug 1 (#573): deleted assets stay hidden from generation history and a
                 { projectId: "proj-1", expectedId: "task-deleted-1" },
             ),
         ).toThrow("该任务没有可插入的生成结果");
+
+        // readTaskOutcome fallback must project all-deleted succeeded tasks as unrecoverable failure, never ready.
+        expect(readTaskOutcome(deletedTask)).toEqual({
+            phase: "failed",
+            regenerate: "confirm",
+            reason: "result_unrecoverable",
+        });
+        expect(
+            readTaskOutcome({
+                ...deletedTask,
+                outputs: [
+                    { outputIndex: 0, mediaType: "image", materializationErrorCode: "asset_deleted" },
+                    { outputIndex: 1, mediaType: "image", materializedAssetId: "generation_live_2" },
+                ],
+            }),
+        ).toEqual({
+            phase: "ready",
+            regenerate: "allowed",
+            reason: "result_ready",
+        });
+    });
+
+    test("bindBackendCanvasGenerationResult fails immediately on asset_deleted instead of polling for 15 minutes", async () => {
+        const deletedTask: GenerationTask = {
+            id: "task-bind-deleted-573",
+            projectId: "canvas-bind-573",
+            type: "canvas_image",
+            status: "succeeded",
+            prompt: "已删输出",
+            outputs: [{ outputIndex: 0, mediaType: "image", materializationErrorCode: "asset_deleted" }],
+            attempts: 1,
+            createdAt: "2026-10-02T10:01:00.000Z",
+            updatedAt: "2026-10-02T10:01:00.000Z",
+        };
+        const node: CanvasNodeData = {
+            id: "node-bind-573",
+            type: CanvasNodeType.Image,
+            title: "生成中",
+            position: { x: 0, y: 0 },
+            width: 512,
+            height: 512,
+            metadata: {
+                status: "loading",
+                taskId: deletedTask.id,
+            },
+        };
+        let sleepCalls = 0;
+        let refreshCalls = 0;
+
+        await expect(
+            bindBackendCanvasGenerationResult({
+                canvasId: "canvas-bind-573",
+                nodeId: node.id,
+                task: deletedTask,
+                isCurrent: () => true,
+                nodesRef: { current: [node] },
+                setNodes: () => {},
+                runtime: {
+                    sleep: async () => {
+                        sleepCalls += 1;
+                    },
+                    refreshTask: async () => {
+                        refreshCalls += 1;
+                        return deletedTask;
+                    },
+                },
+            }),
+        ).rejects.toBeInstanceOf(CanvasGenerationMaterializationError);
+        expect(sleepCalls).toBe(0);
+        expect(refreshCalls).toBe(0);
     });
 
     test("ensureCanvasNodeAsset reuses existing backend generation asset instead of creating a duplicate Canvas copy", async () => {
@@ -135,9 +208,8 @@ describe("Bug 1 (#573): deleted assets stay hidden from generation history and a
         enterDesktopWailsMode();
 
         const taskId = "task-dedupe-573";
-        const effectKey = `materialize:${taskId}:0`;
-        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKey));
-        const canonicalId = `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+        const effectKey = materializeEffectKey(taskId, 0);
+        const canonicalId = await generationAssetId(effectKey);
 
         const backendGenAsset: Asset = {
             id: canonicalId,
@@ -202,6 +274,77 @@ describe("Bug 1 (#573): deleted assets stay hidden from generation history and a
             expect(result.assetId).toBe(canonicalId);
             expect(result.created).toBe(false);
             expect(putAssetIds.every((id) => id === canonicalId)).toBe(true);
+        } finally {
+            setActiveUserScope(prevScope);
+        }
+    });
+
+    test("ensureCanvasNodeAsset does not mint a duplicate Canvas asset when /assets/batch fails with transient 5xx", async () => {
+        const prevScope = getActiveUserScope();
+        setActiveUserScope("b3-batch-err-scope");
+        enterDesktopWailsMode();
+
+        const taskId = "task-batch-503";
+        const putAssetIds: string[] = [];
+        try {
+            const node: CanvasNodeData = {
+                id: "node-batch-503",
+                type: CanvasNodeType.Image,
+                title: "生成图",
+                position: { x: 0, y: 0 },
+                width: 512,
+                height: 512,
+                metadata: {
+                    content: "/api/resources/res-batch-503/file",
+                    storageKey: "resource:res-batch-503",
+                    taskId,
+                    taskOutputIndex: 0,
+                    status: "success",
+                },
+            };
+
+            await expect(
+                withAdapter(async (config) => {
+                    const method = String(config.method || "get").toUpperCase();
+                    const url = String(config.url || "");
+                    if (url.includes("/assets/batch")) {
+                        throw new ApiError("Service Unavailable", { status: 503 });
+                    }
+                    if (method === "PUT" && url.startsWith("/assets/")) {
+                        putAssetIds.push(url.replace("/assets/", ""));
+                    }
+                    return envelope({});
+                }, () => ensureCanvasNodeAsset({
+                    canvasId: "canvas-503",
+                    node,
+                    source: "canvas-generation",
+                    taskId,
+                })),
+            ).rejects.toThrow("Service Unavailable");
+
+            expect(putAssetIds).toEqual([]);
+            expect(useAssetStore.getState().assets).toEqual([]);
+
+            // When /assets/batch explicitly returns 404, creating a new asset is allowed.
+            const createdResult = await withAdapter(async (config) => {
+                const method = String(config.method || "get").toUpperCase();
+                const url = String(config.url || "");
+                if (url.includes("/assets/batch")) {
+                    throw new ApiError("Not Found", { status: 404 });
+                }
+                if (method === "PUT" && url.startsWith("/assets/")) {
+                    putAssetIds.push(url.replace("/assets/", ""));
+                    return envelope({ asset: { id: url.replace("/assets/", "") } });
+                }
+                return envelope({});
+            }, () => ensureCanvasNodeAsset({
+                canvasId: "canvas-503",
+                node,
+                source: "canvas-generation",
+                taskId,
+            }));
+            expect(createdResult.created).toBe(true);
+            expect(putAssetIds.length).toBe(1);
         } finally {
             setActiveUserScope(prevScope);
         }
