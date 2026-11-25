@@ -709,6 +709,7 @@ func CaptureTaskFailureDiagnostics(task *model.Task, err error, source string) {
 	var payload PayloadError
 	var appErr *kernel.AppError
 	var upload *ReferenceUploadError
+	var storagePrep ReferenceStoragePreparationError
 	var dns *outbound.DNSResolutionError
 	var download VideoDownloadError
 	var persist VideoPersistError
@@ -719,6 +720,14 @@ func CaptureTaskFailureDiagnostics(task *model.Task, err error, source string) {
 		d.Source, d.Stage, d.Summary = "reference_upload", upload.Meta.Label(), upload.Error()
 		d.FailedOperation, d.TransportPhase = "reference_"+upload.Meta.Stage, upload.TransportPhase
 		d.HTTPStatus, d.ProviderCode, d.RequestID = upload.HTTPStatus, upload.Code, upload.RequestID
+	case errors.As(err, &storagePrep):
+		d.Source, d.Stage = "reference_upload", "参考素材上传"
+		var rejection referencestorage.UploadRejectionError
+		if errors.As(storagePrep.Cause, &rejection) {
+			d.HTTPStatus, d.ProviderCode, d.Summary = rejection.StatusCode, rejection.Code, rejection.Error()
+		} else {
+			d.Summary = failure.UserMessage()
+		}
 	case errors.As(err, &dns):
 		d.Source, d.TransportPhase = "local_network", "dns"
 		d.Stage = "解析模型服务域名"

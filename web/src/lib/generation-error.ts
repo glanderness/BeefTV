@@ -1,5 +1,4 @@
 import { LocalImageUnavailableError } from "@/lib/local-image-unavailable";
-import { REFERENCE_PREPARATION_COPY, confirmedReferencePreparation, persistedReferencePreparation, resourceStorageFailureMessage } from "./generation-error-storage";
 import {
     allowlistedString,
     CATEGORY_COPY,
@@ -36,6 +35,7 @@ import {
     referenceAudioCopy,
     referenceDurationCopy,
     referenceMediaConstraintCopy,
+    resourceStorageFailureMessage,
     retryableCategory,
     sanitizeDebugId,
     sanitizeProviderCode,
@@ -136,14 +136,14 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
     const message = joinSentences(copy.reason, copy.action, debugIdLine(classified.taskId || context.taskId, classified.requestId || context.providerRequestId));
     const moderation = isModerationCategory(classified.category);
     const uncertain = classified.uncertain || classified.category === "submission_uncertain" || classified.category === "download_failed" || (classified.category === "timeout" && classified.status === 524);
-    const preparation = confirmedReferencePreparation(classified);
-    const blockAutomaticRetry = uncertain || moderation || preparation || Object.hasOwn(REFERENCE_PREPARATION_COPY, classified.providerCode || "") || !["throttled", "concurrency", "provider_unavailable", "cancelled", "request_not_sent"].includes(classified.category);
+    const preparation = !uncertain && classified.category === "reference_upload_failed";
+    const blockAutomaticRetry = uncertain || moderation || preparation || !["throttled", "concurrency", "provider_unavailable", "cancelled", "request_not_sent"].includes(classified.category);
     const rawSummary = providerPayloadMessage(error instanceof Error ? error.message : error);
     const sanitizedSummary = sanitizeProviderText(rawSummary);
     return {
         category: classified.category,
         httpStatus: classified.status,
-        summary: ["local_storage", "local_disk_full"].includes(classified.category) || Boolean(resourceStorageFailureMessage(rawSummary)) ? copy.reason : sanitizedSummary.includes("[已隐藏]") || sanitizedSummary.includes("[路径已隐藏]") || /[{}]/.test(sanitizedSummary) || UNSAFE_SLASH_PATH_PATTERN.test(sanitizedSummary) ? "" : sanitizedSummary,
+        summary: ["local_storage", "local_disk_full", "reference_upload_failed"].includes(classified.category) || Boolean(resourceStorageFailureMessage(rawSummary)) ? copy.reason : sanitizedSummary.includes("[已隐藏]") || sanitizedSummary.includes("[路径已隐藏]") || /[{}]/.test(sanitizedSummary) || UNSAFE_SLASH_PATH_PATTERN.test(sanitizedSummary) ? "" : sanitizedSummary,
         reason: copy.reason,
         action: copy.action,
         message: message || DEFAULT_GENERATION_ERROR_MESSAGE,
@@ -257,6 +257,7 @@ const LOCAL_ONLY_FAILURE_CATEGORIES: ReadonlySet<GenerationErrorCategory> = new 
     "local_storage",
     "local_disk_full",
     "local_credential",
+    "reference_upload_failed",
     "canvas_conflict",
     "result_apply_failed",
     "result_target_unavailable",
@@ -294,7 +295,7 @@ function cleanUpstreamCandidate(raw: string | undefined, explanation: Generation
     const combined = normalizeComparableText(`${explanation.reason}${explanation.action}`);
     if (normalized === reason || normalized === action || normalized === combined) return "";
     if (reason && normalized.startsWith(reason) && (!action || normalized.includes(action))) return "";
-    for (const copy of [LOCAL_TASK_ADMISSION_FAILURE, ...Object.values(CATEGORY_COPY), ...Object.values(REFERENCE_PREPARATION_COPY)]) {
+    for (const copy of [LOCAL_TASK_ADMISSION_FAILURE, ...Object.values(CATEGORY_COPY)]) {
         if (normalized === normalizeComparableText(copy.reason) || normalized === normalizeComparableText(`${copy.reason}${copy.action}`)) return "";
     }
     return cleaned;
@@ -315,7 +316,6 @@ export function formatUpstreamFailureDetail(explanation: GenerationFailureExplan
         rawCode &&
             !/^\d+$/.test(rawCode) &&
             !BACKEND_FAILURE_CATEGORIES.has(rawCode.toLowerCase()) &&
-            !Object.hasOwn(REFERENCE_PREPARATION_COPY, rawCode) &&
             !isGenericProviderCode(rawCode) &&
             !detail.toLowerCase().includes(rawCode.toLowerCase()),
     );
@@ -328,15 +328,16 @@ export function formatGenerationDiagnostics(explanation: GenerationFailureExplan
     const requestId = sanitizeDebugId(evidence?.requestId) || sanitizeDebugId(explanation.requestId);
     const model = sanitizeProviderCode(evidence?.input?.model || context.model || "");
     const createdAt = context.createdAt && /^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(context.createdAt) ? context.createdAt : "";
+    const preserveStorageCode = explanation.category === "reference_upload_failed";
     const lines = [
         "排查信息版本：3",
         ...supportDiagnosticIdentity(context, { appVersion: import.meta.env.VITE_APP_VERSION, buildCommit: import.meta.env.VITE_BUILD_COMMIT }),
-        `原因：${sanitizeProviderText(explanation.reason)}`,
-        explanation.action ? `下一步：${sanitizeProviderText(explanation.action)}` : "",
+        `原因：${sanitizeProviderText(explanation.reason, { preserveStorageCode })}`,
+        explanation.action ? `下一步：${sanitizeProviderText(explanation.action, { preserveStorageCode })}` : "",
         `类别：${explanation.category}`,
         explanation.category === "local_credential" ? `失败阶段：读取本地算力凭据${explanation.summary?.includes("尚未提交生成") ? "（尚未提交生成）" : ""}` : "",
-        `错误来源：${explanation.category === "local_credential" ? "本地算力连接" : explanation.category === "local_disk_full" ? "本地磁盘写入" : explanation.category === "local_storage" ? "本地任务存储" : ({ local_validation: "本地参数校验", local_network: "本地网络", upstream_http: "上游 HTTP 响应", upstream_response: "上游业务响应", local_result: "本地结果处理", local_response: "本地响应大小限制", reference_upload: "参考素材上传", client_result: "画布应用结果", unknown: "未记录" } as Record<string, string>)[evidence?.source || "unknown"] || "未记录"}`,
-        `错误摘要：${sanitizeProviderText(evidence?.summary || context.errorSummary || explanation.summary || "") || "未记录"}`,
+        `错误来源：${explanation.category === "local_credential" ? "本地算力连接" : explanation.category === "local_disk_full" ? "本地磁盘写入" : explanation.category === "local_storage" ? "本地任务存储" : explanation.category === "reference_upload_failed" && (!evidence?.source || evidence.source === "unknown") ? "参考素材上传" : ({ local_validation: "本地参数校验", local_network: "本地网络", upstream_http: "上游 HTTP 响应", upstream_response: "上游业务响应", local_result: "本地结果处理", local_response: "本地响应大小限制", reference_upload: "参考素材上传", client_result: "画布应用结果", unknown: "未记录" } as Record<string, string>)[evidence?.source || "unknown"] || "未记录"}`,
+        `错误摘要：${sanitizeProviderText(evidence?.summary || context.errorSummary || explanation.summary || "", { preserveStorageCode: preserveStorageCode || evidence?.source === "reference_upload" }) || "未记录"}`,
         evidence && ["upstream_http", "upstream_response", "reference_upload"].includes(evidence.source) && sanitizeProviderCode(evidence.providerCode || "") ? `${evidence.source === "reference_upload" ? "存储返回代码" : "上游代码"}：${sanitizeProviderCode(evidence.providerCode || "")}` : "",
         evidence?.httpStatus && Number.isInteger(evidence.httpStatus) && evidence.httpStatus >= 100 && evidence.httpStatus <= 599 ? `HTTP 状态：${evidence.httpStatus}` : "",
         !evidence?.httpStatus && explanation.httpStatus ? `HTTP 状态：${explanation.httpStatus}` : "",
@@ -470,18 +471,20 @@ const BACKEND_UNCERTAIN_CATEGORIES: ReadonlySet<string> = new Set(["submission_u
 function backendTaskFailure(record: Record<string, unknown>): Classified | undefined {
     const category = record.code;
     if (typeof category !== "string" || !BACKEND_FAILURE_CATEGORIES.has(category) || typeof record.message !== "string") return undefined;
+    if (record.status !== undefined || record.statusCode !== undefined || record.response !== undefined || record.data !== undefined || record.body !== undefined) {
+        return undefined;
+    }
     const text = record.message.trim();
     if (!text) return undefined;
     // 回传给后端的排查编号会被 explainGenerationError 重新拼上，这里先拆下来。
-    const preparation = category === "provider_unavailable" ? persistedReferencePreparation(text) : undefined;
-    if (preparation) return preparation;
     const debugMatch = text.match(/。排查编号：([^。]+)。?$/);
     const debug = debugMatch?.[1] || "";
     const [reason = "", ...action] = (debugMatch ? text.slice(0, debugMatch.index) : text).split("。").map((part) => part.trim()).filter(Boolean);
+    const preserveStorageCode = category === "reference_upload_failed";
     return {
         category: category as GenerationErrorCategory,
-        reason: sanitizeProviderText(reason) || undefined,
-        action: sanitizeProviderText(action.join("。")) || undefined,
+        reason: sanitizeProviderText(reason, { preserveStorageCode }) || undefined,
+        action: sanitizeProviderText(action.join("。"), { preserveStorageCode }) || undefined,
         requestId: sanitizeDebugId(allowlistedString(record.request_id) || allowlistedString(record.requestId)) || sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
         taskId: sanitizeDebugId(allowlistedString(record.task_id) || allowlistedString(record.taskId)) || sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})(?: · |$)/)?.[1]),
         fromCode: true,
@@ -492,7 +495,7 @@ function backendTaskFailure(record: Record<string, unknown>): Classified | undef
 
 function classifyHttp(status: number | undefined, body: unknown): Classified {
     const text = typeof body === "string" ? body : providerPayloadMessage(body) || (body && typeof body === "object" ? JSON.stringify(body) : "");
-    if (persistedReferencePreparation(text)) return { category: "submission_uncertain", status, uncertain: true, retryable: false };
+    if (text.includes("本次尚未开始生成")) return { category: "submission_uncertain", status, uncertain: true, retryable: false };
     let classified = classifyText(text || (body && typeof body === "object" ? stringifyAllowlisted(body) : ""));
     if (body && typeof body === "object") {
         const fromObject = classifyText(stringifyAllowlisted(body));
@@ -575,8 +578,6 @@ function classifyText(raw: string): Classified {
         if (status) return classifyHttp(status, "");
         return { category: "malformed_response", retryable: false };
     }
-    const preparation = persistedReferencePreparation(text);
-    if (preparation) return preparation;
     const storage = resourceStorageFailureMessage(text);
     if (storage) {
         const debug = text.match(/。排查编号：([^。]+)。?$/)?.[1] || "";

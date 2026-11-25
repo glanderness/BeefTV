@@ -15,7 +15,7 @@ const preparationMessages = [
 ] as const;
 
 function task(error: string, stage = "准备参考素材"): GenerationTask {
-    return { id: "task-reference", type: "canvas_image", status: "failed", errorCode: "provider_unavailable", error, stage, attempts: 1, createdAt: "2026-10-17T10:00:00Z", updatedAt: "2026-10-17T10:00:01Z" };
+    return { id: "task-reference", type: "canvas_image", status: "failed", errorCode: "reference_upload_failed", error, stage, attempts: 1, createdAt: "2026-10-17T10:00:00Z", updatedAt: "2026-10-17T10:00:01Z" };
 }
 
 function creation(error: string, generationStage?: string, generationErrorCode?: string) {
@@ -27,10 +27,9 @@ function creation(error: string, generationStage?: string, generationErrorCode?:
 
 test("local runtime preserves confirmed preparation copy and offers only manual retry", () => {
     for (const [code, message] of preparationMessages) {
-        const structured = { code: "provider_unavailable", message };
+        const structured = { code: "reference_upload_failed", message };
         const explanation = explainGenerationError(structured);
-        expect(explanation.providerCode).toBe(code);
-        expect(explanation.category).toBe("provider_unavailable");
+        expect(explanation.category).toBe("reference_upload_failed");
         expect(explanation.message).toBe(message);
         expect(explanation.retryable).toBe(false);
         expect(explanation.uncertain).toBe(false);
@@ -39,7 +38,7 @@ test("local runtime preserves confirmed preparation copy and offers only manual 
         expect(isTaskRegenerateBlocked(task(message))).toBe(false);
         const notice = renderToStaticMarkup(<GenerationFailureNotice explanation={explanation} onRetry={() => {}} />);
         expect(notice).toContain("重新生成");
-        const html = creation(message, undefined, "provider_unavailable");
+        const html = creation(message, undefined, "reference_upload_failed");
         expect(html).toContain("本次尚未开始生成");
         expect(html).toContain("重新生成");
         expect(html).not.toContain("本地资源目录");
@@ -49,9 +48,9 @@ test("local runtime preserves confirmed preparation copy and offers only manual 
 
 test("unknown stage overrides later preparation text in creation and task center", () => {
     for (const [, message] of preparationMessages) {
-        expect(explainGenerationError({ code: "provider_unavailable", message }, { stage: "submission_unknown" }).blockManualRetry).toBe(true);
+        expect(explainGenerationError({ code: "reference_upload_failed", message }, { stage: "submission_unknown" }).blockManualRetry).toBe(true);
         expect(isTaskRegenerateBlocked(task(message, "submission_unknown"))).toBe(true);
-        const html = creation(message, "submission_unknown", "provider_unavailable");
+        const html = creation(message, "submission_unknown", "reference_upload_failed");
         expect(html).toContain("提交结果尚未确认");
         expect(html).not.toContain("本次尚未开始生成");
         expect(html).not.toContain("重新生成");
@@ -75,7 +74,7 @@ test("untrusted HTTP echoes and upload short messages do not grant manual retry"
 
 test("manual canvas and batch retry keep preparation distinct from unknown submission", () => {
     for (const [, message] of preparationMessages) {
-        const node: CanvasNodeData = { id: "prepared", type: CanvasNodeType.Image, title: "镜头", width: 320, height: 180, position: { x: 0, y: 0 }, metadata: { status: "error", generationErrorCode: "provider_unavailable", errorDetails: message } };
+        const node: CanvasNodeData = { id: "prepared", type: CanvasNodeType.Image, title: "镜头", width: 320, height: 180, position: { x: 0, y: 0 }, metadata: { status: "error", generationErrorCode: "reference_upload_failed", errorDetails: message } };
         const unknown = { ...node, id: "unknown", metadata: { ...node.metadata, taskStage: "submission_unknown" } };
         expect(isNodeRegenerateBlocked(node.metadata)).toBe(false);
         expect(isNodeRegenerateBlocked(unknown.metadata)).toBe(true);

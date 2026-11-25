@@ -29,37 +29,27 @@ test("local runtime preserves remote upload, object storage, and HTTP 403 causes
     expect(generationErrorMessage("腾讯云 COS 上传失败：i/o timeout")).toBe("参考素材上传失败，请检查网络连接或对象存储配置后重试");
     expect(generationErrorMessage("S3 upload failed: connection reset")).toBe("参考素材上传失败，请检查网络连接或对象存储配置后重试");
 
-    for (const [denied, expected] of [
-        [
-            "对象存储拒绝上传（HTTP 403），请检查区域、密钥和存储桶权限",
-            "对象存储拒绝上传（HTTP 403），请检查访问密钥、存储桶名称（腾讯云 COS 须含 -APPID）、区域及存储桶/子账号写入权限",
-        ],
-        [
-            "参考图片上传失败：HTTP 403 SignatureDoesNotMatch",
-            "对象存储签名校验失败（HTTP 403，SignatureDoesNotMatch），请检查 Secret Access Key、区域代码（如 ap-guangzhou / auto）及本机系统时间后重试",
-        ],
-        [
-            "OSS 上传失败：AccessDenied",
-            "对象存储拒绝上传（HTTP 403，AccessDenied），请检查存储桶访问权限（推荐公有读私有写）以及子账号/CAM 是否具备写入与删除权限",
-        ],
-        [
-            new ApiError("对象存储拒绝上传（HTTP 403），请检查区域、密钥和存储桶权限", { status: 403 }),
-            "对象存储拒绝上传（HTTP 403），请检查访问密钥、存储桶名称（腾讯云 COS 须含 -APPID）、区域及存储桶/子账号写入权限",
-        ],
-        [
-            new ApiError("参考图片上传失败：HTTP 403 SignatureDoesNotMatch", { status: 403 }),
-            "对象存储签名校验失败（HTTP 403，SignatureDoesNotMatch），请检查 Secret Access Key、区域代码（如 ap-guangzhou / auto）及本机系统时间后重试",
-        ],
-        [
-            new ApiError("对象存储拒绝上传", { status: 403, reason: "reference_upload_forbidden" }),
-            "参考素材上传被拒绝（HTTP 403），请检查对象存储密钥和存储桶权限后重试",
-        ],
-    ] as const) {
+    for (const denied of [
+        "对象存储拒绝上传（HTTP 403），请检查区域、密钥和存储桶权限",
+        "参考图片上传失败：HTTP 403 SignatureDoesNotMatch",
+        "OSS 上传失败：AccessDenied",
+        new ApiError("对象存储拒绝上传（HTTP 403），请检查区域、密钥和存储桶权限", { status: 403 }),
+        new ApiError("参考图片上传失败：HTTP 403 SignatureDoesNotMatch", { status: 403 }),
+        new ApiError("对象存储拒绝上传", { status: 403, reason: "reference_upload_forbidden" }),
+    ]) {
         const msg = generationErrorMessage(denied);
-        expect(msg).toBe(expected);
+        expect(msg).toBe("参考素材上传被拒绝（HTTP 403），请检查对象存储密钥和存储桶权限后重试");
         expect(msg).not.toContain("本地参考素材保存失败");
         expect(msg).not.toContain("没有使用该模型的权限");
     }
+
+    // Backend-authored storage failures tagged with reference_upload_failed preserve code-specific hints verbatim.
+    expect(
+        generationErrorMessage({
+            code: "reference_upload_failed",
+            message: "对象存储签名校验失败（HTTP 403，SignatureDoesNotMatch），本次尚未开始生成。请检查 Secret Access Key、区域代码（如 ap-guangzhou / auto）及本机系统时间后重试。",
+        }),
+    ).toBe("对象存储签名校验失败（HTTP 403，SignatureDoesNotMatch），本次尚未开始生成。请检查 Secret Access Key、区域代码（如 ap-guangzhou / auto）及本机系统时间后重试。");
 
     for (const unreadable of [
         "素材已上传，但公网地址不可读取（HTTP 403），请检查公开读取设置",

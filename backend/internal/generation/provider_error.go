@@ -37,8 +37,9 @@ const (
 	CategoryModelMissing        FailureCategory = "model_missing"
 	CategoryThrottled           FailureCategory = "throttled"
 	CategoryConcurrency         FailureCategory = "concurrency"
-	CategoryProviderUnavailable FailureCategory = "provider_unavailable"
-	CategoryNetwork             FailureCategory = "network"
+	CategoryProviderUnavailable        FailureCategory = "provider_unavailable"
+	CategoryReferenceUploadFailed      FailureCategory = "reference_upload_failed"
+	CategoryNetwork                    FailureCategory = "network"
 	CategoryRequestNotSent      FailureCategory = "request_not_sent"
 	CategoryTimeout             FailureCategory = "timeout"
 	CategorySubmissionUncertain FailureCategory = "submission_uncertain"
@@ -97,8 +98,9 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryModelMissing:        {Reason: "当前模型或接口不可用", Action: "请检查模型名称和渠道配置"},
 	CategoryThrottled:           {Reason: "请求过于频繁", Action: "请稍后再试"},
 	CategoryConcurrency:         {Reason: "同时进行的生成过多", Action: "请等待已有任务完成后再试"},
-	CategoryProviderUnavailable: {Reason: "模型服务暂时不可用", Action: "请稍后重试"},
-	CategoryNetwork:             {Reason: "网络连接失败", Action: "请检查网络并核对原任务状态后，再决定是否重新生成"},
+	CategoryProviderUnavailable:        {Reason: "模型服务暂时不可用", Action: "请稍后重试"},
+	CategoryReferenceUploadFailed: {Reason: "参考素材上传失败，本次尚未开始生成", Action: "请检查对象存储配置和公开读取权限后重试"},
+	CategoryNetwork:                    {Reason: "网络连接失败", Action: "请检查网络并核对原任务状态后，再决定是否重新生成"},
 	CategoryRequestNotSent:      {Reason: "未能连接服务，本次请求尚未提交", Action: "请检查网络或代理后重试"},
 	CategoryTimeout:             {Reason: "模型服务响应超时", Action: "请稍后查询原任务，不要立即重新提交"},
 	CategorySubmissionUncertain: {Reason: "提交结果尚未确认，上游任务可能仍在执行", Action: "请先查询原任务状态，不要立即重新提交"},
@@ -148,8 +150,7 @@ func (f Failure) IsModeration() bool {
 }
 
 func (f Failure) BlocksAutomaticRetry() bool {
-	_, preparation := referencePreparationCopies[f.ProviderCode]
-	if f.Uncertain || preparation {
+	if f.Uncertain {
 		return true
 	}
 	switch f.Category {
@@ -158,6 +159,15 @@ func (f Failure) BlocksAutomaticRetry() bool {
 	default:
 		return true
 	}
+}
+
+// Manual retry is a deliberate new submission; pre-submission reference upload
+// failures never authorize the automatic loop to resend, but allow manual retry.
+func (f Failure) BlocksManualRetry() bool {
+	if !f.Uncertain && f.Category == CategoryReferenceUploadFailed {
+		return false
+	}
+	return f.BlocksAutomaticRetry()
 }
 
 func (f Failure) displayCopy() (string, string) {
@@ -217,7 +227,7 @@ func (e PayloadError) Error() string {
 
 func ClassifyHTTP(status int, statusText string, body string) Failure {
 	fields := extractProviderFields(body)
-	if _, persisted := persistedReferencePreparationFailure(firstNonEmpty(fields.Message, body)); persisted {
+	if strings.Contains(firstNonEmpty(fields.Message, body), "本次尚未开始生成") {
 		// Only the typed transport boundary may attest an unsent request. A
 		// provider response cannot grant that proof by echoing our saved copy.
 		return normalizeFailure(Failure{Category: CategorySubmissionUncertain, HTTPStatus: status, ProviderCode: sanitizeProviderCode(fields.Code)})
@@ -352,9 +362,14 @@ func ClassifyError(err error) Failure {
 			}
 			return failure
 		}
-		copy := referencePreparationCopies["reference_preupload_failed"]
-		failure := normalizeFailure(Failure{Category: CategoryProviderUnavailable, ProviderCode: "reference_preupload_failed",
-			Reason: copy.reason, Action: copy.action, HTTPStatus: referenceUpload.HTTPStatus, RequestID: referenceUpload.RequestID})
+		failure := normalizeFailure(Failure{
+			Category:     CategoryReferenceUploadFailed,
+			ProviderCode: "reference_preupload_failed",
+			Reason:       "参考素材上传失败，本次尚未开始生成",
+			Action:       "请检查网络或稍后重试",
+			HTTPStatus:   referenceUpload.HTTPStatus,
+			RequestID:    referenceUpload.RequestID,
+		})
 		failure.Retryable = false
 		return failure
 	}
@@ -377,13 +392,13 @@ func ClassifyError(err error) Failure {
 					}
 				}
 			}
-			failure := normalizeFailure(Failure{Category: CategoryProviderUnavailable, ProviderCode: "reference_media_upload_failed", Reason: reason, Action: action})
+			failure := normalizeFailure(Failure{Category: CategoryReferenceUploadFailed, ProviderCode: "reference_media_upload_failed", Reason: reason, Action: action})
 			failure.Retryable = false
 			return failure
 		}
 		failure := classifyHTTPErrorCause(preparation.Cause)
 		if failure.ProviderCode == "image_reference_upload_failed" {
-			failure.Category = CategoryProviderUnavailable
+			failure.Category = CategoryReferenceUploadFailed
 			failure.Uncertain = false
 			failure.Reason = "参考图片上传失败，本次尚未开始生成"
 			failure.Action = "请稍后重试"
@@ -396,7 +411,7 @@ func ClassifyError(err error) Failure {
 		}
 		return normalizeFailure(Failure{Category: CategoryInputInaccessible, Reason: "本次请求在准备时失败，未发送到模型服务", Action: "请检查参考素材和生成参数后重试"})
 	}
-	if _, echoed := persistedReferencePreparationFailure(err.Error()); echoed {
+	if strings.Contains(err.Error(), "本次尚未开始生成") {
 		return normalizeFailure(Failure{Category: CategorySubmissionUncertain})
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -444,7 +459,7 @@ func ClassifyError(err error) Failure {
 	if errors.As(err, &payload) {
 		raw := firstNonEmpty(payload.raw, payload.message)
 		fields := extractProviderFields(raw)
-		if _, echoed := persistedReferencePreparationFailure(firstNonEmpty(fields.Message, raw)); echoed {
+		if strings.Contains(firstNonEmpty(fields.Message, raw), "本次尚未开始生成") {
 			return normalizeFailure(Failure{Category: CategorySubmissionUncertain})
 		}
 		failure := ClassifyText(raw)
@@ -487,9 +502,6 @@ func managedFailureCategory(managed *beeftv.MediaTaskError) FailureCategory {
 }
 
 func ClassifyText(raw string) Failure {
-	if failure, ok := persistedReferencePreparationFailure(raw); ok {
-		return failure
-	}
 	if copy, ok := persistedTaskConstraintCopy(raw); ok {
 		requestID, taskID := persistedReferenceIDs(raw)
 		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID, FromCode: true})

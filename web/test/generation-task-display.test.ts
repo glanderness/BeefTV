@@ -107,7 +107,7 @@ test("cancelled image with unconfirmed result does not claim recovery is running
     expect(taskCenterRetryRequiresNewSubmission({ ...allowedVideoBase, stage: "请求尚未提交", errorCode: "quota_user" })).toBe(false);
     expect(taskCenterRetryRequiresNewSubmission({
         ...allowedVideoBase,
-        errorCode: "provider_unavailable",
+        errorCode: "reference_upload_failed",
         error: "参考素材上传失败，本次尚未开始生成。请检查网络或稍后重试。",
     })).toBe(false);
 });

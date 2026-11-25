@@ -281,7 +281,7 @@ func TestManagedMediaUpload5xxAndPutFailuresStayNonPaidPreupload(t *testing.T) {
 				t.Fatalf("put_500 did not surface PUT-stage 500 error: attempts=%d meta=%+v status=%d", putAttempts, uploadErr.Meta, uploadErr.HTTPStatus)
 			}
 			failure := ClassifyError(err)
-			if failure.Category != CategoryProviderUnavailable || failure.Uncertain || failure.ProviderCode != "reference_preupload_failed" || !failure.BlocksAutomaticRetry() || failure.BlocksManualRetry() {
+			if failure.Category != CategoryReferenceUploadFailed || failure.Uncertain || failure.ProviderCode != "reference_preupload_failed" || !failure.BlocksAutomaticRetry() || failure.BlocksManualRetry() {
 				t.Fatalf("unexpected preupload failure classification: %+v", failure)
 			}
 		})

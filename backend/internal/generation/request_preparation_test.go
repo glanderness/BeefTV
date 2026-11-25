@@ -16,6 +16,7 @@ import (
 	"infinite-canvas/backend/internal/beeftv"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/mediatools"
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/referencestorage"
 )
@@ -250,6 +251,7 @@ func TestReferenceStorageRejectionPreservesAllowlistedCOSDiagnostic(t *testing.T
 		{400, "AuthorizationHeaderMalformed"},
 		{301, "PermanentRedirect"},
 		{403, ""},
+		{500, ""},
 	}
 	for _, tc := range cases {
 		reason, action := referencestorage.SafeStorageRejectionCopy(tc.status, tc.code)
@@ -259,8 +261,9 @@ func TestReferenceStorageRejectionPreservesAllowlistedCOSDiagnostic(t *testing.T
 			Reason:     reason,
 			Action:     action,
 		}
-		classified := ClassifyError(RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: cause}})
-		if classified.Category != CategoryProviderUnavailable || classified.ProviderCode != "reference_media_upload_failed" || classified.Uncertain || classified.Retryable {
+		err := RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: cause}}
+		classified := ClassifyError(err)
+		if classified.Category != CategoryReferenceUploadFailed || classified.ErrorCode() != "reference_upload_failed" || classified.ProviderCode != "reference_media_upload_failed" || classified.Uncertain || classified.Retryable {
 			t.Fatalf("status=%d code=%s unexpected storage classification: %#v", tc.status, tc.code, classified)
 		}
 		if classified.BlocksManualRetry() || !classified.BlocksAutomaticRetry() {
@@ -273,13 +276,20 @@ func TestReferenceStorageRejectionPreservesAllowlistedCOSDiagnostic(t *testing.T
 		if !strings.Contains(msg, "本次尚未开始生成") {
 			t.Fatalf("expected unsent marker in %q", msg)
 		}
-		// Persisted task.Error restored via ClassifyText (used by assistantturns/task_binding)
-		// must preserve manual-retry allowance and non-uncertain state.
-		restored := ClassifyText(msg)
-		if restored.ProviderCode != "reference_media_upload_failed" || restored.Uncertain || restored.BlocksManualRetry() || !restored.BlocksAutomaticRetry() {
-			t.Fatalf("status=%d code=%s ClassifyText(%q) failed to restore manual retry: %#v", tc.status, tc.code, msg, restored)
+		// Persisted structured error_code restores manual-retry allowance without reverse-parsing Chinese copy.
+		restored := PersistedFailure(msg, classified.ErrorCode())
+		if restored.Category != CategoryReferenceUploadFailed || restored.Uncertain || restored.BlocksManualRetry() || !restored.BlocksAutomaticRetry() {
+			t.Fatalf("status=%d code=%s PersistedFailure(%q) failed to restore manual retry: %#v", tc.status, tc.code, msg, restored)
 		}
-		// Upstream HTTP responses echoing our copy must still be rejected as uncertain.
+		if PersistedFailureBlocksRetry(msg, "任务失败", classified.ErrorCode()) {
+			t.Fatalf("status=%d code=%s PersistedFailureBlocksRetry unexpectedly blocked manual retry", tc.status, tc.code)
+		}
+		task := &model.Task{Stage: "准备参考素材"}
+		CaptureTaskFailureDiagnostics(task, err, "unknown")
+		if task.FailureDiagnostics == nil || task.FailureDiagnostics.Source != "reference_upload" || task.FailureDiagnostics.HTTPStatus != tc.status || task.FailureDiagnostics.ProviderCode != tc.code {
+			t.Fatalf("status=%d code=%s diagnostics = %+v", tc.status, tc.code, task.FailureDiagnostics)
+		}
+		// Upstream HTTP responses echoing our copy or error code must still be rejected as uncertain.
 		echoed := ClassifyError(UncertainVideoSubmission(context.Background(), HTTPError{StatusCode: tc.status, Body: msg}))
 		if !echoed.Uncertain || !echoed.BlocksManualRetry() {
 			t.Fatalf("status=%d code=%s echoed HTTP copy must remain uncertain: %#v", tc.status, tc.code, echoed)

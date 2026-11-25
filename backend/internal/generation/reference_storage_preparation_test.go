@@ -33,7 +33,7 @@ func TestReferenceStorageFailureProvesNoModelSubmission(t *testing.T) {
 				t.Fatalf("lost preparation evidence: %v", err)
 			}
 			failure := ClassifyError(err)
-			if failure.Category != CategoryProviderUnavailable || failure.ProviderCode != "reference_media_upload_failed" || failure.Uncertain || failure.Retryable {
+			if failure.Category != CategoryReferenceUploadFailed || failure.ProviderCode != "reference_media_upload_failed" || failure.Uncertain || failure.Retryable {
 				t.Fatalf("storage failure became provider rejection or unknown submission: %#v", failure)
 			}
 			message := failure.UserMessage()

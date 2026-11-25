@@ -122,7 +122,10 @@ func provablyNotSubmitted(task model.Task, facts OutcomeFacts) bool {
 	case "accepted", "submission_unknown":
 		return false
 	}
-	return facts.RequestNotSent
+	if facts.RequestNotSent {
+		return true
+	}
+	return task.ErrorCode == "reference_upload_failed" && task.Stage != "submission_unknown" && !facts.HasImageReceipt
 }
 
 var arkPolicyRejectedCodePattern = regexp.MustCompile(

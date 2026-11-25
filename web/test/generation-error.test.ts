@@ -1,9 +1,7 @@
 import referenceVideoErrors from "./fixtures/reference-video-errors.json";
-import safeStorageErrorsContract from "../../backend/internal/referencestorage/safe_storage_errors.json";
 import { describe, expect, test } from "bun:test";
 import { ApiError } from "../src/services/api/request";
 import { redactLocalPaths } from "../src/lib/local-path-redaction";
-import { matchOwnedStorageRejectionCopy, SAFE_STORAGE_REJECTION_CODES, safeStorageRejectionCopy } from "../src/lib/generation-error-storage";
 
 test("reference transport admission identifies blocked inputs and survives persisted display", () => {
     const message = "当前渠道需要在线素材链接：参考图片 2、参考视频 1无法直接读取。请替换为可访问的 HTTPS 链接，或切换支持本地素材的渠道";
@@ -289,6 +287,7 @@ test("gateway JSON suffix retains reference duration advice and request id", () 
 import {
     explainGenerationError,
     formatGenerationDiagnostics,
+    formatUpstreamFailureDetail,
     generationErrorMessage,
     generationFailureMetadata,
     generationInputFingerprint,
@@ -580,7 +579,7 @@ describe("generation error classification", () => {
     });
 
     test("reference upload diagnostics identify storage and the failing asset", () => {
-        const failure = explainGenerationError({ code: "provider_unavailable", message: "参考素材上传失败，本次尚未开始生成。请检查网络或稍后重试。" });
+        const failure = explainGenerationError({ code: "reference_upload_failed", message: "参考素材上传失败，本次尚未开始生成。请检查网络或稍后重试。" });
         expect(failure.blockAutomaticRetry).toBe(true);
         expect(failure.blockManualRetry).toBe(false);
         const text = formatGenerationDiagnostics(failure, { failureDiagnostics: {
@@ -604,7 +603,7 @@ describe("generation error classification", () => {
     });
 
     test("copied reference failure keeps DNS stage and recovery attempt", () => {
-        const text = formatGenerationDiagnostics(explainGenerationError({ code: "provider_unavailable", message: "参考素材上传失败，本次尚未开始生成。请检查网络或稍后重试。" }), { failureDiagnostics: {
+        const text = formatGenerationDiagnostics(explainGenerationError({ code: "reference_upload_failed", message: "参考素材上传失败，本次尚未开始生成。请检查网络或稍后重试。" }), { failureDiagnostics: {
             source: "reference_upload", requests: [{ operation: "reference_put", method: "PUT", dispatched: false, outcome: "not_dispatched", transportPhase: "dns", transportRoute: "direct", startedAt: "2026-10-22T03:00:00Z", durationMs: 123, summary: "参考图 1 上传文件（第 3 次）失败：域名解析失败" }],
         } });
         expect(text).toContain("阶段=DNS 解析");
@@ -832,7 +831,7 @@ test("lookbehind-free credential and local path redaction preserves exact bounda
     );
 });
 
-test("explains all allowlisted COS/S3 rejection codes intact across structured and text paths", () => {
+test("explains backend structured S3/COS storage rejection codes intact without leaking credentials", () => {
     const cases: Array<{ status: string; code: string; backendMessage: string; expectedHint: string }> = [
         {
             status: "403",
@@ -882,29 +881,46 @@ test("explains all allowlisted COS/S3 rejection codes intact across structured a
             backendMessage: "对象存储区域或端点不匹配（HTTP 301，PermanentRedirect），本次尚未开始生成。请核对 S3 端点与区域代码是否一致后重试。",
             expectedHint: "端点与区域代码",
         },
+        {
+            status: "403",
+            code: "",
+            backendMessage: "对象存储拒绝上传（HTTP 403），本次尚未开始生成。请检查访问密钥、存储桶名称（腾讯云 COS 须含 -APPID）、区域及存储桶/子账号写入权限。",
+            expectedHint: "-APPID",
+        },
+        {
+            status: "500",
+            code: "",
+            backendMessage: "对象存储拒绝上传（HTTP 500），本次尚未开始生成。请检查对象存储端点、区域、访问密钥与存储桶权限后重试。",
+            expectedHint: "对象存储端点",
+        },
     ];
 
     for (const tc of cases) {
-        // Structured backend task failure path (goes through persistedReferencePreparation / sanitizeProviderText).
-        const structured = explainGenerationError({ code: "provider_unavailable", message: tc.backendMessage });
-        expect(structured.message).toContain(tc.code);
+        // Structured backend task failure path trusts backend-persisted reference_upload_failed code directly.
+        const structured = explainGenerationError({ code: "reference_upload_failed", message: tc.backendMessage });
+        expect(structured.category).toBe("reference_upload_failed");
+        if (tc.code) expect(structured.message).toContain(tc.code);
         expect(structured.message).toContain(`HTTP ${tc.status}`);
         expect(structured.message).toContain(tc.expectedHint);
         expect(structured.message).not.toContain("参考素材已上传，但公网地址无法读取");
         expect(structured.uncertain).toBe(false);
+        expect(structured.blockAutomaticRetry).toBe(true);
         expect(structured.blockManualRetry).toBe(false);
+        expect(formatUpstreamFailureDetail(structured)).toBe("");
 
-        // Plain-text classification path (routes persisted owned copy cleanly with identical manual-retry semantics).
-        const fromText = explainGenerationError(tc.backendMessage);
-        expect(fromText.message).toContain(tc.code);
-        expect(fromText.message).toContain(`HTTP ${tc.status}`);
-        expect(fromText.message).toContain(tc.expectedHint);
-        expect(fromText.message).not.toContain("参考素材已上传，但公网地址无法读取");
-        expect(fromText.blockManualRetry).toBe(false);
+        // Copied diagnostics also preserve allowlisted S3/COS codes cleanly.
+        const diagnostics = formatGenerationDiagnostics(structured);
+        if (tc.code) expect(diagnostics).toContain(tc.code);
+        expect(diagnostics).toContain("错误来源：参考素材上传");
+
+        // Untrusted upstream HTTP response echoing code or copy stays submission_uncertain.
+        const echoed = explainGenerationError({ status: Number(tc.status), data: { error: { code: "reference_upload_failed", message: tc.backendMessage } } });
+        expect(echoed.uncertain).toBe(true);
+        expect(echoed.blockManualRetry).toBe(true);
     }
 
-    // Generic persisted reference_media_upload_failed copy must NOT be misclassified as post-upload public-read failure.
-    const genericPersisted = explainGenerationError("参考素材上传失败，本次尚未开始生成。请检查对象存储配置和公开读取权限后重试。");
+    // Generic persisted reference_upload_failed copy must NOT be misclassified as post-upload public-read failure.
+    const genericPersisted = explainGenerationError({ code: "reference_upload_failed", message: "参考素材上传失败，本次尚未开始生成。请检查对象存储配置和公开读取权限后重试。" });
     expect(genericPersisted.message).toContain("参考素材上传失败，本次尚未开始生成");
     expect(genericPersisted.message).not.toContain("参考素材已上传，但公网地址无法读取");
     expect(genericPersisted.blockManualRetry).toBe(false);
@@ -913,33 +929,15 @@ test("explains all allowlisted COS/S3 rejection codes intact across structured a
     const publicRead = explainGenerationError("素材已上传，但公网地址不可读取（HTTP 403，AccessDenied），请检查公开读取设置");
     expect(publicRead.message).toContain("参考素材已上传，但公网地址无法读取");
 
-    // Credential tail redaction after InvalidAccessKeyId: / InvalidAccessKeyId= must NOT leak secrets.
-    const leakedColon = explainGenerationError({ code: "provider_unavailable", message: "InvalidAccessKeyId: AKIAIOSFODNN7EXAMPLE" });
-    expect(leakedColon.message).not.toContain("AKIAIOSFODNN7EXAMPLE");
-    const leakedEquals = explainGenerationError({ code: "provider_unavailable", message: "InvalidAccessKeyId=AKIAIOSFODNN7EXAMPLE" });
-    expect(leakedEquals.message).not.toContain("AKIAIOSFODNN7EXAMPLE");
-});
-
-test("TS safe storage rejection allowlist and copy stay in exact parity with Go contract", () => {
-    const goCodes = Object.keys(safeStorageErrorsContract.codes).sort();
-    expect([...SAFE_STORAGE_REJECTION_CODES].sort()).toEqual(goCodes);
-
-    for (const [code, spec] of Object.entries(safeStorageErrorsContract.codes)) {
-        const status = code === "PermanentRedirect" ? "301" : code === "NoSuchBucket" ? "404" : "403";
-        const expectedReason = `${spec.reason.replaceAll("{status}", status)}，本次尚未开始生成`;
-        const tsCopy = safeStorageRejectionCopy(status, code);
-        expect(tsCopy.reason).toBe(expectedReason);
-        expect(tsCopy.action).toBe(spec.action);
-        expect(matchOwnedStorageRejectionCopy(expectedReason, spec.action)).toEqual(tsCopy);
+    // Credential tail, URL, and token redaction must NOT leak secrets even under reference_upload_failed.
+    for (const code of ["provider_unavailable", "reference_upload_failed"] as const) {
+        const leakedColon = explainGenerationError({ code, message: "InvalidAccessKeyId: AKIAIOSFODNN7EXAMPLE" });
+        expect(leakedColon.message).not.toContain("AKIAIOSFODNN7EXAMPLE");
+        const leakedEquals = explainGenerationError({ code, message: "InvalidAccessKeyId=AKIAIOSFODNN7EXAMPLE" });
+        expect(leakedEquals.message).not.toContain("AKIAIOSFODNN7EXAMPLE");
+        const leakedUrl = explainGenerationError({ code, message: "对象存储上传失败 https://bucket.cos.ap-guangzhou.myqcloud.com/a?X-Amz-Signature=SECRET_SIG sk-1234567890abcdef" });
+        expect(leakedUrl.message).not.toContain("SECRET_SIG");
+        expect(leakedUrl.message).not.toContain("sk-1234567890abcdef");
+        expect(leakedUrl.message).not.toContain("myqcloud.com");
     }
-
-    const fallback403 = safeStorageRejectionCopy("403", "");
-    expect(fallback403.reason).toBe(`${safeStorageErrorsContract.fallback403.reason}，本次尚未开始生成`);
-    expect(fallback403.action).toBe(safeStorageErrorsContract.fallback403.action);
-    expect(matchOwnedStorageRejectionCopy(fallback403.reason, fallback403.action)).toEqual(fallback403);
-
-    const fallback500 = safeStorageRejectionCopy("500", "");
-    expect(fallback500.reason).toBe(`${safeStorageErrorsContract.fallbackDefault.reason.replaceAll("{status}", "500")}，本次尚未开始生成`);
-    expect(fallback500.action).toBe(safeStorageErrorsContract.fallbackDefault.action);
-    expect(matchOwnedStorageRejectionCopy(fallback500.reason, fallback500.action)).toEqual(fallback500);
 });

@@ -524,7 +524,7 @@ func matchPersistedCategory(text string) FailureCategory {
 		return CategoryInvalidParams
 	}
 	for category, copyText := range categoryCopies {
-		if category == CategoryUnknown {
+		if category == CategoryUnknown || category == CategoryReferenceUploadFailed {
 			continue
 		}
 		if strings.HasPrefix(text, copyText.Reason) {

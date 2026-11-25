@@ -185,9 +185,10 @@ var providerCodeCategories = map[string]FailureCategory{
 	"pre_consume_token_quota_failed":       CategoryUnknown,
 	"upstream_crowded":                     CategoryThrottled,
 	"upstream_unavailable":                 CategoryProviderUnavailable,
-	"image_reference_upload_failed":        CategoryProviderUnavailable,
-	"reference_media_upload_failed":        CategoryProviderUnavailable,
-	"reference_preupload_failed":           CategoryProviderUnavailable,
+	"image_reference_upload_failed":        CategorySubmissionUncertain,
+	"reference_media_upload_failed":        CategorySubmissionUncertain,
+	"reference_preupload_failed":           CategorySubmissionUncertain,
+	"reference_upload_failed":              CategorySubmissionUncertain,
 	"reference_unavailable":                CategoryInputInaccessible,
 	"upscale_unavailable":                  CategoryProviderUnavailable,
 	"fal_billing_unavailable":              CategoryProviderUnavailable,
@@ -402,11 +403,11 @@ func categoryFromProviderCode(values ...string) (FailureCategory, bool) {
 		if normalized == "" || normalized == "0" || normalized == "success" || normalized == "succeeded" || normalized == "ok" {
 			continue
 		}
-		if _, ok := categoryCopies[FailureCategory(normalized)]; ok {
-			return FailureCategory(normalized), true
-		}
 		if category, ok := providerCodeCategories[normalized]; ok {
 			return category, true
+		}
+		if _, ok := categoryCopies[FailureCategory(normalized)]; ok {
+			return FailureCategory(normalized), true
 		}
 		if f, ok := moderationErrorCopy(normalized, ""); ok {
 			return f.Category, true
