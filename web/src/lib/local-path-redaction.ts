@@ -13,28 +13,8 @@ const UNIX_PATH_PREFIX_BLOCKED = /[A-Za-z0-9._-]/;
 // Keep the app's own API route names visible only in explicit HTTP request logs
 // (e.g. "GET /workspace/bootstrap"), while still redacting filesystem paths
 // even if they happen to share the same path prefix.
-const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+const HTTP_METHOD_PREFIX = /(?:^|[\s"'(\[])(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)[ \t]+$/i;
 const SAFE_APP_API_ROUTE = /^\/workspace\/(?:bootstrap|model-config(?:\/capability)?)(?:$|\s|[）),;\]])/i;
-
-function isHorizontalWhitespace(ch: string): boolean {
-    return ch === " " || ch === "\t";
-}
-
-function isMethodBoundary(ch: string): boolean {
-    return /\s/.test(ch) || ch === '"' || ch === "'" || ch === "(" || ch === "[";
-}
-
-function hasHTTPMethodPrefix(input: string, offset: number): boolean {
-    let i = offset - 1;
-    while (i >= 0 && isHorizontalWhitespace(input[i] ?? "")) i -= 1;
-    if (i === offset - 1 || i < 0) return false;
-    const methodEnd = i + 1;
-    while (i >= 0 && ASCII_LETTER.test(input[i] ?? "")) i -= 1;
-    const methodStart = i + 1;
-    if (methodStart === methodEnd) return false;
-    if (methodStart > 0 && !isMethodBoundary(input[methodStart - 1] ?? "")) return false;
-    return HTTP_METHODS.has(input.slice(methodStart, methodEnd).toUpperCase());
-}
 
 function isValidLocalPathMatch(match: RegExpExecArray, input: string): boolean {
     const offset = match.index;
@@ -44,7 +24,7 @@ function isValidLocalPathMatch(match: RegExpExecArray, input: string): boolean {
     }
     if (match[4] !== undefined) {
         if (offset > 0 && UNIX_PATH_PREFIX_BLOCKED.test(prev)) return false;
-        if (SAFE_APP_API_ROUTE.test(match[0]) && hasHTTPMethodPrefix(input, offset)) {
+        if (SAFE_APP_API_ROUTE.test(match[0]) && HTTP_METHOD_PREFIX.test(input.slice(0, offset))) {
             return false;
         }
     }
