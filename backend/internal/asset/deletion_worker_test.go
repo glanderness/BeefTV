@@ -438,19 +438,16 @@ func (r *staleOnceDetachedRepo) DeleteDetachedResources(resources []model.Resour
 
 func TestStartDeletionWorkerRearmsAndConvergesAfterStaleWatermark(t *testing.T) {
 	prevAfter := startupCleanupAfter
-	prevBackoff := detachedCleanupRetryBackoff
 	prevBusyBase := detachedBusyRetryBase
 	prevBusyMax := detachedBusyRetryMax
 	fireCleanup := make(chan time.Time, 1)
 	startupCleanupAfter = func(delay time.Duration) (<-chan time.Time, func()) {
 		return fireCleanup, func() {}
 	}
-	detachedCleanupRetryBackoff = 5 * time.Millisecond
 	detachedBusyRetryBase = 35 * time.Millisecond
 	detachedBusyRetryMax = 70 * time.Millisecond
 	t.Cleanup(func() {
 		startupCleanupAfter = prevAfter
-		detachedCleanupRetryBackoff = prevBackoff
 		detachedBusyRetryBase = prevBusyBase
 		detachedBusyRetryMax = prevBusyMax
 	})
@@ -475,9 +472,10 @@ func TestStartDeletionWorkerRearmsAndConvergesAfterStaleWatermark(t *testing.T) 
 	}
 
 	staleRepo := &staleOnceDetachedRepo{Repository: svc.repo}
-	// Exhaust all 3 inner attempts on the first pass so StartDeletionWorker MUST
-	// re-arm cleanupRetryTimer rather than waiting for the hourly ticker.
-	staleRepo.staleBudget.Store(int64(maxDetachedCleanupAttempts))
+	// Force two consecutive stale-watermark exits so StartDeletionWorker MUST
+	// re-arm cleanupRetryTimer with backoff rather than waiting for the hourly ticker.
+	const staleFailures = 2
+	staleRepo.staleBudget.Store(staleFailures)
 	svc.repo = staleRepo
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -499,8 +497,8 @@ func TestStartDeletionWorkerRearmsAndConvergesAfterStaleWatermark(t *testing.T) 
 	for time.Now().Before(deadline) {
 		var remaining int64
 		if err := repo.DB().Model(&model.Resource{}).Where("id = ?", orphan.ID).Count(&remaining).Error; err == nil && remaining == 0 {
-			if got := staleRepo.deleteCalls.Load(); got != int64(maxDetachedCleanupAttempts)+1 {
-				t.Fatalf("delete calls = %d, want %d (3 stale + 1 converged)", got, maxDetachedCleanupAttempts+1)
+			if got := staleRepo.deleteCalls.Load(); got != staleFailures+1 {
+				t.Fatalf("delete calls = %d, want %d (%d stale + 1 converged)", got, staleFailures+1, staleFailures)
 			}
 			return
 		}
