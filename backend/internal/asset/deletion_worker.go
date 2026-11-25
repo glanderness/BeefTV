@@ -16,16 +16,40 @@ import (
 const resourceDeletionLease = 2 * time.Minute
 const incompleteResourceRetention = time.Hour
 const detachedReadyResourceRetention = 24 * time.Hour
-const maxDetachedCleanupAttempts = 3
 
 var deletionRetryBase = 15 * time.Second
-var detachedCleanupRetryBackoff = 25 * time.Millisecond
 var detachedBusyRetryBase = 15 * time.Second
 var detachedBusyRetryMax = 5 * time.Minute
 var startupCleanupDelay = 20 * time.Second
 var startupCleanupAfter = func(delay time.Duration) (<-chan time.Time, func()) {
 	timer := time.NewTimer(delay)
 	return timer.C, func() { timer.Stop() }
+}
+
+func stopTimer(timer *time.Timer) {
+	if timer == nil {
+		return
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+}
+
+func resetTimer(timer **time.Timer, delay time.Duration) <-chan time.Time {
+	if delay <= 0 {
+		stopTimer(*timer)
+		return nil
+	}
+	if *timer == nil {
+		*timer = time.NewTimer(delay)
+	} else {
+		stopTimer(*timer)
+		(*timer).Reset(delay)
+	}
+	return (*timer).C
 }
 
 func (s *Service) signalDeletionWorker() {
@@ -46,31 +70,10 @@ func (s *Service) StartDeletionWorker(ctx context.Context, loop func(func(contex
 	loop(func(ctx context.Context) {
 		var retryTimer *time.Timer
 		var retryC <-chan time.Time
-		stopRetryTimer := func() {
-			if retryTimer != nil {
-				if !retryTimer.Stop() {
-					select {
-					case <-retryTimer.C:
-					default:
-					}
-				}
-			}
-			retryC = nil
-		}
-		defer stopRetryTimer()
+		defer func() { stopTimer(retryTimer) }()
 
 		armRetry := func(delay time.Duration) {
-			if delay <= 0 {
-				stopRetryTimer()
-				return
-			}
-			if retryTimer == nil {
-				retryTimer = time.NewTimer(delay)
-			} else {
-				stopRetryTimer()
-				retryTimer.Reset(delay)
-			}
-			retryC = retryTimer.C
+			retryC = resetTimer(&retryTimer, delay)
 		}
 
 		runDrain := func() {
@@ -107,18 +110,7 @@ func (s *Service) StartDeletionWorker(ctx context.Context, loop func(func(contex
 		var cleanupRetryTimer *time.Timer
 		var cleanupRetryC <-chan time.Time
 		var cleanupBusyAttempts int
-		stopCleanupRetryTimer := func() {
-			if cleanupRetryTimer != nil {
-				if !cleanupRetryTimer.Stop() {
-					select {
-					case <-cleanupRetryTimer.C:
-					default:
-					}
-				}
-			}
-			cleanupRetryC = nil
-		}
-		defer stopCleanupRetryTimer()
+		defer func() { stopTimer(cleanupRetryTimer) }()
 
 		armCleanupRetry := func() {
 			cleanupBusyAttempts++
@@ -132,13 +124,7 @@ func (s *Service) StartDeletionWorker(ctx context.Context, loop func(func(contex
 			if delay <= 0 {
 				delay = 10 * time.Millisecond
 			}
-			if cleanupRetryTimer == nil {
-				cleanupRetryTimer = time.NewTimer(delay)
-			} else {
-				stopCleanupRetryTimer()
-				cleanupRetryTimer.Reset(delay)
-			}
-			cleanupRetryC = cleanupRetryTimer.C
+			cleanupRetryC = resetTimer(&cleanupRetryTimer, delay)
 		}
 
 		runMaintenance := func() {
@@ -148,7 +134,7 @@ func (s *Service) StartDeletionWorker(ctx context.Context, loop func(func(contex
 				return
 			}
 			cleanupBusyAttempts = 0
-			stopCleanupRetryTimer()
+			cleanupRetryC = resetTimer(&cleanupRetryTimer, 0)
 		}
 
 		runDrain()
@@ -217,6 +203,7 @@ func (s *Service) cleanupDetachedResources() bool {
 	for userID, resources := range byUser {
 		if err := s.CleanupDetachedUserResources(userID, resources); err != nil {
 			if errors.Is(err, repository.ErrResourceCleanupSnapshotStale) {
+				log.Printf("detached resource cleanup deferred for user %s: workspace busy", userID)
 				deferred = true
 				continue
 			}
@@ -236,128 +223,117 @@ func (s *Service) CleanupDetachedUserResources(userID string, candidates []model
 	// Run the read-only chunked snapshot scan outside storageMu so canvas saves
 	// and asset writes are never blocked. DeleteDetachedResources verifies the
 	// snapshot watermark under BEGIN IMMEDIATE and exits immediately with
-	// ErrResourceCleanupSnapshotStale on concurrent writes so we retry unlocked
-	// instead of holding storageMu/BEGIN IMMEDIATE during a full-workspace scan.
+	// ErrResourceCleanupSnapshotStale on concurrent writes so the worker loop
+	// can back off and retry later instead of holding locks during a scan.
 	resourceIDs := make([]string, 0, len(candidates))
 	candidateSet := make(map[string]struct{}, len(candidates))
 	for _, resource := range candidates {
 		resourceIDs = append(resourceIDs, resource.ID)
 		candidateSet[resource.ID] = struct{}{}
 	}
-	for attempt := 0; attempt < maxDetachedCleanupAttempts; attempt++ {
-		snapshot, err := s.repo.ResourceReferenceSnapshot(userID, "", resourceIDs)
-		if err != nil {
-			return err
+	snapshot, err := s.repo.ResourceReferenceSnapshot(userID, "", resourceIDs)
+	if err != nil {
+		return err
+	}
+	referenced := map[string]struct{}{}
+	if s.lifecycle != nil {
+		for resourceID := range s.lifecycle.AppearanceReferencedIDs(resourceIDs) {
+			referenced[resourceID] = struct{}{}
 		}
-		referenced := map[string]struct{}{}
+	}
+	for _, reference := range snapshot.Direct {
+		if _, exists := candidateSet[reference.ResourceID]; exists {
+			referenced[reference.ResourceID] = struct{}{}
+		}
+	}
+	for _, document := range snapshot.Documents {
+		if document.PrimaryMatchedIDs != nil || document.SecondaryMatchedIDs != nil {
+			for _, resourceID := range document.PrimaryMatchedIDs {
+				if _, exists := candidateSet[resourceID]; exists {
+					referenced[resourceID] = struct{}{}
+				}
+			}
+			for _, resourceID := range document.SecondaryMatchedIDs {
+				if _, exists := candidateSet[resourceID]; exists {
+					referenced[resourceID] = struct{}{}
+				}
+			}
+			continue
+		}
+		for resourceID := range assets.DocumentReferencedIDs(document.PrimaryJSON, candidateSet) {
+			referenced[resourceID] = struct{}{}
+		}
+		for resourceID := range assets.DocumentReferencedIDs(document.SecondaryJSON, candidateSet) {
+			referenced[resourceID] = struct{}{}
+		}
+	}
+	detached := make([]model.Resource, 0, len(candidates))
+	for _, resource := range candidates {
+		if _, exists := referenced[resource.ID]; !exists {
+			detached = append(detached, resource)
+		}
+	}
+	if len(detached) == 0 {
+		return nil
+	}
+	var deletionJobs []model.ResourceDeletionJob
+	commit := func() error {
 		if s.lifecycle != nil {
-			for resourceID := range s.lifecycle.AppearanceReferencedIDs(resourceIDs) {
-				referenced[resourceID] = struct{}{}
-			}
-		}
-		for _, reference := range snapshot.Direct {
-			if _, exists := candidateSet[reference.ResourceID]; exists {
-				referenced[reference.ResourceID] = struct{}{}
-			}
-		}
-		for _, document := range snapshot.Documents {
-			if document.PrimaryMatchedIDs != nil || document.SecondaryMatchedIDs != nil {
-				for _, resourceID := range document.PrimaryMatchedIDs {
-					if _, exists := candidateSet[resourceID]; exists {
-						referenced[resourceID] = struct{}{}
-					}
-				}
-				for _, resourceID := range document.SecondaryMatchedIDs {
-					if _, exists := candidateSet[resourceID]; exists {
-						referenced[resourceID] = struct{}{}
-					}
-				}
-				continue
-			}
-			for resourceID := range assets.DocumentReferencedIDs(document.PrimaryJSON, candidateSet) {
-				referenced[resourceID] = struct{}{}
-			}
-			for resourceID := range assets.DocumentReferencedIDs(document.SecondaryJSON, candidateSet) {
-				referenced[resourceID] = struct{}{}
-			}
-		}
-		detached := make([]model.Resource, 0, len(candidates))
-		for _, resource := range candidates {
-			if _, exists := referenced[resource.ID]; !exists {
-				detached = append(detached, resource)
-			}
-		}
-		if len(detached) == 0 {
-			return nil
-		}
-		var deletionJobs []model.ResourceDeletionJob
-		commit := func() error {
-			if s.lifecycle != nil {
-				detachedIDs := make([]string, 0, len(detached))
-				for _, resource := range detached {
-					detachedIDs = append(detachedIDs, resource.ID)
-				}
-				appearanceRefs := s.lifecycle.AppearanceReferencedIDs(detachedIDs)
-				if len(appearanceRefs) > 0 {
-					filtered := make([]model.Resource, 0, len(detached))
-					for _, resource := range detached {
-						if _, exists := appearanceRefs[resource.ID]; !exists {
-							filtered = append(filtered, resource)
-						}
-					}
-					detached = filtered
-				}
-			}
-			if len(detached) == 0 {
-				return nil
-			}
 			detachedIDs := make([]string, 0, len(detached))
 			for _, resource := range detached {
 				detachedIDs = append(detachedIDs, resource.ID)
 			}
-			physicalObjects := map[string]*model.Resource{}
-			for index := range detached {
-				resource := &detached[index]
-				if strings.TrimSpace(resource.ObjectKey) == "" {
-					continue
+			appearanceRefs := s.lifecycle.AppearanceReferencedIDs(detachedIDs)
+			if len(appearanceRefs) > 0 {
+				filtered := make([]model.Resource, 0, len(detached))
+				for _, resource := range detached {
+					if _, exists := appearanceRefs[resource.ID]; !exists {
+						filtered = append(filtered, resource)
+					}
 				}
-				sharedCount, countErr := s.repo.ResourceStorageReferenceCount(resource, detachedIDs)
-				if countErr != nil {
-					return countErr
-				}
-				if sharedCount == 0 {
-					physicalObjects[StorageIdentity(resource)] = resource
-				}
+				detached = filtered
 			}
-			deletionJobs = DeletionJobs(userID, physicalObjects)
-			return s.repo.DeleteDetachedResources(detached, deletionJobs, snapshot.Watermark)
-		}
-		var commitErr error
-		if s.lifecycle != nil {
-			commitErr = s.lifecycle.WithStorageLock(commit)
-		} else {
-			commitErr = commit()
-		}
-		if errors.Is(commitErr, repository.ErrResourceCleanupSnapshotStale) {
-			if attempt+1 < maxDetachedCleanupAttempts {
-				time.Sleep(detachedCleanupRetryBackoff)
-				continue
-			}
-			log.Printf("detached resource cleanup deferred for user %s after %d attempts: workspace busy", userID, maxDetachedCleanupAttempts)
-			return repository.ErrResourceCleanupSnapshotStale
-		}
-		if commitErr != nil {
-			return commitErr
 		}
 		if len(detached) == 0 {
 			return nil
 		}
-		log.Printf("detached resource cleanup: removed %d resource rows for user %s", len(detached), userID)
-		if len(deletionJobs) > 0 {
-			s.signalDeletionWorker()
-			s.runBackground(func() { s.DrainDeletionJobs(len(deletionJobs)) })
+		detachedIDs := make([]string, 0, len(detached))
+		for _, resource := range detached {
+			detachedIDs = append(detachedIDs, resource.ID)
 		}
+		physicalObjects := map[string]*model.Resource{}
+		for index := range detached {
+			resource := &detached[index]
+			if strings.TrimSpace(resource.ObjectKey) == "" {
+				continue
+			}
+			sharedCount, countErr := s.repo.ResourceStorageReferenceCount(resource, detachedIDs)
+			if countErr != nil {
+				return countErr
+			}
+			if sharedCount == 0 {
+				physicalObjects[StorageIdentity(resource)] = resource
+			}
+		}
+		deletionJobs = DeletionJobs(userID, physicalObjects)
+		return s.repo.DeleteDetachedResources(detached, deletionJobs, snapshot.Watermark)
+	}
+	var commitErr error
+	if s.lifecycle != nil {
+		commitErr = s.lifecycle.WithStorageLock(commit)
+	} else {
+		commitErr = commit()
+	}
+	if commitErr != nil {
+		return commitErr
+	}
+	if len(detached) == 0 {
 		return nil
+	}
+	log.Printf("detached resource cleanup: removed %d resource rows for user %s", len(detached), userID)
+	if len(deletionJobs) > 0 {
+		s.signalDeletionWorker()
+		s.runBackground(func() { s.DrainDeletionJobs(len(deletionJobs)) })
 	}
 	return nil
 }
