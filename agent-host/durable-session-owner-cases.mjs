@@ -143,6 +143,15 @@ test('public provider failures hide upstream detail while retaining internal dia
   }
   const budget = { error: 'local budget is exhausted', errorReason: 'turn_request_budget_exhausted' };
   assert.deepEqual(publicDurableTurn(budget), budget);
+  const netCompletion = durableCompletion({ status: 'unanswered', reason: 'model_error', detail: 'Connection error: connect ECONNREFUSED 127.0.0.1:7890 secret-token' }, null);
+  assert.equal(netCompletion.errorReason, 'model_network_error');
+  const providerNetCompletion = durableCompletion({ status: 'unanswered', reason: 'provider_error', detail: 'fetch failed: ERR_PROXY_CONNECTION_FAILED http://127.0.0.1:7890' }, null);
+  assert.equal(providerNetCompletion.errorReason, 'model_network_error');
+  const netVisible = publicDurableTurn(netCompletion);
+  assert.equal(netVisible.errorReason, 'model_network_error');
+  assert(!JSON.stringify(netVisible).includes('secret-token'));
+  assert(!JSON.stringify(netVisible).includes('7890'));
+  assert.match(netVisible.error, /网络代理/);
   assert.equal(publicDurableTurn({ cancelled: true, error: null }).error, null);
 });
 const run = (directory, phase) => new Promise((resolve, reject) => {

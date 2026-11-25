@@ -23,6 +23,7 @@ import (
 	"infinite-canvas/backend/internal/conversation"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/depthcapture"
+	"infinite-canvas/backend/internal/desktopnet"
 	"infinite-canvas/backend/internal/eagle"
 	canvasHandler "infinite-canvas/backend/internal/handler"
 	"infinite-canvas/backend/internal/localapp"
@@ -90,6 +91,9 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	reportPhase("lock", "正在检查工作区目录与实例锁")
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, err
+	}
+	if _, prefErr := desktopnet.LoadPreference(cfg.DataDir); prefErr != nil {
+		log.Printf("读取网络代理设置失败，回退为跟随系统代理: %v", prefErr)
 	}
 	var workspaceLock *os.File
 	if cfg.Profile == ProfileDesktop {

@@ -2,6 +2,7 @@ package operations_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -105,5 +106,33 @@ func TestCanvasEdgeDeletePreservesBothNodesAndReadOnlyDeniesWrites(t *testing.T)
 	after := editDocument(t, h)
 	if len(after["connections"].([]any)) != 0 || !reflect.DeepEqual(before["nodes"], after["nodes"]) {
 		t.Fatalf("unlink damaged nodes: %v", after)
+	}
+}
+
+func TestCanvasNodesCreateAcceptsLargeBatch(t *testing.T) {
+	h := newHarness(t)
+	before := h.revisionNow(t)
+	nodes := make([]map[string]any, 0, 40)
+	for i := 1; i <= 40; i++ {
+		nodes = append(nodes, map[string]any{
+			"type":  "image",
+			"title": fmt.Sprintf("批量图 %d", i),
+		})
+	}
+	res, err := h.execute(t, h.assistant(), "canvas.nodes.create", "create-40", map[string]any{
+		"canvasId":         h.canvasID,
+		"expectedRevision": before,
+		"nodes":            nodes,
+	})
+	if err != nil {
+		t.Fatalf("一次创建 40 个节点应成功: %v", err)
+	}
+	if res.Revision != before+1 {
+		t.Fatalf("批量创建应只推进一次版本: got %d want %d", res.Revision, before+1)
+	}
+	payload, _ := res.Result.(map[string]any)
+	created, _ := payload["created"].([]any)
+	if len(created) != 40 {
+		t.Fatalf("应返回 40 个新建节点，得到 %d", len(created))
 	}
 }

@@ -55,4 +55,18 @@ test("unknown and fatal policy failures retain existing conservative action elig
     for (const reason of ["forbidden", "native_history_unavailable", "request_budget_storage_unavailable", "unrecognized_reason"]) expect(assistantTurnCanContinue(reason)).toBe(false);
     expect(agentAssistantFailureText("unrecognized_reason", "fallback")).toBe("fallback");
     expect(assistantTurnCanContinue("turn_timeout")).toBe(true);
+    expect(assistantTurnCanContinue("model_network_error")).toBe(true);
+    const networkHtml = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={makeTurn("model_network_error")}
+            handledProposals={new Set(["confirmed-proposal"])}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onDismissProposal={() => {}}
+            onContinue={() => {}}
+        />,
+    );
+    expect(networkHtml).toContain("继续处理");
+    expect(networkHtml).toContain("网络代理");
 });

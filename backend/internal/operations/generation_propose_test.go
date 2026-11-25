@@ -2,6 +2,7 @@ package operations
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -163,5 +164,29 @@ func TestOpGenerationProposeRejectsKindMismatch(t *testing.T) {
 	}
 	if AsError(err).Reason != "generation_model_kind_mismatch" {
 		t.Fatalf("model kind reason: %v", err)
+	}
+}
+
+func TestOpGenerationProposeAcceptsLargeBatch(t *testing.T) {
+	nodes := make([]map[string]any, 0, 40)
+	nodeIDs := make([]string, 0, 40)
+	for i := 1; i <= 40; i++ {
+		id := fmt.Sprintf("img-%d", i)
+		nodes = append(nodes, imageNode(id, "beeftv::gpt-image-2"))
+		nodeIDs = append(nodeIDs, id)
+	}
+	probe := &proposeProbe{doc: proposeCanvas(t, nodes)}
+	params, err := json.Marshal(map[string]any{"canvasId": "c1", "nodeIds": nodeIDs, "kind": "image"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := opCanvasGenerationPropose(&Context{UserID: "owner", Domain: probe}, params)
+	if err != nil {
+		t.Fatalf("一次提议 40 个节点应成功: %v", err)
+	}
+	payload := result.(map[string]any)
+	targets, ok := payload["targets"].([]map[string]any)
+	if !ok || len(targets) != 40 {
+		t.Fatalf("应返回 40 项提议明细，得到 %d", len(targets))
 	}
 }

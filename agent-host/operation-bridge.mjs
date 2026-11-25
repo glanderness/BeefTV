@@ -8,7 +8,7 @@ import { collectTurnEffects, extendWriteChain, rebaseOntoWriteChain } from './ca
 import { toolOperationId } from './session-identity.mjs';
 import { budgetError, spendToolStep } from './request-budget.mjs';
 import { mediaToolResult, mediaFacts, mediaEvidence } from './media-content.mjs';
-import { canvasReadView, CANVAS_READ_VIEW_SCHEMA } from './canvas-read-view.mjs';
+import { canvasReadView, canvasNodesGetView, CANVAS_READ_VIEW_SCHEMA } from './canvas-read-view.mjs';
 import { canvasWriteView, canvasWriteViewDescription } from './canvas-write-view.mjs';
 import { awaitBusinessTasks } from './await-business-tasks.mjs';
 import { timelineDeliveryTool } from './timeline-delivery.mjs';
@@ -23,6 +23,7 @@ const REBASABLE_WRITES = new Set([
   'canvas.edge.create',
   CANVAS_NODE_UPDATE,
   'canvas.node.configure',
+  'canvas.nodes.configure',
   'canvas.node.move',
   'canvas.script.rows.append',
   'canvas.script.row.update',
@@ -176,7 +177,7 @@ export function createOperationBridge({
       readOnly: descriptor.readOnly === true,
       replay: descriptor.replay === 'safe' ? 'safe' : 'unsafe',
       description: descriptor.summary + canvasWriteViewDescription(descriptor.id),
-      parameters: scopedSchema(descriptor.params, mode !== 'canvas' || descriptor.id === 'canvas.get', descriptor.id),
+      parameters: scopedSchema(descriptor.params, mode !== 'canvas' || descriptor.id === 'canvas.get' || descriptor.id === 'canvas.nodes.get', descriptor.id),
       ...(descriptor.readOnly ? {} : { executionMode: 'sequential' }),
       execute: async (toolCallId, args, signal, api = {}) => {
         try { assertToolGeneration(generation, descriptor, signal, turn); }
@@ -220,7 +221,7 @@ export function createOperationBridge({
             delete params.projectId;
           }
         } else if (Object.hasOwn(descriptor.params?.properties || {}, 'canvasId')) {
-          if ((generation.permissionMode || 'canvas') === 'canvas' && descriptor.id !== 'canvas.get' && params.canvasId !== undefined && params.canvasId !== canvasId) {
+          if ((generation.permissionMode || 'canvas') === 'canvas' && descriptor.id !== 'canvas.get' && descriptor.id !== 'canvas.nodes.get' && params.canvasId !== undefined && params.canvasId !== canvasId) {
             throw new Error(`scope_denied: 画布参数与当前会话不一致（${params.canvasId} ≠ ${canvasId}）`);
           }
           if (params.canvasId === undefined) params.canvasId = canvasId;
@@ -318,7 +319,12 @@ export function createOperationBridge({
           if (descriptor.id !== 'canvas.task.bind' || !data?.replayed) {
             collectTurnEffects(turn, descriptor.id, data?.result, opId);
           }
-          const converted = mediaToolResult(descriptor.id === 'canvas.get' ? canvasReadView(data, readView) : canvasWriteView(data, descriptor.id, params), descriptor.id, { ...mediaModel, originTurnId:turn.turnId,
+          const projected = descriptor.id === 'canvas.get'
+            ? canvasReadView(data, readView)
+            : descriptor.id === 'canvas.nodes.get'
+              ? canvasNodesGetView(data)
+              : canvasWriteView(data, descriptor.id, params);
+          const converted = mediaToolResult(projected, descriptor.id, { ...mediaModel, originTurnId:turn.turnId,
             ...(generation.durable ? {nativePartStore} : {}) });
           const evidence = mediaEvidence(data?.result, descriptor.id);
           const facts = evidence ? undefined : mediaFacts(data?.result, descriptor.id);

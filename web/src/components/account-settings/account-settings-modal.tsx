@@ -1,4 +1,4 @@
-import { Button, Segmented, Switch } from "antd";
+import { App, Button, Segmented, Switch } from "antd";
 import { Bug, Database, Plug, Settings2, UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
@@ -7,6 +7,7 @@ import { AppChangelogButton, APP_VERSION, formatAppVersionLabel } from "@/compon
 import { useBeefTVConnection } from "@/components/layout/beeftv-connection-provider";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { useDesktopUpdate } from "@/hooks/use-desktop-update";
+import { useNetworkProxySetting } from "@/hooks/use-network-proxy-setting";
 import {
     getTaskCompletionSoundEnabled,
     onTaskCompletionSoundChange,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/task-completion-sound";
 import DiagnosticsPanel from "@/pages/settings/diagnostics-panel";
 import { ModelDefaultGrid } from "@/pages/settings/model-default-grid";
+import { NETWORK_PROXY_OPTIONS, networkProxyDescription, networkProxySavedNotice, type NetworkProxyMode } from "@/services/api/network-proxy";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { AccountBuiltinPlugins } from "./account-builtin-plugins";
@@ -31,6 +33,7 @@ const sections = [
 type Section = typeof sections[number]["id"];
 
 export function AccountSettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+    const { message } = App.useApp();
     const [active, setActive] = useState<Section>("account");
     const [soundEnabled, setSoundEnabled] = useState<boolean>(() => getTaskCompletionSoundEnabled());
     const contentRef = useRef<HTMLElement>(null);
@@ -42,10 +45,25 @@ export function AccountSettingsModal({ open, onClose }: { open: boolean; onClose
     const { state: updateState } = useDesktopUpdate();
     const installedVersion = formatAppVersionLabel(updateState.currentVersion || APP_VERSION);
     const { connection, syncing, catalogSyncFailed, retryCatalog, busy } = useBeefTVConnection();
+    const {
+        status: proxyStatus,
+        loading: proxyLoading,
+        saving: proxySaving,
+        error: proxyError,
+        refresh: refreshProxy,
+        saveMode: saveProxyMode,
+    } = useNetworkProxySetting(open && active === "general");
     useEffect(() => onTaskCompletionSoundChange(() => setSoundEnabled(getTaskCompletionSoundEnabled())), []);
     useEffect(() => { if (open) setActive("account"); }, [open]);
     useEffect(() => { contentRef.current?.scrollTo({ top: 0 }); }, [active]);
     const goTo = (path: string) => { onClose(); navigate(path); };
+    const handleProxyModeChange = async (mode: NetworkProxyMode) => {
+        if (proxyStatus?.mode === mode || proxySaving) return;
+        const next = await saveProxyMode(mode);
+        if (next) {
+            message.success(networkProxySavedNotice(mode, next.assistantRestartPending));
+        }
+    };
     return <AppModal flush open={open} aria-label="账户设置" width="min(960px, calc(100vw - 32px))" className="account-settings-modal" footer={null} onCancel={onClose}>
         <div className="account-settings-layout">
             <nav className="account-settings-nav" aria-label="账户设置分类">
@@ -69,6 +87,26 @@ export function AccountSettingsModal({ open, onClose }: { open: boolean; onClose
                                 if (checked) playTaskCompletionChime({ force: true });
                             }}
                         />
+                    </div>
+                    <div className="account-setting-row">
+                        <div>
+                            <h3>网络代理</h3>
+                            <p>{networkProxyDescription(proxyStatus, proxyLoading, Boolean(proxyError))}</p>
+                            {proxyStatus?.assistantRestartPending ? <p role="status">助手当前正忙或正在重启，空闲后将自动应用新设置。</p> : null}
+                            {proxyError ? <p role="alert" className="account-setting-error">{proxyError}</p> : null}
+                        </div>
+                        {!proxyStatus && proxyError ? (
+                            <Button loading={proxyLoading} onClick={() => void refreshProxy()}>重试</Button>
+                        ) : (
+                            <Segmented
+                                className="account-proxy-control"
+                                aria-label="网络代理"
+                                value={proxyStatus?.mode ?? "system"}
+                                disabled={proxyLoading || proxySaving || !proxyStatus}
+                                options={NETWORK_PROXY_OPTIONS}
+                                onChange={(value) => void handleProxyModeChange(value as NetworkProxyMode)}
+                            />
+                        )}
                     </div>
                     <div className="account-setting-row"><div><h3>提示词与反推指令</h3><p>自定义图片反推、视频反推默认指令及平台提示词模板</p></div><Button onClick={() => goTo("/settings?section=prompts")}>打开</Button></div>
                     <div className="account-setting-row"><div><h3>存储设置</h3><p>管理素材、缓存与本地存储位置</p></div><Button onClick={() => goTo("/settings?section=storage")}>打开</Button></div>

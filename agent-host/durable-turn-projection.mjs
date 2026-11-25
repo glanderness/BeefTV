@@ -192,11 +192,19 @@ export function publicDurableTurn(active, running = false) {
   // the same public projection so an upstream body cannot become UI copy.
   if (result.error && ['model_error', 'provider_error'].includes(result.errorReason)) {
     result.error = '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。';
+  } else if (result.error && result.errorReason === 'model_network_error') {
+    result.error = '无法连接模型服务。若开启了系统代理，可在「通用设置 → 网络代理」切为不使用代理后重试；已完成的改动会保留。';
   } else if (result.error && result.errorReason === 'turn_interrupted') {
     result.error = '上一轮执行中断，请核对已落地的改动。';
   }
   if (running) { delete result.toolCalls; result.status = 'running'; }
   return result;
+}
+
+const CONNECTION_FAILURE_PATTERN = /\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ERR_PROXY_CONNECTION_FAILED|UND_ERR_CONNECT_TIMEOUT)\b|fetch failed|connection error|proxy response|tunneling socket|failed to connect/i;
+
+function isConnectionFailureDetail(detail) {
+  return CONNECTION_FAILURE_PATTERN.test(String(detail || ''));
 }
 
 export function durableCompletion(settled, assistant, budgetFailure, stopped = false, replyText = undefined) {
@@ -207,15 +215,27 @@ export function durableCompletion(settled, assistant, budgetFailure, stopped = f
   if (settled.status !== 'done') {
     const interrupted = !budgetFailure && ['interrupted', 'restart_limit'].includes(settled.reason);
     const interruptedReply = replyText !== undefined ? replyText : (assistant?.stopReason === 'aborted' ? fallbackText : '');
+    const baseReason = budgetFailure?.reason || (interrupted ? 'turn_interrupted' : settled.reason) || 'agent_run_failed';
+    const detail = String(budgetFailure?.message || settled.detail || (interrupted ? '上一轮执行中断，请核对已落地的改动。' : settled.reason) || 'agent_run_failed');
+    const errorReason = !budgetFailure && !interrupted && (baseReason === 'model_error' || baseReason === 'provider_error') && isConnectionFailureDetail(detail)
+      ? 'model_network_error'
+      : baseReason;
     return {
       reply: interrupted ? interruptedReply : '',
       cancelled: false,
-      error: String(budgetFailure?.message || settled.detail || (interrupted ? '上一轮执行中断，请核对已落地的改动。' : settled.reason) || 'agent_run_failed'),
-      errorReason: budgetFailure?.reason || (interrupted ? 'turn_interrupted' : settled.reason) || 'agent_run_failed',
+      error: detail,
+      errorReason,
     };
   }
-  if (!assistant || ['error', 'aborted'].includes(assistant.stopReason)) return { reply: '', cancelled: false,
-    error: assistant?.errorMessage || 'agent_answer_missing', errorReason: 'provider_error' };
+  if (!assistant || ['error', 'aborted'].includes(assistant.stopReason)) {
+    const detail = assistant?.errorMessage || 'agent_answer_missing';
+    return {
+      reply: '',
+      cancelled: false,
+      error: detail,
+      errorReason: isConnectionFailureDetail(detail) ? 'model_network_error' : 'provider_error',
+    };
+  }
   return { reply: text,
     cancelled: false, error: null, errorReason: null };
 }

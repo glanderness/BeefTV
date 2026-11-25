@@ -1,6 +1,8 @@
 package desktopnet
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/url"
 	"runtime"
 	"strings"
@@ -13,10 +15,61 @@ import (
 // Return a replacement environment: duplicate/case-conflicting inherited keys
 // otherwise have different precedence in Go, Node and Windows launchers.
 func NodeProxyEnvironment(inherited []string, modelBaseURL string) []string {
-	return nodeProxyEnvironment(inherited, modelBaseURL, readSystemProxy)
+	return nodeProxyEnvironmentWithMode(inherited, modelBaseURL, CurrentMode(), readSystemProxy)
 }
 
-func nodeProxyEnvironment(inherited []string, modelBaseURL string, systemReader func() systemProxySettings) []string {
+// NodeProxyFingerprint returns a stable hash of the resolved Node proxy
+// environment so supervisors can detect system proxy toggles or app mode
+// changes without leaking proxy URLs or credentials.
+func NodeProxyFingerprint(inherited []string, modelBaseURL string) string {
+	return NodeProxyFingerprintFromEnv(NodeProxyEnvironment(inherited, modelBaseURL))
+}
+
+// NodeProxyFingerprintFromEnv hashes the canonical proxy entries already
+// projected into a child environment slice.
+func NodeProxyFingerprintFromEnv(env []string) string {
+	var httpProxy, httpsProxy, noProxy, useProxy string
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "HTTP_PROXY":
+			httpProxy = value
+		case "HTTPS_PROXY":
+			httpsProxy = value
+		case "NO_PROXY":
+			noProxy = value
+		case "NODE_USE_ENV_PROXY":
+			useProxy = value
+		}
+	}
+	digest := sha256.Sum256([]byte(strings.Join([]string{httpProxy, httpsProxy, noProxy, useProxy}, "\x00")))
+	return hex.EncodeToString(digest[:])
+}
+
+func nodeProxyEnvironmentWithMode(inherited []string, modelBaseURL string, mode Mode, systemReader func() systemProxySettings) []string {
+	keys := map[string]bool{"HTTP_PROXY": true, "HTTPS_PROXY": true, "NO_PROXY": true, "ALL_PROXY": true, "NODE_USE_ENV_PROXY": true}
+	stripProxyKeys := func() []string {
+		out := make([]string, 0, len(inherited)+9)
+		for _, entry := range inherited {
+			key, _, _ := strings.Cut(entry, "=")
+			if !keys[strings.ToUpper(key)] {
+				out = append(out, entry)
+			}
+		}
+		return out
+	}
+	if mode == ModeDirect {
+		return append(stripProxyKeys(),
+			"HTTP_PROXY=", "http_proxy=",
+			"HTTPS_PROXY=", "https_proxy=",
+			"NO_PROXY=*", "no_proxy=*",
+			"ALL_PROXY=", "all_proxy=",
+			"NODE_USE_ENV_PROXY=0",
+		)
+	}
 	values := map[string]string{}
 	for _, entry := range inherited {
 		if key, value, ok := strings.Cut(entry, "="); ok {
@@ -98,15 +151,7 @@ func nodeProxyEnvironment(inherited []string, modelBaseURL string, systemReader 
 	if useProxy == "" {
 		useProxy = "1"
 	}
-	keys := map[string]bool{"HTTP_PROXY": true, "HTTPS_PROXY": true, "NO_PROXY": true, "ALL_PROXY": true, "NODE_USE_ENV_PROXY": true}
-	out := make([]string, 0, len(inherited)+9)
-	for _, entry := range inherited {
-		key, _, _ := strings.Cut(entry, "=")
-		if !keys[strings.ToUpper(key)] {
-			out = append(out, entry)
-		}
-	}
-	return append(out, "HTTP_PROXY="+resolved.HTTPProxy, "http_proxy="+resolved.HTTPProxy,
+	return append(stripProxyKeys(), "HTTP_PROXY="+resolved.HTTPProxy, "http_proxy="+resolved.HTTPProxy,
 		"HTTPS_PROXY="+resolved.HTTPSProxy, "https_proxy="+resolved.HTTPSProxy,
 		"NO_PROXY="+noProxy, "no_proxy="+noProxy, "ALL_PROXY=", "all_proxy=", "NODE_USE_ENV_PROXY="+useProxy)
 }

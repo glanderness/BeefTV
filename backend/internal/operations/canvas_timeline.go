@@ -181,8 +181,8 @@ func commitTimelineDoc(ctx *Context, canvasID string, revision int64, doc map[st
 // Validate using the same ownership and render rules as a full edit, but write
 // only the selected media references back into the original document.
 func refreshTimelineSources(ctx *Context, doc map[string]any, nodeIDs []string) error {
-	if len(nodeIDs) == 0 || len(nodeIDs) > 50 {
-		return InvalidArg("invalid_params", "refreshNodeIds 需要1至50个不同节点")
+	if len(nodeIDs) == 0 {
+		return InvalidArg("invalid_params", "refreshNodeIds 至少需要 1 个节点")
 	}
 	selected := map[string]bool{}
 	for _, id := range nodeIDs {

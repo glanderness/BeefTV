@@ -1,23 +1,25 @@
 {
   "minAdjacentPrefixCoverageRatio": 0.95,
   "maxHeaderChars": 2968,
-  "maxToolsChars": 19585,
-  "maxHeaderPlusToolsChars": 22553,
+  "maxToolsChars": 21588,
+  "maxHeaderPlusToolsChars": 24532,
   "toolChars": {
     "asset_get": 176,
     "canvas_edge_create": 283,
     "canvas_edge_delete": 235,
-    "canvas_generation_propose": 557,
-    "canvas_generation_submit": 475,
+    "canvas_generation_propose": 534,
+    "canvas_generation_submit": 462,
     "canvas_get": 653,
     "canvas_node_bind_asset": 357,
     "canvas_node_configure": 1700,
     "canvas_node_delete": 238,
     "canvas_node_move": 353,
     "canvas_node_update": 423,
+    "canvas_nodes_configure": 1845,
     "canvas_nodes_create": 382,
+    "canvas_nodes_get": 281,
     "canvas_project_export": 221,
-    "canvas_script_prepare": 1422,
+    "canvas_script_prepare": 1383,
     "canvas_script_row_remove": 312,
     "canvas_script_row_update": 699,
     "canvas_script_rows_append": 528,
@@ -26,7 +28,7 @@
     "canvas_timeline_update": 477,
     "media_check": 486,
     "media_inspect": 706,
-    "media_overview": 764,
+    "media_overview": 714,
     "media_review": 491,
     "model_catalog": 304,
     "project_canvas_search": 292,
@@ -50,6 +52,11 @@
       "reason": "#453 节点配置参数改为从能力目录生成，补上此前漏掉的音高、音量、数量、质量等字段（#457 调整）",
       "maxToolsChars": 19918,
       "maxHeaderPlusToolsChars": 22894
+    },
+    {
+      "reason": "开放 canvas_nodes_configure 与 canvas_nodes_get 给内置助手，取消单轮及批量人为上限",
+      "maxToolsChars": 21588,
+      "maxHeaderPlusToolsChars": 24532
     }
   ]
 }

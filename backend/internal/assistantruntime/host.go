@@ -106,6 +106,13 @@ func (h *Host) isAsyncStarting() bool {
 	return starting
 }
 
+func (h *Host) asyncLaunchDone() chan struct{} {
+	h.startControlMu.Lock()
+	done := h.asyncDone
+	h.startControlMu.Unlock()
+	return done
+}
+
 type asyncLaunchOutcome int
 
 const (
@@ -448,6 +455,67 @@ func (h *Host) StopContext(ctx context.Context) error {
 	return nil
 }
 
+// EnsureFresh coordinates with any in-flight start/restart and synchronously
+// restarts an idle running child when its provider or proxy environment has
+// drifted. Busy or unhealthy children are left untouched, and once a restart
+// begins its child startup is detached from the caller request context so an
+// aborted chat request cannot leave the host stopped.
+func (h *Host) EnsureFresh(ctx context.Context, provider assistant.Provider, opsURL, desktopToken string) (restarted bool, err error) {
+	if h == nil {
+		return false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if done := h.asyncLaunchDone(); done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
+	st := h.State()
+	if !st.Starting && (!st.Running || st.TestOwned || !h.needsRestartState(st, provider)) {
+		return false, nil
+	}
+	if h.isClosed() {
+		return false, invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+	}
+	if err := h.lockLifecycle(ctx); err != nil {
+		return false, err
+	}
+	defer h.unlockLifecycle()
+	state := h.proc.state()
+	if !state.Running || state.TestOwned || !h.needsRestartState(state, provider) {
+		return false, nil
+	}
+	health := h.Probe(ctx)
+	if !health.OK || health.Busy {
+		return false, nil
+	}
+	h.cancelInFlightStart()
+	gen := h.captureStartGen()
+	startCtx, cleanupStart, ok := h.beginStartLocked(context.Background(), gen)
+	if !ok {
+		if h.isClosed() {
+			return false, invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
+		}
+		return false, nil
+	}
+	defer cleanupStart()
+	config, configured := h.EffectiveConfig()
+	if !configured || strings.TrimSpace(config.HostCommand) == "" {
+		return false, invalidArg("host_command_missing", "未配置宿主启动命令")
+	}
+	if stopErr := h.proc.stop(); stopErr != nil {
+		return false, stopErr
+	}
+	if startErr := h.startOwned(startCtx, config, provider, opsURL, desktopToken); startErr != nil {
+		return false, startErr
+	}
+	return true, nil
+}
+
 // Ensure 让状态查询自己把宿主带起来：
 // 没跑就按当前配置启动；跑着但供应商指纹变了、而且此刻空闲，就重启到新配置。
 // 返回 launched=true 表示这次调用刚拉起进程（或已有异步启动在进行，界面此时应显示 host_starting）。
@@ -463,6 +531,38 @@ func (h *Host) Ensure(provider assistant.Provider, opsURL, desktopToken string, 
 	}
 	gen := h.captureStartGen()
 	return h.ensureStart(gen, provider, opsURL, desktopToken, idle)
+}
+
+// NeedsRestart reports whether a running child process is out of date with
+// either the resolved provider configuration or the active proxy environment.
+func (h *Host) NeedsRestart(provider assistant.Provider) bool {
+	if h == nil {
+		return false
+	}
+	return h.needsRestartState(h.proc.state(), provider)
+}
+
+// NeedsProxyRestart reports specifically whether a running child process has a
+// stale proxy environment compared to the active desktopnet configuration.
+func (h *Host) NeedsProxyRestart(provider assistant.Provider) bool {
+	if h == nil {
+		return false
+	}
+	state := h.proc.state()
+	return state.Running && state.ProxyFingerprint != "" && state.ProxyFingerprint != h.proxyFingerprint(provider)
+}
+
+func (h *Host) needsRestartState(state State, provider assistant.Provider) bool {
+	if !state.Running {
+		return false
+	}
+	if state.Fingerprint != "" && state.Fingerprint != provider.Fingerprint() {
+		return true
+	}
+	if state.ProxyFingerprint != "" && state.ProxyFingerprint != h.proxyFingerprint(provider) {
+		return true
+	}
+	return false
 }
 
 func (h *Host) ensureStart(gen uint64, provider assistant.Provider, opsURL, desktopToken string, idle bool) (launched bool, err error) {
@@ -483,9 +583,8 @@ func (h *Host) ensureStart(gen uint64, provider assistant.Provider, opsURL, desk
 		return false, invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
 	state := h.proc.state()
-	fingerprint := provider.Fingerprint()
 	if state.Running {
-		if state.Fingerprint == "" || state.Fingerprint == fingerprint || !idle {
+		if !h.needsRestartState(state, provider) || !idle {
 			return false, nil
 		}
 		if stopErr := h.proc.stop(); stopErr != nil {
@@ -503,8 +602,8 @@ func (h *Host) startOwned(ctx context.Context, config HostConfig, provider assis
 		return invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
 	}
 	opsPipe := h.opsPipePath()
-	return h.proc.startOwned(ctx, config, provider.Fingerprint(), h.readyTimeout(), func(port int, nonce, listenFD, listenPipe string) []string {
-		return h.buildEnv(provider, childPin{
+	return h.proc.startOwned(ctx, config, provider.Fingerprint(), h.readyTimeout(), func(port int, nonce, listenFD, listenPipe string) ([]string, string) {
+		return h.buildEnvWithProxyFingerprint(provider, childPin{
 			Port:       port,
 			Nonce:      nonce,
 			ListenFD:   listenFD,

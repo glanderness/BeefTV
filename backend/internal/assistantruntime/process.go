@@ -72,6 +72,7 @@ type supervisor struct {
 	active            *childProcess
 	starting          bool
 	fingerprint       string
+	proxyFingerprint  string
 	launchedAt        time.Time
 	lastErr           error
 	failedFingerprint string
@@ -89,11 +90,13 @@ type State struct {
 	Running           bool
 	Starting          bool
 	Fingerprint       string
+	ProxyFingerprint  string
 	LaunchedAt        time.Time
 	LastError         error
 	FailedFingerprint string
 	FailedAt          time.Time
 	Endpoint          string
+	TestOwned         bool
 }
 
 func (s *supervisor) state() State {
@@ -103,11 +106,13 @@ func (s *supervisor) state() State {
 		Running:           s.isRunningLocked(),
 		Starting:          s.starting,
 		Fingerprint:       s.fingerprint,
+		ProxyFingerprint:  s.proxyFingerprint,
 		LaunchedAt:        s.launchedAt,
 		LastError:         s.lastErr,
 		FailedFingerprint: s.failedFingerprint,
 		FailedAt:          s.failedAt,
 		Endpoint:          s.endpoint,
+		TestOwned:         s.testOwned,
 	}
 }
 
@@ -191,7 +196,7 @@ func pipeSyntheticBaseURL(pipePath string) string {
 	return "http://pipe-" + hex.EncodeToString(sum[:8]) + ".invalid"
 }
 
-func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerprint string, timeout time.Duration, envFor func(port int, nonce, listenFD, listenPipe string) []string, token string) error {
+func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerprint string, timeout time.Duration, envFor func(port int, nonce, listenFD, listenPipe string) ([]string, string), token string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -281,7 +286,8 @@ func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerpr
 
 	cmd := exec.Command(parts[0], parts[1:]...)
 	ConfigureHostProcess(cmd)
-	cmd.Env = envFor(port, nonce, listenFD, listenPipe)
+	childEnv, proxyFingerprint := envFor(port, nonce, listenFD, listenPipe)
+	cmd.Env = childEnv
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = lifetimeR
@@ -340,6 +346,7 @@ func (s *supervisor) startOwned(ctx context.Context, config HostConfig, fingerpr
 	}
 	s.active = owned
 	s.fingerprint = fingerprint
+	s.proxyFingerprint = proxyFingerprint
 	s.launchedAt = time.Now()
 	s.lastErr = nil
 	s.nonce = nonce
@@ -538,6 +545,7 @@ func (s *supervisor) clearIdentityLocked() {
 	s.endpoint = ""
 	s.pipePath = ""
 	s.nonce = ""
+	s.proxyFingerprint = ""
 	s.testOwned = false
 	if s.lifetimeW != nil {
 		_ = s.lifetimeW.Close()
@@ -554,6 +562,7 @@ func (s *supervisor) testingUseEndpoint(baseURL, nonce, fingerprint string) {
 	s.pipeMode = false
 	s.nonce = nonce
 	s.fingerprint = fingerprint
+	s.proxyFingerprint = ""
 	s.launchedAt = time.Now()
 	s.lastErr = nil
 	s.active = nil

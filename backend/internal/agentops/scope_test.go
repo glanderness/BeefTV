@@ -26,8 +26,13 @@ func TestAssistantScopeAllowsOnlyVerifiedResources(t *testing.T) {
 		{"当前画布可读", "canvas.get", `{"canvasId":"canvas-a"}`, false},
 		{"显式引用的画布可读", "canvas.get", `{"canvasId":"canvas-b"}`, false},
 		{"未引用的画布不可读", "canvas.get", `{"canvasId":"canvas-c"}`, true},
+		{"当前画布批量节点可读", "canvas.nodes.get", `{"canvasId":"canvas-a","nodeIds":["n1"]}`, false},
+		{"显式引用的画布批量节点可读", "canvas.nodes.get", `{"canvasId":"canvas-b","nodeIds":["n1"]}`, false},
+		{"未引用的画布批量节点不可读", "canvas.nodes.get", `{"canvasId":"canvas-c","nodeIds":["n1"]}`, true},
 		{"当前画布可写", "canvas.nodes.create", `{"canvasId":"canvas-a"}`, false},
 		{"额外画布不可写", "canvas.nodes.create", `{"canvasId":"canvas-b"}`, true},
+		{"当前画布可批量配置", "canvas.nodes.configure", `{"canvasId":"canvas-a"}`, false},
+		{"额外画布不可批量配置", "canvas.nodes.configure", `{"canvasId":"canvas-b"}`, true},
 		{"当前分镜可追加", "canvas.script.rows.append", `{"canvasId":"canvas-a"}`, false},
 		{"额外分镜不可追加", "canvas.script.rows.append", `{"canvasId":"canvas-b"}`, true},
 		{"额外分镜不可修改", "canvas.script.row.update", `{"canvasId":"canvas-b"}`, true},
@@ -163,7 +168,7 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 		t.Fatalf("空指针范围不应收窄目录，得到 %d", len(listed))
 	}
 	empty := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{}, false))
-	if len(empty) != 38 {
+	if len(empty) != 40 {
 		t.Fatalf("空助手范围应只露出助手集合，得到 %d", len(empty))
 	}
 	if got := registry.List(agentops.AssistantCaller(nil, false)); len(got) != 0 {
@@ -174,7 +179,7 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 func TestReferenceBindingCatalogPermissionModes(t *testing.T) {
 	registry := agentops.NewRegistry(nil, nil)
 	agentops.RegisterDefaultOps(registry)
-	for mode, want := range map[string]int{"read-only": 20, "canvas": 38, "full-access": 42} {
+	for mode, want := range map[string]int{"read-only": 21, "canvas": 40, "full-access": 44} {
 		descriptors := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{PermissionMode: mode}, false))
 		if len(descriptors) != want {
 			t.Fatalf("%s catalog=%d want=%d", mode, len(descriptors), want)

@@ -15,12 +15,12 @@ func registerStoryboardPreparation(r *Registry) {
 	properties := map[string]any{
 		"canvasId": map[string]any{"type": "string"}, "nodeId": map[string]any{"type": "string"},
 		"expectedRevision": map[string]any{"type": "integer", "minimum": 1},
-		"rowIds":           map[string]any{"type": "array", "minItems": 1, "maxItems": 8, "items": map[string]any{"type": "string"}},
+		"rowIds": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}},
 		"script": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"title", "rows"}, "properties": map[string]any{
 			"title": map[string]any{"type": "string", "minLength": 1},
-			"rows":  map[string]any{"type": "array", "minItems": 1, "maxItems": 8, "items": map[string]any{"type": "object", "description": "行ID与镜号由服务端分配", "properties": storyboardRowFieldSchemas}},
+			"rows":  map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "description": "行ID与镜号由服务端分配", "properties": storyboardRowFieldSchemas}},
 		}, "description": "新建分镜（省略 image/video 只建分镜）"},
-		"referenceNodeIds": map[string]any{"type": "array", "maxItems": 4, "items": map[string]any{"type": "string"}},
+		"referenceNodeIds": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"image":            map[string]any{"type": "object", "properties": map[string]any{"model": map[string]any{"type": "string"}, "size": map[string]any{"type": "string"}, "title": map[string]any{"type": "string", "maxLength": storyboardTitleTemplateMaxRunes, "description": "标题模板，{n} 为镜号，如「镜 {n} 首帧」；省略默认「镜头 {n} · 首帧」"}}, "required": []string{"model"}},
 		"video":            map[string]any{"type": "object", "properties": map[string]any{"model": map[string]any{"type": "string"}, "size": map[string]any{"type": "string"}, "generateAudio": map[string]any{"type": "string", "enum": []string{"true", "false"}}, "title": map[string]any{"type": "string", "maxLength": storyboardTitleTemplateMaxRunes, "description": "标题模板，{n} 为镜号，如「镜 {n} 视频」；省略默认「镜头 {n} · 视频」"}}, "required": []string{"model", "generateAudio"}},
 	}
@@ -46,8 +46,8 @@ func opStoryboardPrepare(ctx *Context, raw json.RawMessage) (any, error) {
 	if strings.TrimSpace(args.CanvasID) == "" || args.ExpectedRevision <= 0 || (args.Script == nil && strings.TrimSpace(args.NodeID) == "") {
 		return nil, InvalidArg("invalid_params", "需要画布、分镜节点和当前版本")
 	}
-	if args.Script != nil && (args.NodeID != "" || len(args.RowIDs) > 0 || strings.TrimSpace(args.Script.Title) == "" || len(args.Script.Rows) < 1 || len(args.Script.Rows) > 8) {
-		return nil, InvalidArg("invalid_params", "新分镜需要名称和1至8行正文，不能同时指定已有分镜")
+	if args.Script != nil && (args.NodeID != "" || len(args.RowIDs) > 0 || strings.TrimSpace(args.Script.Title) == "" || len(args.Script.Rows) < 1) {
+		return nil, InvalidArg("invalid_params", "新分镜需要名称和至少 1 行正文，不能同时指定已有分镜")
 	}
 	input := canvas.StoryboardPreparation{Script: args.Script, RowIDs: args.RowIDs, ReferenceNodeIDs: args.ReferenceNodeIDs}
 	for _, item := range []struct {

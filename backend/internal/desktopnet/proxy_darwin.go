@@ -6,12 +6,12 @@ import (
 	"time"
 )
 
-func readSystemProxy() systemProxySettings {
+func readSystemProxyRaw() (systemProxySettings, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, "/usr/sbin/scutil", "--proxy").Output()
 	if err != nil {
-		return systemProxySettings{}
+		return systemProxySettings{}, false
 	}
-	return parseMacProxy(string(output))
+	return parseMacProxy(string(output)), true
 }

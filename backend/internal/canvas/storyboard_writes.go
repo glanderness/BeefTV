@@ -13,10 +13,6 @@ import (
 	"infinite-canvas/backend/internal/writechange"
 )
 
-// maxStoryboardRowsPerCall 是单次分镜行写入的批量上限。一次拆完一集的常见规模远低于此；
-// 超过该值更可能是调用方把多集内容混进一次调用，应拆分提交。
-const maxStoryboardRowsPerCall = 32
-
 // defaultStoryboardShotSeconds 对齐前端 createStoryboardRow 的默认镜头时长。
 const defaultStoryboardShotSeconds = float64(6)
 
@@ -520,9 +516,8 @@ func newStoryboardID(prefix string) string {
 }
 
 func requireStoryboardRows(drafts []StoryboardRowDraft) error {
-	if len(drafts) == 0 || len(drafts) > maxStoryboardRowsPerCall {
-		return kernel.NewAppError(http.StatusBadRequest,
-			"rows 必须是 1.."+strconv.Itoa(maxStoryboardRowsPerCall)+" 项的数组")
+	if len(drafts) == 0 {
+		return kernel.NewAppError(http.StatusBadRequest, "rows 至少需要 1 项")
 	}
 	for _, draft := range drafts {
 		if err := validateStoryboardDraft(draft); err != nil {
@@ -543,9 +538,8 @@ func validateStoryboardDraft(draft StoryboardRowDraft) error {
 }
 
 func requireStoryboardPatches(patches []StoryboardRowPatch) error {
-	if len(patches) == 0 || len(patches) > maxStoryboardRowsPerCall {
-		return kernel.NewAppError(http.StatusBadRequest,
-			"patches 必须是 1.."+strconv.Itoa(maxStoryboardRowsPerCall)+" 项的数组")
+	if len(patches) == 0 {
+		return kernel.NewAppError(http.StatusBadRequest, "patches 至少需要 1 项")
 	}
 	for _, patch := range patches {
 		if err := validateStoryboardDraft(patch.StoryboardRowDraft); err != nil {
@@ -562,9 +556,8 @@ func requireStoryboardPatches(patches []StoryboardRowPatch) error {
 }
 
 func requireStoryboardRowIDs(rowIDs []string) error {
-	if len(rowIDs) == 0 || len(rowIDs) > maxStoryboardRowsPerCall {
-		return kernel.NewAppError(http.StatusBadRequest,
-			"rowIds 必须是 1.."+strconv.Itoa(maxStoryboardRowsPerCall)+" 项的数组")
+	if len(rowIDs) == 0 {
+		return kernel.NewAppError(http.StatusBadRequest, "rowIds 至少需要 1 项")
 	}
 	for _, id := range rowIDs {
 		if strings.TrimSpace(id) == "" {

@@ -30,6 +30,8 @@ func registerAgentProxyTurnRoutes(
 	guard func(*gin.Context, bool) bool,
 	hostJSON func(*gin.Context, string, string, []byte),
 	requireOwnedCanvas func(*gin.Context, string) (json.RawMessage, bool),
+	hostOpsURL func(*gin.Context) string,
+	launchToken func(*gin.Context) string,
 ) {
 	r.POST("/assistant/turns/:turnId/undo", func(c *gin.Context) {
 		if !guard(c, true) {
@@ -176,6 +178,17 @@ func registerAgentProxyTurnRoutes(
 		c.Header("X-Beeftv-Turn-Admission", "rejected")
 		if !guard(c, true) {
 			return
+		}
+		if host != nil {
+			if state := host.State(); (state.Starting || state.Running) && !state.TestOwned {
+				if provider, reason := host.ResolveProvider(); reason == "" {
+					if _, ensureErr := host.EnsureFresh(c.Request.Context(), provider, hostOpsURL(c), launchToken(c)); ensureErr != nil {
+						c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_start_failed",
+							"msg": "内置创作助手宿主重启失败，请重试"})
+						return
+					}
+				}
+			}
 		}
 		if host == nil || host.Endpoint() == "" {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",

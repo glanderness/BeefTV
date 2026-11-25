@@ -24,12 +24,18 @@ test('Go descriptors drive default Pi discovery, calls and durable replay', asyn
   await bridge.loadDescriptors();
   const build = mode => bridge.buildTools('canvas-a',[],{aborted:false,...(mode ? {permissionMode:mode}: {})},newTurnAccumulator(),'session');
   const tools = build();
-  for (const id of ['canvas.script.rows.append','canvas.script.row.update','canvas.script.row.remove','canvas.script.prepare']) {
+  for (const id of ['canvas.script.rows.append','canvas.script.row.update','canvas.script.row.remove','canvas.script.prepare','canvas.nodes.configure']) {
    const tool = tools.find(tool => tool.label === id);
    expect(tool).toBeDefined(); expect(durableToolReplay(tool)).toBe('safe');
    expect(build('read-only').some(tool => tool.label === id)).toBe(false);
    expect(build('full-access').some(tool => tool.label === id)).toBe(true);
   }
+  const nodesGet = tools.find(tool => tool.label === 'canvas.nodes.get');
+  expect(nodesGet).toBeDefined();
+  expect(nodesGet.readOnly).toBe(true);
+  expect(nodesGet.parameters.properties.canvasId).toBeDefined();
+  expect(build('read-only').some(tool => tool.label === 'canvas.nodes.get')).toBe(true);
+  expect(build('full-access').some(tool => tool.label === 'canvas.nodes.get')).toBe(true);
   expect(tools.some(tool => tool.label === 'canvas.document.commit')).toBe(false);
   expect(build('read-only').some(tool => tool.label === 'canvas.generation.propose')).toBe(false);
   expect(build('full-access').some(tool => tool.label === 'conversation.message.attach')).toBe(false);

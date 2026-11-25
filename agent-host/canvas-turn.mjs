@@ -179,6 +179,12 @@ export function collectTurnEffects(turn, opID, result, operationId) {
         turn.createdEdgeIds.push(...asStringList(result.createdEdgeIds));
       }
       break;
+    case 'canvas.nodes.configure':
+      for (const item of Array.isArray(result.nodes) ? result.nodes : []) {
+        if (item && item.nodeId) turn.updatedNodeIds.push(String(item.nodeId));
+      }
+      pushUpdatedNodeIds(turn, alsoChangedNodeIds(result));
+      break;
     case 'canvas.node.update':
     case 'canvas.node.bind_asset':
     case 'canvas.node.configure':

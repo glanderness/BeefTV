@@ -2,6 +2,7 @@ package operations
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -52,5 +53,31 @@ func TestOpStoryboardPrepareTreatsBlankTitleAsOmitted(t *testing.T) {
 	}
 	if probe.input.ImageTitle != "" {
 		t.Fatalf("空白模板应等同省略: %#v", probe.input)
+	}
+}
+
+func TestOpStoryboardPrepareAcceptsMoreThan8RowsAndMoreThan4Refs(t *testing.T) {
+	probe := &prepareProbe{configureProbe: configureFixture(t, "image")}
+	rowIDs := make([]string, 0, 15)
+	for i := 1; i <= 15; i++ {
+		rowIDs = append(rowIDs, fmt.Sprintf("shot-%d", i))
+	}
+	refIDs := []string{"ref-1", "ref-2", "ref-3", "ref-4", "ref-5", "ref-6"}
+	params, err := json.Marshal(map[string]any{
+		"canvasId":         "c1",
+		"nodeId":           "n",
+		"expectedRevision": 4,
+		"rowIds":           rowIDs,
+		"referenceNodeIds": refIDs,
+		"image":            map[string]any{"model": "chosen"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := opStoryboardPrepare(&Context{UserID: "owner", Domain: probe}, params); err != nil {
+		t.Fatalf("15 行分镜 + 6 张参考图应允许一次准备: %v", err)
+	}
+	if !probe.prepared || len(probe.input.RowIDs) != 15 || len(probe.input.ReferenceNodeIDs) != 6 {
+		t.Fatalf("prepare input mismatch: %#v", probe.input)
 	}
 }

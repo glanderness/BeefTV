@@ -8,11 +8,6 @@ import (
 	"infinite-canvas/backend/internal/canvas"
 )
 
-const (
-	canvasNodesConfigureMax = 20
-	canvasNodesGetMax       = 50
-)
-
 func registerCanvasNodesBatchOps(r *Registry) {
 	patch := map[string]any{"type": "object", "minProperties": 1, "additionalProperties": false,
 		"properties": canvasNodeConfigurePatchProperties()}
@@ -20,7 +15,7 @@ func registerCanvasNodesBatchOps(r *Registry) {
 		"properties": map[string]any{
 			"canvasId":         map[string]any{"type": "string"},
 			"expectedRevision": map[string]any{"type": "integer", "minimum": 1},
-			"nodes": map[string]any{"type": "array", "minItems": 1, "maxItems": canvasNodesConfigureMax,
+			"nodes": map[string]any{"type": "array", "minItems": 1,
 				"items": map[string]any{"type": "object", "additionalProperties": false,
 					"properties": map[string]any{
 						"nodeId": map[string]any{"type": "string"},
@@ -30,16 +25,16 @@ func registerCanvasNodesBatchOps(r *Registry) {
 					"required": []string{"nodeId", "kind", "patch"}}},
 		},
 		"required": []string{"canvasId", "expectedRevision", "nodes"}})
-	r.Register(Op{ExternalOnly: true, ReplaySafe: true, ID: "canvas.nodes.configure", Summary: "一次设置多个媒体节点的提示词草稿与生成参数；全部校验通过后只增加一次画布版本", Scope: ScopeCanvas,
+	r.Register(Op{AssistantCanvas: true, ReplaySafe: true, ID: "canvas.nodes.configure", Summary: "一次设置多个媒体节点的提示词草稿与生成参数；全部校验通过后只增加一次画布版本", Scope: ScopeCanvas,
 		Params: configureParams, Handler: opCanvasNodesConfigure})
 
 	getParams, _ := json.Marshal(map[string]any{"type": "object", "additionalProperties": false,
 		"properties": map[string]any{
 			"canvasId": map[string]any{"type": "string"},
-			"nodeIds":  map[string]any{"type": "array", "minItems": 1, "maxItems": canvasNodesGetMax, "items": map[string]any{"type": "string"}},
+			"nodeIds":  map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}},
 		},
 		"required": []string{"canvasId", "nodeIds"}})
-	r.Register(Op{ExternalOnly: true, ReadOnly: true, ID: "canvas.nodes.get", Summary: "一次读取指定的多个画布节点", Scope: ScopeCanvas,
+	r.Register(Op{AssistantCanvas: true, ReadOnly: true, ID: "canvas.nodes.get", Summary: "一次读取指定的多个画布节点", Scope: ScopeCanvas,
 		Params: getParams, Handler: opCanvasNodesGet})
 }
 
@@ -61,8 +56,8 @@ func opCanvasNodesConfigure(ctx *Context, raw json.RawMessage) (any, error) {
 	if strings.TrimSpace(args.CanvasID) == "" || args.ExpectedRevision <= 0 {
 		return nil, InvalidArg("invalid_params", "需要画布和当前版本")
 	}
-	if len(args.Nodes) == 0 || len(args.Nodes) > canvasNodesConfigureMax {
-		return nil, InvalidArg("invalid_batch", fmt.Sprintf("nodes 必须是 1..%d 项的数组", canvasNodesConfigureMax))
+	if len(args.Nodes) == 0 {
+		return nil, InvalidArg("invalid_batch", "nodes 至少需要 1 项")
 	}
 	seen := map[string]int{}
 	for index, node := range args.Nodes {
@@ -134,8 +129,8 @@ func opCanvasNodesGet(ctx *Context, raw json.RawMessage) (any, error) {
 	if strings.TrimSpace(args.CanvasID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId 必填")
 	}
-	if len(args.NodeIDs) == 0 || len(args.NodeIDs) > canvasNodesGetMax {
-		return nil, InvalidArg("invalid_batch", fmt.Sprintf("nodeIds 必须是 1..%d 项的数组", canvasNodesGetMax))
+	if len(args.NodeIDs) == 0 {
+		return nil, InvalidArg("invalid_batch", "nodeIds 至少需要 1 项")
 	}
 	for _, nodeID := range args.NodeIDs {
 		if strings.TrimSpace(nodeID) == "" {
@@ -150,6 +145,17 @@ func opCanvasNodesGet(ctx *Context, raw json.RawMessage) (any, error) {
 	if err := json.Unmarshal(canvasRaw, &doc); err != nil {
 		return nil, AsError(err)
 	}
+	rawNodes, _ := doc["nodes"].([]any)
+	byID := make(map[string]any, len(rawNodes))
+	for _, item := range rawNodes {
+		node, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id, ok := node["id"].(string); ok && id != "" {
+			byID[id] = node
+		}
+	}
 	nodes := make([]any, 0, len(args.NodeIDs))
 	missing := make([]string, 0)
 	seen := make(map[string]bool, len(args.NodeIDs))
@@ -159,8 +165,8 @@ func opCanvasNodesGet(ctx *Context, raw json.RawMessage) (any, error) {
 			continue
 		}
 		seen[nodeID] = true
-		node := findDocNode(doc, nodeID)
-		if node == nil {
+		node, exists := byID[nodeID]
+		if !exists {
 			missing = append(missing, nodeID)
 			continue
 		}

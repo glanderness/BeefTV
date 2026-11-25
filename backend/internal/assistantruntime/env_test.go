@@ -4,7 +4,14 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/assistant"
 )
+
+func (h *Host) buildEnv(provider assistant.Provider, pin childPin) []string {
+	env, _ := h.buildEnvWithProxyFingerprint(provider, pin)
+	return env
+}
 
 // envValue 按系统规则读环境变量。Windows 的变量名不分大小写，启动子进程时
 // NO_PROXY 和 no_proxy 会合成一条，只留后写的那个写法；按名字精确匹配会读不到。

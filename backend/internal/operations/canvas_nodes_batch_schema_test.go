@@ -13,18 +13,18 @@ func TestCanvasNodesBatchSchemasAndPolicy(t *testing.T) {
 	RegisterDefaultOps(registry)
 
 	configure := registry.ops["canvas.nodes.configure"]
-	if configure == nil || !configure.ExternalOnly || configure.ReadOnly || configure.AssistantCanvas || !configure.ReplaySafe {
+	if configure == nil || configure.ExternalOnly || configure.ReadOnly || !configure.AssistantCanvas || !configure.ReplaySafe {
 		t.Fatalf("canvas.nodes.configure 策略不正确: %#v", configure)
 	}
-	if configure.AssistantVisible("canvas") || configure.AssistantVisible("full-access") || configure.AssistantVisible("read-only") {
-		t.Fatal("批量配置不应暴露给内置助手")
+	if !configure.AssistantVisible("canvas") || !configure.AssistantVisible("full-access") || configure.AssistantVisible("read-only") {
+		t.Fatal("批量配置应对画布与完全访问模式的内置助手开放，且只读模式不可见")
 	}
 	get := registry.ops["canvas.nodes.get"]
-	if get == nil || !get.ExternalOnly || !get.ReadOnly || get.AssistantCanvas {
+	if get == nil || get.ExternalOnly || !get.ReadOnly || !get.AssistantCanvas {
 		t.Fatalf("canvas.nodes.get 策略不正确: %#v", get)
 	}
-	if get.AssistantVisible("canvas") || get.AssistantVisible("full-access") || get.AssistantVisible("read-only") {
-		t.Fatal("批量读取不应暴露给内置助手")
+	if !get.AssistantVisible("canvas") || !get.AssistantVisible("full-access") || !get.AssistantVisible("read-only") {
+		t.Fatal("批量读取应对内置助手各模式开放")
 	}
 
 	descriptor, _ := registry.Descriptor("canvas.nodes.configure")
@@ -33,8 +33,8 @@ func TestCanvasNodesBatchSchemasAndPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodes := schema.Properties["nodes"]
-	if nodes == nil || nodes.MaxItems == nil || *nodes.MaxItems != canvasNodesConfigureMax || nodes.MinItems == nil || *nodes.MinItems != 1 {
-		t.Fatalf("批量配置 nodes 数量边界未声明: %#v", nodes)
+	if nodes == nil || nodes.MaxItems != nil || nodes.MinItems == nil || *nodes.MinItems != 1 {
+		t.Fatalf("批量配置 nodes 应只要求 minItems=1 且无人为上限: %#v", nodes)
 	}
 	item := nodes.Items
 	if item == nil {
@@ -60,12 +60,12 @@ func TestCanvasNodesBatchSchemasAndPolicy(t *testing.T) {
 	if err := resolved.Validate(valid); err != nil {
 		t.Fatalf("合法批量配置被拒绝: %v", err)
 	}
-	valid["nodes"] = make([]any, 21)
+	valid["nodes"] = make([]any, 50)
 	for index := range valid["nodes"].([]any) {
 		valid["nodes"].([]any)[index] = map[string]any{"nodeId": "n", "kind": "image", "patch": map[string]any{"prompt": "草稿"}}
 	}
-	if err := resolved.Validate(valid); err == nil {
-		t.Fatal("schema 应拒绝超过 20 个节点")
+	if err := resolved.Validate(valid); err != nil {
+		t.Fatalf("schema 不应再限制大批量配置: %v", err)
 	}
 
 	var getSchema jsonschema.Schema
@@ -73,8 +73,8 @@ func TestCanvasNodesBatchSchemasAndPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodeIDs := getSchema.Properties["nodeIds"]
-	if nodeIDs == nil || nodeIDs.MaxItems == nil || *nodeIDs.MaxItems != canvasNodesGetMax || nodeIDs.MinItems == nil || *nodeIDs.MinItems != 1 {
-		t.Fatalf("批量读取 nodeIds 数量边界未声明: %#v", nodeIDs)
+	if nodeIDs == nil || nodeIDs.MaxItems != nil || nodeIDs.MinItems == nil || *nodeIDs.MinItems != 1 {
+		t.Fatalf("批量读取 nodeIds 应只要求 minItems=1 且无人为上限: %#v", nodeIDs)
 	}
 	readResolved, err := getSchema.Resolve(nil)
 	if err != nil {
