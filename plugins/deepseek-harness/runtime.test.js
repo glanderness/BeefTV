@@ -250,7 +250,7 @@ function mockRuntimeProcesses(context, { unavailableAttempts = 0, available, lau
     if (!present) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
   })
   context.mock.method(childProcess, 'execFile', (command, args, options, callback) => {
-    if (realRuntimesDir && (command === '/usr/bin/ditto' || command === 'unzip' || command === 'tar.exe')) {
+    if (realRuntimesDir && (command === '/usr/bin/ditto' || command === 'unzip' || command === 'bsdtar' || command === 'tar.exe' || command === 'powershell.exe')) {
       return originalExecFile(command, args, options, callback)
     }
     if (command === '/usr/libexec/PlistBuddy' || command === 'dpkg-query' || (args?.[0] === '--version' && String(command).includes('beeftv'))) {

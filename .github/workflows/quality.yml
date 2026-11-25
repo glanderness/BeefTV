@@ -99,7 +99,7 @@ jobs:
           emit backend '^(backend/|agent-host/|plugin-packages/|plugins/|scripts/deadcode|\.github/workflows/quality\.yml$)'
           emit web '^(web/|plugins/deepseek-harness/|plugin-packages/|scripts/(public-release-(export|audit)|audit-public-docs|verify-beeftv-local-release|build-beeftv-release)\.sh$|(backend/)?Dockerfile$|docker-compose.*\.yml$|\.github/workflows/(quality|publish-images)\.yml$)'
           emit agent_host '^(agent-host/|plugins/deepseek-harness/|backend/internal/assistant|scripts/package-agent-host|\.github/workflows/quality\.yml$)'
-          emit windows_storage '^(agent-host/|backend/cmd/(desktop|beeftv)/|backend/internal/(desktopstorage|desktopupdate|environment|database|diagnostics|localipc|webviewlock|assistantruntime|supporttrace|assistantdiagnostics)/|scripts/.*windows|scripts/installers/|\.github/workflows/quality\.yml$)'
+          emit windows_storage '^(agent-host/|plugins/deepseek-harness/|backend/cmd/(desktop|beeftv)/|backend/internal/(desktopstorage|desktopupdate|environment|database|diagnostics|localipc|webviewlock|assistantruntime|supporttrace|assistantdiagnostics)/|scripts/.*windows|scripts/installers/|\.github/workflows/quality\.yml$)'
           emit release_scripts '^(\.github/workflows/|scripts/|licenses/|VERSION$|CHANGELOG\.md$|NOTICE$|THIRD_PARTY_NOTICES\.md$)'
           emit docker '^((backend/)?Dockerfile$|docker-compose.*\.yml$|\.github/workflows/publish-images\.yml$)'
 

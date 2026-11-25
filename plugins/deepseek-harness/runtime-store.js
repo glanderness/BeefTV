@@ -1,16 +1,15 @@
 // 托管 BeefTV 独立运行环境：流式下载、校验解压、原子切换与安全回收。
-// 验签、域名白名单与 ZIP 安全预检位于 runtime-verify.js。
+// 验签与下载源白名单位于 runtime-verify.js；解压至独立暂存目录后复检符号链接，通过后再原子切换。
 
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createWriteStream } from 'node:fs'
-import { access, chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, chmod, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { compareSemver } from './platform-app.js'
 import {
   DEFAULT_FEED_URL,
   DEFAULT_PUBLIC_KEY,
-  inspectZipSafety,
   isDomesticURL,
   MAX_FEED_BYTES,
   orderCandidateURLs,
@@ -23,10 +22,15 @@ import {
 export {
   DEFAULT_FEED_URL,
   DEFAULT_PUBLIC_KEY,
-  inspectZipSafety,
   orderCandidateURLs,
   preferDomesticMirror,
   verifyFeedEnvelope,
+}
+
+export const ARCHIVE_SAFETY_ERROR_CODE = 'BEEFTV_UNSAFE_ARCHIVE'
+
+function archiveSafetyError(message, options) {
+  return Object.assign(new Error(message, options), { code: ARCHIVE_SAFETY_ERROR_CODE })
 }
 
 const FEED_TIMEOUT_MS = 20_000
@@ -120,46 +124,77 @@ function runCommand(command, args, { signal } = {}) {
   })
 }
 
+function encodePowerShellCommand(script) {
+  return Buffer.from(String(script), 'utf16le').toString('base64')
+}
+
+function buildPowerShellExpandCommand(zipPath, targetDir) {
+  const escapedZip = String(zipPath).replaceAll("'", "''")
+  const escapedDest = String(targetDir).replaceAll("'", "''")
+  return `$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath '${escapedZip}' -DestinationPath '${escapedDest}' -Force`
+}
+
+// 运行包解压前已通过 Ed25519 签名、HTTPS 白名单与 SHA-256 校验；解压至独立暂存目录后仅做一次纯 Node 符号链接与路径归属复检。
+export async function rejectExtractedSymlinks(targetDir) {
+  const resolvedRoot = await realpath(targetDir)
+  async function walk(dir) {
+    const entries = await readdir(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name)
+      if (entry.isSymbolicLink()) {
+        throw archiveSafetyError(`安装包不能包含符号链接：${relative(resolvedRoot, fullPath)}`)
+      }
+      const entryReal = await realpath(fullPath)
+      const rel = relative(resolvedRoot, entryReal)
+      if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+        throw archiveSafetyError(`安装包解压路径越界：${relative(resolvedRoot, fullPath)}`)
+      }
+      if (entry.isDirectory()) await walk(fullPath)
+    }
+  }
+  await walk(resolvedRoot)
+}
+
 export async function extractZipArchive(zipPath, targetDir, { platform = process.platform, signal, runCmd = runCommand } = {}) {
   await mkdir(targetDir, { recursive: true })
-  if (platform === 'darwin') {
-    await runCmd('/usr/bin/ditto', ['-xk', zipPath, targetDir], { signal })
-    return
-  }
-  if (platform === 'win32') {
-    try {
-      await runCmd('tar.exe', ['-xf', zipPath, '-C', targetDir], { signal })
-      return
-    } catch (error) {
-      if (signal?.aborted) throw error
-      const escapedZip = zipPath.replaceAll("'", "''")
-      const escapedDest = targetDir.replaceAll("'", "''")
-      await runCmd(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath '${escapedZip}' -DestinationPath '${escapedDest}' -Force`],
-        { signal },
-      )
-      return
-    }
-  }
   try {
-    await runCmd('unzip', ['-q', '-o', zipPath, '-d', targetDir], { signal })
-  } catch (unzipError) {
-    if (signal?.aborted) throw unzipError
-    try {
-      await runCmd('bsdtar', ['-xf', zipPath, '-C', targetDir], { signal })
-    } catch (bsdtarError) {
-      if (signal?.aborted) throw bsdtarError
+    if (platform === 'darwin') {
+      await runCmd('/usr/bin/ditto', ['-xk', zipPath, targetDir], { signal })
+    } else if (platform === 'win32') {
       try {
-        await runCmd('python3', ['-c', 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', zipPath, targetDir], { signal })
-      } catch (pyError) {
-        if (signal?.aborted) throw pyError
-        if (unzipError?.code === 'ENOENT') {
-          throw new Error('解压 BeefTV 运行环境失败：系统缺少 unzip，请先安装 unzip 后重试', { cause: unzipError })
+        await runCmd('tar.exe', ['-xf', zipPath, '-C', targetDir], { signal })
+      } catch (error) {
+        if (signal?.aborted) throw error
+        await rm(targetDir, { recursive: true, force: true }).catch(() => {})
+        await mkdir(targetDir, { recursive: true })
+        await runCmd(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowerShellCommand(buildPowerShellExpandCommand(zipPath, targetDir))],
+          { signal },
+        )
+      }
+    } else {
+      try {
+        await runCmd('unzip', ['-q', '-o', zipPath, '-d', targetDir], { signal })
+      } catch (unzipError) {
+        if (signal?.aborted) throw unzipError
+        await rm(targetDir, { recursive: true, force: true }).catch(() => {})
+        await mkdir(targetDir, { recursive: true })
+        try {
+          await runCmd('bsdtar', ['-xf', zipPath, '-C', targetDir], { signal })
+        } catch (bsdtarError) {
+          if (signal?.aborted) throw bsdtarError
+          if (unzipError?.code === 'ENOENT' && bsdtarError?.code === 'ENOENT') {
+            throw new Error('解压 BeefTV 运行环境失败：系统缺少 unzip，请先安装 unzip 后重试', { cause: unzipError })
+          }
+          throw bsdtarError?.code === 'ENOENT' ? unzipError : bsdtarError
         }
-        throw unzipError
       }
     }
+    await rejectExtractedSymlinks(targetDir)
+  } catch (error) {
+    await rm(targetDir, { recursive: true, force: true }).catch(() => {})
+    throw error
   }
 }
 
@@ -302,7 +337,6 @@ export function createRuntimeStore({
   publicKey = env?.BEEFTV_HARNESS_PUBLIC_KEY || DEFAULT_PUBLIC_KEY,
   fetchImpl = globalThis.fetch,
   extractImpl = extractZipArchive,
-  inspectZipImpl = inspectZipSafety,
 } = {}) {
   const platKey = platformKey(platform, arch)
   const runtimesDir = pluginHome ? join(pluginHome, 'runtimes') : null
@@ -517,8 +551,6 @@ export function createRuntimeStore({
         throw new Error(`下载 BeefTV 运行环境失败：${lastDownloadError?.message || '请检查网络连接后重试'}`)
       }
 
-      provision = { ...provision, phase: 'verifying', percent: 100 }
-      await inspectZipImpl(zipPath)
       if (signal?.aborted) throw formatAbortError(Object.assign(new Error('aborted'), { name: 'AbortError' }))
 
       provision = { ...provision, phase: 'extracting', percent: null }
