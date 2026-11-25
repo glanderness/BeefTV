@@ -158,6 +158,60 @@ func TestDashscopeQwenImageSurfacesFailureMessage(t *testing.T) {
 	}
 }
 
+func TestDashscopeQwenImage21ProCompatAndTerminalUnknownStatus(t *testing.T) {
+	adapter := officialPackageAdapter(t, "dashscope-qwen-image.beeftv-plugin", "dashscope-qwen-image")
+
+	unknown, err := adapter.ParsePoll(context.Background(), PollContext{TaskID: "task-qwen-21"}, []byte(`{"output":{"task_id":"task-qwen-21","task_status":"UNKNOWN"},"request_id":"req-unknown"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unknown.Status != StatusFailed {
+		t.Fatalf("DashScope UNKNOWN status = %q, want %q (must fail instead of spinning to timeout)", unknown.Status, StatusFailed)
+	}
+
+	topLevelStatus, err := adapter.ParsePoll(context.Background(), PollContext{TaskID: "task-qwen-21"}, []byte(`{"task_id":"task-qwen-21","task_status":"SUCCEEDED","output":{"results":[{"url":"https://dashscope-result.example/qwen21.png"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if topLevelStatus.Status != StatusSucceeded || topLevelStatus.Result == nil || len(topLevelStatus.Result.Images) != 1 || topLevelStatus.Result.Images[0].URL != "https://dashscope-result.example/qwen21.png" {
+		t.Fatalf("top-level task_status + output.results = %#v", topLevelStatus)
+	}
+
+	multiChoice, err := adapter.ParsePoll(context.Background(), PollContext{TaskID: "task-qwen-21"}, []byte(`{"output":{"task_id":"task-qwen-21","task_status":"SUCCEEDED","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":[{"image":"https://dashscope-result.example/1.png"}]}},{"finish_reason":"stop","message":{"role":"assistant","content":[{"image":"data:image/png;base64,QUJD"}]}}]},"usage":{"image_count":2,"width":1024,"height":1024}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if multiChoice.Status != StatusSucceeded || multiChoice.Result == nil || len(multiChoice.Result.Images) != 2 {
+		t.Fatalf("multi-choice result = %#v", multiChoice)
+	}
+	if multiChoice.Result.Images[0].URL != "https://dashscope-result.example/1.png" || multiChoice.Result.Images[1].DataURL != "data:image/png;base64,QUJD" {
+		t.Fatalf("multi-choice images = %#v", multiChoice.Result.Images)
+	}
+}
+
+func TestDashscopeQwenImageSyncUsesMultimodalEndpoint(t *testing.T) {
+	adapter := officialPackageAdapter(t, "dashscope-qwen-image-sync.beeftv-plugin", "dashscope-qwen-image-sync")
+	create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "qwen-image-2.1-pro", Prompt: "赛博朋克人像", AspectRatio: "16:9", ImageCount: 1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if create.Method != "POST" || create.Path != "/api/v1/services/aigc/multimodal-generation/generation" || !create.OriginPath {
+		t.Fatalf("sync create = %#v", create)
+	}
+	if _, hasAsync := create.Headers["X-DashScope-Async"]; hasAsync {
+		t.Fatalf("sync endpoint must not send X-DashScope-Async header: %#v", create.Headers)
+	}
+	completed, err := adapter.ParseCreate(context.Background(), []byte(`{"output":{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":[{"image":"https://dashscope-result.example/sync.png"}]}}]},"usage":{"image_count":1,"width":1536,"height":864},"request_id":"req-sync"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != StatusSucceeded || completed.Result == nil || len(completed.Result.Images) != 1 || completed.Result.Images[0].URL != "https://dashscope-result.example/sync.png" {
+		t.Fatalf("sync parse = %#v", completed)
+	}
+}
+
 func dashscopeQwenImageContent(t *testing.T, body map[string]any) []any {
 	t.Helper()
 	input, _ := body["input"].(map[string]any)

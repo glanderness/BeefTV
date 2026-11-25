@@ -1,11 +1,10 @@
 {
-  "apiVersion": "beeftv.plugin/v2",
+  "apiVersion": "beeftv.plugin/v3",
   "id": "dashscope-wan-video",
   "name": "DashScope Wan Video",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "author": "影策 / Open AI Canvas contributors",
-  "description": "DashScope Wan Video 独立请求协议插件。",
-  "documentation": "# DashScope Wan Video\n\n该目录是 BeefTV 声明式协议插件源码。后端从生成的 `dashscope-wan-video.beeftv-plugin` 包加载，不依赖系统内置 `host:` 适配器。\n\n本插件源自影策 Open AI Canvas 社区并由 BeefTV 适配维护，用于适配 Alibaba Cloud 相关服务接口；不表示 BeefTV 与该服务商存在隶属、授权或合作关系。\n\n完整接口见 [docs/interface.md](docs/interface.md)。\n\n---\n\n# DashScope Wan Video 接口字段\n\n## 协议身份\n\n- 插件 ID：`dashscope-wan-video`。\n- Provider ID：`dashscope-wan-video`。\n- 能力：`video`。\n- 默认 Base URL：`https://dashscope.aliyuncs.com`。\n- 鉴权驱动：`bearer`。\n- 创建：`POST /api/v1/services/aigc/video-generation/video-synthesis`。\n- 查询：`GET /api/v1/tasks/{{taskId}}`。\n\n## 配置字段\n\n| 字段 | 类型 | 必填 | 含义 |\n| --- | --- | --- | --- |\n| `apiKey` | secret | 是 | API Key |\n\n## 统一字段映射\n\n| 统一字段 | 类型 | 必填 | 上游映射 | 说明 |\n| --- | --- | --- | --- | --- |\n| `model` | string | 是 | `model` | 视频模型 ID。 |\n| `prompt` | string | 是 | `prompt/content/input` | 视频提示词。 |\n| `images` | media[] | 否 | `first/last/reference image` | 显式 role 图片输入。 |\n| `videos` | media[] | 否 | `reference video` | 参考视频。 |\n| `audios` | media[] | 否 | `reference audio/voice` | 参考音频或音色。 |\n| `duration` | integer | 否 | `duration/seconds` | 时长秒数。 |\n| `aspectRatio` | string | 否 | `ratio/aspect_ratio/size` | 画幅比例或尺寸。 |\n| `resolution` | string | 否 | `resolution` | 分辨率档位。 |\n| `generateAudio` | boolean | 否 | `generate_audio` | 是否生成音频。 |\n| `watermark` | boolean | 否 | `watermark` | 水印开关。 |\n| `providerOptions` | object | 否 | `provider-specific fields` | 插件命名空间内的厂商扩展字段。 |\n\n## 上游请求模板逐字段清单\n\n下表由插件请求模板生成，覆盖 body、query、headers 和 multipart 文件声明中的每个字段。\n\n| 上游位置 | 值或转换表达式 |\n| --- | --- |\n| `create.method` | `\"POST\"` |\n| `create.path` | `\"/api/v1/services/aigc/video-generation/video-synthesis\"` |\n| `create.contentType` | `\"application/json\"` |\n| `create.body.model` | `{\"$ref\":\"request.model\"}` |\n| `create.body.input.prompt` | `{\"$ref\":\"request.prompt\"}` |\n| `create.body.input.negative_prompt` | `{\"$omitEmpty\":{\"$ref\":\"request.providerOptions.dashscope-wan-video.negative_prompt\"}}` |\n| `create.body.input.img_url` | `{\"$omitEmpty\":{\"$if\":{\"condition\":{\"$and\":[{\"$ne\":[{\"$ref\":\"request.operation\"},\"reference_to_video\"]},{\"$eq\":[{\"$len\":{\"$filter\":{\"from\":{\"$sortByOrder\":{\"$ref\":\"request.images\"}},\"as\":\"media\",\"where\":{\"$in\":[{\"$ref\":\"media.role\"},[\"last_frame\"]]}}}},0]}]},\"then\":{\"$coalesce\":[{\"$first\":{\"$map\":{\"from\":{\"$filter\":{\"from\":{\"$sortByOrder\":{\"$ref\":\"request.images\"}},\"as\":\"media\",\"where\":{\"$in\":[{\"$ref\":\"media.role\"},[\"first_frame\"]]}}},\"as\":\"media\",\"in\":{\"$ref\":\"media.value\"}}}},{\"$first\":{\"$map\":{\"from\":{\"$filter\":{\"from\":{\"$sortByOrder\":{\"$ref\":\"request.images\"}},\"as\":\"media\",\"where\":{\"$in\":[{\"$ref\":\"media.role\"},[\"reference_image\",\"edit_source\",\"\"]]}}},\"as\":\"media\",\"in\":{\"$ref\":\"media.value\"}}}}]},\"else\":null}}}` |\n| `create.body.input.first_frame_url` | `{\"$omitEmpty\":{\"$if\":{\"condition\":{\"$gt\":[{\"$len\":{\"$filter\":{\"from\":{\"$sortByOrder\":{\"$ref\":\"request.images\"}},\"as\":\"media\",\"where\":{\"$in\":[{\"$ref\":\"media.role\"},[\"last_frame\"]]}}}},0]},\"then\":{\"$first\":{\"$map\":{\"from\":{\"$filter\":{\"from\":{\"$sortByOrder\":{\"$ref\":\"request.images\"}},\"as\":\"media\",\"where\":{\"$in\":[{\"$ref\":\"media.role\"},[\"first_frame\"]]}}},\"as\":\"media\",\"in\":{\"$ref\":\"media.value\"}}}},\"else\":null}}}` |\n| `create.body.input.last_frame_url` | `{\"$omitEmpty\":{\"$first\":{\"$map\":{\"from\":{\"$filter\":{\"from\":{\"$sortByOrder\":{\"$ref\":\"request.images\"}},\"as\":\"media\",\"where\":{\"$in\":[{\"$ref\":\"media.role\"},[\"last_frame\"]]}}},\"as\":\"media\",\"in\":{\"$ref\":\"media.value\"}}}}}` |\n| `create.body.input.reference_images` | `{\"$omitEmpty\":{\"$if\":{\"condition\":{\"$eq\":[{\"$ref\":\"request.operation\"},\"reference_to_video\"]},\"then\":{\"$map\":{\"from\":{\"$filter\":{\"from\":{\"$sortByOrder\":{\"$ref\":\"request.images\"}},\"as\":\"media\",\"where\":{\"$in\":[{\"$ref\":\"media.role\"},[\"reference_image\",\"subject_reference\",\"style_reference\"]]}}},\"as\":\"media\",\"in\":{\"$ref\":\"media.value\"}}},\"else\":null}}}` |\n| `create.body.input.video_url` | `{\"$omitEmpty\":{\"$first\":{\"$map\":{\"from\":{\"$filter\":{\"from\":{\"$sortByOrder\":{\"$ref\":\"request.videos\"}},\"as\":\"media\",\"where\":{\"$in\":[{\"$ref\":\"media.role\"},[\"reference_video\",\"\"]]}}},\"as\":\"media\",\"in\":{\"$ref\":\"media.value\"}}}}}` |\n| `create.body.input.audio_url` | `{\"$omitEmpty\":{\"$first\":{\"$map\":{\"from\":{\"$filter\":{\"from\":{\"$sortByOrder\":{\"$ref\":\"request.audios\"}},\"as\":\"media\",\"where\":{\"$in\":[{\"$ref\":\"media.role\"},[\"reference_audio\",\"reference_voice\",\"\"]]}}},\"as\":\"media\",\"in\":{\"$ref\":\"media.value\"}}}}}` |\n| `create.body.parameters.size` | `{\"$omitEmpty\":{\"$ref\":\"request.resolution\"}}` |\n| `create.body.parameters.duration` | `{\"$omitEmpty\":{\"$ref\":\"request.duration\"}}` |\n| `create.body.parameters.prompt_extend` | `{\"$omitEmpty\":{\"$ref\":\"request.providerOptions.dashscope-wan-video.prompt_extend\"}}` |\n| `create.body.parameters.watermark` | `{\"$ref\":\"request.watermark\"}` |\n| `create.body.parameters.seed` | `{\"$omitEmpty\":{\"$ref\":\"request.providerOptions.dashscope-wan-video.seed\"}}` |\n| `create.body.parameters.shot_type` | `{\"$omitEmpty\":{\"$ref\":\"request.providerOptions.dashscope-wan-video.shot_type\"}}` |\n| `create.body.parameters.audio` | `{\"$ref\":\"request.generateAudio\"}` |\n| `create.body.parameters.template` | `{\"$omitEmpty\":{\"$ref\":\"request.providerOptions.dashscope-wan-video.template\"}}` |\n| `create.headers.X-DashScope-Async` | `\"enable\"` |\n| `poll.method` | `\"GET\"` |\n| `poll.path` | `\"/api/v1/tasks/{{taskId}}\"` |\n| `poll.contentType` | `\"application/json\"` |\n\n## Provider 扩展键\n\n- `providerOptions.dashscope-wan-video.negative_prompt`\n- `providerOptions.dashscope-wan-video.prompt_extend`\n- `providerOptions.dashscope-wan-video.seed`\n- `providerOptions.dashscope-wan-video.shot_type`\n- `providerOptions.dashscope-wan-video.template`\n\n动态模型或工作流允许使用文档声明的完整 `parameters/input/extra_body` 对象；该对象是协议本身的开放 schema，不会被宿主裁剪。\n\n## 响应映射逐字段清单\n\n| 映射位置 | 上游路径或转换表达式 |\n| --- | --- |\n| `response.taskId` | `{\"$coalesce\":[{\"$ref\":\"response.output.task_id\"},{\"$ref\":\"response.task_id\"},{\"$ref\":\"taskId\"}]}` |\n| `response.status` | `{\"$coalesce\":[{\"$ref\":\"response.output.task_status\"},{\"$ref\":\"response.status\"},\"pending\"]}` |\n| `response.message` | `{\"$coalesce\":[{\"$ref\":\"response.error.message\"},{\"$ref\":\"response.message\"},{\"$ref\":\"response.fail_reason\"}]}` |\n| `response.videos` | `{\"$coalesce\":[{\"$ref\":\"response.output.video_url\"},{\"$ref\":\"response.output.results\"},{\"$ref\":\"response.video_url\"}]}` |\n| `response.errorPaths[0]` | `\"code\"` |\n| `response.resultEphemeral` | `true` |\n| `response.usage` | `{\"$ref\":\"response.usage\"}` |\n| `response.messagePaths[0]` | `\"message\"` |\n| `response.messagePaths[1]` | `\"output.message\"` |\n\n## 响应与错误\n\n插件把上游 task/status/text/media/usage 映射为统一结果。临时媒体 URL 标记为 ephemeral，由宿主立即下载持久化。HTTP 错误、业务 code 和 error object 保持失败语义，不包装成成功。\n\n## 兼容边界\n\n该包只代表上述线协议 profile；同一品牌的其他 endpoint、云区域或网关包装必须使用独立插件，不能根据模型名猜测。\n\n<!-- BEEFTV_PLUGIN_MANIFEST_START -->\n## Manifest 完整接口定义\n\n以下 JSON 与插件包内实际 `manifest.json` 逐字段一致，覆盖插件身份、权限、配置、鉴权、参数、校验、创建、Agent、查询、取消、结果下载、响应和 Agent 响应映射。`documentation` 字段的值就是当前完整文档；为避免文档在自身内部无限递归，JSON 中仅用等义占位文本表示正文。\n\n```json\n{\n  \"apiVersion\": \"beeftv.plugin/v2\",\n  \"id\": \"dashscope-wan-video\",\n  \"name\": \"DashScope Wan Video\",\n  \"version\": \"2.0.1\",\n  \"author\": \"影策 / Open AI Canvas contributors\",\n  \"description\": \"DashScope Wan Video 独立请求协议插件。\",\n  \"documentation\": \"<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>\",\n  \"permissions\": [\n    \"generation.run\",\n    \"media.read\"\n  ],\n  \"configuration\": {\n    \"fields\": [\n      {\n        \"name\": \"apiKey\",\n        \"type\": \"secret\",\n        \"label\": \"API Key\",\n        \"required\": true\n      }\n    ]\n  },\n  \"contributes\": {\n    \"providers\": [\n      {\n        \"id\": \"dashscope-wan-video\",\n        \"label\": \"DashScope Wan Video\",\n        \"capabilities\": [\n          \"video\"\n        ],\n        \"scopes\": [\n          \"admin.system-channel\",\n          \"user.custom-channel\",\n          \"canvas\",\n          \"creation\",\n          \"agent\"\n        ],\n        \"baseUrl\": \"https://dashscope.aliyuncs.com\",\n        \"requiresPublicMediaUrls\": true,\n        \"mediaTransport\": {\n          \"image\": \"inline\",\n          \"video\": \"url\",\n          \"audio\": \"url\"\n        },\n        \"auth\": {\n          \"type\": \"bearer\",\n          \"field\": \"apiKey\"\n        },\n        \"parameters\": [\n          {\n            \"name\": \"model\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"model\",\n            \"description\": \"视频模型 ID。\"\n          },\n          {\n            \"name\": \"prompt\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"prompt/content/input\",\n            \"description\": \"视频提示词。\"\n          },\n          {\n            \"name\": \"images\",\n            \"type\": \"media[]\",\n            \"required\": false,\n            \"mapping\": \"first/last/reference image\",\n            \"description\": \"显式 role 图片输入。\"\n          },\n          {\n            \"name\": \"videos\",\n            \"type\": \"media[]\",\n            \"required\": false,\n            \"mapping\": \"reference video\",\n            \"description\": \"参考视频。\"\n          },\n          {\n            \"name\": \"audios\",\n            \"type\": \"media[]\",\n            \"required\": false,\n            \"mapping\": \"reference audio/voice\",\n            \"description\": \"参考音频或音色。\"\n          },\n          {\n            \"name\": \"duration\",\n            \"type\": \"integer\",\n            \"required\": false,\n            \"mapping\": \"duration/seconds\",\n            \"description\": \"时长秒数。\"\n          },\n          {\n            \"name\": \"aspectRatio\",\n            \"type\": \"string\",\n            \"required\": false,\n            \"mapping\": \"ratio/aspect_ratio/size\",\n            \"description\": \"画幅比例或尺寸。\"\n          },\n          {\n            \"name\": \"resolution\",\n            \"type\": \"string\",\n            \"required\": false,\n            \"mapping\": \"resolution\",\n            \"description\": \"分辨率档位。\"\n          },\n          {\n            \"name\": \"generateAudio\",\n            \"type\": \"boolean\",\n            \"required\": false,\n            \"mapping\": \"generate_audio\",\n            \"description\": \"是否生成音频。\"\n          },\n          {\n            \"name\": \"watermark\",\n            \"type\": \"boolean\",\n            \"required\": false,\n            \"mapping\": \"watermark\",\n            \"description\": \"水印开关。\"\n          },\n          {\n            \"name\": \"providerOptions\",\n            \"type\": \"object\",\n            \"required\": false,\n            \"mapping\": \"provider-specific fields\",\n            \"description\": \"插件命名空间内的厂商扩展字段。\"\n          }\n        ],\n        \"validations\": [\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$sortByOrder\": {\n                          \"$ref\": \"request.images\"\n                        }\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$in\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          [\n                            \"first_frame\"\n                          ]\n                        ]\n                      }\n                    }\n                  }\n                },\n                1\n              ]\n            },\n            \"message\": \"Wan 视频最多只能有一个首帧\"\n          },\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$sortByOrder\": {\n                          \"$ref\": \"request.images\"\n                        }\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$in\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          [\n                            \"last_frame\"\n                          ]\n                        ]\n                      }\n                    }\n                  }\n                },\n                1\n              ]\n            },\n            \"message\": \"Wan 视频最多只能有一个尾帧\"\n          },\n          {\n            \"assert\": {\n              \"$or\": [\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$sortByOrder\": {\n                              \"$ref\": \"request.images\"\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"last_frame\"\n                              ]\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    0\n                  ]\n                },\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$sortByOrder\": {\n                              \"$ref\": \"request.images\"\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"first_frame\"\n                              ]\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    1\n                  ]\n                }\n              ]\n            },\n            \"message\": \"Wan 视频使用尾帧时必须同时提供首帧\"\n          }\n        ],\n        \"create\": {\n          \"method\": \"POST\",\n          \"path\": \"/api/v1/services/aigc/video-generation/video-synthesis\",\n          \"contentType\": \"application/json\",\n          \"body\": {\n            \"model\": {\n              \"$ref\": \"request.model\"\n            },\n            \"input\": {\n              \"prompt\": {\n                \"$ref\": \"request.prompt\"\n              },\n              \"negative_prompt\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.providerOptions.dashscope-wan-video.negative_prompt\"\n                }\n              },\n              \"img_url\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$and\": [\n                        {\n                          \"$ne\": [\n                            {\n                              \"$ref\": \"request.operation\"\n                            },\n                            \"reference_to_video\"\n                          ]\n                        },\n                        {\n                          \"$eq\": [\n                            {\n                              \"$len\": {\n                                \"$filter\": {\n                                  \"from\": {\n                                    \"$sortByOrder\": {\n                                      \"$ref\": \"request.images\"\n                                    }\n                                  },\n                                  \"as\": \"media\",\n                                  \"where\": {\n                                    \"$in\": [\n                                      {\n                                        \"$ref\": \"media.role\"\n                                      },\n                                      [\n                                        \"last_frame\"\n                                      ]\n                                    ]\n                                  }\n                                }\n                              }\n                            },\n                            0\n                          ]\n                        }\n                      ]\n                    },\n                    \"then\": {\n                      \"$coalesce\": [\n                        {\n                          \"$first\": {\n                            \"$map\": {\n                              \"from\": {\n                                \"$filter\": {\n                                  \"from\": {\n                                    \"$sortByOrder\": {\n                                      \"$ref\": \"request.images\"\n                                    }\n                                  },\n                                  \"as\": \"media\",\n                                  \"where\": {\n                                    \"$in\": [\n                                      {\n                                        \"$ref\": \"media.role\"\n                                      },\n                                      [\n                                        \"first_frame\"\n                                      ]\n                                    ]\n                                  }\n                                }\n                              },\n                              \"as\": \"media\",\n                              \"in\": {\n                                \"$ref\": \"media.value\"\n                              }\n                            }\n                          }\n                        },\n                        {\n                          \"$first\": {\n                            \"$map\": {\n                              \"from\": {\n                                \"$filter\": {\n                                  \"from\": {\n                                    \"$sortByOrder\": {\n                                      \"$ref\": \"request.images\"\n                                    }\n                                  },\n                                  \"as\": \"media\",\n                                  \"where\": {\n                                    \"$in\": [\n                                      {\n                                        \"$ref\": \"media.role\"\n                                      },\n                                      [\n                                        \"reference_image\",\n                                        \"edit_source\",\n                                        \"\"\n                                      ]\n                                    ]\n                                  }\n                                }\n                              },\n                              \"as\": \"media\",\n                              \"in\": {\n                                \"$ref\": \"media.value\"\n                              }\n                            }\n                          }\n                        }\n                      ]\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"first_frame_url\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$gt\": [\n                        {\n                          \"$len\": {\n                            \"$filter\": {\n                              \"from\": {\n                                \"$sortByOrder\": {\n                                  \"$ref\": \"request.images\"\n                                }\n                              },\n                              \"as\": \"media\",\n                              \"where\": {\n                                \"$in\": [\n                                  {\n                                    \"$ref\": \"media.role\"\n                                  },\n                                  [\n                                    \"last_frame\"\n                                  ]\n                                ]\n                              }\n                            }\n                          }\n                        },\n                        0\n                      ]\n                    },\n                    \"then\": {\n                      \"$first\": {\n                        \"$map\": {\n                          \"from\": {\n                            \"$filter\": {\n                              \"from\": {\n                                \"$sortByOrder\": {\n                                  \"$ref\": \"request.images\"\n                                }\n                              },\n                              \"as\": \"media\",\n                              \"where\": {\n                                \"$in\": [\n                                  {\n                                    \"$ref\": \"media.role\"\n                                  },\n                                  [\n                                    \"first_frame\"\n                                  ]\n                                ]\n                              }\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"in\": {\n                            \"$ref\": \"media.value\"\n                          }\n                        }\n                      }\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"last_frame_url\": {\n                \"$omitEmpty\": {\n                  \"$first\": {\n                    \"$map\": {\n                      \"from\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$sortByOrder\": {\n                              \"$ref\": \"request.images\"\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"last_frame\"\n                              ]\n                            ]\n                          }\n                        }\n                      },\n                      \"as\": \"media\",\n                      \"in\": {\n                        \"$ref\": \"media.value\"\n                      }\n                    }\n                  }\n                }\n              },\n              \"reference_images\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$eq\": [\n                        {\n                          \"$ref\": \"request.operation\"\n                        },\n                        \"reference_to_video\"\n                      ]\n                    },\n                    \"then\": {\n                      \"$map\": {\n                        \"from\": {\n                          \"$filter\": {\n                            \"from\": {\n                              \"$sortByOrder\": {\n                                \"$ref\": \"request.images\"\n                              }\n                            },\n                            \"as\": \"media\",\n                            \"where\": {\n                              \"$in\": [\n                                {\n                                  \"$ref\": \"media.role\"\n                                },\n                                [\n                                  \"reference_image\",\n                                  \"subject_reference\",\n                                  \"style_reference\"\n                                ]\n                              ]\n                            }\n                          }\n                        },\n                        \"as\": \"media\",\n                        \"in\": {\n                          \"$ref\": \"media.value\"\n                        }\n                      }\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"video_url\": {\n                \"$omitEmpty\": {\n                  \"$first\": {\n                    \"$map\": {\n                      \"from\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$sortByOrder\": {\n                              \"$ref\": \"request.videos\"\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"reference_video\",\n                                \"\"\n                              ]\n                            ]\n                          }\n                        }\n                      },\n                      \"as\": \"media\",\n                      \"in\": {\n                        \"$ref\": \"media.value\"\n                      }\n                    }\n                  }\n                }\n              },\n              \"audio_url\": {\n                \"$omitEmpty\": {\n                  \"$first\": {\n                    \"$map\": {\n                      \"from\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$sortByOrder\": {\n                              \"$ref\": \"request.audios\"\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"reference_audio\",\n                                \"reference_voice\",\n                                \"\"\n                              ]\n                            ]\n                          }\n                        }\n                      },\n                      \"as\": \"media\",\n                      \"in\": {\n                        \"$ref\": \"media.value\"\n                      }\n                    }\n                  }\n                }\n              }\n            },\n            \"parameters\": {\n              \"size\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.resolution\"\n                }\n              },\n              \"duration\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.duration\"\n                }\n              },\n              \"prompt_extend\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.providerOptions.dashscope-wan-video.prompt_extend\"\n                }\n              },\n              \"watermark\": {\n                \"$ref\": \"request.watermark\"\n              },\n              \"seed\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.providerOptions.dashscope-wan-video.seed\"\n                }\n              },\n              \"shot_type\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.providerOptions.dashscope-wan-video.shot_type\"\n                }\n              },\n              \"audio\": {\n                \"$ref\": \"request.generateAudio\"\n              },\n              \"template\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.providerOptions.dashscope-wan-video.template\"\n                }\n              }\n            }\n          },\n          \"headers\": {\n            \"X-DashScope-Async\": \"enable\"\n          }\n        },\n        \"poll\": {\n          \"method\": \"GET\",\n          \"path\": \"/api/v1/tasks/{{taskId}}\"\n        },\n        \"response\": {\n          \"taskId\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.output.task_id\"\n              },\n              {\n                \"$ref\": \"response.task_id\"\n              },\n              {\n                \"$ref\": \"taskId\"\n              }\n            ]\n          },\n          \"status\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.output.task_status\"\n              },\n              {\n                \"$ref\": \"response.status\"\n              },\n              \"pending\"\n            ]\n          },\n          \"message\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.error.message\"\n              },\n              {\n                \"$ref\": \"response.message\"\n              },\n              {\n                \"$ref\": \"response.fail_reason\"\n              }\n            ]\n          },\n          \"videos\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.output.video_url\"\n              },\n              {\n                \"$ref\": \"response.output.results\"\n              },\n              {\n                \"$ref\": \"response.video_url\"\n              }\n            ]\n          },\n          \"errorPaths\": [\n            \"code\"\n          ],\n          \"resultEphemeral\": true,\n          \"usage\": {\n            \"$ref\": \"response.usage\"\n          },\n          \"messagePaths\": [\n            \"message\",\n            \"output.message\"\n          ]\n        }\n      }\n    ]\n  }\n}\n```\n<!-- BEEFTV_PLUGIN_MANIFEST_END -->\n",
+  "description": "DashScope Wan Video 独立请求协议插件，兼容 Wan 2.1–2.6 传统字段与 Wan 2.7 / 3.0 统一 input.media 数组格式。",
   "permissions": [
     "generation.run",
     "media.read"
@@ -52,69 +51,69 @@
             "type": "string",
             "required": true,
             "mapping": "model",
-            "description": "视频模型 ID。"
+            "description": "视频模型 ID（如 wan3.0-video、wan3.0-video-prime、wan2.7-i2v、wan2.6-r2v、wan2.2-kf2v-flash）。"
           },
           {
             "name": "prompt",
             "type": "string",
             "required": true,
-            "mapping": "prompt/content/input",
+            "mapping": "input.prompt",
             "description": "视频提示词。"
           },
           {
             "name": "images",
             "type": "media[]",
             "required": false,
-            "mapping": "first/last/reference image",
+            "mapping": "input.media（Wan 2.7/3.0）或 input.img_url / first_frame_url / last_frame_url / reference_images（Wan 2.1–2.6）",
             "description": "显式 role 图片输入。"
           },
           {
             "name": "videos",
             "type": "media[]",
             "required": false,
-            "mapping": "reference video",
+            "mapping": "input.media[type=reference_video] 或 input.video_url",
             "description": "参考视频。"
           },
           {
             "name": "audios",
             "type": "media[]",
             "required": false,
-            "mapping": "reference audio/voice",
+            "mapping": "input.media[type=reference_audio] 或 input.audio_url",
             "description": "参考音频或音色。"
           },
           {
             "name": "duration",
             "type": "integer",
             "required": false,
-            "mapping": "duration/seconds",
-            "description": "时长秒数。"
+            "mapping": "parameters.duration",
+            "description": "时长秒数（Wan 3.0 支持 2–30 或 -1）。"
           },
           {
             "name": "aspectRatio",
             "type": "string",
             "required": false,
-            "mapping": "ratio/aspect_ratio/size",
-            "description": "画幅比例或尺寸。"
+            "mapping": "parameters.ratio（Wan 2.7/3.0）",
+            "description": "画幅比例（adaptive、21:9、16:9、9:16、1:1、4:3、3:4）。"
           },
           {
             "name": "resolution",
             "type": "string",
             "required": false,
-            "mapping": "resolution",
+            "mapping": "parameters.resolution（Wan 2.7/3.0 大写 480P/720P/1080P）或 parameters.size（Wan 2.1–2.6）",
             "description": "分辨率档位。"
           },
           {
             "name": "generateAudio",
             "type": "boolean",
             "required": false,
-            "mapping": "generate_audio",
+            "mapping": "parameters.audio",
             "description": "是否生成音频。"
           },
           {
             "name": "watermark",
             "type": "boolean",
             "required": false,
-            "mapping": "watermark",
+            "mapping": "parameters.watermark",
             "description": "水印开关。"
           },
           {
@@ -123,6 +122,64 @@
             "required": false,
             "mapping": "provider-specific fields",
             "description": "插件命名空间内的厂商扩展字段。"
+          }
+        ],
+        "variables": [
+          {
+            "name": "modelFamily",
+            "value": {
+              "$at": [
+                {
+                  "$split": [
+                    {
+                      "$last": {
+                        "$split": [
+                          {
+                            "$lower": {
+                              "$trim": {
+                                "$ref": "request.model"
+                              }
+                            }
+                          },
+                          "/"
+                        ]
+                      }
+                    },
+                    "-"
+                  ]
+                },
+                0
+              ]
+            }
+          },
+          {
+            "name": "usesMediaArray",
+            "value": {
+              "$in": [
+                {
+                  "$ref": "vars.modelFamily"
+                },
+                [
+                  "wan2.7",
+                  "wan3.0",
+                  "wan3"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "isWan3",
+            "value": {
+              "$in": [
+                {
+                  "$ref": "vars.modelFamily"
+                },
+                [
+                  "wan3.0",
+                  "wan3"
+                ]
+              ]
+            }
           }
         ],
         "validations": [
@@ -246,11 +303,102 @@
               ]
             },
             "message": "Wan 视频使用尾帧时必须同时提供首帧"
+          },
+          {
+            "assert": {
+              "$or": [
+                {
+                  "$not": {
+                    "$ref": "vars.isWan3"
+                  }
+                },
+                {
+                  "$eq": [
+                    {
+                      "$len": {
+                        "$filter": {
+                          "from": {
+                            "$ref": "request.images"
+                          },
+                          "as": "media",
+                          "where": {
+                            "$in": [
+                              {
+                                "$ref": "media.role"
+                              },
+                              [
+                                "first_frame",
+                                "last_frame"
+                              ]
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    0
+                  ]
+                },
+                {
+                  "$and": [
+                    {
+                      "$eq": [
+                        {
+                          "$len": {
+                            "$filter": {
+                              "from": {
+                                "$ref": "request.images"
+                              },
+                              "as": "media",
+                              "where": {
+                                "$not": {
+                                  "$in": [
+                                    {
+                                      "$ref": "media.role"
+                                    },
+                                    [
+                                      "first_frame",
+                                      "last_frame"
+                                    ]
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        },
+                        0
+                      ]
+                    },
+                    {
+                      "$eq": [
+                        {
+                          "$len": {
+                            "$ref": "request.videos"
+                          }
+                        },
+                        0
+                      ]
+                    },
+                    {
+                      "$eq": [
+                        {
+                          "$len": {
+                            "$ref": "request.audios"
+                          }
+                        },
+                        0
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "message": "Wan 3.0 首尾帧模式不能同时混用参考图、参考视频或参考音频"
           }
         ],
         "create": {
           "method": "POST",
           "path": "/api/v1/services/aigc/video-generation/video-synthesis",
+          "originPath": true,
           "contentType": "application/json",
           "body": {
             "model": {
@@ -258,11 +406,156 @@
             },
             "input": {
               "prompt": {
-                "$ref": "request.prompt"
+                "$omitEmpty": {
+                  "$ref": "request.prompt"
+                }
               },
               "negative_prompt": {
                 "$omitEmpty": {
                   "$ref": "request.providerOptions.dashscope-wan-video.negative_prompt"
+                }
+              },
+              "media": {
+                "$omitEmpty": {
+                  "$if": {
+                    "condition": {
+                      "$ref": "vars.usesMediaArray"
+                    },
+                    "then": {
+                      "$concatArrays": [
+                        {
+                          "$map": {
+                            "from": {
+                              "$sortByOrder": {
+                                "$ref": "request.images"
+                              }
+                            },
+                            "as": "media",
+                            "in": {
+                              "type": {
+                                "$switch": {
+                                  "cases": [
+                                    {
+                                      "when": {
+                                        "$eq": [
+                                          {
+                                            "$ref": "media.role"
+                                          },
+                                          "first_frame"
+                                        ]
+                                      },
+                                      "then": "first_frame"
+                                    },
+                                    {
+                                      "when": {
+                                        "$eq": [
+                                          {
+                                            "$ref": "media.role"
+                                          },
+                                          "last_frame"
+                                        ]
+                                      },
+                                      "then": "last_frame"
+                                    },
+                                    {
+                                      "when": {
+                                        "$and": [
+                                          {
+                                            "$eq": [
+                                              {
+                                                "$ref": "request.operation"
+                                              },
+                                              "image_to_video"
+                                            ]
+                                          },
+                                          {
+                                            "$eq": [
+                                              {
+                                                "$ref": "media.role"
+                                              },
+                                              ""
+                                            ]
+                                          },
+                                          {
+                                            "$eq": [
+                                              {
+                                                "$len": {
+                                                  "$ref": "request.images"
+                                                }
+                                              },
+                                              1
+                                            ]
+                                          },
+                                          {
+                                            "$eq": [
+                                              {
+                                                "$len": {
+                                                  "$ref": "request.videos"
+                                                }
+                                              },
+                                              0
+                                            ]
+                                          },
+                                          {
+                                            "$eq": [
+                                              {
+                                                "$len": {
+                                                  "$ref": "request.audios"
+                                                }
+                                              },
+                                              0
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      "then": "first_frame"
+                                    }
+                                  ],
+                                  "default": "reference_image"
+                                }
+                              },
+                              "url": {
+                                "$ref": "media.value"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "$map": {
+                            "from": {
+                              "$sortByOrder": {
+                                "$ref": "request.videos"
+                              }
+                            },
+                            "as": "media",
+                            "in": {
+                              "type": "reference_video",
+                              "url": {
+                                "$ref": "media.value"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "$map": {
+                            "from": {
+                              "$sortByOrder": {
+                                "$ref": "request.audios"
+                              }
+                            },
+                            "as": "media",
+                            "in": {
+                              "type": "reference_audio",
+                              "url": {
+                                "$ref": "media.value"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "else": null
+                  }
                 }
               },
               "img_url": {
@@ -270,6 +563,11 @@
                   "$if": {
                     "condition": {
                       "$and": [
+                        {
+                          "$not": {
+                            "$ref": "vars.usesMediaArray"
+                          }
+                        },
                         {
                           "$ne": [
                             {
@@ -381,30 +679,39 @@
                 "$omitEmpty": {
                   "$if": {
                     "condition": {
-                      "$gt": [
+                      "$and": [
                         {
-                          "$len": {
-                            "$filter": {
-                              "from": {
-                                "$sortByOrder": {
-                                  "$ref": "request.images"
-                                }
-                              },
-                              "as": "media",
-                              "where": {
-                                "$in": [
-                                  {
-                                    "$ref": "media.role"
-                                  },
-                                  [
-                                    "last_frame"
-                                  ]
-                                ]
-                              }
-                            }
+                          "$not": {
+                            "$ref": "vars.usesMediaArray"
                           }
                         },
-                        0
+                        {
+                          "$gt": [
+                            {
+                              "$len": {
+                                "$filter": {
+                                  "from": {
+                                    "$sortByOrder": {
+                                      "$ref": "request.images"
+                                    }
+                                  },
+                                  "as": "media",
+                                  "where": {
+                                    "$in": [
+                                      {
+                                        "$ref": "media.role"
+                                      },
+                                      [
+                                        "last_frame"
+                                      ]
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            0
+                          ]
+                        }
                       ]
                     },
                     "then": {
@@ -443,33 +750,43 @@
               },
               "last_frame_url": {
                 "$omitEmpty": {
-                  "$first": {
-                    "$map": {
-                      "from": {
-                        "$filter": {
+                  "$if": {
+                    "condition": {
+                      "$not": {
+                        "$ref": "vars.usesMediaArray"
+                      }
+                    },
+                    "then": {
+                      "$first": {
+                        "$map": {
                           "from": {
-                            "$sortByOrder": {
-                              "$ref": "request.images"
+                            "$filter": {
+                              "from": {
+                                "$sortByOrder": {
+                                  "$ref": "request.images"
+                                }
+                              },
+                              "as": "media",
+                              "where": {
+                                "$in": [
+                                  {
+                                    "$ref": "media.role"
+                                  },
+                                  [
+                                    "last_frame"
+                                  ]
+                                ]
+                              }
                             }
                           },
                           "as": "media",
-                          "where": {
-                            "$in": [
-                              {
-                                "$ref": "media.role"
-                              },
-                              [
-                                "last_frame"
-                              ]
-                            ]
+                          "in": {
+                            "$ref": "media.value"
                           }
                         }
-                      },
-                      "as": "media",
-                      "in": {
-                        "$ref": "media.value"
                       }
-                    }
+                    },
+                    "else": null
                   }
                 }
               },
@@ -477,11 +794,20 @@
                 "$omitEmpty": {
                   "$if": {
                     "condition": {
-                      "$eq": [
+                      "$and": [
                         {
-                          "$ref": "request.operation"
+                          "$not": {
+                            "$ref": "vars.usesMediaArray"
+                          }
                         },
-                        "reference_to_video"
+                        {
+                          "$eq": [
+                            {
+                              "$ref": "request.operation"
+                            },
+                            "reference_to_video"
+                          ]
+                        }
                       ]
                     },
                     "then": {
@@ -520,68 +846,88 @@
               },
               "video_url": {
                 "$omitEmpty": {
-                  "$first": {
-                    "$map": {
-                      "from": {
-                        "$filter": {
+                  "$if": {
+                    "condition": {
+                      "$not": {
+                        "$ref": "vars.usesMediaArray"
+                      }
+                    },
+                    "then": {
+                      "$first": {
+                        "$map": {
                           "from": {
-                            "$sortByOrder": {
-                              "$ref": "request.videos"
+                            "$filter": {
+                              "from": {
+                                "$sortByOrder": {
+                                  "$ref": "request.videos"
+                                }
+                              },
+                              "as": "media",
+                              "where": {
+                                "$in": [
+                                  {
+                                    "$ref": "media.role"
+                                  },
+                                  [
+                                    "reference_video",
+                                    ""
+                                  ]
+                                ]
+                              }
                             }
                           },
                           "as": "media",
-                          "where": {
-                            "$in": [
-                              {
-                                "$ref": "media.role"
-                              },
-                              [
-                                "reference_video",
-                                ""
-                              ]
-                            ]
+                          "in": {
+                            "$ref": "media.value"
                           }
                         }
-                      },
-                      "as": "media",
-                      "in": {
-                        "$ref": "media.value"
                       }
-                    }
+                    },
+                    "else": null
                   }
                 }
               },
               "audio_url": {
                 "$omitEmpty": {
-                  "$first": {
-                    "$map": {
-                      "from": {
-                        "$filter": {
+                  "$if": {
+                    "condition": {
+                      "$not": {
+                        "$ref": "vars.usesMediaArray"
+                      }
+                    },
+                    "then": {
+                      "$first": {
+                        "$map": {
                           "from": {
-                            "$sortByOrder": {
-                              "$ref": "request.audios"
+                            "$filter": {
+                              "from": {
+                                "$sortByOrder": {
+                                  "$ref": "request.audios"
+                                }
+                              },
+                              "as": "media",
+                              "where": {
+                                "$in": [
+                                  {
+                                    "$ref": "media.role"
+                                  },
+                                  [
+                                    "reference_audio",
+                                    "reference_voice",
+                                    ""
+                                  ]
+                                ]
+                              }
                             }
                           },
                           "as": "media",
-                          "where": {
-                            "$in": [
-                              {
-                                "$ref": "media.role"
-                              },
-                              [
-                                "reference_audio",
-                                "reference_voice",
-                                ""
-                              ]
-                            ]
+                          "in": {
+                            "$ref": "media.value"
                           }
                         }
-                      },
-                      "as": "media",
-                      "in": {
-                        "$ref": "media.value"
                       }
-                    }
+                    },
+                    "else": null
                   }
                 }
               }
@@ -589,12 +935,198 @@
             "parameters": {
               "size": {
                 "$omitEmpty": {
-                  "$ref": "request.resolution"
+                  "$if": {
+                    "condition": {
+                      "$not": {
+                        "$ref": "vars.usesMediaArray"
+                      }
+                    },
+                    "then": {
+                      "$ref": "request.resolution"
+                    },
+                    "else": null
+                  }
+                }
+              },
+              "resolution": {
+                "$omitEmpty": {
+                  "$if": {
+                    "condition": {
+                      "$ref": "vars.usesMediaArray"
+                    },
+                    "then": {
+                      "$switch": {
+                        "cases": [
+                          {
+                            "when": {
+                              "$in": [
+                                {
+                                  "$upper": {
+                                    "$trim": {
+                                      "$ref": "request.resolution"
+                                    }
+                                  }
+                                },
+                                [
+                                  "480",
+                                  "480P"
+                                ]
+                              ]
+                            },
+                            "then": "480P"
+                          },
+                          {
+                            "when": {
+                              "$in": [
+                                {
+                                  "$upper": {
+                                    "$trim": {
+                                      "$ref": "request.resolution"
+                                    }
+                                  }
+                                },
+                                [
+                                  "720",
+                                  "720P"
+                                ]
+                              ]
+                            },
+                            "then": "720P"
+                          },
+                          {
+                            "when": {
+                              "$in": [
+                                {
+                                  "$upper": {
+                                    "$trim": {
+                                      "$ref": "request.resolution"
+                                    }
+                                  }
+                                },
+                                [
+                                  "1080",
+                                  "1080P"
+                                ]
+                              ]
+                            },
+                            "then": "1080P"
+                          }
+                        ],
+                        "default": {
+                          "$omitEmpty": {
+                            "$upper": {
+                              "$trim": {
+                                "$ref": "request.resolution"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "else": null
+                  }
+                }
+              },
+              "ratio": {
+                "$omitEmpty": {
+                  "$if": {
+                    "condition": {
+                      "$ref": "vars.usesMediaArray"
+                    },
+                    "then": {
+                      "$switch": {
+                        "cases": [
+                          {
+                            "when": {
+                              "$eq": [
+                                {
+                                  "$trim": {
+                                    "$ref": "request.aspectRatio"
+                                  }
+                                },
+                                ""
+                              ]
+                            },
+                            "then": null
+                          },
+                          {
+                            "when": {
+                              "$in": [
+                                {
+                                  "$lower": {
+                                    "$trim": {
+                                      "$ref": "request.aspectRatio"
+                                    }
+                                  }
+                                },
+                                [
+                                  "auto",
+                                  "adaptive"
+                                ]
+                              ]
+                            },
+                            "then": "adaptive"
+                          },
+                          {
+                            "when": {
+                              "$in": [
+                                {
+                                  "$trim": {
+                                    "$ref": "request.aspectRatio"
+                                  }
+                                },
+                                [
+                                  "21:9",
+                                  "16:9",
+                                  "9:16",
+                                  "1:1",
+                                  "4:3",
+                                  "3:4"
+                                ]
+                              ]
+                            },
+                            "then": {
+                              "$trim": {
+                                "$ref": "request.aspectRatio"
+                              }
+                            }
+                          }
+                        ],
+                        "default": "adaptive"
+                      }
+                    },
+                    "else": null
+                  }
                 }
               },
               "duration": {
                 "$omitEmpty": {
-                  "$ref": "request.duration"
+                  "$if": {
+                    "condition": {
+                      "$or": [
+                        {
+                          "$gt": [
+                            {
+                              "$ref": "request.duration"
+                            },
+                            0
+                          ]
+                        },
+                        {
+                          "$eq": [
+                            {
+                              "$ref": "request.duration"
+                            },
+                            -1
+                          ]
+                        }
+                      ]
+                    },
+                    "then": {
+                      "$ref": "request.duration"
+                    },
+                    "else": null
+                  }
                 }
               },
               "prompt_extend": {
@@ -631,7 +1163,8 @@
         },
         "poll": {
           "method": "GET",
-          "path": "/api/v1/tasks/{{taskId}}"
+          "path": "/api/v1/tasks/{{taskId}}",
+          "originPath": true
         },
         "response": {
           "taskId": {
@@ -653,6 +1186,9 @@
                 "$ref": "response.output.task_status"
               },
               {
+                "$ref": "response.task_status"
+              },
+              {
                 "$ref": "response.status"
               },
               "pending"
@@ -660,6 +1196,9 @@
           },
           "message": {
             "$coalesce": [
+              {
+                "$ref": "response.output.message"
+              },
               {
                 "$ref": "response.error.message"
               },
@@ -685,7 +1224,8 @@
             ]
           },
           "errorPaths": [
-            "code"
+            "code",
+            "output.code"
           ],
           "resultEphemeral": true,
           "usage": {
@@ -698,5 +1238,6 @@
         }
       }
     ]
-  }
+  },
+  "documentation": "# DashScope Wan Video\n\n该目录是 BeefTV 声明式协议插件源码。后端从生成的 `dashscope-wan-video.beeftv-plugin` 包加载，不依赖系统内置 `host:` 适配器。\n\n本插件源自影策 Open AI Canvas 社区并由 BeefTV 适配维护，用于适配 Alibaba Cloud 相关服务接口；不表示 BeefTV 与该服务商存在隶属、授权或合作关系。\n\n完整接口见 [docs/interface.md](docs/interface.md)。\n\n---\n\n# DashScope Wan Video 接口字段\n\n## 协议身份\n\n- 插件 ID：`dashscope-wan-video`。\n- Provider ID：`dashscope-wan-video`。\n- 能力：`video`。\n- 默认 Base URL：`https://dashscope.aliyuncs.com`。\n- 鉴权驱动：`bearer`。\n- 创建：`POST /api/v1/services/aigc/video-generation/video-synthesis`（`originPath: true`，自动替换 `/compatible-mode/v1` 路径前缀并附带 `X-DashScope-Async: enable`）。\n- 查询：`GET /api/v1/tasks/{{taskId}}`（`originPath: true`）。\n\n## 配置字段\n\n| 字段 | 类型 | 必填 | 含义 |\n| --- | --- | --- | --- |\n| `apiKey` | secret | 是 | API Key |\n\n## 统一字段映射\n\n| 统一字段 | 类型 | 必填 | 上游映射 | 说明 |\n| --- | --- | --- | --- | --- |\n| `model` | string | 是 | `model` | 视频模型 ID。 |\n| `prompt` | string | 是 | `input.prompt` | 视频提示词。 |\n| `images` | media[] | 否 | `input.media`（Wan 2.7/3.0）或 `img_url/first_frame_url/last_frame_url/reference_images`（Wan 2.1–2.6） | 显式 role 图片输入。 |\n| `videos` | media[] | 否 | `input.media[type=reference_video]` 或 `input.video_url` | 参考视频。 |\n| `audios` | media[] | 否 | `input.media[type=reference_audio]` 或 `input.audio_url` | 参考音频或音色。 |\n| `duration` | integer | 否 | `parameters.duration` | 时长秒数（Wan 3.0 支持 2–30 或 -1）。 |\n| `aspectRatio` | string | 否 | `parameters.ratio`（Wan 2.7/3.0） | 画幅比例（`adaptive`、`21:9`、`16:9`、`9:16`、`1:1`、`4:3`、`3:4`）。 |\n| `resolution` | string | 否 | `parameters.resolution`（Wan 2.7/3.0 大写 `480P`/`720P`/`1080P`）或 `parameters.size`（Wan 2.1–2.6） | 分辨率档位。 |\n| `generateAudio` | boolean | 否 | `parameters.audio` | 是否生成音频。 |\n| `watermark` | boolean | 否 | `parameters.watermark` | 水印开关。 |\n| `providerOptions` | object | 否 | `provider-specific fields` | 插件命名空间内的厂商扩展字段。 |\n\n## Provider 扩展键\n\n- `providerOptions.dashscope-wan-video.negative_prompt`\n- `providerOptions.dashscope-wan-video.prompt_extend`\n- `providerOptions.dashscope-wan-video.seed`\n- `providerOptions.dashscope-wan-video.shot_type`\n- `providerOptions.dashscope-wan-video.template`\n\n## 响应与错误\n\n插件把上游 `output.task_id`、`output.task_status`（兼容顶层 `task_status`/`status`）、`output.video_url` / `output.results` 与 `usage` 映射为统一结果。临时媒体 URL 标记为 ephemeral，由宿主立即下载持久化。HTTP 错误、业务 `code`/`output.code` 以及 `FAILED`/`UNKNOWN` 状态均按失败处理，不会包装成成功或无限轮询。\n\n## 兼容边界\n\n- **Wan 2.7 / 3.0 系列**（`wan3.0-*`、`wan3-*`、`wan2.7-*`）：按阿里云百炼官方文档使用统一 `input.media` 数组（`first_frame`、`last_frame`、`reference_image`、`reference_video`、`reference_audio`），以及 `parameters.resolution`（大写 `480P`/`720P`/`1080P`）和 `parameters.ratio`；其中 Wan 3.0 首尾帧模式与多模态参考互斥，提交前拦截混用。\n- **Wan 2.1–2.6 系列**：保持原有 `input.img_url`、`input.first_frame_url`、`input.last_frame_url`、`input.reference_images`、`input.video_url`、`input.audio_url` 与 `parameters.size` 结构不变。\n- `originPath: true` 允许复用已配置为 `https://dashscope.aliyuncs.com/compatible-mode/v1` 或业务空间专属域名的百炼渠道，自动解析到域名根路径 `/api/v1/...`。\n\n<!-- BEEFTV_PLUGIN_MANIFEST_START -->\n## Manifest 完整接口定义\n\n以下 JSON 与插件包内实际 `manifest.json` 逐字段一致，覆盖插件身份、权限、配置、鉴权、参数、校验、创建、Agent、查询、取消、结果下载、响应和 Agent 响应映射。`documentation` 字段的值就是当前完整文档；为避免文档在自身内部无限递归，JSON 中仅用等义占位文本表示正文。\n\n```json\n{\n  \"apiVersion\": \"beeftv.plugin/v3\",\n  \"id\": \"dashscope-wan-video\",\n  \"name\": \"DashScope Wan Video\",\n  \"version\": \"2.1.0\",\n  \"author\": \"影策 / Open AI Canvas contributors\",\n  \"description\": \"DashScope Wan Video 独立请求协议插件，兼容 Wan 2.1–2.6 传统字段与 Wan 2.7 / 3.0 统一 input.media 数组格式。\",\n  \"permissions\": [\n    \"generation.run\",\n    \"media.read\"\n  ],\n  \"configuration\": {\n    \"fields\": [\n      {\n        \"name\": \"apiKey\",\n        \"type\": \"secret\",\n        \"label\": \"API Key\",\n        \"required\": true\n      }\n    ]\n  },\n  \"contributes\": {\n    \"providers\": [\n      {\n        \"id\": \"dashscope-wan-video\",\n        \"label\": \"DashScope Wan Video\",\n        \"capabilities\": [\n          \"video\"\n        ],\n        \"scopes\": [\n          \"admin.system-channel\",\n          \"user.custom-channel\",\n          \"canvas\",\n          \"creation\",\n          \"agent\"\n        ],\n        \"baseUrl\": \"https://dashscope.aliyuncs.com\",\n        \"requiresPublicMediaUrls\": true,\n        \"mediaTransport\": {\n          \"image\": \"inline\",\n          \"video\": \"url\",\n          \"audio\": \"url\"\n        },\n        \"auth\": {\n          \"type\": \"bearer\",\n          \"field\": \"apiKey\"\n        },\n        \"parameters\": [\n          {\n            \"name\": \"model\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"model\",\n            \"description\": \"视频模型 ID（如 wan3.0-video、wan3.0-video-prime、wan2.7-i2v、wan2.6-r2v、wan2.2-kf2v-flash）。\"\n          },\n          {\n            \"name\": \"prompt\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"input.prompt\",\n            \"description\": \"视频提示词。\"\n          },\n          {\n            \"name\": \"images\",\n            \"type\": \"media[]\",\n            \"required\": false,\n            \"mapping\": \"input.media（Wan 2.7/3.0）或 input.img_url / first_frame_url / last_frame_url / reference_images（Wan 2.1–2.6）\",\n            \"description\": \"显式 role 图片输入。\"\n          },\n          {\n            \"name\": \"videos\",\n            \"type\": \"media[]\",\n            \"required\": false,\n            \"mapping\": \"input.media[type=reference_video] 或 input.video_url\",\n            \"description\": \"参考视频。\"\n          },\n          {\n            \"name\": \"audios\",\n            \"type\": \"media[]\",\n            \"required\": false,\n            \"mapping\": \"input.media[type=reference_audio] 或 input.audio_url\",\n            \"description\": \"参考音频或音色。\"\n          },\n          {\n            \"name\": \"duration\",\n            \"type\": \"integer\",\n            \"required\": false,\n            \"mapping\": \"parameters.duration\",\n            \"description\": \"时长秒数（Wan 3.0 支持 2–30 或 -1）。\"\n          },\n          {\n            \"name\": \"aspectRatio\",\n            \"type\": \"string\",\n            \"required\": false,\n            \"mapping\": \"parameters.ratio（Wan 2.7/3.0）\",\n            \"description\": \"画幅比例（adaptive、21:9、16:9、9:16、1:1、4:3、3:4）。\"\n          },\n          {\n            \"name\": \"resolution\",\n            \"type\": \"string\",\n            \"required\": false,\n            \"mapping\": \"parameters.resolution（Wan 2.7/3.0 大写 480P/720P/1080P）或 parameters.size（Wan 2.1–2.6）\",\n            \"description\": \"分辨率档位。\"\n          },\n          {\n            \"name\": \"generateAudio\",\n            \"type\": \"boolean\",\n            \"required\": false,\n            \"mapping\": \"parameters.audio\",\n            \"description\": \"是否生成音频。\"\n          },\n          {\n            \"name\": \"watermark\",\n            \"type\": \"boolean\",\n            \"required\": false,\n            \"mapping\": \"parameters.watermark\",\n            \"description\": \"水印开关。\"\n          },\n          {\n            \"name\": \"providerOptions\",\n            \"type\": \"object\",\n            \"required\": false,\n            \"mapping\": \"provider-specific fields\",\n            \"description\": \"插件命名空间内的厂商扩展字段。\"\n          }\n        ],\n        \"variables\": [\n          {\n            \"name\": \"modelFamily\",\n            \"value\": {\n              \"$at\": [\n                {\n                  \"$split\": [\n                    {\n                      \"$last\": {\n                        \"$split\": [\n                          {\n                            \"$lower\": {\n                              \"$trim\": {\n                                \"$ref\": \"request.model\"\n                              }\n                            }\n                          },\n                          \"/\"\n                        ]\n                      }\n                    },\n                    \"-\"\n                  ]\n                },\n                0\n              ]\n            }\n          },\n          {\n            \"name\": \"usesMediaArray\",\n            \"value\": {\n              \"$in\": [\n                {\n                  \"$ref\": \"vars.modelFamily\"\n                },\n                [\n                  \"wan2.7\",\n                  \"wan3.0\",\n                  \"wan3\"\n                ]\n              ]\n            }\n          },\n          {\n            \"name\": \"isWan3\",\n            \"value\": {\n              \"$in\": [\n                {\n                  \"$ref\": \"vars.modelFamily\"\n                },\n                [\n                  \"wan3.0\",\n                  \"wan3\"\n                ]\n              ]\n            }\n          }\n        ],\n        \"validations\": [\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$sortByOrder\": {\n                          \"$ref\": \"request.images\"\n                        }\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$in\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          [\n                            \"first_frame\"\n                          ]\n                        ]\n                      }\n                    }\n                  }\n                },\n                1\n              ]\n            },\n            \"message\": \"Wan 视频最多只能有一个首帧\"\n          },\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$sortByOrder\": {\n                          \"$ref\": \"request.images\"\n                        }\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$in\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          [\n                            \"last_frame\"\n                          ]\n                        ]\n                      }\n                    }\n                  }\n                },\n                1\n              ]\n            },\n            \"message\": \"Wan 视频最多只能有一个尾帧\"\n          },\n          {\n            \"assert\": {\n              \"$or\": [\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$sortByOrder\": {\n                              \"$ref\": \"request.images\"\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"last_frame\"\n                              ]\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    0\n                  ]\n                },\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$sortByOrder\": {\n                              \"$ref\": \"request.images\"\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"first_frame\"\n                              ]\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    1\n                  ]\n                }\n              ]\n            },\n            \"message\": \"Wan 视频使用尾帧时必须同时提供首帧\"\n          },\n          {\n            \"assert\": {\n              \"$or\": [\n                {\n                  \"$not\": {\n                    \"$ref\": \"vars.isWan3\"\n                  }\n                },\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.images\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"first_frame\",\n                                \"last_frame\"\n                              ]\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    0\n                  ]\n                },\n                {\n                  \"$and\": [\n                    {\n                      \"$eq\": [\n                        {\n                          \"$len\": {\n                            \"$filter\": {\n                              \"from\": {\n                                \"$ref\": \"request.images\"\n                              },\n                              \"as\": \"media\",\n                              \"where\": {\n                                \"$not\": {\n                                  \"$in\": [\n                                    {\n                                      \"$ref\": \"media.role\"\n                                    },\n                                    [\n                                      \"first_frame\",\n                                      \"last_frame\"\n                                    ]\n                                  ]\n                                }\n                              }\n                            }\n                          }\n                        },\n                        0\n                      ]\n                    },\n                    {\n                      \"$eq\": [\n                        {\n                          \"$len\": {\n                            \"$ref\": \"request.videos\"\n                          }\n                        },\n                        0\n                      ]\n                    },\n                    {\n                      \"$eq\": [\n                        {\n                          \"$len\": {\n                            \"$ref\": \"request.audios\"\n                          }\n                        },\n                        0\n                      ]\n                    }\n                  ]\n                }\n              ]\n            },\n            \"message\": \"Wan 3.0 首尾帧模式不能同时混用参考图、参考视频或参考音频\"\n          }\n        ],\n        \"create\": {\n          \"method\": \"POST\",\n          \"path\": \"/api/v1/services/aigc/video-generation/video-synthesis\",\n          \"originPath\": true,\n          \"contentType\": \"application/json\",\n          \"body\": {\n            \"model\": {\n              \"$ref\": \"request.model\"\n            },\n            \"input\": {\n              \"prompt\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.prompt\"\n                }\n              },\n              \"negative_prompt\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.providerOptions.dashscope-wan-video.negative_prompt\"\n                }\n              },\n              \"media\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$ref\": \"vars.usesMediaArray\"\n                    },\n                    \"then\": {\n                      \"$concatArrays\": [\n                        {\n                          \"$map\": {\n                            \"from\": {\n                              \"$sortByOrder\": {\n                                \"$ref\": \"request.images\"\n                              }\n                            },\n                            \"as\": \"media\",\n                            \"in\": {\n                              \"type\": {\n                                \"$switch\": {\n                                  \"cases\": [\n                                    {\n                                      \"when\": {\n                                        \"$eq\": [\n                                          {\n                                            \"$ref\": \"media.role\"\n                                          },\n                                          \"first_frame\"\n                                        ]\n                                      },\n                                      \"then\": \"first_frame\"\n                                    },\n                                    {\n                                      \"when\": {\n                                        \"$eq\": [\n                                          {\n                                            \"$ref\": \"media.role\"\n                                          },\n                                          \"last_frame\"\n                                        ]\n                                      },\n                                      \"then\": \"last_frame\"\n                                    },\n                                    {\n                                      \"when\": {\n                                        \"$and\": [\n                                          {\n                                            \"$eq\": [\n                                              {\n                                                \"$ref\": \"request.operation\"\n                                              },\n                                              \"image_to_video\"\n                                            ]\n                                          },\n                                          {\n                                            \"$eq\": [\n                                              {\n                                                \"$ref\": \"media.role\"\n                                              },\n                                              \"\"\n                                            ]\n                                          },\n                                          {\n                                            \"$eq\": [\n                                              {\n                                                \"$len\": {\n                                                  \"$ref\": \"request.images\"\n                                                }\n                                              },\n                                              1\n                                            ]\n                                          },\n                                          {\n                                            \"$eq\": [\n                                              {\n                                                \"$len\": {\n                                                  \"$ref\": \"request.videos\"\n                                                }\n                                              },\n                                              0\n                                            ]\n                                          },\n                                          {\n                                            \"$eq\": [\n                                              {\n                                                \"$len\": {\n                                                  \"$ref\": \"request.audios\"\n                                                }\n                                              },\n                                              0\n                                            ]\n                                          }\n                                        ]\n                                      },\n                                      \"then\": \"first_frame\"\n                                    }\n                                  ],\n                                  \"default\": \"reference_image\"\n                                }\n                              },\n                              \"url\": {\n                                \"$ref\": \"media.value\"\n                              }\n                            }\n                          }\n                        },\n                        {\n                          \"$map\": {\n                            \"from\": {\n                              \"$sortByOrder\": {\n                                \"$ref\": \"request.videos\"\n                              }\n                            },\n                            \"as\": \"media\",\n                            \"in\": {\n                              \"type\": \"reference_video\",\n                              \"url\": {\n                                \"$ref\": \"media.value\"\n                              }\n                            }\n                          }\n                        },\n                        {\n                          \"$map\": {\n                            \"from\": {\n                              \"$sortByOrder\": {\n                                \"$ref\": \"request.audios\"\n                              }\n                            },\n                            \"as\": \"media\",\n                            \"in\": {\n                              \"type\": \"reference_audio\",\n                              \"url\": {\n                                \"$ref\": \"media.value\"\n                              }\n                            }\n                          }\n                        }\n                      ]\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"img_url\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$and\": [\n                        {\n                          \"$not\": {\n                            \"$ref\": \"vars.usesMediaArray\"\n                          }\n                        },\n                        {\n                          \"$ne\": [\n                            {\n                              \"$ref\": \"request.operation\"\n                            },\n                            \"reference_to_video\"\n                          ]\n                        },\n                        {\n                          \"$eq\": [\n                            {\n                              \"$len\": {\n                                \"$filter\": {\n                                  \"from\": {\n                                    \"$sortByOrder\": {\n                                      \"$ref\": \"request.images\"\n                                    }\n                                  },\n                                  \"as\": \"media\",\n                                  \"where\": {\n                                    \"$in\": [\n                                      {\n                                        \"$ref\": \"media.role\"\n                                      },\n                                      [\n                                        \"last_frame\"\n                                      ]\n                                    ]\n                                  }\n                                }\n                              }\n                            },\n                            0\n                          ]\n                        }\n                      ]\n                    },\n                    \"then\": {\n                      \"$coalesce\": [\n                        {\n                          \"$first\": {\n                            \"$map\": {\n                              \"from\": {\n                                \"$filter\": {\n                                  \"from\": {\n                                    \"$sortByOrder\": {\n                                      \"$ref\": \"request.images\"\n                                    }\n                                  },\n                                  \"as\": \"media\",\n                                  \"where\": {\n                                    \"$in\": [\n                                      {\n                                        \"$ref\": \"media.role\"\n                                      },\n                                      [\n                                        \"first_frame\"\n                                      ]\n                                    ]\n                                  }\n                                }\n                              },\n                              \"as\": \"media\",\n                              \"in\": {\n                                \"$ref\": \"media.value\"\n                              }\n                            }\n                          }\n                        },\n                        {\n                          \"$first\": {\n                            \"$map\": {\n                              \"from\": {\n                                \"$filter\": {\n                                  \"from\": {\n                                    \"$sortByOrder\": {\n                                      \"$ref\": \"request.images\"\n                                    }\n                                  },\n                                  \"as\": \"media\",\n                                  \"where\": {\n                                    \"$in\": [\n                                      {\n                                        \"$ref\": \"media.role\"\n                                      },\n                                      [\n                                        \"reference_image\",\n                                        \"edit_source\",\n                                        \"\"\n                                      ]\n                                    ]\n                                  }\n                                }\n                              },\n                              \"as\": \"media\",\n                              \"in\": {\n                                \"$ref\": \"media.value\"\n                              }\n                            }\n                          }\n                        }\n                      ]\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"first_frame_url\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$and\": [\n                        {\n                          \"$not\": {\n                            \"$ref\": \"vars.usesMediaArray\"\n                          }\n                        },\n                        {\n                          \"$gt\": [\n                            {\n                              \"$len\": {\n                                \"$filter\": {\n                                  \"from\": {\n                                    \"$sortByOrder\": {\n                                      \"$ref\": \"request.images\"\n                                    }\n                                  },\n                                  \"as\": \"media\",\n                                  \"where\": {\n                                    \"$in\": [\n                                      {\n                                        \"$ref\": \"media.role\"\n                                      },\n                                      [\n                                        \"last_frame\"\n                                      ]\n                                    ]\n                                  }\n                                }\n                              }\n                            },\n                            0\n                          ]\n                        }\n                      ]\n                    },\n                    \"then\": {\n                      \"$first\": {\n                        \"$map\": {\n                          \"from\": {\n                            \"$filter\": {\n                              \"from\": {\n                                \"$sortByOrder\": {\n                                  \"$ref\": \"request.images\"\n                                }\n                              },\n                              \"as\": \"media\",\n                              \"where\": {\n                                \"$in\": [\n                                  {\n                                    \"$ref\": \"media.role\"\n                                  },\n                                  [\n                                    \"first_frame\"\n                                  ]\n                                ]\n                              }\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"in\": {\n                            \"$ref\": \"media.value\"\n                          }\n                        }\n                      }\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"last_frame_url\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$not\": {\n                        \"$ref\": \"vars.usesMediaArray\"\n                      }\n                    },\n                    \"then\": {\n                      \"$first\": {\n                        \"$map\": {\n                          \"from\": {\n                            \"$filter\": {\n                              \"from\": {\n                                \"$sortByOrder\": {\n                                  \"$ref\": \"request.images\"\n                                }\n                              },\n                              \"as\": \"media\",\n                              \"where\": {\n                                \"$in\": [\n                                  {\n                                    \"$ref\": \"media.role\"\n                                  },\n                                  [\n                                    \"last_frame\"\n                                  ]\n                                ]\n                              }\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"in\": {\n                            \"$ref\": \"media.value\"\n                          }\n                        }\n                      }\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"reference_images\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$and\": [\n                        {\n                          \"$not\": {\n                            \"$ref\": \"vars.usesMediaArray\"\n                          }\n                        },\n                        {\n                          \"$eq\": [\n                            {\n                              \"$ref\": \"request.operation\"\n                            },\n                            \"reference_to_video\"\n                          ]\n                        }\n                      ]\n                    },\n                    \"then\": {\n                      \"$map\": {\n                        \"from\": {\n                          \"$filter\": {\n                            \"from\": {\n                              \"$sortByOrder\": {\n                                \"$ref\": \"request.images\"\n                              }\n                            },\n                            \"as\": \"media\",\n                            \"where\": {\n                              \"$in\": [\n                                {\n                                  \"$ref\": \"media.role\"\n                                },\n                                [\n                                  \"reference_image\",\n                                  \"subject_reference\",\n                                  \"style_reference\"\n                                ]\n                              ]\n                            }\n                          }\n                        },\n                        \"as\": \"media\",\n                        \"in\": {\n                          \"$ref\": \"media.value\"\n                        }\n                      }\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"video_url\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$not\": {\n                        \"$ref\": \"vars.usesMediaArray\"\n                      }\n                    },\n                    \"then\": {\n                      \"$first\": {\n                        \"$map\": {\n                          \"from\": {\n                            \"$filter\": {\n                              \"from\": {\n                                \"$sortByOrder\": {\n                                  \"$ref\": \"request.videos\"\n                                }\n                              },\n                              \"as\": \"media\",\n                              \"where\": {\n                                \"$in\": [\n                                  {\n                                    \"$ref\": \"media.role\"\n                                  },\n                                  [\n                                    \"reference_video\",\n                                    \"\"\n                                  ]\n                                ]\n                              }\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"in\": {\n                            \"$ref\": \"media.value\"\n                          }\n                        }\n                      }\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"audio_url\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$not\": {\n                        \"$ref\": \"vars.usesMediaArray\"\n                      }\n                    },\n                    \"then\": {\n                      \"$first\": {\n                        \"$map\": {\n                          \"from\": {\n                            \"$filter\": {\n                              \"from\": {\n                                \"$sortByOrder\": {\n                                  \"$ref\": \"request.audios\"\n                                }\n                              },\n                              \"as\": \"media\",\n                              \"where\": {\n                                \"$in\": [\n                                  {\n                                    \"$ref\": \"media.role\"\n                                  },\n                                  [\n                                    \"reference_audio\",\n                                    \"reference_voice\",\n                                    \"\"\n                                  ]\n                                ]\n                              }\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"in\": {\n                            \"$ref\": \"media.value\"\n                          }\n                        }\n                      }\n                    },\n                    \"else\": null\n                  }\n                }\n              }\n            },\n            \"parameters\": {\n              \"size\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$not\": {\n                        \"$ref\": \"vars.usesMediaArray\"\n                      }\n                    },\n                    \"then\": {\n                      \"$ref\": \"request.resolution\"\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"resolution\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$ref\": \"vars.usesMediaArray\"\n                    },\n                    \"then\": {\n                      \"$switch\": {\n                        \"cases\": [\n                          {\n                            \"when\": {\n                              \"$in\": [\n                                {\n                                  \"$upper\": {\n                                    \"$trim\": {\n                                      \"$ref\": \"request.resolution\"\n                                    }\n                                  }\n                                },\n                                [\n                                  \"480\",\n                                  \"480P\"\n                                ]\n                              ]\n                            },\n                            \"then\": \"480P\"\n                          },\n                          {\n                            \"when\": {\n                              \"$in\": [\n                                {\n                                  \"$upper\": {\n                                    \"$trim\": {\n                                      \"$ref\": \"request.resolution\"\n                                    }\n                                  }\n                                },\n                                [\n                                  \"720\",\n                                  \"720P\"\n                                ]\n                              ]\n                            },\n                            \"then\": \"720P\"\n                          },\n                          {\n                            \"when\": {\n                              \"$in\": [\n                                {\n                                  \"$upper\": {\n                                    \"$trim\": {\n                                      \"$ref\": \"request.resolution\"\n                                    }\n                                  }\n                                },\n                                [\n                                  \"1080\",\n                                  \"1080P\"\n                                ]\n                              ]\n                            },\n                            \"then\": \"1080P\"\n                          }\n                        ],\n                        \"default\": {\n                          \"$omitEmpty\": {\n                            \"$upper\": {\n                              \"$trim\": {\n                                \"$ref\": \"request.resolution\"\n                              }\n                            }\n                          }\n                        }\n                      }\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"ratio\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$ref\": \"vars.usesMediaArray\"\n                    },\n                    \"then\": {\n                      \"$switch\": {\n                        \"cases\": [\n                          {\n                            \"when\": {\n                              \"$eq\": [\n                                {\n                                  \"$trim\": {\n                                    \"$ref\": \"request.aspectRatio\"\n                                  }\n                                },\n                                \"\"\n                              ]\n                            },\n                            \"then\": null\n                          },\n                          {\n                            \"when\": {\n                              \"$in\": [\n                                {\n                                  \"$lower\": {\n                                    \"$trim\": {\n                                      \"$ref\": \"request.aspectRatio\"\n                                    }\n                                  }\n                                },\n                                [\n                                  \"auto\",\n                                  \"adaptive\"\n                                ]\n                              ]\n                            },\n                            \"then\": \"adaptive\"\n                          },\n                          {\n                            \"when\": {\n                              \"$in\": [\n                                {\n                                  \"$trim\": {\n                                    \"$ref\": \"request.aspectRatio\"\n                                  }\n                                },\n                                [\n                                  \"21:9\",\n                                  \"16:9\",\n                                  \"9:16\",\n                                  \"1:1\",\n                                  \"4:3\",\n                                  \"3:4\"\n                                ]\n                              ]\n                            },\n                            \"then\": {\n                              \"$trim\": {\n                                \"$ref\": \"request.aspectRatio\"\n                              }\n                            }\n                          }\n                        ],\n                        \"default\": \"adaptive\"\n                      }\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"duration\": {\n                \"$omitEmpty\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$or\": [\n                        {\n                          \"$gt\": [\n                            {\n                              \"$ref\": \"request.duration\"\n                            },\n                            0\n                          ]\n                        },\n                        {\n                          \"$eq\": [\n                            {\n                              \"$ref\": \"request.duration\"\n                            },\n                            -1\n                          ]\n                        }\n                      ]\n                    },\n                    \"then\": {\n                      \"$ref\": \"request.duration\"\n                    },\n                    \"else\": null\n                  }\n                }\n              },\n              \"prompt_extend\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.providerOptions.dashscope-wan-video.prompt_extend\"\n                }\n              },\n              \"watermark\": {\n                \"$ref\": \"request.watermark\"\n              },\n              \"seed\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.providerOptions.dashscope-wan-video.seed\"\n                }\n              },\n              \"shot_type\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.providerOptions.dashscope-wan-video.shot_type\"\n                }\n              },\n              \"audio\": {\n                \"$ref\": \"request.generateAudio\"\n              },\n              \"template\": {\n                \"$omitEmpty\": {\n                  \"$ref\": \"request.providerOptions.dashscope-wan-video.template\"\n                }\n              }\n            }\n          },\n          \"headers\": {\n            \"X-DashScope-Async\": \"enable\"\n          }\n        },\n        \"poll\": {\n          \"method\": \"GET\",\n          \"path\": \"/api/v1/tasks/{{taskId}}\",\n          \"originPath\": true\n        },\n        \"response\": {\n          \"taskId\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.output.task_id\"\n              },\n              {\n                \"$ref\": \"response.task_id\"\n              },\n              {\n                \"$ref\": \"taskId\"\n              }\n            ]\n          },\n          \"status\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.output.task_status\"\n              },\n              {\n                \"$ref\": \"response.task_status\"\n              },\n              {\n                \"$ref\": \"response.status\"\n              },\n              \"pending\"\n            ]\n          },\n          \"message\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.output.message\"\n              },\n              {\n                \"$ref\": \"response.error.message\"\n              },\n              {\n                \"$ref\": \"response.message\"\n              },\n              {\n                \"$ref\": \"response.fail_reason\"\n              }\n            ]\n          },\n          \"videos\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.output.video_url\"\n              },\n              {\n                \"$ref\": \"response.output.results\"\n              },\n              {\n                \"$ref\": \"response.video_url\"\n              }\n            ]\n          },\n          \"errorPaths\": [\n            \"code\",\n            \"output.code\"\n          ],\n          \"resultEphemeral\": true,\n          \"usage\": {\n            \"$ref\": \"response.usage\"\n          },\n          \"messagePaths\": [\n            \"message\",\n            \"output.message\"\n          ]\n        }\n      }\n    ]\n  },\n  \"documentation\": \"<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>\"\n}\n```\n<!-- BEEFTV_PLUGIN_MANIFEST_END -->\n"
 }

@@ -198,6 +198,15 @@ func ExtractProviderTaskID(body []byte) (string, error) {
 	if json.Unmarshal(body, &payload) != nil {
 		return "", nil
 	}
+	// DashScope envelopes always include request_id as a tracing correlation ID,
+	// never as an async task_id. When output is present, only accept an explicit
+	// job identifier so a non-task response never spins polling /tasks/{request_id}.
+	if output, ok := payload["output"].(map[string]interface{}); ok {
+		if nested, nestedErr := firstJSONString(output, "task_id", "taskId", "TaskId", "id"); nested != "" || nestedErr != nil {
+			return nested, nestedErr
+		}
+		return firstJSONString(payload, "id", "task_id", "taskId", "TaskId", "name")
+	}
 	id, err := firstJSONString(payload, "id", "task_id", "taskId", "TaskId", "request_id", "name")
 	if id != "" {
 		return id, nil

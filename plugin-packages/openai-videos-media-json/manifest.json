@@ -1,0 +1,714 @@
+{
+  "apiVersion": "beeftv.plugin/v3",
+  "id": "openai-videos-media-json",
+  "name": "Videos JSON · media 数组",
+  "version": "1.0.0",
+  "author": "BeefTV Contributors",
+  "description": "使用顶层 media 数组（first_frame/last_frame/reference_*）、seconds 与像素 size 的 /v1/videos JSON 异步视频协议。",
+  "permissions": [
+    "generation.run",
+    "media.read"
+  ],
+  "configuration": {
+    "fields": [
+      {
+        "name": "apiKey",
+        "type": "secret",
+        "label": "API Key",
+        "required": true
+      }
+    ]
+  },
+  "contributes": {
+    "providers": [
+      {
+        "id": "openai-videos-media-json",
+        "label": "Videos JSON · media 数组",
+        "capabilities": [
+          "video"
+        ],
+        "scopes": [
+          "admin.system-channel",
+          "user.custom-channel",
+          "canvas",
+          "creation",
+          "agent"
+        ],
+        "requiresPublicMediaUrls": false,
+        "auth": {
+          "type": "bearer",
+          "field": "apiKey"
+        },
+        "parameters": [
+          {
+            "name": "model",
+            "type": "string",
+            "required": true,
+            "mapping": "model",
+            "description": "视频模型 ID（如 minimax/h3、minimax/h3-fast、wan/wan3.0-video）。"
+          },
+          {
+            "name": "prompt",
+            "type": "string",
+            "required": true,
+            "mapping": "prompt",
+            "description": "视频提示词。"
+          },
+          {
+            "name": "images",
+            "type": "media[]",
+            "required": false,
+            "mapping": "media[type=first_frame|last_frame|reference_image]",
+            "description": "首尾帧或参考图片（支持公网 URL 与 data URL）。"
+          },
+          {
+            "name": "videos",
+            "type": "media[]",
+            "required": false,
+            "mapping": "media[type=reference_video]",
+            "description": "参考视频。"
+          },
+          {
+            "name": "audios",
+            "type": "media[]",
+            "required": false,
+            "mapping": "media[type=reference_audio]",
+            "description": "参考音频。"
+          },
+          {
+            "name": "duration",
+            "type": "integer",
+            "required": false,
+            "mapping": "seconds",
+            "description": "整数时长秒数。"
+          },
+          {
+            "name": "aspectRatio",
+            "type": "string",
+            "required": false,
+            "mapping": "size",
+            "description": "画幅比例（换算为 768P 像素画布如 1344x768）或显式 WIDTHxHEIGHT。"
+          },
+          {
+            "name": "providerOptions",
+            "type": "object",
+            "required": false,
+            "mapping": "size / seed / prompt_extend / watermark / audio / body",
+            "description": "仅在显式配置时下发的可选扩展参数。"
+          }
+        ],
+        "variables": [
+          {
+            "name": "ratioNorm",
+            "value": {
+              "$lower": {
+                "$trim": {
+                  "$ref": "request.aspectRatio"
+                }
+              }
+            }
+          },
+          {
+            "name": "isWxH",
+            "value": {
+              "$eq": [
+                {
+                  "$len": {
+                    "$split": [
+                      {
+                        "$ref": "vars.ratioNorm"
+                      },
+                      "x"
+                    ]
+                  }
+                },
+                2
+              ]
+            }
+          },
+          {
+            "name": "resolvedSize",
+            "value": {
+              "$coalesce": [
+                {
+                  "$ref": "request.providerOptions.openai-videos-media-json.size"
+                },
+                {
+                  "$if": {
+                    "condition": {
+                      "$ref": "vars.isWxH"
+                    },
+                    "then": {
+                      "$trim": {
+                        "$ref": "request.aspectRatio"
+                      }
+                    },
+                    "else": {
+                      "$switch": {
+                        "cases": [
+                          {
+                            "when": {
+                              "$eq": [
+                                {
+                                  "$ref": "vars.ratioNorm"
+                                },
+                                "21:9"
+                              ]
+                            },
+                            "then": "1536x672"
+                          },
+                          {
+                            "when": {
+                              "$in": [
+                                {
+                                  "$ref": "vars.ratioNorm"
+                                },
+                                [
+                                  "16:9",
+                                  "landscape"
+                                ]
+                              ]
+                            },
+                            "then": "1344x768"
+                          },
+                          {
+                            "when": {
+                              "$eq": [
+                                {
+                                  "$ref": "vars.ratioNorm"
+                                },
+                                "4:3"
+                              ]
+                            },
+                            "then": "1024x768"
+                          },
+                          {
+                            "when": {
+                              "$in": [
+                                {
+                                  "$ref": "vars.ratioNorm"
+                                },
+                                [
+                                  "1:1",
+                                  "square"
+                                ]
+                              ]
+                            },
+                            "then": "768x768"
+                          },
+                          {
+                            "when": {
+                              "$eq": [
+                                {
+                                  "$ref": "vars.ratioNorm"
+                                },
+                                "3:4"
+                              ]
+                            },
+                            "then": "768x1024"
+                          },
+                          {
+                            "when": {
+                              "$in": [
+                                {
+                                  "$ref": "vars.ratioNorm"
+                                },
+                                [
+                                  "9:16",
+                                  "portrait"
+                                ]
+                              ]
+                            },
+                            "then": "768x1344"
+                          }
+                        ],
+                        "default": null
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "validations": [
+          {
+            "assert": {
+              "$lte": [
+                {
+                  "$len": {
+                    "$filter": {
+                      "from": {
+                        "$ref": "request.images"
+                      },
+                      "as": "media",
+                      "where": {
+                        "$eq": [
+                          {
+                            "$ref": "media.role"
+                          },
+                          "first_frame"
+                        ]
+                      }
+                    }
+                  }
+                },
+                1
+              ]
+            },
+            "message": "最多只能提供 1 张首帧图片"
+          },
+          {
+            "assert": {
+              "$lte": [
+                {
+                  "$len": {
+                    "$filter": {
+                      "from": {
+                        "$ref": "request.images"
+                      },
+                      "as": "media",
+                      "where": {
+                        "$eq": [
+                          {
+                            "$ref": "media.role"
+                          },
+                          "last_frame"
+                        ]
+                      }
+                    }
+                  }
+                },
+                1
+              ]
+            },
+            "message": "最多只能提供 1 张尾帧图片"
+          },
+          {
+            "assert": {
+              "$or": [
+                {
+                  "$eq": [
+                    {
+                      "$len": {
+                        "$filter": {
+                          "from": {
+                            "$ref": "request.images"
+                          },
+                          "as": "media",
+                          "where": {
+                            "$eq": [
+                              {
+                                "$ref": "media.role"
+                              },
+                              "last_frame"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    0
+                  ]
+                },
+                {
+                  "$eq": [
+                    {
+                      "$len": {
+                        "$filter": {
+                          "from": {
+                            "$ref": "request.images"
+                          },
+                          "as": "media",
+                          "where": {
+                            "$eq": [
+                              {
+                                "$ref": "media.role"
+                              },
+                              "first_frame"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    1
+                  ]
+                }
+              ]
+            },
+            "message": "使用尾帧时必须同时提供首帧图片"
+          },
+          {
+            "assert": {
+              "$or": [
+                {
+                  "$eq": [
+                    {
+                      "$len": {
+                        "$filter": {
+                          "from": {
+                            "$ref": "request.images"
+                          },
+                          "as": "media",
+                          "where": {
+                            "$in": [
+                              {
+                                "$ref": "media.role"
+                              },
+                              [
+                                "first_frame",
+                                "last_frame"
+                              ]
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    0
+                  ]
+                },
+                {
+                  "$and": [
+                    {
+                      "$eq": [
+                        {
+                          "$len": {
+                            "$filter": {
+                              "from": {
+                                "$ref": "request.images"
+                              },
+                              "as": "media",
+                              "where": {
+                                "$not": {
+                                  "$in": [
+                                    {
+                                      "$ref": "media.role"
+                                    },
+                                    [
+                                      "first_frame",
+                                      "last_frame"
+                                    ]
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        },
+                        0
+                      ]
+                    },
+                    {
+                      "$eq": [
+                        {
+                          "$len": {
+                            "$ref": "request.videos"
+                          }
+                        },
+                        0
+                      ]
+                    },
+                    {
+                      "$eq": [
+                        {
+                          "$len": {
+                            "$ref": "request.audios"
+                          }
+                        },
+                        0
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "message": "首尾帧模式不能同时混用参考图、参考视频或参考音频"
+          }
+        ],
+        "create": {
+          "method": "POST",
+          "path": "/v1/videos",
+          "contentType": "application/json",
+          "body": {
+            "$merge": [
+              {
+                "model": {
+                  "$ref": "request.model"
+                },
+                "prompt": {
+                  "$ref": "request.prompt"
+                },
+                "seconds": {
+                  "$if": {
+                    "condition": {
+                      "$gt": [
+                        {
+                          "$ref": "request.duration"
+                        },
+                        0
+                      ]
+                    },
+                    "then": {
+                      "$ref": "request.duration"
+                    },
+                    "else": null
+                  }
+                },
+                "size": {
+                  "$omitEmpty": {
+                    "$ref": "vars.resolvedSize"
+                  }
+                },
+                "media": {
+                  "$omitEmpty": {
+                    "$concatArrays": [
+                      {
+                        "$map": {
+                          "from": {
+                            "$sortByOrder": {
+                              "$ref": "request.images"
+                            }
+                          },
+                          "as": "media",
+                          "in": {
+                            "type": {
+                              "$switch": {
+                                "cases": [
+                                  {
+                                    "when": {
+                                      "$eq": [
+                                        {
+                                          "$ref": "media.role"
+                                        },
+                                        "first_frame"
+                                      ]
+                                    },
+                                    "then": "first_frame"
+                                  },
+                                  {
+                                    "when": {
+                                      "$eq": [
+                                        {
+                                          "$ref": "media.role"
+                                        },
+                                        "last_frame"
+                                      ]
+                                    },
+                                    "then": "last_frame"
+                                  },
+                                  {
+                                    "when": {
+                                      "$and": [
+                                        {
+                                          "$eq": [
+                                            {
+                                              "$ref": "request.operation"
+                                            },
+                                            "image_to_video"
+                                          ]
+                                        },
+                                        {
+                                          "$eq": [
+                                            {
+                                              "$ref": "media.role"
+                                            },
+                                            ""
+                                          ]
+                                        },
+                                        {
+                                          "$eq": [
+                                            {
+                                              "$len": {
+                                                "$ref": "request.images"
+                                              }
+                                            },
+                                            1
+                                          ]
+                                        },
+                                        {
+                                          "$eq": [
+                                            {
+                                              "$len": {
+                                                "$ref": "request.videos"
+                                              }
+                                            },
+                                            0
+                                          ]
+                                        },
+                                        {
+                                          "$eq": [
+                                            {
+                                              "$len": {
+                                                "$ref": "request.audios"
+                                              }
+                                            },
+                                            0
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "then": "first_frame"
+                                  }
+                                ],
+                                "default": "reference_image"
+                              }
+                            },
+                            "url": {
+                              "$ref": "media.value"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "$map": {
+                          "from": {
+                            "$sortByOrder": {
+                              "$ref": "request.videos"
+                            }
+                          },
+                          "as": "media",
+                          "in": {
+                            "type": "reference_video",
+                            "url": {
+                              "$ref": "media.value"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "$map": {
+                          "from": {
+                            "$sortByOrder": {
+                              "$ref": "request.audios"
+                            }
+                          },
+                          "as": "media",
+                          "in": {
+                            "type": "reference_audio",
+                            "url": {
+                              "$ref": "media.value"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                "seed": {
+                  "$omitEmpty": {
+                    "$ref": "request.providerOptions.openai-videos-media-json.seed"
+                  }
+                },
+                "prompt_extend": {
+                  "$omitEmpty": {
+                    "$ref": "request.providerOptions.openai-videos-media-json.prompt_extend"
+                  }
+                },
+                "watermark": {
+                  "$omitEmpty": {
+                    "$ref": "request.providerOptions.openai-videos-media-json.watermark"
+                  }
+                },
+                "audio": {
+                  "$omitEmpty": {
+                    "$ref": "request.providerOptions.openai-videos-media-json.audio"
+                  }
+                }
+              },
+              {
+                "$coalesce": [
+                  {
+                    "$ref": "request.providerOptions.openai-videos-media-json.body"
+                  },
+                  {
+                    "$ref": "request.providerOptions.openai-videos-media-json.extra_body"
+                  },
+                  {}
+                ]
+              }
+            ]
+          }
+        },
+        "poll": {
+          "method": "GET",
+          "path": "/v1/videos/{{taskId}}"
+        },
+        "result": {
+          "method": "GET",
+          "path": "/v1/videos/{{taskId}}/content",
+          "headers": {
+            "Accept": "video/mp4"
+          }
+        },
+        "response": {
+          "taskId": {
+            "$coalesce": [
+              {
+                "$ref": "response.id"
+              },
+              {
+                "$ref": "response.task_id"
+              },
+              {
+                "$ref": "response.data.id"
+              },
+              {
+                "$ref": "taskId"
+              }
+            ]
+          },
+          "status": {
+            "$coalesce": [
+              {
+                "$ref": "response.status"
+              },
+              {
+                "$ref": "response.data.status"
+              },
+              "pending"
+            ]
+          },
+          "message": {
+            "$coalesce": [
+              {
+                "$ref": "response.error.message"
+              },
+              {
+                "$ref": "response.message"
+              },
+              {
+                "$ref": "response.fail_reason"
+              }
+            ]
+          },
+          "videos": {
+            "$coalesce": [
+              {
+                "$ref": "response.video_url"
+              },
+              {
+                "$ref": "response.url"
+              },
+              {
+                "$ref": "response.data.video_url"
+              },
+              {
+                "$ref": "response.data.url"
+              }
+            ]
+          },
+          "usage": {
+            "$ref": "response.usage"
+          },
+          "errorPaths": [
+            "error.code"
+          ],
+          "messagePaths": [
+            "error.message",
+            "message"
+          ],
+          "resultEphemeral": true
+        }
+      }
+    ]
+  },
+  "documentation": "# Videos JSON · media 数组\n\n适用于服务商明确提供 `POST /v1/videos` JSON 接口，并使用顶层 `media` 数组（`first_frame`、`last_frame`、`reference_image`、`reference_video`、`reference_audio`）、整数 `seconds` 与像素尺寸 `size` 的异步视频协议。\n\n本插件由 BeefTV Contributors 维护。它描述具体线协议格式，不代表与任何服务商存在合作或授权关系；标准 OpenAI Videos / Sora 的 multipart 协议请继续使用 `openai-videos`（`newapi`）。\n\n完整请求、查询及结果格式见 [docs/interface.md](docs/interface.md)。\n\n---\n\n# Videos JSON · media 数组 接口字段\n\n## 协议身份\n\n- 插件 ID：`openai-videos-media-json`。\n- Provider ID：`openai-videos-media-json`。\n- 能力：`video`。\n- 鉴权驱动：`bearer`。\n- 创建：`POST /v1/videos`（`application/json`）。\n- 查询：`GET /v1/videos/{{taskId}}`。\n- 结果下载：`GET /v1/videos/{{taskId}}/content`（`Accept: video/mp4`，当轮询响应未返回 `video_url` 时自动回退）。\n\n## 配置字段\n\n| 字段 | 类型 | 必填 | 含义 |\n| --- | --- | --- | --- |\n| `apiKey` | secret | 是 | API Key |\n\n## 统一字段映射\n\n| 统一字段 | 类型 | 必填 | 上游映射 | 说明 |\n| --- | --- | --- | --- | --- |\n| `model` | string | 是 | `model` | 视频模型 ID（如 `minimax/h3`、`minimax/h3-fast`、`wan/wan3.0-video`）。 |\n| `prompt` | string | 是 | `prompt` | 视频提示词。 |\n| `images` | media[] | 否 | `media[type=first_frame|last_frame|reference_image]` | 支持公网 URL 与 `data:<mime>;base64,...` 内联数据；首尾帧不可与参考素材混用。 |\n| `videos` | media[] | 否 | `media[type=reference_video]` | 参考视频地址或内联数据。 |\n| `audios` | media[] | 否 | `media[type=reference_audio]` | 参考音频地址或内联数据。 |\n| `duration` | integer | 否 | `seconds` | 整数时长秒数；未指定时省略。 |\n| `aspectRatio` | string | 否 | `size` | 像素画布尺寸：`21:9`→`1536x672`、`16:9`→`1344x768`、`4:3`→`1024x768`、`1:1`→`768x768`、`3:4`→`768x1024`、`9:16`→`768x1344`；显式传入 `WIDTHxHEIGHT` 时原样透传。 |\n| `providerOptions` | object | 否 | `size`、`seed`、`prompt_extend`、`watermark`、`audio`、`body`/`extra_body` | 仅在用户显式配置时才发送可选扩展字段，避免被严格校验的模型（如 `minimax/h3`）以 HTTP 400 拒绝。 |\n\n## 响应与错误\n\n创建响应读取 `id` / `task_id` 与 `status`（`queued` / `in_progress` / `completed` / `failed`）。轮询完成后优先读取直链 `video_url`（标记为 ephemeral，由宿主立即下载持久化且不向外部存储域名发送 API Key）；若 `video_url` 为 `null` 或缺失，宿主自动回退调用 `GET /v1/videos/{{taskId}}/content` 下载成片。HTTP 错误、`error.code` 及 `failed` 状态均保持失败语义，不包装成成功。\n\n## 兼容边界\n\n- 本协议独立于标准 OpenAI Videos multipart 协议（`openai-videos`），不改动现有 Sora / OpenAI Videos multipart 契约。\n- 默认不下发 `watermark`、`audio`、`prompt_extend`、`seed`，需要时通过 `providerOptions.openai-videos-media-json` 显式传入。\n- 公开采用该 `/v1/videos` JSON + 顶层 `media` 数组格式的网关（例如 GoodPut AI 视频生成接口）可直接选用此协议，服务地址与密钥由用户自行填写。\n\n<!-- BEEFTV_PLUGIN_MANIFEST_START -->\n## Manifest 完整接口定义\n\n以下 JSON 与插件包内实际 `manifest.json` 逐字段一致，覆盖插件身份、权限、配置、鉴权、参数、校验、创建、Agent、查询、取消、结果下载、响应和 Agent 响应映射。`documentation` 字段的值就是当前完整文档；为避免文档在自身内部无限递归，JSON 中仅用等义占位文本表示正文。\n\n```json\n{\n  \"apiVersion\": \"beeftv.plugin/v3\",\n  \"id\": \"openai-videos-media-json\",\n  \"name\": \"Videos JSON · media 数组\",\n  \"version\": \"1.0.0\",\n  \"author\": \"BeefTV Contributors\",\n  \"description\": \"使用顶层 media 数组（first_frame/last_frame/reference_*）、seconds 与像素 size 的 /v1/videos JSON 异步视频协议。\",\n  \"permissions\": [\n    \"generation.run\",\n    \"media.read\"\n  ],\n  \"configuration\": {\n    \"fields\": [\n      {\n        \"name\": \"apiKey\",\n        \"type\": \"secret\",\n        \"label\": \"API Key\",\n        \"required\": true\n      }\n    ]\n  },\n  \"contributes\": {\n    \"providers\": [\n      {\n        \"id\": \"openai-videos-media-json\",\n        \"label\": \"Videos JSON · media 数组\",\n        \"capabilities\": [\n          \"video\"\n        ],\n        \"scopes\": [\n          \"admin.system-channel\",\n          \"user.custom-channel\",\n          \"canvas\",\n          \"creation\",\n          \"agent\"\n        ],\n        \"requiresPublicMediaUrls\": false,\n        \"auth\": {\n          \"type\": \"bearer\",\n          \"field\": \"apiKey\"\n        },\n        \"parameters\": [\n          {\n            \"name\": \"model\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"model\",\n            \"description\": \"视频模型 ID（如 minimax/h3、minimax/h3-fast、wan/wan3.0-video）。\"\n          },\n          {\n            \"name\": \"prompt\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"prompt\",\n            \"description\": \"视频提示词。\"\n          },\n          {\n            \"name\": \"images\",\n            \"type\": \"media[]\",\n            \"required\": false,\n            \"mapping\": \"media[type=first_frame|last_frame|reference_image]\",\n            \"description\": \"首尾帧或参考图片（支持公网 URL 与 data URL）。\"\n          },\n          {\n            \"name\": \"videos\",\n            \"type\": \"media[]\",\n            \"required\": false,\n            \"mapping\": \"media[type=reference_video]\",\n            \"description\": \"参考视频。\"\n          },\n          {\n            \"name\": \"audios\",\n            \"type\": \"media[]\",\n            \"required\": false,\n            \"mapping\": \"media[type=reference_audio]\",\n            \"description\": \"参考音频。\"\n          },\n          {\n            \"name\": \"duration\",\n            \"type\": \"integer\",\n            \"required\": false,\n            \"mapping\": \"seconds\",\n            \"description\": \"整数时长秒数。\"\n          },\n          {\n            \"name\": \"aspectRatio\",\n            \"type\": \"string\",\n            \"required\": false,\n            \"mapping\": \"size\",\n            \"description\": \"画幅比例（换算为 768P 像素画布如 1344x768）或显式 WIDTHxHEIGHT。\"\n          },\n          {\n            \"name\": \"providerOptions\",\n            \"type\": \"object\",\n            \"required\": false,\n            \"mapping\": \"size / seed / prompt_extend / watermark / audio / body\",\n            \"description\": \"仅在显式配置时下发的可选扩展参数。\"\n          }\n        ],\n        \"variables\": [\n          {\n            \"name\": \"ratioNorm\",\n            \"value\": {\n              \"$lower\": {\n                \"$trim\": {\n                  \"$ref\": \"request.aspectRatio\"\n                }\n              }\n            }\n          },\n          {\n            \"name\": \"isWxH\",\n            \"value\": {\n              \"$eq\": [\n                {\n                  \"$len\": {\n                    \"$split\": [\n                      {\n                        \"$ref\": \"vars.ratioNorm\"\n                      },\n                      \"x\"\n                    ]\n                  }\n                },\n                2\n              ]\n            }\n          },\n          {\n            \"name\": \"resolvedSize\",\n            \"value\": {\n              \"$coalesce\": [\n                {\n                  \"$ref\": \"request.providerOptions.openai-videos-media-json.size\"\n                },\n                {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$ref\": \"vars.isWxH\"\n                    },\n                    \"then\": {\n                      \"$trim\": {\n                        \"$ref\": \"request.aspectRatio\"\n                      }\n                    },\n                    \"else\": {\n                      \"$switch\": {\n                        \"cases\": [\n                          {\n                            \"when\": {\n                              \"$eq\": [\n                                {\n                                  \"$ref\": \"vars.ratioNorm\"\n                                },\n                                \"21:9\"\n                              ]\n                            },\n                            \"then\": \"1536x672\"\n                          },\n                          {\n                            \"when\": {\n                              \"$in\": [\n                                {\n                                  \"$ref\": \"vars.ratioNorm\"\n                                },\n                                [\n                                  \"16:9\",\n                                  \"landscape\"\n                                ]\n                              ]\n                            },\n                            \"then\": \"1344x768\"\n                          },\n                          {\n                            \"when\": {\n                              \"$eq\": [\n                                {\n                                  \"$ref\": \"vars.ratioNorm\"\n                                },\n                                \"4:3\"\n                              ]\n                            },\n                            \"then\": \"1024x768\"\n                          },\n                          {\n                            \"when\": {\n                              \"$in\": [\n                                {\n                                  \"$ref\": \"vars.ratioNorm\"\n                                },\n                                [\n                                  \"1:1\",\n                                  \"square\"\n                                ]\n                              ]\n                            },\n                            \"then\": \"768x768\"\n                          },\n                          {\n                            \"when\": {\n                              \"$eq\": [\n                                {\n                                  \"$ref\": \"vars.ratioNorm\"\n                                },\n                                \"3:4\"\n                              ]\n                            },\n                            \"then\": \"768x1024\"\n                          },\n                          {\n                            \"when\": {\n                              \"$in\": [\n                                {\n                                  \"$ref\": \"vars.ratioNorm\"\n                                },\n                                [\n                                  \"9:16\",\n                                  \"portrait\"\n                                ]\n                              ]\n                            },\n                            \"then\": \"768x1344\"\n                          }\n                        ],\n                        \"default\": null\n                      }\n                    }\n                  }\n                }\n              ]\n            }\n          }\n        ],\n        \"validations\": [\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$ref\": \"request.images\"\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$eq\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          \"first_frame\"\n                        ]\n                      }\n                    }\n                  }\n                },\n                1\n              ]\n            },\n            \"message\": \"最多只能提供 1 张首帧图片\"\n          },\n          {\n            \"assert\": {\n              \"$lte\": [\n                {\n                  \"$len\": {\n                    \"$filter\": {\n                      \"from\": {\n                        \"$ref\": \"request.images\"\n                      },\n                      \"as\": \"media\",\n                      \"where\": {\n                        \"$eq\": [\n                          {\n                            \"$ref\": \"media.role\"\n                          },\n                          \"last_frame\"\n                        ]\n                      }\n                    }\n                  }\n                },\n                1\n              ]\n            },\n            \"message\": \"最多只能提供 1 张尾帧图片\"\n          },\n          {\n            \"assert\": {\n              \"$or\": [\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.images\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$eq\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              \"last_frame\"\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    0\n                  ]\n                },\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.images\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$eq\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              \"first_frame\"\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    1\n                  ]\n                }\n              ]\n            },\n            \"message\": \"使用尾帧时必须同时提供首帧图片\"\n          },\n          {\n            \"assert\": {\n              \"$or\": [\n                {\n                  \"$eq\": [\n                    {\n                      \"$len\": {\n                        \"$filter\": {\n                          \"from\": {\n                            \"$ref\": \"request.images\"\n                          },\n                          \"as\": \"media\",\n                          \"where\": {\n                            \"$in\": [\n                              {\n                                \"$ref\": \"media.role\"\n                              },\n                              [\n                                \"first_frame\",\n                                \"last_frame\"\n                              ]\n                            ]\n                          }\n                        }\n                      }\n                    },\n                    0\n                  ]\n                },\n                {\n                  \"$and\": [\n                    {\n                      \"$eq\": [\n                        {\n                          \"$len\": {\n                            \"$filter\": {\n                              \"from\": {\n                                \"$ref\": \"request.images\"\n                              },\n                              \"as\": \"media\",\n                              \"where\": {\n                                \"$not\": {\n                                  \"$in\": [\n                                    {\n                                      \"$ref\": \"media.role\"\n                                    },\n                                    [\n                                      \"first_frame\",\n                                      \"last_frame\"\n                                    ]\n                                  ]\n                                }\n                              }\n                            }\n                          }\n                        },\n                        0\n                      ]\n                    },\n                    {\n                      \"$eq\": [\n                        {\n                          \"$len\": {\n                            \"$ref\": \"request.videos\"\n                          }\n                        },\n                        0\n                      ]\n                    },\n                    {\n                      \"$eq\": [\n                        {\n                          \"$len\": {\n                            \"$ref\": \"request.audios\"\n                          }\n                        },\n                        0\n                      ]\n                    }\n                  ]\n                }\n              ]\n            },\n            \"message\": \"首尾帧模式不能同时混用参考图、参考视频或参考音频\"\n          }\n        ],\n        \"create\": {\n          \"method\": \"POST\",\n          \"path\": \"/v1/videos\",\n          \"contentType\": \"application/json\",\n          \"body\": {\n            \"$merge\": [\n              {\n                \"model\": {\n                  \"$ref\": \"request.model\"\n                },\n                \"prompt\": {\n                  \"$ref\": \"request.prompt\"\n                },\n                \"seconds\": {\n                  \"$if\": {\n                    \"condition\": {\n                      \"$gt\": [\n                        {\n                          \"$ref\": \"request.duration\"\n                        },\n                        0\n                      ]\n                    },\n                    \"then\": {\n                      \"$ref\": \"request.duration\"\n                    },\n                    \"else\": null\n                  }\n                },\n                \"size\": {\n                  \"$omitEmpty\": {\n                    \"$ref\": \"vars.resolvedSize\"\n                  }\n                },\n                \"media\": {\n                  \"$omitEmpty\": {\n                    \"$concatArrays\": [\n                      {\n                        \"$map\": {\n                          \"from\": {\n                            \"$sortByOrder\": {\n                              \"$ref\": \"request.images\"\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"in\": {\n                            \"type\": {\n                              \"$switch\": {\n                                \"cases\": [\n                                  {\n                                    \"when\": {\n                                      \"$eq\": [\n                                        {\n                                          \"$ref\": \"media.role\"\n                                        },\n                                        \"first_frame\"\n                                      ]\n                                    },\n                                    \"then\": \"first_frame\"\n                                  },\n                                  {\n                                    \"when\": {\n                                      \"$eq\": [\n                                        {\n                                          \"$ref\": \"media.role\"\n                                        },\n                                        \"last_frame\"\n                                      ]\n                                    },\n                                    \"then\": \"last_frame\"\n                                  },\n                                  {\n                                    \"when\": {\n                                      \"$and\": [\n                                        {\n                                          \"$eq\": [\n                                            {\n                                              \"$ref\": \"request.operation\"\n                                            },\n                                            \"image_to_video\"\n                                          ]\n                                        },\n                                        {\n                                          \"$eq\": [\n                                            {\n                                              \"$ref\": \"media.role\"\n                                            },\n                                            \"\"\n                                          ]\n                                        },\n                                        {\n                                          \"$eq\": [\n                                            {\n                                              \"$len\": {\n                                                \"$ref\": \"request.images\"\n                                              }\n                                            },\n                                            1\n                                          ]\n                                        },\n                                        {\n                                          \"$eq\": [\n                                            {\n                                              \"$len\": {\n                                                \"$ref\": \"request.videos\"\n                                              }\n                                            },\n                                            0\n                                          ]\n                                        },\n                                        {\n                                          \"$eq\": [\n                                            {\n                                              \"$len\": {\n                                                \"$ref\": \"request.audios\"\n                                              }\n                                            },\n                                            0\n                                          ]\n                                        }\n                                      ]\n                                    },\n                                    \"then\": \"first_frame\"\n                                  }\n                                ],\n                                \"default\": \"reference_image\"\n                              }\n                            },\n                            \"url\": {\n                              \"$ref\": \"media.value\"\n                            }\n                          }\n                        }\n                      },\n                      {\n                        \"$map\": {\n                          \"from\": {\n                            \"$sortByOrder\": {\n                              \"$ref\": \"request.videos\"\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"in\": {\n                            \"type\": \"reference_video\",\n                            \"url\": {\n                              \"$ref\": \"media.value\"\n                            }\n                          }\n                        }\n                      },\n                      {\n                        \"$map\": {\n                          \"from\": {\n                            \"$sortByOrder\": {\n                              \"$ref\": \"request.audios\"\n                            }\n                          },\n                          \"as\": \"media\",\n                          \"in\": {\n                            \"type\": \"reference_audio\",\n                            \"url\": {\n                              \"$ref\": \"media.value\"\n                            }\n                          }\n                        }\n                      }\n                    ]\n                  }\n                },\n                \"seed\": {\n                  \"$omitEmpty\": {\n                    \"$ref\": \"request.providerOptions.openai-videos-media-json.seed\"\n                  }\n                },\n                \"prompt_extend\": {\n                  \"$omitEmpty\": {\n                    \"$ref\": \"request.providerOptions.openai-videos-media-json.prompt_extend\"\n                  }\n                },\n                \"watermark\": {\n                  \"$omitEmpty\": {\n                    \"$ref\": \"request.providerOptions.openai-videos-media-json.watermark\"\n                  }\n                },\n                \"audio\": {\n                  \"$omitEmpty\": {\n                    \"$ref\": \"request.providerOptions.openai-videos-media-json.audio\"\n                  }\n                }\n              },\n              {\n                \"$coalesce\": [\n                  {\n                    \"$ref\": \"request.providerOptions.openai-videos-media-json.body\"\n                  },\n                  {\n                    \"$ref\": \"request.providerOptions.openai-videos-media-json.extra_body\"\n                  },\n                  {}\n                ]\n              }\n            ]\n          }\n        },\n        \"poll\": {\n          \"method\": \"GET\",\n          \"path\": \"/v1/videos/{{taskId}}\"\n        },\n        \"result\": {\n          \"method\": \"GET\",\n          \"path\": \"/v1/videos/{{taskId}}/content\",\n          \"headers\": {\n            \"Accept\": \"video/mp4\"\n          }\n        },\n        \"response\": {\n          \"taskId\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.id\"\n              },\n              {\n                \"$ref\": \"response.task_id\"\n              },\n              {\n                \"$ref\": \"response.data.id\"\n              },\n              {\n                \"$ref\": \"taskId\"\n              }\n            ]\n          },\n          \"status\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.status\"\n              },\n              {\n                \"$ref\": \"response.data.status\"\n              },\n              \"pending\"\n            ]\n          },\n          \"message\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.error.message\"\n              },\n              {\n                \"$ref\": \"response.message\"\n              },\n              {\n                \"$ref\": \"response.fail_reason\"\n              }\n            ]\n          },\n          \"videos\": {\n            \"$coalesce\": [\n              {\n                \"$ref\": \"response.video_url\"\n              },\n              {\n                \"$ref\": \"response.url\"\n              },\n              {\n                \"$ref\": \"response.data.video_url\"\n              },\n              {\n                \"$ref\": \"response.data.url\"\n              }\n            ]\n          },\n          \"usage\": {\n            \"$ref\": \"response.usage\"\n          },\n          \"errorPaths\": [\n            \"error.code\"\n          ],\n          \"messagePaths\": [\n            \"error.message\",\n            \"message\"\n          ],\n          \"resultEphemeral\": true\n        }\n      }\n    ]\n  },\n  \"documentation\": \"<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>\"\n}\n```\n<!-- BEEFTV_PLUGIN_MANIFEST_END -->\n"
+}

@@ -42,6 +42,8 @@ const BUILTIN_PROTOCOL_CAPABILITIES: Record<ModelProtocol, ProtocolCapability> =
     "newapi-channel-1": "video",
     "newapi-channel-2": "video",
     "video-generations-json": "video",
+    "openai-videos-media-json": "video",
+    "vllm-omni-videos": "video",
     "xai-video": "video",
     "volcengine-ark-video": "video",
     "volcengine-ark-agent-plan-video": "video",
@@ -138,7 +140,7 @@ export function inferProtocolCapabilityFromModel(model: string): ProtocolCapabil
         lower.includes("veo") ||
         lower.includes("kling") ||
         lower.includes("seedance") ||
-        /minimax-(?:video|h3)/.test(lower) ||
+        /minimax[-/](?:video|h3)/.test(lower) ||
         lower.includes("hailuo") ||
         lower.includes("pika") ||
         lower.includes("runway") ||

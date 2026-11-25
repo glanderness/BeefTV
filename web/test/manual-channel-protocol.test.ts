@@ -69,10 +69,14 @@ describe("manual channel protocol defaults", () => {
         ]);
     });
 
-    test("manual MiniMax text names stay text", () => {
+    test("manual MiniMax text names stay text and slash-prefixed H3 names infer video", () => {
         expect(inferProtocolCapabilityFromModel("minimax-m2")).toBe("text");
+        expect(inferProtocolCapabilityFromModel("minimax/m2")).toBe("text");
         expect(defaultProtocolForModel("minimax-m2")).toBe("chat-completion");
         expect(ensureModelProfilesWithUiDefaults(["minimax-m2"], undefined)).toEqual([expect.objectContaining({ model: "minimax-m2", capability: "text", protocol: "chat-completion" })]);
+        expect(inferProtocolCapabilityFromModel("minimax/h3")).toBe("video");
+        expect(inferProtocolCapabilityFromModel("minimax/h3-fast")).toBe("video");
+        expect(inferProtocolCapabilityFromModel("minimax/video-01")).toBe("video");
     });
 
     test("explicit capability is kept when protocol is missing", () => {
