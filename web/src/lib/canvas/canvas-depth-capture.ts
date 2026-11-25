@@ -115,6 +115,9 @@ function explanationMatchesAuthoritativeOutcome(outcome: TaskOutcome, explanatio
         if (outcome.reason === "submission_unknown") return explanation.category === "submission_uncertain";
         return false;
     }
+    if (outcome.phase === "failed" && outcome.reason === "result_unrecoverable" && explanation.category === "timeout" && explanation.uncertain) {
+        return true;
+    }
     if (
         outcome.regenerate === "blocked" ||
         outcome.reason === "cancelled_result_unconfirmed" ||

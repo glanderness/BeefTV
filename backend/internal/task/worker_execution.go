@@ -8,12 +8,14 @@ import (
 	"image"
 	_ "image/png"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	localasset "infinite-canvas/backend/internal/asset"
+	"infinite-canvas/backend/internal/beeftv"
 	cw "infinite-canvas/backend/internal/canvasworkflow"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
@@ -24,6 +26,8 @@ import (
 	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/taskruntime"
+
+	"gorm.io/gorm"
 )
 
 func CanvasMediaDemuxer(mime string) string {
@@ -384,6 +388,10 @@ func ExecuteClaimedTask(deps WorkerExecuteDeps, session taskruntime.Session) tas
 			}
 		}
 		outcome := ExecutionFailureOutcome(terminal, task, err, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest, deps.ImageTaskEnded)
+		if outcome.Applied && task.Type == "canvas_image" && !task.IsUpscale() && task.RecoveryOutcome == nil && isNonRecoverableGatewayTimeout(deps.Repo, *task, decryptedInput, err) {
+			unrecoverable := RecoveryUnrecoverable
+			task.RecoveryOutcome = &unrecoverable
+		}
 		if outcome.Applied && task.Type == "canvas_image" && !task.IsUpscale() && task.RecoveryOutcome != nil {
 			failed := *task
 			failed.LeaseOwner = ""
@@ -486,6 +494,60 @@ func TerminalWriteApplied(termErr, cause error) bool {
 		return false
 	}
 	return cause != nil && errors.Is(termErr, cause)
+}
+
+func isNonRecoverableGatewayTimeout(repo *repository.Repository, task model.Task, decryptedInput string, err error) bool {
+	if repo == nil || err == nil {
+		return false
+	}
+	var httpErr generation.HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != 524 {
+		return false
+	}
+	if taskUsesManagedConnection(decryptedInput) {
+		return false
+	}
+	evidence, evErr := repo.ImageRecoveryEvidence([]string{task.ID})
+	if evErr != nil {
+		return false
+	}
+	ev := evidence[task.ID]
+	if ev.Submission != nil {
+		return false
+	}
+	if ev.Attempt != nil && ev.Attempt.ChannelID == beeftv.ChannelID {
+		return false
+	}
+	receipt, receiptErr := repo.ImageCreateReceipt(task.UserID, task.ID)
+	if receiptErr != nil && !errors.Is(receiptErr, gorm.ErrRecordNotFound) {
+		return false
+	}
+	if receipt != nil && receipt.StatusCode >= 200 && receipt.StatusCode < 300 {
+		return false
+	}
+	return true
+}
+
+func taskUsesManagedConnection(inputJSON string) bool {
+	if strings.TrimSpace(inputJSON) == "" {
+		return false
+	}
+	var input struct {
+		Config struct {
+			CredentialRef string `json:"credentialRef"`
+			ChannelID     string `json:"channelId"`
+			BaseURL       string `json:"baseUrl"`
+		} `json:"config"`
+	}
+	if json.Unmarshal([]byte(inputJSON), &input) != nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(input.Config.CredentialRef), beeftv.ChannelID) ||
+		strings.EqualFold(strings.TrimSpace(input.Config.ChannelID), beeftv.ChannelID) {
+		return true
+	}
+	parsed, err := url.Parse(strings.TrimSpace(input.Config.BaseURL))
+	return err == nil && parsed != nil && strings.EqualFold(parsed.Hostname(), "beeftv.app")
 }
 
 func TaskUsesUpstreamReportedProgress(taskType string) bool {

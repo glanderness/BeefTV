@@ -126,6 +126,10 @@ func ClassifyTaskFailure(err error) Failure {
 func ApplyAppFailureWrappers(err error, failure Failure) Failure {
 	var imageRecovery ImageRecoveryError
 	if errors.As(err, &imageRecovery) {
+		var httpErr HTTPError
+		if errors.As(imageRecovery.Cause, &httpErr) && httpErr.StatusCode == 524 {
+			return ClassifyHTTP(httpErr.StatusCode, httpErr.Status, httpErr.Body)
+		}
 		failure.Category = CategorySubmissionUncertain
 		failure.Uncertain = true
 		failure.Reason = "图片结果尚未确认，自动恢复已停止"

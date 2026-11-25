@@ -216,6 +216,10 @@ func (c *Terminal) persistedFailureCode(err error, stage string) string {
 		return string(generation.CategoryRequestNotSent)
 	}
 	if stage == "submission_unknown" {
+		var httpErr generation.HTTPError
+		if errors.As(err, &httpErr) && httpErr.StatusCode == 524 {
+			return string(generation.CategoryTimeout)
+		}
 		return string(generation.CategorySubmissionUncertain)
 	}
 	if c.failureErrorCode == nil {
