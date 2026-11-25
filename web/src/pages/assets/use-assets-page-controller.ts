@@ -289,6 +289,7 @@ export function useAssetsPageController() {
         await Promise.all([
             invalidateAssetLibrary(),
             queryClient.invalidateQueries({ queryKey: assetPickerQueryKey() }),
+            queryClient.invalidateQueries({ queryKey: ["canvas-generation-history"] }),
         ]);
     };
 

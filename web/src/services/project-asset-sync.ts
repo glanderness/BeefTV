@@ -5,20 +5,34 @@ import { parseAssetRecord } from "@/lib/asset-record";
 import { parseBackendGenerationResult, type BackendGenerationResult } from "@/services/api/generation-task";
 import { ApiError, http } from "@/services/api/request";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { parseWorkspaceAssetPayloads } from "@/lib/workspace-asset-normalize";
+import { lookupWorkspaceAssetsByIds } from "@/services/api/workspace-assets";
 import { getWorkspaceAsset } from "@/services/api/workspace-data";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
-import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
+import { queryGenerationTask, type GenerationTask, type GenerationTaskOutput } from "@/services/api/task-center";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
-import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
+import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, materializeEffectKey, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
 import { withGenerationArtifactCommitLock } from "@/services/generation-asset-repository";
 import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
 import { generationArtifactStorageKey, loadOrStoreGenerationArtifact } from "@/services/generation-artifact-sink";
 import { createProviderNeutralGenerationTaskEffectStore } from "@/services/provider-neutral-generation-effects";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
-import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCategory, type NewAsset } from "@/stores/use-asset-store";
+import { recordDeletedGenerationAssetIds } from "@/stores/asset-store-drafts";
+import {
+    flushAssetStorePersistence,
+    generationAssetId,
+    hydrateAssetStoreDrafts,
+    isDeletedGenerationAsset,
+    runAssetStoreProjection,
+    useAssetStore,
+    type Asset,
+    type AssetCategory,
+    type NewAsset,
+} from "@/stores/use-asset-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import { persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
+import { usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
 import { usesBrowserLocalResourceStore, workspaceAssetHasCanonicalMediaPersist } from "@/services/workspace-resource-storage";
 import { bindBackendConversationMessageResult, type BindBackendConversationMessageRuntime } from "@/services/conversation-generation-consumer";
 import type { StoredCreationConversation } from "@/services/creation-conversation-store";
@@ -134,10 +148,130 @@ export function ensureCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions) {
     return request;
 }
 
+type CanonicalGenerationIdentity = {
+    generationTaskId?: string;
+    outputIndex: number;
+    canonicalId?: string;
+};
+
+async function resolveCanonicalGenerationIdentity(options: EnsureCanvasNodeAssetOptions): Promise<CanonicalGenerationIdentity> {
+    const generationTaskId = (options.taskId || options.node.metadata?.taskId)?.trim() || undefined;
+    const outputIndex = Math.max(0, Math.trunc(options.node.metadata?.taskOutputIndex ?? 0));
+    const canonicalId =
+        generationTaskId && typeof crypto !== "undefined" && crypto.subtle
+            ? await generationAssetId(materializeEffectKey(generationTaskId, outputIndex))
+            : undefined;
+    return { generationTaskId, outputIndex, canonicalId };
+}
+
+async function lookupBackendCanvasAssetsByIds(
+    ids: string[],
+    options: EnsureCanvasNodeAssetOptions,
+): Promise<Asset | undefined> {
+    if (!ids.length) return undefined;
+    try {
+        const result = await lookupWorkspaceAssetsByIds(ids, { signal: options.signal });
+        throwIfAborted(options.signal);
+        const remoteAssets = parseWorkspaceAssetPayloads(result.assets);
+        if (!remoteAssets.length) return undefined;
+        const matched = findCanvasNodeAsset(remoteAssets, options.node, options.canvasId, options.taskId);
+        if (!matched) return undefined;
+        runAssetStoreProjection(() => {
+            useAssetStore.setState((state) => {
+                if (state.assets.some((item) => item.id === matched.id)) return state;
+                return { assets: [matched, ...state.assets] };
+            });
+        });
+        return matched;
+    } catch (error) {
+        if (error instanceof ApiError && (error.status === 404 || error.code === 404)) return undefined;
+        throw error;
+    }
+}
+
+async function lookupExistingBackendCanvasAsset(
+    options: EnsureCanvasNodeAssetOptions,
+    identity: CanonicalGenerationIdentity,
+): Promise<Asset | undefined> {
+    if (!usesWorkspaceAssetLibraryApi()) return undefined;
+    const candidateIds: string[] = [];
+    const explicitId = options.node.metadata?.assetId?.trim();
+    if (explicitId) candidateIds.push(explicitId);
+    if (identity.canonicalId && !candidateIds.includes(identity.canonicalId)) {
+        candidateIds.push(identity.canonicalId);
+    }
+    return lookupBackendCanvasAssetsByIds(candidateIds, options);
+}
+
+type BackendGenerationAssetAvailability =
+    | { state: "found"; asset: Asset }
+    | { state: "deleted" | "delivering" | "missing_task" };
+
+async function checkBackendGenerationAssetAvailability(
+    options: EnsureCanvasNodeAssetOptions,
+    identity: CanonicalGenerationIdentity,
+    scope: string,
+): Promise<BackendGenerationAssetAvailability> {
+    if (!identity.generationTaskId) return { state: "missing_task" };
+    let task: GenerationTask;
+    try {
+        task = await queryGenerationTask(identity.generationTaskId, { signal: options.signal });
+        throwIfAborted(options.signal);
+    } catch (error) {
+        if (error instanceof ApiError && (error.status === 404 || error.code === 404)) {
+            return { state: "missing_task" };
+        }
+        throw error;
+    }
+    if (!task || !task.id) return { state: "missing_task" };
+    const output = task.outputs?.find((item) => item.outputIndex === identity.outputIndex);
+    const materializedId = output?.materializedAssetId?.trim();
+    if (materializedId) {
+        const matched = await lookupBackendCanvasAssetsByIds([materializedId], options);
+        return matched ? { state: "found", asset: matched } : { state: "deleted" };
+    }
+    if (output?.materializationErrorCode === "asset_deleted" || task.resultState === "FAILED_PERMANENT") {
+        if (identity.canonicalId) recordDeletedGenerationAssetIds(scope, [identity.canonicalId]);
+        return { state: "deleted" };
+    }
+    if (
+        task.status === "queued" ||
+        task.status === "running" ||
+        (task.status === "succeeded" && (task.resultState !== "READY" || Boolean(task.outputs?.length)))
+    ) {
+        return { state: "delivering" };
+    }
+    return { state: "missing_task" };
+}
+
 async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Promise<CanvasNodeAssetResult> {
     throwIfAborted(options.signal);
+    const scope = getActiveUserScope();
+    const explicitId = options.node.metadata?.assetId?.trim();
+    const identity = await resolveCanonicalGenerationIdentity(options);
+    if (options.source !== "canvas-manual" && (identity.canonicalId || explicitId)) {
+        await hydrateAssetStoreDrafts(scope);
+        throwIfAborted(options.signal);
+        if (
+            (identity.canonicalId && isDeletedGenerationAsset(scope, identity.canonicalId)) ||
+            (explicitId && isDeletedGenerationAsset(scope, explicitId))
+        ) {
+            return { assetId: "", created: false, linkedToProject: false, confirmed: false };
+        }
+    }
     const store = useAssetStore.getState();
     let asset = findCanvasNodeAsset(store.assets, options.node, options.canvasId, options.taskId);
+    if (!asset) {
+        asset = await lookupExistingBackendCanvasAsset(options, identity);
+    }
+    if (!asset && options.source !== "canvas-manual" && usesWorkspaceAssetLibraryApi() && identity.generationTaskId) {
+        const availability = await checkBackendGenerationAssetAvailability(options, identity, scope);
+        if (availability.state === "found") {
+            asset = availability.asset;
+        } else if (availability.state === "deleted" || availability.state === "delivering") {
+            return { assetId: "", created: false, linkedToProject: false, confirmed: false };
+        }
+    }
     const declaredCategory = options.category || declaredCanvasNodeAssetCategory(options.node);
     let created = false;
     if (!asset) {

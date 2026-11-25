@@ -8,12 +8,14 @@ import (
 	"image"
 	_ "image/png"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	localasset "infinite-canvas/backend/internal/asset"
+	"infinite-canvas/backend/internal/beeftv"
 	cw "infinite-canvas/backend/internal/canvasworkflow"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
@@ -24,6 +26,8 @@ import (
 	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/taskruntime"
+
+	"gorm.io/gorm"
 )
 
 func CanvasMediaDemuxer(mime string) string {
@@ -384,6 +388,10 @@ func ExecuteClaimedTask(deps WorkerExecuteDeps, session taskruntime.Session) tas
 			}
 		}
 		outcome := ExecutionFailureOutcome(terminal, task, err, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest, deps.ImageTaskEnded)
+		if outcome.Applied && task.Type == "canvas_image" && !task.IsUpscale() && task.RecoveryOutcome == nil && isNonRecoverableGatewayTimeout(deps.Repo, *task, decryptedInput, decryptErr, err) {
+			unrecoverable := RecoveryUnrecoverable
+			task.RecoveryOutcome = &unrecoverable
+		}
 		if outcome.Applied && task.Type == "canvas_image" && !task.IsUpscale() && task.RecoveryOutcome != nil {
 			failed := *task
 			failed.LeaseOwner = ""
@@ -486,6 +494,75 @@ func TerminalWriteApplied(termErr, cause error) bool {
 		return false
 	}
 	return cause != nil && errors.Is(termErr, cause)
+}
+
+// isNonRecoverableGatewayTimeout is strictly fail-closed: it returns true only
+// when positive persisted evidence proves a synchronous unmanaged third-party
+// image request hit HTTP 524 with no upstream job handle, no frozen
+// ImageSubmission, and no accepted 2xx create receipt.
+func isNonRecoverableGatewayTimeout(repo *repository.Repository, task model.Task, decryptedInput string, decryptErr error, err error) bool {
+	if repo == nil || err == nil || decryptErr != nil || strings.TrimSpace(decryptedInput) == "" {
+		return false
+	}
+	if task.Type != "canvas_image" || task.IsUpscale() {
+		return false
+	}
+	if strings.TrimSpace(task.ImageJobID) != "" || strings.TrimSpace(task.ProviderRequestID) != "" {
+		return false
+	}
+	var httpErr generation.HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != 524 {
+		return false
+	}
+	var input struct {
+		Config struct {
+			CredentialRef string `json:"credentialRef"`
+			ChannelID     string `json:"channelId"`
+			BaseURL       string `json:"baseUrl"`
+		} `json:"config"`
+	}
+	if json.Unmarshal([]byte(decryptedInput), &input) != nil {
+		return false
+	}
+	trimmedBase := strings.TrimSpace(input.Config.BaseURL)
+	if trimmedBase == "" && strings.TrimSpace(input.Config.ChannelID) == "" {
+		return false
+	}
+	if trimmedBase != "" {
+		parsed, parseErr := url.Parse(trimmedBase)
+		if parseErr != nil || parsed.Host == "" {
+			return false
+		}
+		if beeftv.IsManagedBaseURL(trimmedBase) {
+			return false
+		}
+	}
+	if beeftv.IsManagedTaskInput(decryptedInput) ||
+		beeftv.IsManagedChannel(input.Config.ChannelID, input.Config.CredentialRef, trimmedBase) {
+		return false
+	}
+	evidence, evErr := repo.ImageRecoveryEvidence([]string{task.ID})
+	if evErr != nil {
+		return false
+	}
+	ev := evidence[task.ID]
+	if ev.Attempt == nil || ev.Attempt.RouteRun != task.RouteRun || strings.TrimSpace(ev.Attempt.ChannelID) == "" {
+		return false
+	}
+	if beeftv.IsManagedChannel(ev.Attempt.ChannelID, "", "") {
+		return false
+	}
+	if ev.Submission != nil {
+		return false
+	}
+	receipt, receiptErr := repo.ImageCreateReceipt(task.UserID, task.ID)
+	if receiptErr != nil && !errors.Is(receiptErr, gorm.ErrRecordNotFound) {
+		return false
+	}
+	if receipt != nil && receipt.StatusCode >= 200 && receipt.StatusCode < 300 {
+		return false
+	}
+	return true
 }
 
 func TaskUsesUpstreamReportedProgress(taskType string) bool {

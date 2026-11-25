@@ -2,7 +2,7 @@ import { type GenerationTask } from "@/services/api/task-center";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
-import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { ownedResourceStorageKey, resourceIdFromStorageKey } from "@/services/api/resources";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { modelCapabilityConfigFor, normalizeVideoGenerationControls, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
@@ -164,12 +164,13 @@ export function nodeReferenceImage(node: CanvasNodeData): ReferenceImage | null 
         };
     }
     if (node.type !== CanvasNodeType.Image || (!node.metadata?.content && !node.metadata?.storageKey)) return null;
+    const normalizedStorageKey = ownedResourceStorageKey(node.metadata.storageKey, node.metadata.content) || node.metadata.storageKey;
     return {
         id: node.id,
         name: `reference-${node.id}.png`,
         type: node.metadata.mimeType || "image/png",
         dataUrl: node.metadata.content || "",
-        storageKey: node.metadata.storageKey,
+        storageKey: normalizedStorageKey,
     };
 }
 

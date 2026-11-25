@@ -6,6 +6,7 @@ type PluginProviderCatalogItem = {
     version: string;
     name: string;
     vendor: string;
+    description?: string;
     categories: string[];
     scopes: string[];
     create?: string;
@@ -41,10 +42,10 @@ export async function fetchPluginProviderCatalog(scope: string, capability?: Pro
 }
 
 const BUILTIN_OPENAI_PROTOCOLS: ModelProtocolDefinition[] = [
-    { value: "chat-completion", label: "OpenAI Chat Completions", vendor: "OpenAI", capability: "text", create: "POST /v1/chat/completions", contentType: "application/json", media: "内置协议", enabled: true },
-    { value: "openai-response", label: "OpenAI Responses", vendor: "OpenAI", capability: "text", create: "POST /v1/responses", contentType: "application/json", media: "内置协议", enabled: true },
-    { value: "openai-image", label: "OpenAI Images", vendor: "OpenAI", capability: "image", create: "POST /v1/images/generations", contentType: "application/json", media: "内置协议", enabled: true },
-    { value: "newapi", label: "OpenAI Videos", vendor: "OpenAI compatible", capability: "video", create: "POST /v1/videos", poll: "GET /v1/videos/{task_id}", contentType: "multipart/form-data", media: "内置协议", enabled: true },
+    { value: "chat-completion", label: "OpenAI Chat Completions", vendor: "OpenAI", description: "OpenAI 标准对话接口，适用于多数兼容服务与中转站。", capability: "text", create: "POST /v1/chat/completions", contentType: "application/json", media: "内置协议", baseUrl: "https://api.openai.com", enabled: true },
+    { value: "openai-response", label: "OpenAI Responses", vendor: "OpenAI", description: "OpenAI 新版 Responses 文本接口，支持推理与工具调用。", capability: "text", create: "POST /v1/responses", contentType: "application/json", media: "内置协议", baseUrl: "https://api.openai.com", enabled: true },
+    { value: "openai-image", label: "OpenAI Images", vendor: "OpenAI", description: "OpenAI 标准图像生成与编辑接口，适用于多数兼容出图服务。", capability: "image", create: "POST /v1/images/generations", contentType: "application/json", media: "内置协议", baseUrl: "https://api.openai.com", enabled: true },
+    { value: "newapi", label: "OpenAI Videos", vendor: "OpenAI compatible", description: "OpenAI 兼容视频异步接口（/v1/videos）。", capability: "video", create: "POST /v1/videos", poll: "GET /v1/videos/{task_id}", contentType: "multipart/form-data", media: "内置协议", baseUrl: "https://api.openai.com", enabled: true },
 ];
 
 // 一个接口能做几种生成（比如 ComfyUI 同时出图、视频、音频），就按能力各列一项：
@@ -59,6 +60,7 @@ function toProviderDefinition(item: PluginProviderCatalogItem, capability: Proto
         value: item.id,
         label: item.name,
         vendor: item.vendor,
+        description: item.description,
         capability,
         create: item.create || "",
         poll: item.poll,

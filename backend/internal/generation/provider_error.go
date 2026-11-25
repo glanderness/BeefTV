@@ -258,8 +258,8 @@ func ClassifyHTTP(status int, statusText string, body string) Failure {
 	if status == 524 && (failure.Category == CategoryUnknown || failure.Category == CategoryTimeout || failure.Category == CategoryProviderUnavailable || failure.Category == CategoryMalformedResponse) {
 		failure.Category = CategoryTimeout
 		failure.Uncertain = true
-		failure.Reason = "模型服务响应超时，请求可能仍在服务端执行"
-		failure.Action = "请先查询原任务或到供应商核对状态，不要立即重新提交"
+		failure.Reason = "上游网关响应超时（HTTP 524），请求可能仍在服务端执行"
+		failure.Action = "请先到供应商或中转后台核对状态，不要立即重新提交；若频繁超时，请检查中转网关超时或连接保活（keep-alive）配置，确认未出图后再重新生成"
 	}
 	_ = statusText
 	return normalizeFailure(failure)

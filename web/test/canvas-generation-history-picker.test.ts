@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { generationHistoryPreviewImageSrc } from "../src/components/canvas/canvas-generation-history-picker";
+import { generationHistoryPreviewImageSrc, generationHistoryPreviewStorageKey } from "../src/components/canvas/canvas-generation-history-picker";
 import {
     assertCanvasGenerationHistoryTaskForInsert,
     awaitCanvasGenerationHistoryDetailIfValid,
@@ -180,6 +180,57 @@ describe("LibTV generation history picker", () => {
             expectedId: summary.id,
         })).toThrow("生成任务不属于当前画布");
         expect(insertableCanvasGenerationHistoryTasks([succeededImageSummary({ projectId: "" })], { projectId: "   " })).toEqual([]);
+    });
+
+    test("previews and inserts surviving images at their original indexes when the first output was deleted", async () => {
+        const detail = succeededImageDetail({
+            outputs: [
+                { mediaType: "image", outputIndex: 0, materializationErrorCode: "asset_deleted" },
+                { mediaType: "image", outputIndex: 1, resourceId: "surviving-image", materializedAssetId: "surviving-asset" },
+                { mediaType: "image", outputIndex: 2 },
+            ],
+            previewUrl: "/api/resources/deleted-image/file",
+            resultJson: JSON.stringify({
+                mode: "image",
+                images: [{ storageKey: "resource:deleted-image" }, { storageKey: "resource:surviving-image" }],
+            }),
+        });
+        const projectId = detail.projectId!;
+        const { id } = detail;
+        const summary = { ...detail, resultJson: undefined };
+        expect(insertableCanvasGenerationHistoryTasks([summary], { projectId })).toEqual([summary]);
+        expect(generationHistoryPreviewStorageKey(summary)).toBe("resource:surviving-image");
+        expect(generationHistoryPreviewStorageKey(detail)).toBe("resource:surviving-image");
+        expect(assertCanvasGenerationHistoryTaskForInsert(detail, { projectId, expectedId: id })).toBe(detail);
+
+        const appliedIndexes: Array<number | undefined> = [];
+        const result = await insertCanvasGenerationHistoryTask({
+            task: detail,
+            projectId,
+            center: { x: 0, y: 0 },
+            nodes: [],
+            assets: [],
+            persist: async () => {},
+            ensureAsset: async () => ({ assetId: "surviving-asset" }),
+            readLiveNodes: () => [],
+            applyResult: async ([node]) => {
+                appliedIndexes.push(node.metadata?.taskOutputIndex);
+                const applied = { ...node, metadata: { ...node.metadata, storageKey: "resource:surviving-image" } };
+                return { nodes: [applied], updated: true, nodeId: node.id, node: applied };
+            },
+        });
+        expect(appliedIndexes).toEqual([1]);
+        expect(result.insertedNodes?.map((node) => node.metadata?.assetId)).toEqual(["surviving-asset"]);
+    });
+
+    test("filters tasks whose remaining image output is still being delivered", () => {
+        const task = succeededImageSummary({
+            outputs: [
+                { mediaType: "image", outputIndex: 0, materializationErrorCode: "asset_deleted" },
+                { mediaType: "image", outputIndex: 1, materializationErrorCode: "delivery_pending" },
+            ],
+        });
+        expect(insertableCanvasGenerationHistoryTasks([task], { projectId: task.projectId! })).toEqual([]);
     });
 
     test("delayed detail is not inserted after picker close, canvas switch, or unmount", async () => {

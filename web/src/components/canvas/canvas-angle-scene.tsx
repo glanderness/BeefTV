@@ -53,6 +53,7 @@ export function CanvasAngleScene({
     dirLabels,
     onRotateChange,
     onTiltChange,
+    onImageError,
 }: {
     mode: "camera" | "skybox";
     rotate: number;
@@ -63,6 +64,7 @@ export function CanvasAngleScene({
     dirLabels: { up: string; down: string; left: string; right: string };
     onRotateChange: (value: number) => void;
     onTiltChange: (value: number) => void;
+    onImageError?: (failedUrl: string) => void;
 }) {
     const scale = visualScale(distance);
     const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
@@ -74,11 +76,17 @@ export function CanvasAngleScene({
     const rotateRef = useRef(onRotateChange);
     const tiltRef = useRef(onTiltChange);
     const modeRef = useRef(mode);
+    const onImageErrorRef = useRef(onImageError);
     rotateRef.current = onRotateChange;
     tiltRef.current = onTiltChange;
     modeRef.current = mode;
+    onImageErrorRef.current = onImageError;
 
     const hasImage = Boolean(imageSrc && imageSrc !== failedSrc);
+    const reportImageError = (failedUrl: string) => {
+        setFailedSrc(failedUrl);
+        onImageErrorRef.current?.(failedUrl);
+    };
 
     useEffect(() => {
         setNaturalSize(null);
@@ -93,7 +101,7 @@ export function CanvasAngleScene({
             if (w > 0 && h > 0) setNaturalSize({ w, h });
         };
         image.onerror = () => {
-            if (!cancelled) setFailedSrc(imageSrc);
+            if (!cancelled) reportImageError(imageSrc);
         };
         image.src = imageSrc;
         return () => { cancelled = true; };
@@ -188,7 +196,7 @@ export function CanvasAngleScene({
                                 <div className="canvas-angle-cube" style={cubeStyle}>
                                     <div className={cn("canvas-angle-cube-face is-front", hasImage && "has-image")}>
                                         {hasImage ? (
-                                            <img src={imageSrc} alt="" draggable={false} onLoad={handleImgLoad} onError={() => setFailedSrc(imageSrc)} />
+                                            <img src={imageSrc} alt="" draggable={false} onLoad={handleImgLoad} onError={() => reportImageError(imageSrc)} />
                                         ) : (
                                             <span data-angle-placeholder className="grid size-full place-items-center text-[var(--mae-face-label)]">
                                                 <ImageIcon className="size-5" aria-hidden />
@@ -215,7 +223,7 @@ export function CanvasAngleScene({
                 <div className="canvas-angle-subject-wrap">
                     <div className="canvas-angle-subject" style={{ width: subjectSize.width, height: subjectSize.height, transition: dragging ? "none" : "transform 120ms ease-out", transform: `scale(${scale})` }}>
                         {hasImage ? (
-                            <img src={imageSrc} alt="" draggable={false} onLoad={handleImgLoad} onError={() => setFailedSrc(imageSrc)} />
+                            <img src={imageSrc} alt="" draggable={false} onLoad={handleImgLoad} onError={() => reportImageError(imageSrc)} />
                         ) : (
                             <span
                                 data-angle-placeholder

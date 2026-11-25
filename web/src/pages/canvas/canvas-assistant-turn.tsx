@@ -5,7 +5,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ASSISTANT_PROPOSAL_INVALIDATED_TEXT, ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantScriptProposal, type AssistantTurn } from "@/services/api/agent-assistant";
-import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantOrderTargetLines, assistantProductionProposalParts, assistantProposalText, assistantProposalProgress, assistantScriptProposalLines, assistantScriptResultStatusText, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
+import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantOrderTargetLines, assistantProductionProposalParts, assistantProposalConfirmLabel, assistantProposalText, assistantProposalProgress, assistantScriptProposalLines, assistantScriptResultStatusText, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
 import type { CanvasNodeData } from "@/types/canvas";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
 import { modelOptionName, resolveModelChannel, useEffectiveConfig } from "@/stores/use-config-store";
@@ -207,7 +207,7 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                                 </div>
                                 {productionParts.targetLines.length > 0 ? (
                                     <details className="canvas-assistant-proposal-details">
-                                        <summary>查看 {productionParts.targetLines.length} 项镜头与提示词明细</summary>
+                                        <summary>{productionParts.summaryLabel}</summary>
                                         <div className="canvas-assistant-proposal-targets">
                                             {productionParts.targetLines.map((line, index) => (
                                                 <div key={proposal.production?.targets?.[index]?.nodeId || index} className="canvas-assistant-proposal-target">
@@ -260,7 +260,7 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                         ) : (
                             <div className="canvas-assistant-card-actions">
                                 <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={generationDisabled} onClick={() => onRunProposal(proposal, turn.turnId)}>
-                                    {proposal.production ? "确认并制作整片" : "生成"}
+                                    {assistantProposalConfirmLabel(proposal)}
                                 </Button>
                                 <Button size="small" disabled={running} onClick={() => onDismissProposal(proposal.proposalId)}>
                                     先不用

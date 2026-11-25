@@ -140,3 +140,31 @@ func IsManagedTaskInput(inputJSON string) bool {
 	return json.Unmarshal([]byte(inputJSON), &input) == nil &&
 		IsManagedChannel(input.Config.ChannelID, input.Config.CredentialRef, "")
 }
+
+// IsManagedBaseURL reports whether baseURL targets BeefTV's official managed
+// host (beeftv.app / *.beeftv.app, preview localhost, or configured test origin).
+func IsManagedBaseURL(baseURL string) bool {
+	trimmed := strings.TrimSpace(baseURL)
+	if trimmed == "" {
+		return false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if host == "" {
+		return false
+	}
+	if host == "beeftv.app" || strings.HasSuffix(host, ".beeftv.app") || host == PreviewLocalHost {
+		return true
+	}
+	if rawTestOrigin := strings.TrimSpace(os.Getenv(TestOriginEnv)); rawTestOrigin != "" {
+		if testOrigin, err := parseSafeTestOrigin(rawTestOrigin); err == nil {
+			if testParsed, err := url.Parse(testOrigin); err == nil && strings.EqualFold(parsed.Scheme+"://"+parsed.Host, testParsed.Scheme+"://"+testParsed.Host) {
+				return true
+			}
+		}
+	}
+	return false
+}

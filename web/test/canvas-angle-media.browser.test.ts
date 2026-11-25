@@ -16,8 +16,11 @@ beforeAll(async () => {
             {
                 name: "angle-media-test-stubs",
                 setup(builder) {
-                    builder.onResolve({ filter: /^@\/services\/file-storage$/ }, () => ({
+                    builder.onResolve({ filter: /^@\/services\/image-storage$/ }, () => ({
                         path: resolve(import.meta.dir, "fixtures/angle-media-storage-stub.ts"),
+                    }));
+                    builder.onResolve({ filter: /^@\/services\/resource-blob-cache$/ }, () => ({
+                        path: resolve(import.meta.dir, "fixtures/angle-media-blob-cache-stub.ts"),
                     }));
                     builder.onResolve({ filter: /^@\// }, (args) => ({
                         path: Bun.resolveSync(resolve(import.meta.dir, "../src", args.path.slice(2)), import.meta.dir),
@@ -39,6 +42,9 @@ beforeAll(async () => {
             if (url.pathname === "/harness.css") return new Response(css, { headers: { "Content-Type": "text/css" } });
             if (url.pathname.startsWith("/api/resources/")) {
                 return new Response("Unauthorized without desktop token", { status: 401 });
+            }
+            if (url.pathname === "/nonexistent-broken-preview.png") {
+                return new Response("Not Found", { status: 404 });
             }
             return new Response(
                 `<!doctype html><meta charset="UTF-8"><link rel="stylesheet" href="/harness.css"><div id="root"></div><script type="module" src="/harness.js"></script>`,
@@ -96,6 +102,35 @@ test("CanvasNodeAnglePanel resolves protected desktop resource URLs and renders 
         await skyboxImg.waitFor();
         expect(await skyboxImg.getAttribute("src")).toBe(SAMPLE_PNG_DATA_URL);
         expect(unauthorizedResourceRequests).toEqual([]);
+    } finally {
+        await page.close();
+    }
+}, 20_000);
+
+test("CanvasNodeAnglePanel recovers via authenticated resource fallback when initial preview image fails to load", async () => {
+    const page = await browser.newPage({ viewport: { width: 800, height: 640 } });
+    try {
+        await page.addInitScript((fallbackUrl) => {
+            (window as unknown as { __angleFallbackUrl?: string }).__angleFallbackUrl = fallbackUrl;
+        }, SAMPLE_PNG_DATA_URL);
+        await page.goto(`${server.url}?dataUrl=${encodeURIComponent("/api/resources/res-fallback-574/file")}&storageKey=${encodeURIComponent("resource:res-fallback-574")}`);
+        await page.locator("[data-angle-placeholder]").waitFor();
+
+        // Simulate a broken first image URL (e.g. failed preview or revoked blob)
+        await page.evaluate(() => {
+            (window as unknown as { __resolveAngleMedia?: (url: string) => void }).__resolveAngleMedia?.("/nonexistent-broken-preview.png");
+        });
+
+        const cameraImg = page.locator(".canvas-angle-subject img");
+        await page.waitForFunction((expected) => {
+            const img = document.querySelector(".canvas-angle-subject img") as HTMLImageElement | null;
+            return Boolean(img && img.getAttribute("src") === expected && img.complete && img.naturalWidth > 0);
+        }, SAMPLE_PNG_DATA_URL);
+        expect(await cameraImg.getAttribute("src")).toBe(SAMPLE_PNG_DATA_URL);
+
+        const fallbackCalls = await page.evaluate(() => (window as unknown as { __angleFallbackCalls?: Array<{ storageKey: string }> }).__angleFallbackCalls);
+        expect(fallbackCalls?.length).toBe(1);
+        expect(fallbackCalls?.[0]?.storageKey).toBe("resource:res-fallback-574");
     } finally {
         await page.close();
     }

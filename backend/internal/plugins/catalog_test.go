@@ -33,6 +33,9 @@ func TestProviderCatalogOverlaysOfficialRegistry(t *testing.T) {
 	if autoDL == nil || len(autoDL.Workflows) == 0 || autoDL.Enabled != true {
 		t.Fatalf("AutoDL catalog = %#v", autoDL)
 	}
+	if strings.TrimSpace(autoDL.Description) == "" {
+		t.Fatalf("AutoDL catalog should project plugin description, got %#v", autoDL)
+	}
 }
 
 func TestProviderCatalogHidesDisabledPlugins(t *testing.T) {
@@ -146,6 +149,22 @@ func TestProviderCatalogProjectsAuthType(t *testing.T) {
 	item := findProvider(svc.ProviderCatalog(string(protocol.SurfaceCanvas), string(protocol.CapabilityText), false), "catalog-auth-none")
 	if item == nil || item.AuthType != "none" {
 		t.Fatalf("auth catalog = %#v", item)
+	}
+}
+
+func TestProviderCatalogProjectsDescription(t *testing.T) {
+	runtime, err := NewRuntime(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(runtime, nil)
+	raw := []byte(`{"apiVersion":"beeftv.plugin/v1","id":"catalog-desc-video","version":"1.0.0","name":"catalog-desc-video","author":"Test","description":"支持自定义异步视频工作流。","documentation":"# catalog-desc-video","contributes":{"providers":[{"id":"catalog-desc-video","label":"Custom Video","capabilities":["video"],"scopes":["user.custom-channel"],"auth":{"type":"bearer","field":"apiKey"},"create":{"method":"POST","path":"/v1/tasks","fields":{"prompt":"request.prompt"}},"response":{"statusPaths":["status"]}}]}}`)
+	if _, err := svc.Install(testPluginPackage(t, raw), "catalog-desc-video.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	item := findProvider(svc.ProviderCatalog(string(protocol.SurfaceUserCustomChannel), string(protocol.CapabilityVideo), false), "catalog-desc-video")
+	if item == nil || item.Description != "支持自定义异步视频工作流。" {
+		t.Fatalf("description catalog = %#v", item)
 	}
 }
 

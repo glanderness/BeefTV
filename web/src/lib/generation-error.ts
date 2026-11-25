@@ -518,15 +518,15 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
         if (status === 524) {
             classified.category = "timeout";
             classified.uncertain = true;
-            classified.reason = "模型服务响应超时，请求可能仍在服务端执行";
-            classified.action = "请先查询原任务或到供应商核对状态，不要立即重新提交";
+            classified.reason = "上游网关响应超时（HTTP 524），请求可能仍在服务端执行";
+            classified.action = "请先到供应商或中转后台核对状态，不要立即重新提交；若频繁超时，请检查中转网关超时或连接保活（keep-alive）配置，确认未出图后再重新生成";
         }
     }
     if (status === 524 && (classified.category === "unknown" || classified.category === "timeout" || classified.category === "provider_unavailable" || classified.category === "malformed_response")) {
         classified.category = "timeout";
         classified.uncertain = true;
-        classified.reason = "模型服务响应超时，请求可能仍在服务端执行";
-        classified.action = "请先查询原任务或到供应商核对状态，不要立即重新提交";
+        classified.reason = "上游网关响应超时（HTTP 524），请求可能仍在服务端执行";
+        classified.action = "请先到供应商或中转后台核对状态，不要立即重新提交；若频繁超时，请检查中转网关超时或连接保活（keep-alive）配置，确认未出图后再重新生成";
     }
     if (status === 413 && classified.category === "input_too_large" && !classified.reason) {
         classified.reason = "整次请求的数据量超过接口上限";

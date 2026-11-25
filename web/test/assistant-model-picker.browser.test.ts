@@ -120,9 +120,16 @@ test("settings channel retry button finalizes saved credential when connection_e
         await page.goto(new URL("/settings", server.url).toString());
         const retry = page.getByRole("button", { name: "重试更新模型列表" });
         await retry.waitFor();
-        await retry.click();
+        const [started] = await Promise.all([
+            page.waitForResponse((response) =>
+                new URL(response.url()).pathname === "/api/beeftv/connection/start" &&
+                response.request().method() === "POST"),
+            retry.click(),
+        ]);
+        expect(started.ok()).toBe(true);
         await retry.waitFor({ state: "hidden" });
         expect(startCalls).toBe(1);
+        expect(connectionState).toBe("connected");
     } finally {
         await page.close();
     }

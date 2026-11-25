@@ -12,6 +12,7 @@ import {
     canvasGenerationHistorySelectStillValid,
     insertableCanvasGenerationHistoryTasks,
     generationHistoryVideoSource,
+    survivingGenerationHistoryImageOutputs,
     type CanvasGenerationHistorySelectGate,
 } from "@/lib/canvas/canvas-generation-history";
 import { generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
@@ -172,7 +173,7 @@ function modeLabel(mode: string) {
 
 export function generationHistoryPreviewImageSrc(task: GenerationTask) {
     const mode = generationTaskMode(task);
-    if (mode === "audio") return "";
+    if (mode === "audio" || (mode === "image" && survivingGenerationHistoryImageOutputs(task) !== undefined)) return "";
     const inline = mode === "video"
         ? inlineImagePreviewSrc(task.previewPosterUrl || previewPosterFromResult(task))
         : inlineImagePreviewSrc(task.previewPosterUrl || task.previewUrl || previewFromResult(task));
@@ -197,6 +198,11 @@ function inlineImagePreviewSrc(value: string) {
 }
 
 function imagePreviewStorageKey(task: GenerationTask) {
+    const surviving = survivingGenerationHistoryImageOutputs(task);
+    if (surviving !== undefined) {
+        const resourceId = surviving[0]?.resourceId?.trim();
+        return resourceId ? resourceStorageKey(resourceId) : "";
+    }
     const output = task.outputs?.find((item) => item.mediaType === "image" && (item.outputIndex ?? 0) === 0 && item.resourceId?.trim());
     if (output?.resourceId) return resourceStorageKey(output.resourceId.trim());
     const preview = task.previewPosterUrl || task.previewUrl || previewFromResult(task);

@@ -28,6 +28,7 @@ func SummariesForOutput(tasks []model.Task) []Summary {
 
 func SummaryForOutput(task model.Task) Summary {
 	task = CorrectPersistedVODParameterFailure(task)
+	task = CorrectPersistedGatewayTimeoutFailure(task)
 	errorText, errorCode := PersistedFailureView(task.Error, task.Stage, task.ErrorCode)
 	previewURL, previewKind, previewPosterURL := MediaPreviewWithPoster(task.ResultJSON, task.Type)
 	return Summary{
@@ -217,6 +218,7 @@ func findTaskMediaPreview(value any, hint string) (string, string) {
 
 func TaskForOutput(task model.Task) *model.Task {
 	task = CorrectPersistedVODParameterFailure(task)
+	task = CorrectPersistedGatewayTimeoutFailure(task)
 	task.FailureDiagnostics = generation.SanitizeTaskDiagnostics(task.FailureDiagnostics)
 	task.InputJSON = PublicTaskInputJSON(task.InputJSON)
 	task.LogicalModelRevisionID = ""
@@ -229,7 +231,8 @@ func TaskForOutput(task model.Task) *model.Task {
 // PersistedFailureView 是任务失败对外的文案与类目：优先使用失败当时保存的类目与脱敏文案。
 // 旧任务没有该类目时才按文案重新归类；未确认/未发出两个阶段保持按阶段给出的固定文案。
 func PersistedFailureView(message, stage, errorCode string) (string, string) {
-	if strings.TrimSpace(errorCode) != "" && strings.TrimSpace(message) != "" && stage != "submission_unknown" && stage != taskruntime.StageRequestNotSent {
+	preserveTimeout := stage == "submission_unknown" && strings.TrimSpace(errorCode) == string(generation.CategoryTimeout)
+	if strings.TrimSpace(errorCode) != "" && strings.TrimSpace(message) != "" && ((stage != "submission_unknown" && stage != taskruntime.StageRequestNotSent) || preserveTimeout) {
 		// A saved unknown is a conclusion too; the API keeps reporting it as no category.
 		if category := generation.PersistedFailure(message, errorCode).Category; category != generation.CategoryUnknown {
 			return message, string(category)
@@ -312,6 +315,22 @@ func CorrectPersistedVODParameterFailure(task model.Task) model.Task {
 	task.FailureDiagnostics = generation.SanitizeTaskDiagnostics(d)
 	task.FailureDiagnostics.Summary = failure.UserMessage()
 	task.FailureDiagnostics.Stage = task.Stage
+	return task
+}
+
+func CorrectPersistedGatewayTimeoutFailure(task model.Task) model.Task {
+	d := task.FailureDiagnostics
+	if task.Status != model.TaskStatusFailed || task.Stage != "submission_unknown" || d == nil || d.HTTPStatus != 524 {
+		return task
+	}
+	if strings.TrimSpace(task.ErrorCode) == string(generation.CategoryTimeout) && strings.Contains(task.Error, "524") {
+		return task
+	}
+	failure := generation.ClassifyHTTP(524, "", "")
+	task.Error = failure.UserMessage()
+	task.ErrorCode = failure.ErrorCode()
+	task.FailureDiagnostics = generation.SanitizeTaskDiagnostics(d)
+	task.FailureDiagnostics.Summary = failure.UserMessage()
 	return task
 }
 

@@ -152,3 +152,19 @@ test("capabilities of an old official model reference come from the official ser
     expect(modelCapabilityConfigFor(config, "beefapi::shared-image").image?.references.maxImages).toBe(8);
     expect(modelCapabilityConfigFor(config, "channel-2::shared-image").image?.references.maxImages).toBe(0);
 });
+
+test("saved and idle custom channels clarify that they are directly usable without running a connectivity test", () => {
+    const channel = createModelChannel({
+        id: "custom-usable",
+        name: "自定义渠道",
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "synthetic-key",
+        models: ["gpt-4.1-mini"],
+        modelProfiles: [{ model: "gpt-4.1-mini", capability: "text", protocol: "chat-completion" }],
+    });
+    expect(modelConfigChannelStatusLabel(channel, { status: "saved", revision: 1, dirty: false, error: "" })).toBe("已保存 · 可直接使用（未测连通）");
+    expect(modelConfigChannelStatusLabel(channel, { status: "idle", revision: 1, dirty: false, error: "" })).toBe("可直接使用（未测连通）");
+    expect(modelConfigChannelStatusLabel(channel, { status: "saving", revision: 1, dirty: true, error: "" })).toBe("保存中");
+    expect(modelConfigChannelStatusLabel(channel, { status: "error", revision: 1, dirty: true, error: "disk full" })).toBe("保存失败");
+    expect(modelConfigChannelStatusLabel({ ...channel, apiKey: "" }, { status: "saved", revision: 1, dirty: false, error: "" })).toBe("待配置");
+});

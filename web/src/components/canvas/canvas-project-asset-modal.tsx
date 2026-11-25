@@ -8,7 +8,7 @@ import { ASSET_CATEGORY_LABELS, normalizeAssetCategory } from "@/lib/asset-categ
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import type { ProjectAsset, ProjectDetail } from "@/services/api/projects";
 import { getWorkspaceAsset } from "@/services/api/workspace-data";
-import { usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
+import { isWorkspacePersonalLibraryAsset, usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 const categoryLabels: Record<string, string> = { all: "全部资产", ...ASSET_CATEGORY_LABELS };
@@ -43,7 +43,9 @@ export function CanvasProjectAssetModal({
         });
         if (detail) return projectItems;
         // 自由画布未关联项目时回退到个人素材库。
-        return mediaAssets.filter((asset) => asset.kind !== "model" && asset.kind !== "entity" && asset.status !== "archived").map((media): ProjectPickerItem => ({ id: media.id, category: normalizeAssetCategory(media.category), folderId: media.folderId, media }));
+        return mediaAssets
+            .filter((asset) => asset.kind !== "model" && asset.kind !== "entity" && asset.status !== "archived" && isWorkspacePersonalLibraryAsset(asset))
+            .map((media): ProjectPickerItem => ({ id: media.id, category: normalizeAssetCategory(media.category), folderId: media.folderId, media }));
     }, [detail?.assets, mediaAssets]);
     const localPickerItems = useMemo<AssetLibraryPickerItem[]>(
         () =>

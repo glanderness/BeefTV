@@ -164,16 +164,27 @@ func TestDeleteDetachedResourcesWatermarkInvalidatesOnConcurrentWrite(t *testing
 		t.Fatalf("cross-resource watermark delete = %v, want ErrResourceCleanupStillReferenced", err)
 	}
 
-	// 2. Excluding-asset snapshot MUST NOT produce a valid watermark for detached cleanup.
+	// 2. Excluding-asset snapshot (single or multiple excluded IDs) MUST NOT
+	// produce a valid watermark for detached cleanup.
 	snapExcl, err := repo.ResourceReferenceSnapshot("u1", "asset-owner", []string{resRef.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapExcl.Watermark.valid {
+	if snapExcl.Watermark.valid || snapExcl.Watermark.covers([]model.Resource{resRef}) {
 		t.Fatalf("expected invalid watermark when excludingAssetID is set, got %+v", snapExcl.Watermark)
 	}
 	if err := repo.DeleteDetachedResources([]model.Resource{resRef}, nil, snapExcl.Watermark); !errors.Is(err, ErrResourceCleanupStillReferenced) {
 		t.Fatalf("excluding-asset watermark delete = %v, want ErrResourceCleanupStillReferenced", err)
+	}
+	snapMultiExcl, err := repo.ResourceReferenceSnapshotExcluding("u1", []string{"asset-owner", "asset-twin"}, []string{resRef.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapMultiExcl.Watermark.valid || snapMultiExcl.Watermark.covers([]model.Resource{resRef}) {
+		t.Fatalf("expected invalid watermark when multiple excludingAssetIDs are set, got %+v", snapMultiExcl.Watermark)
+	}
+	if err := repo.DeleteDetachedResources([]model.Resource{resRef}, nil, snapMultiExcl.Watermark); !errors.Is(err, ErrResourceCleanupStillReferenced) {
+		t.Fatalf("multi-excluding-asset watermark delete = %v, want ErrResourceCleanupStillReferenced", err)
 	}
 
 	// 3. Same-connection concurrent write after snapshot MUST return
