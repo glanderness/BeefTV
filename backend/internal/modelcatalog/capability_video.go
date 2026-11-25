@@ -24,6 +24,18 @@ func dashscopeWanModelBase(modelName string) string {
 	return base
 }
 
+func dashscopeWanHasModeToken(base string, tokens ...string) bool {
+	parts := strings.FieldsFunc(base, func(r rune) bool { return r == '-' || r == '_' })
+	for _, part := range parts {
+		for _, token := range tokens {
+			if part == token {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func isDashscopeWan3Model(modelName string) bool {
 	base := dashscopeWanModelBase(modelName)
 	return base == "wan3" || base == "wan3.0" || strings.HasPrefix(base, "wan3.0-") || strings.HasPrefix(base, "wan3-")
@@ -161,24 +173,40 @@ func defaultVideoCapabilityConfig(protocol string, modelName string) *VideoCapab
 		video.DefaultResolution = "768P"
 		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
 	case "dashscope-wan-video":
-		video.References.MaxVideos = 3
-		video.References.MaxVideoBytes = 200 * 1024 * 1024
-		video.References.MaxVideoDuration = 15
-		video.References.MaxAudios = 3
-		video.References.MaxAudioBytes = 15 * 1024 * 1024
-		video.References.MaxAudioDuration = 15
+		base := dashscopeWanModelBase(modelName)
+		isWan3 := isDashscopeWan3Model(modelName)
+		isMediaArray := isDashscopeWanMediaArrayModel(modelName)
+		isR2V := dashscopeWanHasModeToken(base, "r2v")
+		isT2V := dashscopeWanHasModeToken(base, "t2v", "text2video")
+		isI2V := dashscopeWanHasModeToken(base, "i2v", "kf2v", "it2v")
+
 		video.Duration = VideoDurationConfig{Selection: "range", Min: 1, Max: 15, Step: 1, Default: 5}
 		video.Resolutions = []string{"480p", "720p", "1080p"}
 		video.DefaultResolution = "720p"
-		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: false}
 		video.Watermark = VideoBooleanConfig{Supported: true, Default: false}
-		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
-		if isDashscopeWanMediaArrayModel(modelName) {
+		if isMediaArray {
 			video.Ratios = []string{"adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"}
 			video.DefaultRatio = "16:9"
+			video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: false}
 		}
-		if isDashscopeWan3Model(modelName) {
+		if isWan3 {
 			video.Duration = VideoDurationConfig{Selection: "range", Min: 2, Max: 30, Step: 1, Default: 5}
+		}
+		switch {
+		case isT2V:
+			video.References.MaxImages = 0
+			video.Operations = []string{"text_to_video"}
+		case isR2V || (isMediaArray && !isI2V):
+			video.References.MaxVideos = 3
+			video.References.MaxVideoBytes = 200 * 1024 * 1024
+			video.References.MaxVideoDuration = 15
+			video.References.MaxAudios = 3
+			video.References.MaxAudioBytes = 15 * 1024 * 1024
+			video.References.MaxAudioDuration = 15
+			video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: false}
+			video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
+		default:
+			video.Operations = []string{"text_to_video", "image_to_video"}
 		}
 	}
 	if protocol == "video-generations-json" {

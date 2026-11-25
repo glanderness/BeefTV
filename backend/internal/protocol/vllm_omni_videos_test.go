@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 )
 
@@ -75,8 +76,8 @@ func TestVLLMOmniVideosMultipartContract(t *testing.T) {
 			t.Fatalf("BuildCreate() error = %v", err)
 		}
 		body := manifestTestBody(t, create)
-		if body["width"] != float64(1344) || body["height"] != float64(768) {
-			t.Fatalf("768p 16:9 size = %#v x %#v, want 1344x768", body["width"], body["height"])
+		if body["width"] != float64(1376) || body["height"] != float64(768) {
+			t.Fatalf("768p 16:9 size = %#v x %#v, want 1376x768", body["width"], body["height"])
 		}
 		var extra map[string]any
 		if err := json.Unmarshal([]byte(body["extra_params"].(string)), &extra); err != nil {
@@ -155,42 +156,51 @@ func TestVLLMOmniVideosMultipartContract(t *testing.T) {
 	})
 
 	t.Run("resolution and aspect ratio matrix produces 32-aligned dimensions", func(t *testing.T) {
+		ratioTargets := map[string]float64{
+			"16:9": 16.0 / 9.0,
+			"9:16": 9.0 / 16.0,
+			"1:1":  1.0,
+			"4:3":  4.0 / 3.0,
+			"3:4":  3.0 / 4.0,
+			"21:9": 21.0 / 9.0,
+		}
 		cases := []struct {
 			resolution string
 			ratio      string
 			wantW      float64
 			wantH      float64
 			wantRatio  string
+			minShort   float64
 		}{
-			{"480p", "16:9", 1024, 576, "16:9"},
-			{"576p", "landscape", 1024, 576, "16:9"},
-			{"480p", "9:16", 576, 1024, "9:16"},
-			{"480p", "portrait", 576, 1024, "9:16"},
-			{"480p", "1:1", 576, 576, "1:1"},
-			{"480p", "square", 576, 576, "1:1"},
-			{"480p", "4:3", 768, 576, "4:3"},
-			{"480p", "3:4", 576, 768, "3:4"},
-			{"480p", "21:9", 1152, 512, "21:9"},
-			{"720p", "16:9", 1344, 768, "16:9"},
-			{"768p", "16:9", 1344, 768, "16:9"},
-			{"768p", "9:16", 768, 1344, "9:16"},
-			{"768p", "1:1", 768, 768, "1:1"},
-			{"768p", "4:3", 1024, 768, "4:3"},
-			{"768p", "3:4", 768, 1024, "3:4"},
-			{"768p", "21:9", 1536, 672, "21:9"},
-			{"1080p", "16:9", 1920, 1088, "16:9"},
-			{"1080p", "9:16", 1088, 1920, "9:16"},
-			{"1080p", "1:1", 1088, 1088, "1:1"},
-			{"1080p", "4:3", 1440, 1088, "4:3"},
-			{"1080p", "3:4", 1088, 1440, "3:4"},
-			{"1080p", "21:9", 2176, 960, "21:9"},
-			{"1440p", "16:9", 2528, 1440, "16:9"},
-			{"2k", "9:16", 1440, 2528, "9:16"},
-			{"1440p", "1:1", 1440, 1440, "1:1"},
-			{"1440p", "4:3", 1920, 1440, "4:3"},
-			{"1440p", "3:4", 1440, 1920, "3:4"},
-			{"1440p", "21:9", 2880, 1280, "21:9"},
-			{"", "1280x720", 1280, 720, ""},
+			{"480p", "16:9", 1024, 576, "16:9", 480},
+			{"576p", "landscape", 1024, 576, "16:9", 576},
+			{"480p", "9:16", 576, 1024, "9:16", 480},
+			{"480p", "portrait", 576, 1024, "9:16", 480},
+			{"480p", "1:1", 576, 576, "1:1", 480},
+			{"480p", "square", 576, 576, "1:1", 480},
+			{"480p", "4:3", 768, 576, "4:3", 480},
+			{"480p", "3:4", 576, 768, "3:4", 480},
+			{"480p", "21:9", 1344, 576, "21:9", 480},
+			{"720p", "16:9", 1376, 768, "16:9", 720},
+			{"768p", "16:9", 1376, 768, "16:9", 768},
+			{"768p", "9:16", 768, 1376, "9:16", 768},
+			{"768p", "1:1", 768, 768, "1:1", 768},
+			{"768p", "4:3", 1024, 768, "4:3", 768},
+			{"768p", "3:4", 768, 1024, "3:4", 768},
+			{"768p", "21:9", 1792, 768, "21:9", 768},
+			{"1080p", "16:9", 1920, 1088, "16:9", 1080},
+			{"1080p", "9:16", 1088, 1920, "9:16", 1080},
+			{"1080p", "1:1", 1088, 1088, "1:1", 1080},
+			{"1080p", "4:3", 1440, 1088, "4:3", 1080},
+			{"1080p", "3:4", 1088, 1440, "3:4", 1080},
+			{"1080p", "21:9", 2528, 1088, "21:9", 1080},
+			{"1440p", "16:9", 2560, 1440, "16:9", 1440},
+			{"2k", "9:16", 1440, 2560, "9:16", 1440},
+			{"1440p", "1:1", 1440, 1440, "1:1", 1440},
+			{"1440p", "4:3", 1920, 1440, "4:3", 1440},
+			{"1440p", "3:4", 1440, 1920, "3:4", 1440},
+			{"1440p", "21:9", 3360, 1440, "21:9", 1440},
+			{"", "1280x720", 1280, 720, "", 0},
 		}
 		for _, tc := range cases {
 			create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
@@ -217,6 +227,15 @@ func TestVLLMOmniVideosMultipartContract(t *testing.T) {
 				}
 				if int(tc.wantW)%32 != 0 || int(tc.wantH)%32 != 0 {
 					t.Fatalf("%s/%s dimensions %vx%v not 32-aligned", tc.resolution, tc.ratio, tc.wantW, tc.wantH)
+				}
+				shortSide := math.Min(tc.wantW, tc.wantH)
+				if shortSide < tc.minShort {
+					t.Fatalf("%s/%s short side %v shrunk below tier %v", tc.resolution, tc.ratio, shortSide, tc.minShort)
+				}
+				targetAspect := ratioTargets[tc.wantRatio]
+				actualAspect := tc.wantW / tc.wantH
+				if relErr := math.Abs(actualAspect-targetAspect) / targetAspect; relErr > 0.01 {
+					t.Fatalf("%s/%s aspect ratio %.4f deviates %.2f%% from target %.4f (>1%%)", tc.resolution, tc.ratio, actualAspect, relErr*100, targetAspect)
 				}
 			}
 		}

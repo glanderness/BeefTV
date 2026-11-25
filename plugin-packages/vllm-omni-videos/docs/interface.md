@@ -29,7 +29,7 @@
 | `audios` | media[] | 否 | `audio_reference` | JSON 字符串 `{"audio_url": "..."}`，支持 URL 或 Base64 Data URL。 |
 | `duration` | integer | 否 | `extra_params.duration` | 时长秒数，随 `extra_params` JSON 字符串下发。 |
 | `aspectRatio` | string | 否 | `width`、`height`、`aspect_ratio` | 按分辨率档位换算为 32 的倍数像素尺寸，同时透传标准画幅比例；直接传入 `WIDTHxHEIGHT` 时原样拆分。 |
-| `resolution` | string | 否 | `width`、`height` | `480p`/`576p` 对应 576 短边（如 `1024x576`），`720p`/`768p` 对应 768 短边（如 `1344x768`），`1080p` 对应 `1920x1088`，`1440p`/`2k` 对应 `2528x1440`（均按 32 像素对齐）。 |
+| `resolution` | string | 否 | `width`、`height` | 按目标短边 × 画幅比并向 32 像素对齐：`480p`/`576p` 对应 576 短边（16:9 为 `1024x576`），`720p`/`768p` 对应 768 短边（16:9 为 `1376x768`），`1080p` 对应 1080 短边（16:9 为 `1920x1088`），`1440p`/`2k` 对应 1440 短边（16:9 为 `2560x1440`）。 |
 | `providerOptions` | object | 否 | `fps`、`num_frames`、`num_inference_steps`、`guidance_scale`、`guidance_scale_2`、`flow_shift`、`seed`、`negative_prompt`、`lora`、`seconds`、`extra_params`、`task`、`audio_flow_shift` | 插件命名空间 `providerOptions.vllm-omni-videos` 下的扩展采样与任务参数。 |
 
 ## 响应与错误
@@ -282,7 +282,7 @@
             }
           },
           {
-            "name": "resScale",
+            "name": "targetShort",
             "value": {
               "$switch": {
                 "cases": [
@@ -302,7 +302,7 @@
                         ]
                       ]
                     },
-                    "then": 0.75
+                    "then": 576
                   },
                   {
                     "when": {
@@ -316,7 +316,7 @@
                         ]
                       ]
                     },
-                    "then": 1.40625
+                    "then": 1080
                   },
                   {
                     "when": {
@@ -331,105 +331,72 @@
                         ]
                       ]
                     },
-                    "then": 1.875
+                    "then": 1440
                   }
                 ],
-                "default": 1
+                "default": 768
               }
             }
           },
           {
-            "name": "baseSize",
+            "name": "ratioParts",
             "value": {
-              "$switch": {
-                "cases": [
-                  {
-                    "when": {
-                      "$eq": [
-                        {
-                          "$ref": "vars.normalizedRatio"
-                        },
-                        "16:9"
-                      ]
+              "$if": {
+                "condition": {
+                  "$ref": "vars.normalizedRatio"
+                },
+                "then": {
+                  "$split": [
+                    {
+                      "$ref": "vars.normalizedRatio"
                     },
-                    "then": [
-                      1344,
-                      768
-                    ]
-                  },
-                  {
-                    "when": {
-                      "$eq": [
-                        {
-                          "$ref": "vars.normalizedRatio"
-                        },
-                        "9:16"
-                      ]
-                    },
-                    "then": [
-                      768,
-                      1344
-                    ]
-                  },
-                  {
-                    "when": {
-                      "$eq": [
-                        {
-                          "$ref": "vars.normalizedRatio"
-                        },
-                        "1:1"
-                      ]
-                    },
-                    "then": [
-                      768,
-                      768
-                    ]
-                  },
-                  {
-                    "when": {
-                      "$eq": [
-                        {
-                          "$ref": "vars.normalizedRatio"
-                        },
-                        "4:3"
-                      ]
-                    },
-                    "then": [
-                      1024,
-                      768
-                    ]
-                  },
-                  {
-                    "when": {
-                      "$eq": [
-                        {
-                          "$ref": "vars.normalizedRatio"
-                        },
-                        "3:4"
-                      ]
-                    },
-                    "then": [
-                      768,
-                      1024
-                    ]
-                  },
-                  {
-                    "when": {
-                      "$eq": [
-                        {
-                          "$ref": "vars.normalizedRatio"
-                        },
-                        "21:9"
-                      ]
-                    },
-                    "then": [
-                      1536,
-                      672
-                    ]
-                  }
-                ],
-                "default": null
+                    ":"
+                  ]
+                },
+                "else": [
+                  1,
+                  1
+                ]
               }
+            }
+          },
+          {
+            "name": "ratioW",
+            "value": {
+              "$toFloat": {
+                "$at": [
+                  {
+                    "$ref": "vars.ratioParts"
+                  },
+                  0
+                ]
+              }
+            }
+          },
+          {
+            "name": "ratioH",
+            "value": {
+              "$toFloat": {
+                "$at": [
+                  {
+                    "$ref": "vars.ratioParts"
+                  },
+                  1
+                ]
+              }
+            }
+          },
+          {
+            "name": "ratioMin",
+            "value": {
+              "$min": [
+                {
+                  "$ref": "vars.ratioW"
+                },
+                {
+                  "$ref": "vars.ratioH"
+                }
+              ]
             }
           },
           {
@@ -452,22 +419,24 @@
                 "else": {
                   "$if": {
                     "condition": {
-                      "$ref": "vars.baseSize"
+                      "$ref": "vars.normalizedRatio"
                     },
                     "then": {
                       "$ceilStep": [
                         {
-                          "$multiply": [
+                          "$divide": [
                             {
-                              "$at": [
+                              "$multiply": [
                                 {
-                                  "$ref": "vars.baseSize"
+                                  "$ref": "vars.targetShort"
                                 },
-                                0
+                                {
+                                  "$ref": "vars.ratioW"
+                                }
                               ]
                             },
                             {
-                              "$ref": "vars.resScale"
+                              "$ref": "vars.ratioMin"
                             }
                           ]
                         },
@@ -500,22 +469,24 @@
                 "else": {
                   "$if": {
                     "condition": {
-                      "$ref": "vars.baseSize"
+                      "$ref": "vars.normalizedRatio"
                     },
                     "then": {
                       "$ceilStep": [
                         {
-                          "$multiply": [
+                          "$divide": [
                             {
-                              "$at": [
+                              "$multiply": [
                                 {
-                                  "$ref": "vars.baseSize"
+                                  "$ref": "vars.targetShort"
                                 },
-                                1
+                                {
+                                  "$ref": "vars.ratioH"
+                                }
                               ]
                             },
                             {
-                              "$ref": "vars.resScale"
+                              "$ref": "vars.ratioMin"
                             }
                           ]
                         },
