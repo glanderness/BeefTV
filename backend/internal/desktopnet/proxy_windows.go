@@ -11,7 +11,7 @@ var (
 	freeProxyString = windows.NewLazySystemDLL("kernel32.dll").NewProc("GlobalFree")
 )
 
-func readSystemProxy() systemProxySettings {
+func readSystemProxyRaw() (systemProxySettings, bool) {
 	var config struct {
 		AutoDetect    int32
 		AutoConfigURL *uint16
@@ -20,7 +20,7 @@ func readSystemProxy() systemProxySettings {
 	}
 	ok, _, _ := getUserProxy.Call(uintptr(unsafe.Pointer(&config)))
 	if ok == 0 {
-		return systemProxySettings{}
+		return systemProxySettings{}, false
 	}
 	defer func() {
 		for _, pointer := range []*uint16{config.AutoConfigURL, config.Proxy, config.Bypass} {
@@ -32,5 +32,5 @@ func readSystemProxy() systemProxySettings {
 	// PAC/WPAD are not static proxy endpoints; never treat a script URL as one.
 	settings := parseWindowsProxy(windows.UTF16PtrToString(config.Proxy), windows.UTF16PtrToString(config.Bypass))
 	settings.autoConfig = config.AutoDetect != 0 || windows.UTF16PtrToString(config.AutoConfigURL) != ""
-	return settings
+	return settings, true
 }

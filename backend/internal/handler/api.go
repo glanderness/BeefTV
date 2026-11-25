@@ -74,6 +74,7 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc CanvasAPIService, depend
 	api.Use(SupportTracingMiddleware(svc))
 	RegisterOpenAPIRoutes(api)
 	RegisterWorkspaceRoutes(api, svc)
+	RegisterNetworkProxyRoutes(api, svc, dependencies.AssistantHost)
 	RegisterBeefTVConnectionRoutes(api, svc)
 	RegisterDesktopAppearanceRoutes(api, svc)
 	RegisterDesktopFeatureAvailabilityRoutes(api, svc)

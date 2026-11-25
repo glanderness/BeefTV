@@ -50,8 +50,8 @@ func (s *Service) PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, i
 	if err := requireExpectedRevision(expectedRevision); err != nil {
 		return UserDataSummary{}, result, err
 	}
-	if (input.Script == nil && len(input.RowIDs) < 1) || len(input.RowIDs) > 8 || len(input.ReferenceNodeIDs) > 4 || (input.Script == nil && len(input.Image) == 0 && len(input.Video) == 0) {
-		return fail("请选择 1..8 个分镜及图片或视频参数，参考图片最多 4 张")
+	if (input.Script == nil && len(input.RowIDs) < 1) || (input.Script == nil && len(input.Image) == 0 && len(input.Video) == 0) {
+		return fail("请选择至少 1 个分镜及图片或视频参数")
 	}
 	if len(input.Image) == 0 && len(input.ReferenceNodeIDs) > 0 {
 		return fail("角色或风格参考用于首帧图片；视频沿用各分镜自己的首帧")
@@ -62,7 +62,7 @@ func (s *Service) PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, i
 	if input.Script == nil {
 		doc, storyboard, rows, err = s.loadStoryboardRows(userID, canvasID, nodeID)
 	} else {
-		if nodeID != "" || len(input.RowIDs) > 0 || len(input.Script.Rows) > 8 {
+		if nodeID != "" || len(input.RowIDs) > 0 {
 			return fail("新分镜与已有分镜请选择一种")
 		}
 		if err := requireStoryboardRows(input.Script.Rows); err != nil {

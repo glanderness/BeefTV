@@ -103,7 +103,7 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 			return nil
 		}
 		return denied("请先加载或选用该技能，再运行它的脚本")
-	case "canvas.get":
+	case "canvas.get", "canvas.nodes.get":
 		if s.canvasAllowed(args.CanvasID) || s.projectReferenceAllowed("canvas", args.CanvasID) {
 			return nil
 		}

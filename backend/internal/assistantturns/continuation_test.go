@@ -455,3 +455,64 @@ func TestContinuationObservationErrorDoesNotMutateOrCancelReceipt(t *testing.T) 
 		t.Fatalf("observation error mutated receipt: %+v", stored)
 	}
 }
+
+func TestContinuationAcceptsMoreThan8NodesAndSubmissions(t *testing.T) {
+	fx := openTurnFixture(t)
+	if _, err := fx.turns.Begin(fx.userID, fx.canvasID, continuationSource, assistantturns.Input{PermissionMode: assistantturns.PermissionCanvas}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.turns.BindDurableSession(fx.userID, continuationSource, contextSession, false); err != nil {
+		t.Fatal(err)
+	}
+	doc := fx.readCanvas(t)
+	nodes := doc["nodes"].([]any)
+	sourceIDs := make([]string, 0, 20)
+	for i := 1; i <= 20; i++ {
+		id := fmt.Sprintf("img-%d", i)
+		sourceIDs = append(sourceIDs, id)
+		nodes = append(nodes, map[string]any{"id": id, "type": "image", "title": id, "position": map[string]any{"x": i * 10, "y": 10}, "metadata": map[string]any{}})
+	}
+	doc["nodes"] = nodes
+	fx.writeCanvas(t, doc)
+	if err := fx.turns.Finalize(continuationSource); err != nil {
+		t.Fatal(err)
+	}
+	row, err := fx.turns.ArmContinuation(fx.userID, assistantturns.ContinuationInput{
+		CanvasID: fx.canvasID, SessionID: contextSession, SourceTurnID: continuationSource,
+		ProposalID: "gp-large-batch", Kind: "image", NodeIDs: sourceIDs,
+	})
+	if err != nil {
+		t.Fatalf("20 个节点应允许建立自动继续: %v", err)
+	}
+	// 第 1 个源节点携带 10 份拆分提交（每份 1 个输出），第 2 个源节点携带 10 个原生输出，其余各 1 份输出。
+	splitSubs := make([]assistantturns.ContinuationSubmission, 0, 10)
+	for i := 0; i < 10; i++ {
+		splitSubs = append(splitSubs, assistantturns.ContinuationSubmission{
+			OperationID:   fmt.Sprintf("proposal:gp-large-batch:img-1:%d", i),
+			OutputNodeIDs: []string{fmt.Sprintf("img-1-out-%d", i)},
+		})
+	}
+	if err := fx.turns.RegisterContinuationManifest(fx.userID, row.ID, assistantturns.ContinuationManifest{
+		SourceNodeID: "img-1", Submissions: splitSubs,
+	}); err != nil {
+		t.Fatalf("超过 8 份拆分提交应允许登记: %v", err)
+	}
+	nativeOuts := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		nativeOuts = append(nativeOuts, fmt.Sprintf("img-2-out-%d", i))
+	}
+	if err := fx.turns.RegisterContinuationManifest(fx.userID, row.ID, assistantturns.ContinuationManifest{
+		SourceNodeID: "img-2",
+		Submissions:  []assistantturns.ContinuationSubmission{{OperationID: "proposal:gp-large-batch:img-2", OutputNodeIDs: nativeOuts}},
+	}); err != nil {
+		t.Fatalf("单次超过 8 个输出节点应允许登记: %v", err)
+	}
+	for _, id := range sourceIDs[2:] {
+		if err := fx.turns.RegisterContinuationManifest(fx.userID, row.ID, assistantturns.ContinuationManifest{
+			SourceNodeID: id,
+			Submissions:  []assistantturns.ContinuationSubmission{{OperationID: "proposal:gp-large-batch:" + id, OutputNodeIDs: []string{id}}},
+		}); err != nil {
+			t.Fatalf("登记 %s 失败: %v", id, err)
+		}
+	}
+}

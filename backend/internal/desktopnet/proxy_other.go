@@ -2,4 +2,4 @@
 
 package desktopnet
 
-func readSystemProxy() systemProxySettings { return systemProxySettings{} }
+func readSystemProxyRaw() (systemProxySettings, bool) { return systemProxySettings{}, true }

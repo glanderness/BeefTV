@@ -127,3 +127,107 @@ export function canvasReadView(data, request = {}) {
   if (bytes(response) > MAX_BYTES) throw Error('canvas_read_field_too_large: 请按 nodeId/fieldPath 定位字段');
   return response;
 }
+
+export function canvasNodesGetView(data) {
+  const result = data?.result;
+  if (!result || !Array.isArray(result.nodes)) return data;
+  const revision = Number.isSafeInteger(result.revision) ? result.revision : undefined;
+  const rawMissing = Array.isArray(result.missingNodeIds) ? result.missingNodeIds : [];
+  let partialFields = 0;
+
+  function compactForNode(nodeId, value, counter, parts = [], depth = 0) {
+    const shorten = () => {
+      counter.count += 1;
+      return {
+        complete: false,
+        type: Array.isArray(value) ? 'array' : typeof value,
+        ...(value && typeof value === 'object' && typeof value.id === 'string' ? { id: value.id } : {}),
+        ...(typeof value === 'string' ? { characters: value.length, preview: value.slice(0, 160) } : {}),
+        readView: { nodeId, fieldPath: pointer(parts), ...(revision !== undefined ? { expectedRevision: revision } : {}) },
+      };
+    };
+    if (typeof value === 'string') return Buffer.byteLength(value, 'utf8') > 2000 ? shorten() : value;
+    if (!value || typeof value !== 'object') return value;
+    if (depth > 5 || noisy.has(parts.at(-1)) || Object.keys(value).length > MAX_ITEMS) return shorten();
+    if (Array.isArray(value)) return value.map((v, i) => compactForNode(nodeId, v, counter, [...parts, i], depth + 1));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, compactForNode(nodeId, v, counter, [...parts, k], depth + 1)]));
+  }
+  const summaryOf = (node) => ({
+    id: node?.id,
+    type: node?.type,
+    ...(typeof node?.title === 'string' ? { title: node.title.slice(0, 120) } : {}),
+    complete: false,
+    readView: { nodeId: node?.id, ...(revision !== undefined ? { expectedRevision: revision } : {}) },
+  });
+
+  const nodes = [];
+  const omittedNodeIds = [];
+  let omittedNodeCount = 0;
+  // Base overhead excludes rawMissing so found nodes always get budget priority over missing IDs.
+  const baseOverhead = bytes({
+    ...data,
+    result: {
+      ...result,
+      nodes: [],
+      missingNodeIds: [],
+      omittedMissingCount: 999999,
+      omittedNodeIds: [],
+      omittedNodeCount: 999999,
+      readView: { complete: false, partialFields: 999999, expectedRevision: revision ?? 0 },
+    },
+  });
+  let usedBytes = baseOverhead;
+  const missingReserve = rawMissing.length > 0 ? Math.min(4096, bytes(rawMissing)) : 0;
+  const nodesBudget = Math.max(0, MAX_BYTES - 512 - missingReserve);
+
+  for (const rawNode of result.nodes) {
+    const nodeId = typeof rawNode?.id === 'string' ? rawNode.id : '';
+    const counter = { count: 0 };
+    let item = compactForNode(nodeId, rawNode, counter);
+    let itemPartials = counter.count;
+    let itemBytes = bytes(item) + 2;
+    if (usedBytes + itemBytes > nodesBudget) {
+      item = summaryOf(rawNode);
+      itemPartials = 1;
+      itemBytes = bytes(item) + 2;
+    }
+    if (usedBytes + itemBytes > nodesBudget) {
+      omittedNodeCount += 1;
+      const omittedBytes = nodeId ? bytes(nodeId) + 2 : 0;
+      if (nodeId && usedBytes + omittedBytes <= nodesBudget) {
+        omittedNodeIds.push(nodeId);
+        usedBytes += omittedBytes;
+      }
+      continue;
+    }
+    nodes.push(item);
+    partialFields += itemPartials;
+    usedBytes += itemBytes;
+  }
+
+  const missingNodeIds = [];
+  let omittedMissingCount = 0;
+  const totalBudget = MAX_BYTES - 256;
+  for (const id of rawMissing) {
+    const entryBytes = bytes(id) + 2;
+    if (usedBytes + entryBytes > totalBudget) {
+      omittedMissingCount = rawMissing.length - missingNodeIds.length;
+      break;
+    }
+    missingNodeIds.push(id);
+    usedBytes += entryBytes;
+  }
+
+  const output = {
+    ...result,
+    nodes,
+    missingNodeIds,
+    ...(omittedMissingCount > 0 ? { omittedMissingCount } : {}),
+    ...(omittedNodeIds.length > 0 ? { omittedNodeIds } : {}),
+    ...(omittedNodeCount > omittedNodeIds.length ? { omittedNodeCount } : {}),
+    ...(partialFields > 0 || omittedNodeCount > 0 || omittedMissingCount > 0
+      ? { readView: { complete: false, partialFields, ...(revision !== undefined ? { expectedRevision: revision } : {}) } }
+      : {}),
+  };
+  return { ...data, result: output };
+}

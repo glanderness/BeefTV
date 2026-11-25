@@ -14,7 +14,6 @@ import (
 const (
 	taskWaitDefaultTimeout = 25 * time.Second
 	taskWaitMaxTimeout     = 25 * time.Second
-	taskWaitMaxTasks       = 8
 )
 
 // taskWaitPollInterval 是任务状态的轮询间隔。等待必须发生在服务端，调用方只发一次请求；
@@ -33,7 +32,7 @@ func registerTaskWaitOp(r *Registry) {
 		ExternalOnly: true,
 		Params: json.RawMessage(`{"type":"object","properties":{` +
 			`"taskId":{"type":"string","description":"单个任务 ID"},` +
-			`"taskIds":{"type":"array","items":{"type":"string"},"maxItems":8,"description":"最多 8 个任务 ID"},` +
+			`"taskIds":{"type":"array","items":{"type":"string"},"description":"要等待的任务 ID 列表"},` +
 			`"canvasId":{"type":"string","description":"可选：和 nodeId 一起检查产物是否已绑定到该节点"},` +
 			`"nodeId":{"type":"string","description":"可选：和 canvasId 一起检查产物是否已绑定到该节点"},` +
 			`"timeoutMs":{"type":"integer","minimum":0,"maximum":25000,"description":"最多等 25000 毫秒，默认 25000"}}}`),
@@ -57,9 +56,6 @@ func opTaskWait(ctx *Context, params json.RawMessage) (any, error) {
 	ids := taskWaitIDs(args)
 	if len(ids) == 0 {
 		return nil, InvalidArg("invalid_params", "taskId 或 taskIds 必填")
-	}
-	if len(ids) > taskWaitMaxTasks {
-		return nil, InvalidArg("invalid_batch", "一次最多等待 8 个任务")
 	}
 	timeout := taskWaitDefaultTimeout
 	if args.TimeoutMs != nil {

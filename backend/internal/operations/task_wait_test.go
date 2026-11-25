@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -402,7 +403,6 @@ func TestTaskWaitValidatesParams(t *testing.T) {
 	}{
 		{"缺少任务", `{}`, "invalid_params"},
 		{"空任务数组", `{"taskIds":[]}`, "invalid_params"},
-		{"超过 8 个", `{"taskIds":["1","2","3","4","5","6","7","8","9"]}`, "invalid_batch"},
 		{"负超时", `{"taskId":"task-1","timeoutMs":-1}`, "invalid_timeout"},
 		{"未知字段", `{"taskId":"task-1","unknown":true}`, "unknown_field"},
 	}
@@ -431,6 +431,25 @@ func TestTaskWaitValidatesParams(t *testing.T) {
 	}
 	if len(result.TaskIDs) != 1 {
 		t.Fatalf("重复任务应去重: %+v", result.TaskIDs)
+	}
+
+	largeDomain := &taskWaitDomain{sequences: map[string]*taskWaitSequence{}}
+	largeIDs := make([]string, 0, 12)
+	for i := 1; i <= 12; i++ {
+		id := fmt.Sprintf("task-%d", i)
+		largeIDs = append(largeIDs, id)
+		largeDomain.sequences[id] = &taskWaitSequence{tasks: []model.Task{savedTask(id)}}
+	}
+	largeParams, err := json.Marshal(map[string]any{"taskIds": largeIDs, "timeoutMs": 2000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	largeRes, err := runTaskWaitOp(t, largeDomain, string(largeParams))
+	if err != nil {
+		t.Fatalf("超过 8 个任务也应允许等待: %v", err)
+	}
+	if len(largeRes.TaskIDs) != 12 || !largeRes.Completed {
+		t.Fatalf("12 个任务应全部返回完成: %+v", largeRes)
 	}
 }
 

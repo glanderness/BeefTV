@@ -21,8 +21,13 @@ type childPin struct {
 	DesktopTok string
 }
 
-func (h *Host) buildEnv(provider assistant.Provider, pin childPin) []string {
+func (h *Host) proxyFingerprint(provider assistant.Provider) string {
+	return desktopnet.NodeProxyFingerprint(filterInheritedEnv(h.environ()), channelurl.CleanBase(provider.BaseURL))
+}
+
+func (h *Host) buildEnvWithProxyFingerprint(provider assistant.Provider, pin childPin) ([]string, string) {
 	env := desktopnet.NodeProxyEnvironment(filterInheritedEnv(h.environ()), channelurl.CleanBase(provider.BaseURL))
+	proxyFingerprint := desktopnet.NodeProxyFingerprintFromEnv(env)
 	set := func(key, value string) {
 		env = setEnvValue(env, key, value)
 	}
@@ -56,7 +61,7 @@ func (h *Host) buildEnv(provider assistant.Provider, pin childPin) []string {
 	}
 	set("BEEFTV_OWNER_TOKEN", "")
 	set("BEEFTV_AGENT_HOST_URL", "")
-	return env
+	return env, proxyFingerprint
 }
 
 func filterInheritedEnv(inherited []string) []string {

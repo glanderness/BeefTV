@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/net/http/httpproxy"
 )
@@ -17,15 +19,73 @@ type systemProxySettings struct {
 	autoConfig    bool
 }
 
-// ConfigurationStatus returns no proxy addresses, bypass hosts or credentials.
-func ConfigurationStatus() struct {
+const systemProxyCacheTTL = 5 * time.Second
+
+var (
+	systemProxyMu     sync.Mutex
+	systemProxyCached systemProxySettings
+	systemProxyValid  bool
+	systemProxyReadAt time.Time
+	systemProxyReader = readSystemProxyRaw
+	systemProxyNow    = time.Now
+)
+
+func invalidateSystemProxyCache() {
+	systemProxyMu.Lock()
+	systemProxyReadAt = time.Time{}
+	systemProxyMu.Unlock()
+}
+
+// readSystemProxy reads OS static proxy settings with a short TTL cache so
+// periodic status polls and chat requests do not spawn scutil on every call.
+// Transient OS reader failures keep the last known good settings instead of
+// flipping to empty and triggering spurious child restarts.
+func readSystemProxy() systemProxySettings {
+	systemProxyMu.Lock()
+	now := systemProxyNow()
+	if systemProxyValid && !systemProxyReadAt.IsZero() && now.Sub(systemProxyReadAt) < systemProxyCacheTTL {
+		cached := systemProxyCached
+		systemProxyMu.Unlock()
+		return cached
+	}
+	reader := systemProxyReader
+	prev := systemProxyCached
+	hadPrev := systemProxyValid
+	systemProxyMu.Unlock()
+
+	settings, ok := reader()
+	if !ok {
+		if hadPrev {
+			return prev
+		}
+		return systemProxySettings{}
+	}
+	systemProxyMu.Lock()
+	systemProxyCached = settings
+	systemProxyValid = true
+	systemProxyReadAt = systemProxyNow()
+	systemProxyMu.Unlock()
+	return settings
+}
+
+// Status describes the effective proxy routing without exposing proxy addresses,
+// bypass hosts or credentials.
+type Status struct {
 	Mode           string
+	Preference     Mode
 	AutoConfigOnly bool
-} {
-	status := struct {
-		Mode           string
-		AutoConfigOnly bool
-	}{Mode: "direct"}
+}
+
+// ConfigurationStatus returns no proxy addresses, bypass hosts or credentials.
+func ConfigurationStatus() Status {
+	preference := CurrentMode()
+	status := Status{
+		Mode:       "direct",
+		Preference: preference,
+	}
+	if preference == ModeDirect {
+		return status
+	}
 	if ExplicitProxyConfigured() {
 		status.Mode = "environment"
 		return status
@@ -42,6 +102,9 @@ func ConfigurationStatus() struct {
 // Desktop launchers do not inherit shell proxy variables. Read system settings
 // on each request so retry also works after the user changes their proxy.
 func Proxy(req *http.Request) (*url.URL, error) {
+	if CurrentMode() == ModeDirect {
+		return nil, nil
+	}
 	config := environmentProxyConfig()
 	if ExplicitProxyConfigured() {
 		return config.ProxyFunc()(req.URL)
@@ -52,6 +115,9 @@ func Proxy(req *http.Request) (*url.URL, error) {
 // A local/private proxy is trusted as a user-selected egress, never as a
 // target URL exemption. Outbound callers must still validate target addresses.
 func ConfiguredProxyAddress(address string) bool {
+	if CurrentMode() == ModeDirect {
+		return false
+	}
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return false
@@ -92,6 +158,9 @@ func ConfiguredProxyAddress(address string) bool {
 // HTTPSProxyEnvironment carries desktop proxy selection to HTTPS-only child
 // downloaders, including redirect hosts and the system bypass list.
 func HTTPSProxyEnvironment() []string {
+	if CurrentMode() == ModeDirect {
+		return []string{"HTTPS_PROXY=", "https_proxy=", "NO_PROXY=*", "no_proxy=*", "ALL_PROXY=", "all_proxy="}
+	}
 	config := environmentProxyConfig()
 	if !ExplicitProxyConfigured() {
 		system := readSystemProxy()
@@ -131,8 +200,12 @@ func firstNonEmptyEnv(names ...string) string {
 	return ""
 }
 
-// Explicit environment configuration must never be bypassed automatically.
+// Explicit environment configuration must never be bypassed automatically
+// unless the user explicitly selected direct mode in BeefTV settings.
 func ExplicitProxyConfigured() bool {
+	if CurrentMode() == ModeDirect {
+		return false
+	}
 	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
 			return true

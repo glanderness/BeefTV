@@ -66,6 +66,10 @@ func TestNodeProxyEnvironmentPreservesExplicitSelectionAndWildcard(t *testing.T)
 	}
 }
 
+func nodeProxyEnvironment(inherited []string, modelBaseURL string, systemReader func() systemProxySettings) []string {
+	return nodeProxyEnvironmentWithMode(inherited, modelBaseURL, CurrentMode(), systemReader)
+}
+
 func nodeEnvMap(t *testing.T, env []string) map[string]string {
 	t.Helper()
 	out := map[string]string{}

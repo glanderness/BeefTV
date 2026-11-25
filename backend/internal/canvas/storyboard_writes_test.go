@@ -363,12 +363,15 @@ func TestStoryboardRowsRejectStaleRevision(t *testing.T) {
 	}
 }
 
-// 超过批次上限必须拒绝，防止一次调用混入多集内容。
-func TestStoryboardRowsRejectOversizedBatch(t *testing.T) {
+// 大批量分镜行写入放开后应一次成功，空批次仍拒绝。
+func TestStoryboardRowsAllowsLargeBatchAndRejectsEmpty(t *testing.T) {
 	svc, canvasID, nodeID, revision := storyboardFixture(t)
-	drafts := make([]StoryboardRowDraft, maxStoryboardRowsPerCall+1)
-	if _, _, err := svc.AppendUserCanvasStoryboardRows("owner", canvasID, nodeID, drafts, revision); err == nil {
-		t.Fatal("超上限批次应被拒绝")
+	if _, _, err := svc.AppendUserCanvasStoryboardRows("owner", canvasID, nodeID, nil, revision); err == nil {
+		t.Fatal("空批次应被拒绝")
+	}
+	drafts := make([]StoryboardRowDraft, 40)
+	if _, created, err := svc.AppendUserCanvasStoryboardRows("owner", canvasID, nodeID, drafts, revision); err != nil || len(created) != 40 {
+		t.Fatalf("40 行批量追加应成功: created=%d err=%v", len(created), err)
 	}
 }
 

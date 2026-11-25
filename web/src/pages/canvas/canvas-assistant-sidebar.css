@@ -300,6 +300,9 @@
     flex-direction: column;
     gap: 10px;
     margin-top: 8px;
+    max-height: 280px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 .canvas-assistant-proposal-lines,
 .canvas-assistant-proposal-note,

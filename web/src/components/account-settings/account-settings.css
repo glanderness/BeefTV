@@ -106,9 +106,11 @@
 .account-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 0; }
 .account-settings-content > h2 + .account-setting-row { padding-top: 0; }
 .account-setting-row > div { min-width: 0; }
-.account-setting-row > :is(.ant-btn, .ant-switch) { flex-shrink: 0; }
+.account-setting-row > :is(.ant-btn, .ant-switch, .ant-segmented) { flex-shrink: 0; }
 .account-setting-row > p { margin: 0; }
-.account-appearance-control.ant-segmented { font-size: var(--fs-body); font-weight: 500; }
+.account-settings-content .account-setting-error { color: var(--destructive); }
+.account-appearance-control.ant-segmented,
+.account-proxy-control.ant-segmented { font-size: var(--fs-body); font-weight: 500; }
 .account-model-connection { padding-top: 0; padding-bottom: 24px; }
 .account-settings-content .model-default-setting-row { gap: 16px; }
 .account-settings-content .model-default-setting-control { width: 52%; }

@@ -1,5 +1,161 @@
 const NODE_WRITES = new Set(['canvas.node.update', 'canvas.node.configure', 'canvas.node.bind_asset']);
 const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
+const MAX_WRITE_VIEW_BYTES = 40000;
+const jsonBytes = value => Buffer.byteLength(JSON.stringify(value), 'utf8');
+
+function previewShort(value, maxChars = 240) {
+  if (typeof value !== 'string' || value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}…`;
+}
+
+function fitBudgetedArray(items, budgetBytes, transform = item => item) {
+  const kept = [];
+  let used = 2; // []
+  for (let i = 0; i < items.length; i++) {
+    const projected = transform(items[i], i);
+    const size = jsonBytes(projected) + (kept.length > 0 ? 1 : 0);
+    if (used + size > budgetBytes) break;
+    kept.push(projected);
+    used += size;
+  }
+  return { items: kept, omitted: items.length - kept.length, usedBytes: used };
+}
+
+function projectProposeResult(result) {
+  const { pricing: _pricing, order: _order, targets, production, nodeIds, ...rest } = result;
+  const compactTarget = (target) => {
+    if (!target || typeof target !== 'object') return target;
+    const { pricing: _targetPricing, prompt, ...targetRest } = target;
+    return {
+      ...targetRest,
+      ...(prompt !== undefined ? { prompt: previewShort(prompt, 240) } : {}),
+    };
+  };
+  const compactProductionTarget = (target) => {
+    if (!target || typeof target !== 'object') return target;
+    const summary = {
+      nodeId: target.nodeId,
+      kind: target.kind,
+      modelKey: target.modelKey,
+    };
+    if (typeof target.title === 'string' && target.title) summary.title = previewShort(target.title, 80);
+    if (target.estimate !== undefined) summary.estimate = target.estimate;
+    return summary;
+  };
+
+  const skeleton = {
+    ...rest,
+    ...(Array.isArray(nodeIds) ? { nodeIds: [], omittedNodeIdCount: 999999 } : {}),
+    ...(Array.isArray(targets) ? { targets: [], targetCount: targets.length, targetsTruncated: true, omittedTargetCount: 999999 } : {}),
+    ...(production && typeof production === 'object'
+      ? {
+          production: {
+            ...(production.estimate !== undefined ? { estimate: production.estimate } : {}),
+            ...(Array.isArray(production.targets)
+              ? { targets: [], targetCount: production.targets.length, targetsTruncated: true, omittedTargetCount: 999999 }
+              : {}),
+          },
+        }
+      : {}),
+  };
+  let remaining = Math.max(0, MAX_WRITE_VIEW_BYTES - 512 - jsonBytes({ result: skeleton }));
+  const output = { ...rest };
+
+  if (Array.isArray(nodeIds)) {
+    const idBudget = Math.min(remaining, 8192);
+    const fittedIds = fitBudgetedArray(nodeIds, idBudget);
+    output.nodeIds = fittedIds.items;
+    if (fittedIds.omitted > 0) output.omittedNodeIdCount = fittedIds.omitted;
+    remaining = Math.max(0, remaining - fittedIds.usedBytes);
+  }
+
+  const hasProductionTargets = Boolean(production && typeof production === 'object' && Array.isArray(production.targets));
+  if (Array.isArray(targets)) {
+    const targetBudget = hasProductionTargets ? Math.floor(remaining * 0.65) : remaining;
+    const fittedTargets = fitBudgetedArray(targets, targetBudget, compactTarget);
+    output.targets = fittedTargets.items;
+    if (fittedTargets.omitted > 0) {
+      output.targetCount = targets.length;
+      output.targetsTruncated = true;
+      output.omittedTargetCount = fittedTargets.omitted;
+    }
+    remaining = Math.max(0, remaining - fittedTargets.usedBytes);
+  }
+
+  if (production && typeof production === 'object') {
+    const nextProduction = {};
+    if (production.estimate !== undefined) nextProduction.estimate = production.estimate;
+    if (Array.isArray(production.targets)) {
+      const fittedProd = fitBudgetedArray(production.targets, remaining, compactProductionTarget);
+      nextProduction.targets = fittedProd.items;
+      if (fittedProd.omitted > 0) {
+        nextProduction.targetCount = production.targets.length;
+        nextProduction.targetsTruncated = true;
+        nextProduction.omittedTargetCount = fittedProd.omitted;
+      }
+    }
+    output.production = nextProduction;
+  }
+
+  return output;
+}
+
+function projectSubmitResult(result) {
+  const { tasks, taskIds, nodeIds, ...rest } = result;
+  const compactTask = (task) => {
+    if (!task || typeof task !== 'object') return task;
+    const out = {};
+    for (const key of ['id', 'status', 'resultState', 'outcome', 'error']) {
+      if (task[key] !== undefined && task[key] !== '') {
+        out[key] = key === 'error' ? previewShort(task[key], 300) : task[key];
+      }
+    }
+    if (Array.isArray(task.outputs)) {
+      out.outputs = task.outputs.map((item) => {
+        if (!item || typeof item !== 'object') return item;
+        const compactOut = {};
+        for (const key of ['outputIndex', 'mediaType', 'resourceId', 'materializationErrorCode']) {
+          if (item[key] !== undefined && item[key] !== '') compactOut[key] = item[key];
+        }
+        return compactOut;
+      });
+    }
+    return out;
+  };
+
+  const skeleton = {
+    ...rest,
+    ...(Array.isArray(taskIds) ? { taskIds: [], omittedTaskIdCount: 999999 } : {}),
+    ...(Array.isArray(nodeIds) ? { nodeIds: [], omittedNodeIdCount: 999999 } : {}),
+    tasks: [],
+    taskCount: tasks.length,
+    tasksTruncated: true,
+    omittedTaskCount: 999999,
+  };
+  let remaining = Math.max(0, MAX_WRITE_VIEW_BYTES - 512 - jsonBytes({ result: skeleton }));
+  const output = { ...rest };
+
+  if (Array.isArray(taskIds)) {
+    const fittedTaskIds = fitBudgetedArray(taskIds, Math.min(remaining, 8192));
+    output.taskIds = fittedTaskIds.items;
+    if (fittedTaskIds.omitted > 0) output.omittedTaskIdCount = fittedTaskIds.omitted;
+    remaining = Math.max(0, remaining - fittedTaskIds.usedBytes);
+  }
+  if (Array.isArray(nodeIds)) {
+    const fittedNodeIds = fitBudgetedArray(nodeIds, Math.min(remaining, 8192));
+    output.nodeIds = fittedNodeIds.items;
+    if (fittedNodeIds.omitted > 0) output.omittedNodeIdCount = fittedNodeIds.omitted;
+    remaining = Math.max(0, remaining - fittedNodeIds.usedBytes);
+  }
+  const fittedTasks = fitBudgetedArray(tasks, remaining, compactTask);
+  output.tasks = fittedTasks.items;
+  if (fittedTasks.omitted > 0) {
+    output.taskCount = tasks.length;
+    output.tasksTruncated = true;
+    output.omittedTaskCount = fittedTasks.omitted;
+  }
+  return output;
+}
 
 // Only the model-facing receipt is reduced. Business receipts and turn effects
 // retain the original node; omitted fields remain accessible through canvas_get.
@@ -12,14 +168,10 @@ export function canvasWriteView(data, operation, params = {}) {
     return { ...data, result: { ...data.result, channels } };
   }
   if (operation === 'canvas.generation.propose' && data?.result && typeof data.result === 'object' && !Array.isArray(data.result)) {
-    const { pricing: _pricing, targets, ...rest } = data.result;
-    return {
-      ...data,
-      result: {
-        ...rest,
-        ...(Array.isArray(targets) ? { targets: targets.map(({ pricing: _targetPricing, ...target }) => target) } : {}),
-      },
-    };
+    return { ...data, result: projectProposeResult(data.result) };
+  }
+  if (operation === 'canvas.generation.submit' && data?.result && typeof data.result === 'object' && !Array.isArray(data.result) && Array.isArray(data.result.tasks)) {
+    return { ...data, result: projectSubmitResult(data.result) };
   }
   if (operation === 'canvas.task.bind' && typeof data?.result?.bindingStatus === 'string') {
     // Go retains the full document for replay and undo. Model/nested callers
@@ -32,6 +184,37 @@ export function canvasWriteView(data, operation, params = {}) {
     result.writeView = { complete: false, omittedNodeFields: true,
       readView: { nodeId: result.nodeId, expectedRevision: result.revision } };
     return { ...data, result };
+  }
+  if (operation === 'canvas.nodes.configure' && Array.isArray(data?.result?.nodes)) {
+    const totalCount = data.result.nodes.length;
+    const skeleton = {
+      ...data,
+      result: {
+        canvasId: data.result.canvasId,
+        revision: data.result.revision,
+        configuredCount: totalCount,
+        nodes: [],
+        omittedNodeCount: 999999,
+        writeView: { complete: false, omittedNodeFields: true },
+      },
+    };
+    const budget = Math.max(0, MAX_WRITE_VIEW_BYTES - 512 - jsonBytes(skeleton));
+    const fitted = fitBudgetedArray(data.result.nodes, budget, (item) => ({
+      nodeId: item?.nodeId,
+      draftConfigured: item?.draftConfigured ?? true,
+      ...(item?.revision !== undefined ? { revision: item.revision } : {}),
+    }));
+    return {
+      ...data,
+      result: {
+        canvasId: data.result.canvasId,
+        revision: data.result.revision,
+        configuredCount: totalCount,
+        nodes: fitted.items,
+        ...(fitted.omitted > 0 ? { omittedNodeCount: fitted.omitted } : {}),
+        writeView: { complete: false, omittedNodeFields: true },
+      },
+    };
   }
   if (!NODE_WRITES.has(operation)) return data;
   const result = data?.result, source = result?.node;

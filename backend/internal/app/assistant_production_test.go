@@ -2,12 +2,81 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"gorm.io/gorm"
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 )
+
+func TestAssistantProductionConfirmsLargeBatchWithContinuePlan(t *testing.T) {
+	svc, canvasID, _ := newAssistantTurnService(t)
+	if err := svc.SaveLocalModelConfig([]byte(`{"imageModel":"custom::image","channels":[{"id":"custom","enabled":true,"baseUrl":"https://example.invalid/v1","apiKey":"test-only","models":["image"],"modelProfiles":[{"model":"image","capability":"image","protocol":"openai-image"}]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := svc.UserCanvasProject("local", canvasID)
+	var doc map[string]any
+	_ = json.Unmarshal(raw, &doc)
+	nodes := make([]any, 0, 12)
+	nodeIDs := make([]string, 0, 12)
+	for i := 1; i <= 12; i++ {
+		id := fmt.Sprintf("batch-img-%d", i)
+		nodeIDs = append(nodeIDs, id)
+		nodes = append(nodes, map[string]any{
+			"id": id, "type": "image", "title": id,
+			"metadata": map[string]any{"prompt": "雨后街景", "size": "9:16", "count": 1},
+		})
+	}
+	doc["nodes"] = nodes
+	doc["connections"] = []any{}
+	raw, _ = json.Marshal(doc)
+	if _, err := svc.UpsertUserCanvasProject("local", raw); err != nil {
+		t.Fatal(err)
+	}
+	const source = "aabbccdd11228812"
+	if _, err := svc.BeginAssistantTurn("local", canvasID, source, AssistantTurnInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AssistantTurns().BindDurableSession("local", source, backgroundContinuationSession, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.FinalizeAssistantTurn(source); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = svc.UserCanvasProject("local", canvasID)
+	_ = json.Unmarshal(raw, &doc)
+	targets, err := operations.GenerationTargets(svc.BindDomain(nil), doc, nodeIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := AssistantProductionConfirmation{
+		CanvasID: canvasID, ProposalID: "gp-large-12", Kind: "image",
+		NodeIDs: nodeIDs, Targets: targets, ContinuePlan: true,
+	}
+	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
+		return operations.UpsertGenerationOrderInTx(tx, "local", operations.GenerationOrder{
+			OrderID: request.ProposalID, ProposalID: request.ProposalID, CanvasID: canvasID,
+			CallerKind: operations.CallerAssistant, ApprovalMode: operations.ApprovalModeAsk,
+			Status: operations.GenerationOrderPending, Kind: "image", NodeIDs: nodeIDs,
+			ProductionNodeIDs: nodeIDs, Targets: targets, SourceTurnID: source,
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.ConfirmAssistantProduction("local", source, request)
+	if err != nil {
+		t.Fatalf("12 个节点带 ContinuePlan 应成功确认提交: %v", err)
+	}
+	payload := res.(map[string]any)
+	taskIDs, _ := payload["taskIds"].([]string)
+	if len(taskIDs) != 12 {
+		t.Fatalf("应创建 12 个任务，得到 %d", len(taskIDs))
+	}
+	if contID, _ := payload["continuationId"].(string); contID == "" {
+		t.Fatalf("应建立自动继续回执: %#v", payload)
+	}
+}
 
 func TestAssistantProductionAtomicAuthorizationAndReplay(t *testing.T) {
 	svc, canvasID, _ := newAssistantTurnService(t)

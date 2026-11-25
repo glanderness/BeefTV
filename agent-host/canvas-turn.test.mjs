@@ -31,6 +31,20 @@ describe("本轮画布变更", () => {
         expect(turnChange(turn)).toEqual({ revisionBefore: 7, revisionAfter: 8,
             createdNodeIds: [], updatedNodeIds: ["video-draft"], createdEdgeIds: [], operationIds: ["configure-op"] });
     });
+    test("批量参数配置记录全部改动节点与单次操作回执", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 7);
+        collectTurnEffects(turn, "canvas.nodes.configure", {
+            canvasId: "c1",
+            revision: 8,
+            nodes: [
+                { nodeId: "img-1", draftConfigured: true },
+                { nodeId: "img-2", draftConfigured: true },
+                { nodeId: "img-1", draftConfigured: true },
+            ],
+        }, "batch-configure-op");
+        expect(turnChange(turn)).toEqual({ revisionBefore: 7, revisionAfter: 8,
+            createdNodeIds: [], updatedNodeIds: ["img-1", "img-2"], createdEdgeIds: [], operationIds: ["batch-configure-op"] });
+    });
     test("从成功的工具结果累计新建节点、改动节点与新建连线", () => {
         const turn = resetTurnAccumulator(newTurnAccumulator(), 7);
 
@@ -479,7 +493,11 @@ describe("供应商定义", () => {
                 } catch { /* wait for listen */ }
                 await new Promise((resolve) => setTimeout(resolve, 40));
             }
-            expect(health).toMatchObject({ ok: false, reason: "model_not_configured" });
+            expect(health).toMatchObject({
+                ok: false,
+                reason: "model_not_configured",
+                requests: { perTurnRequests: 0, perTurnToolSteps: 0 },
+            });
         } finally {
             child.kill("SIGTERM");
             await new Promise((resolve) => child.once("close", resolve));

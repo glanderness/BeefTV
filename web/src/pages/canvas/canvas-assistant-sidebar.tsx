@@ -366,7 +366,7 @@ export function CanvasAssistantSidebar(props: Props) {
                                     </span>
                                     <span className="canvas-assistant-working-text">{assistant.lifecycleNotice || "助手正在处理…"}</span>
                                 </div>
-                                {slowStreamingHint ? <p className="canvas-assistant-meta" role="status">思考耗时较长，若开启了系统代理或 VPN 请检查网络连通性，也可点击下方停止后重试。</p> : null}
+                                {slowStreamingHint ? <p className="canvas-assistant-meta" role="status">思考耗时较长，若开启了系统代理可在「通用设置 → 网络代理」切为不使用代理，也可点击下方停止后重试。</p> : null}
                             </>
                         ) : null}
                     </div>

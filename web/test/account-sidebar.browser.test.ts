@@ -45,6 +45,14 @@ let blockTopUpInfo = false;
 let topUpInfoGate = createGate();
 let checkoutOpened = true;
 let checkoutOpenError = "";
+let networkProxyMode: "system" | "direct" = "system";
+let networkProxyEffectiveMode: "system" | "environment" | "direct" = "system";
+let failNetworkProxyGet = false;
+let failNetworkProxySave = false;
+let holdNetworkProxySave = false;
+let networkProxySaveGate = createGate();
+let networkProxyRestartPending = false;
+let networkProxyPutModes: string[] = [];
 
 beforeEach(() => {
     connectionState = "disconnected";
@@ -72,6 +80,14 @@ beforeEach(() => {
     topUpInfoGate = createGate();
     checkoutOpened = true;
     checkoutOpenError = "";
+    networkProxyMode = "system";
+    networkProxyEffectiveMode = "system";
+    failNetworkProxyGet = false;
+    failNetworkProxySave = false;
+    holdNetworkProxySave = false;
+    networkProxySaveGate = createGate();
+    networkProxyRestartPending = false;
+    networkProxyPutModes = [];
 });
 
 beforeAll(async () => {
@@ -245,6 +261,36 @@ beforeAll(async () => {
                 }
                 return ok({ items: [] });
             }
+            if (path === "/api/workspace/network-proxy") {
+                if (req.method === "PUT") {
+                    const body = (await req.json()) as { mode?: string };
+                    networkProxyPutModes.push(String(body.mode ?? ""));
+                    if (holdNetworkProxySave) {
+                        await networkProxySaveGate.enter();
+                    }
+                    if (failNetworkProxySave) {
+                        return Response.json({ code: 500, msg: "网络代理设置保存失败" }, { status: 500 });
+                    }
+                    networkProxyMode = body.mode === "direct" ? "direct" : "system";
+                    networkProxyEffectiveMode = networkProxyMode === "direct" ? "direct" : "system";
+                    return ok({
+                        mode: networkProxyMode,
+                        effectiveMode: networkProxyEffectiveMode,
+                        autoConfigOnly: false,
+                        assistantRestarted: !networkProxyRestartPending,
+                        assistantRestartPending: networkProxyRestartPending,
+                    });
+                }
+                if (failNetworkProxyGet) {
+                    return Response.json({ code: 500, msg: "读取网络代理设置失败" }, { status: 500 });
+                }
+                return ok({
+                    mode: networkProxyMode,
+                    effectiveMode: networkProxyEffectiveMode,
+                    autoConfigOnly: false,
+                    assistantRestartPending: networkProxyRestartPending,
+                });
+            }
             if (path.startsWith("/api/")) return ok({ items: [], plugins: [], states: {} });
             return new Response('<html><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/harness.css"><div id="root"></div><script type="module" src="/harness.js"></script></html>', {
                 headers: { "Content-Type": "text/html" },
@@ -283,6 +329,70 @@ test("account settings opens problem diagnostics as its own section without leav
         expect(page.url()).toBe(url);
         await modal.getByRole("button", { name: "通用设置", exact: true }).click();
         expect(await modal.getByText("连接诊断", { exact: true }).count()).toBe(0);
+    } finally {
+        await page.close();
+    }
+}, 30000);
+
+test("general settings switches network proxy mode, recovers from load errors, and never wedges saving across tab switches", async () => {
+    failNetworkProxyGet = true;
+    const page = await browser.newPage({ viewport: { width: 960, height: 760 } });
+    try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "登录 BeefTV", exact: true }).click();
+        const modal = page.locator(".account-settings-modal");
+        await modal.waitFor();
+        await modal.getByRole("button", { name: "通用设置", exact: true }).click();
+        await modal.getByRole("alert").filter({ hasText: "读取网络代理设置失败" }).waitFor();
+
+        // Retry button recovers cleanly from an initial load failure.
+        failNetworkProxyGet = false;
+        await modal.getByRole("button", { name: /^重\s*试$/ }).click();
+        await modal.getByText("当前已跟随系统代理。", { exact: false }).waitFor();
+
+        const proxyControl = modal.getByRole("radiogroup", { name: "网络代理" });
+        networkProxyRestartPending = true;
+        await proxyControl.getByText("不使用代理", { exact: true }).click();
+        await modal.getByText("BeefTV 与内置助手均直连", { exact: false }).waitFor();
+        await modal.getByText("助手当前正忙或正在重启，空闲后将自动应用新设置。").waitFor();
+        expect(networkProxyPutModes).toEqual(["direct"]);
+
+        // Save error renders in destructive color inline without duplicating error toasts.
+        failNetworkProxySave = true;
+        await proxyControl.getByText("跟随系统", { exact: true }).click();
+        const errorAlert = modal.getByRole("alert").filter({ hasText: "网络代理设置保存失败" });
+        await errorAlert.waitFor();
+        const errorColors = await errorAlert.evaluate((node) => {
+            const probe = document.createElement("span");
+            probe.style.color = "var(--destructive)";
+            node.parentElement?.appendChild(probe);
+            const destructiveColor = getComputedStyle(probe).color;
+            probe.remove();
+            return { actual: getComputedStyle(node).color, expected: destructiveColor };
+        });
+        expect(errorColors.actual).toBe(errorColors.expected);
+        expect(await page.locator(".ant-message-error").count()).toBe(0);
+        expect(networkProxyMode).toBe("direct");
+
+        // Switching tabs while a PUT is in flight must never leave the Segmented stuck disabled.
+        failNetworkProxySave = false;
+        networkProxyRestartPending = false;
+        holdNetworkProxySave = true;
+        await proxyControl.getByText("跟随系统", { exact: true }).click();
+        await networkProxySaveGate.entered;
+        await modal.getByRole("button", { name: "账号与余额", exact: true }).click();
+        await modal.getByRole("button", { name: "通用设置", exact: true }).click();
+        networkProxySaveGate.release();
+        await modal.getByText("当前已跟随系统代理。", { exact: false }).waitFor();
+        await page.waitForFunction(() => {
+            const el = document.querySelector('.account-settings-modal [role="radiogroup"][aria-label="网络代理"]');
+            return Boolean(el && !el.classList.contains("ant-segmented-disabled"));
+        });
+        holdNetworkProxySave = false;
+        await proxyControl.getByText("不使用代理", { exact: true }).click();
+        await modal.getByText("BeefTV 与内置助手均直连", { exact: false }).waitFor();
+        expect(networkProxyMode).toBe("direct");
     } finally {
         await page.close();
     }

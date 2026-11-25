@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { createOperationBridge } from './operation-bridge.mjs';
 import { newTurnAccumulator, resetTurnAccumulator } from './canvas-turn.mjs';
 import { canvasWriteView } from './canvas-write-view.mjs';
+import { canvasNodesGetView } from './canvas-read-view.mjs';
 import { boundOutput } from '@earendil-works/chord/output';
 
 // Documented Pi tool-output limits, exercised through the public shared API.
@@ -172,5 +173,181 @@ describe('node write receipts keep their identity within official tool output li
       }
       expect(restored).toBe(longPrompt);
     });
+  });
+
+  test('canvas.nodes.configure write view compacts large batch receipts without mutating original Go data', () => {
+    const nodes = Array.from({ length: 30 }, (_, index) => ({
+      canvasId: 'canvas',
+      nodeId: `shot-${index + 1}`,
+      draftConfigured: true,
+      revision: 12,
+      node: {
+        id: `shot-${index + 1}`,
+        type: 'image',
+        metadata: { prompt: longPrompt, taskFailureDiagnostics: { message: 'big'.repeat(500) } },
+      },
+    }));
+    const data = { replayed: false, result: { canvasId: 'canvas', revision: 12, nodes } };
+    const original = JSON.stringify(data);
+    const projected = retainedJSON({ content: [{ type: 'text', text: JSON.stringify(canvasWriteView(data, 'canvas.nodes.configure')) }] });
+    expect(projected.result.canvasId).toBe('canvas');
+    expect(projected.result.revision).toBe(12);
+    expect(projected.result.nodes).toHaveLength(30);
+    expect(projected.result.nodes[0]).toEqual({ nodeId: 'shot-1', draftConfigured: true, revision: 12 });
+    expect(projected.result.writeView).toEqual({ complete: false, omittedNodeFields: true });
+    expect(JSON.stringify(data)).toBe(original);
+  });
+
+  test('canvas.nodes.get read view compacts noisy/long fields and stays bounded on large batches', () => {
+    const nodes = Array.from({ length: 60 }, (_, index) => ({
+      id: `shot-${index + 1}`,
+      type: 'image',
+      title: `镜头 ${index + 1}`,
+      metadata: {
+        prompt: longPrompt,
+        model: 'seedream-5.0',
+        taskFailureDiagnostics: { message: 'noisy'.repeat(1000) },
+      },
+    }));
+    const data = { result: { canvasId: 'canvas', revision: 15, nodes, missingNodeIds: ['missing-1'] } };
+    const original = JSON.stringify(data);
+    const view = canvasNodesGetView(data);
+    const text = JSON.stringify(view);
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(40000);
+    expect(view.result.missingNodeIds).toEqual(['missing-1']);
+    expect(view.result.nodes[0].metadata.prompt.complete).toBe(false);
+    expect(view.result.nodes[0].metadata.prompt.readView).toEqual({
+      nodeId: 'shot-1',
+      fieldPath: '/metadata/prompt',
+      expectedRevision: 15,
+    });
+    expect(view.result.nodes[0].metadata.taskFailureDiagnostics.complete).toBe(false);
+    expect(view.result.readView.complete).toBe(false);
+    expect(JSON.stringify(data)).toBe(original);
+  });
+
+  test('canvas.nodes.get budgets huge missingNodeIds without starving found nodes', () => {
+    const foundNode = { id: 'real-1', type: 'image', title: '存在的图', metadata: { model: 'seedream-5.0' } };
+    const missingNodeIds = Array.from({ length: 3000 }, (_, i) => `missing-node-id-${i + 1}`);
+    const data = { result: { canvasId: 'canvas', revision: 7, nodes: [foundNode], missingNodeIds } };
+    const original = JSON.stringify(data);
+    const view = canvasNodesGetView(data);
+    const text = JSON.stringify(view);
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(40000);
+    expect(view.result.nodes).toEqual([foundNode]);
+    expect(view.result.omittedMissingCount).toBeGreaterThan(0);
+    expect(view.result.missingNodeIds.length + view.result.omittedMissingCount).toBe(3000);
+    expect(view.result.readView).toMatchObject({ complete: false, partialFields: 0 });
+    expect(JSON.stringify(data)).toBe(original);
+  });
+
+  test('canvas.generation.propose strips order/pricing and stays under 50KiB for 80 mixed targets', () => {
+    const chinesePrompt = '赛博朋克雨夜霓虹街道特写镜头，电影级光影质感。'.repeat(14);
+    const allTargets = Array.from({ length: 80 }, (_, index) => ({
+      nodeId: `target-${index + 1}`,
+      title: `镜头 ${index + 1}`,
+      kind: index % 3 === 0 ? 'image' : index % 3 === 1 ? 'video' : 'audio',
+      modelKey: 'beeftv::seedream-5.0',
+      prompt: chinesePrompt,
+      parameters: { size: '16:9', quality: '2k' },
+      pricing: { currency: 'CNY', rates: { '2k': 0.4 } },
+      estimate: { amount: 0.4, text: '预计 ¥0.40' },
+    }));
+    const firstBatch = allTargets.slice(0, 40);
+    const data = {
+      result: {
+        proposalId: 'gp-large-80',
+        orderId: 'gp-large-80',
+        kind: 'image',
+        nodeIds: firstBatch.map(t => t.nodeId),
+        model: 'seedream-5.0',
+        modelKey: 'beeftv::seedream-5.0',
+        pricing: { currency: 'CNY', rates: { '2k': 0.4 } },
+        estimate: { amount: 16, priced: 40, unknown: 0, text: '预计费用：¥16.00' },
+        approvalMode: 'ask',
+        status: 'pending',
+        source: { canvasId: 'canvas', canvasRevision: 9, modelConfigRevision: 2 },
+        targets: firstBatch,
+        production: {
+          targets: allTargets,
+          estimate: { amount: 32, priced: 80, unknown: 0, text: '整片预计费用：¥32.00' },
+        },
+        order: {
+          orderId: 'gp-large-80',
+          pricing: { currency: 'CNY', secretRate: 0.4 },
+          targets: allTargets,
+          targetViews: allTargets,
+        },
+      },
+    };
+    const original = JSON.stringify(data);
+    const view = canvasWriteView(data, 'canvas.generation.propose');
+    const serialized = JSON.stringify(view);
+    const bounded = boundOutput(serialized, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES, retain: 'head' });
+    expect(bounded.droppedBytes).toBe(0);
+    expect(bounded.bytes).toBeLessThanOrEqual(40000);
+    const parsed = JSON.parse(bounded.text);
+    expect(parsed.result.proposalId).toBe('gp-large-80');
+    expect(parsed.result.order).toBeUndefined();
+    expect(parsed.result.pricing).toBeUndefined();
+    expect(serialized).not.toContain('secretRate');
+    expect(parsed.result.estimate).toEqual(data.result.estimate);
+    expect(parsed.result.production.estimate).toEqual(data.result.production.estimate);
+    expect(parsed.result.targets.length).toBeGreaterThan(0);
+    expect(JSON.stringify(data)).toBe(original);
+  });
+
+  test('canvas.generation.submit compacts and budgets 60 completed tasks within 50KiB', () => {
+    const tasks = Array.from({ length: 60 }, (_, i) => ({
+      id: `task-${i + 1}`,
+      status: 'succeeded',
+      resultState: 'ready',
+      outcome: { phase: 'ready' },
+      input: { prompt: longPrompt, config: { model: 'seedream-5.0' } },
+      outputs: [{ outputIndex: 0, mediaType: 'image', resourceId: `res-${i + 1}`, rawPayload: longPrompt }],
+    }));
+    const data = {
+      result: {
+        canvasId: 'canvas',
+        revision: 22,
+        status: 'succeeded',
+        taskIds: tasks.map(t => t.id),
+        nodeIds: tasks.map((_, i) => `node-${i + 1}`),
+        tasks,
+      },
+    };
+    const original = JSON.stringify(data);
+    const view = canvasWriteView(data, 'canvas.generation.submit');
+    const bounded = boundOutput(JSON.stringify(view), { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES, retain: 'head' });
+    expect(bounded.droppedBytes).toBe(0);
+    const parsed = JSON.parse(bounded.text);
+    expect(parsed.result.revision).toBe(22);
+    expect(parsed.result.status).toBe('succeeded');
+    expect(parsed.result.tasks[0]).toEqual({
+      id: 'task-1',
+      status: 'succeeded',
+      resultState: 'ready',
+      outcome: { phase: 'ready' },
+      outputs: [{ outputIndex: 0, mediaType: 'image', resourceId: 'res-1' }],
+    });
+    expect(JSON.stringify(data)).toBe(original);
+  });
+
+  test('canvas.nodes.configure bounds 500 configured nodes within 50KiB', () => {
+    const nodes = Array.from({ length: 500 }, (_, i) => ({
+      canvasId: 'canvas',
+      nodeId: `batch-node-identifier-${i + 1}`,
+      draftConfigured: true,
+      revision: 33,
+      node: { id: `batch-node-identifier-${i + 1}`, metadata: { prompt: longPrompt } },
+    }));
+    const data = { replayed: false, result: { canvasId: 'canvas', revision: 33, nodes } };
+    const view = canvasWriteView(data, 'canvas.nodes.configure');
+    const bounded = boundOutput(JSON.stringify(view), { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES, retain: 'head' });
+    expect(bounded.droppedBytes).toBe(0);
+    expect(bounded.bytes).toBeLessThanOrEqual(40000);
+    const parsed = JSON.parse(bounded.text);
+    expect(parsed.result.configuredCount).toBe(500);
+    expect(parsed.result.nodes.length + (parsed.result.omittedNodeCount || 0)).toBe(500);
   });
 });

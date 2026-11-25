@@ -88,7 +88,7 @@ func RegisterDefaultOps(r *Registry) {
 		Handler: opCanvasDocumentPatch})
 	// 付费生成只提议不执行：这里校验目标并给出用户要确认的模型，真正的生成由界面在用户确认后发起。
 	r.Register(Op{AssistantProposal: true, AssistantCanvas: true, ID: "canvas.generation.propose", Summary: "按节点已保存参数冻结生成单与报价。核对返回的 targets.parameters 和 estimate 后再提交，参数或报价不一致时停止", ReadOnly: true, Scope: ScopeCanvas,
-		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8},"kind":{"type":"string","enum":["image","video","audio"]},"productionNodeIds":{"type":"array","items":{"type":"string"},"maxItems":24,"description":"本批生成的节点（每批≤24，超出分批提案）；nodeIds 只列已就绪首批"},"note":{"type":"string"}},"required":["canvasId","nodeIds","kind"]}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1},"kind":{"type":"string","enum":["image","video","audio"]},"productionNodeIds":{"type":"array","items":{"type":"string"},"description":"本批生成的节点（不限数量，可一次列出全部计划素材）；nodeIds 只列已就绪首批"},"note":{"type":"string"}},"required":["canvasId","nodeIds","kind"]}`),
 		Handler: opCanvasGenerationPropose})
 	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.task.bind", Summary: "把已交付任务产物绑定到节点", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"taskId":{"type":"string"},"nodeId":{"type":"string"},"outputIndex":{"type":"integer"}},"required":["canvasId","taskId","nodeId"]}`),
@@ -115,8 +115,8 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 	if args.Kind != "image" && args.Kind != "video" && args.Kind != "audio" {
 		return nil, InvalidArg("invalid_kind", "kind 只能是 image、video 或 audio")
 	}
-	if len(args.NodeIDs) == 0 || len(args.NodeIDs) > 8 {
-		return nil, InvalidArg("invalid_batch", "nodeIds 必须是 1..8 项的数组")
+	if len(args.NodeIDs) == 0 {
+		return nil, InvalidArg("invalid_batch", "nodeIds 至少需要 1 项")
 	}
 	raw, err := ctx.Domain.UserCanvasProject(ctx.UserID, args.CanvasID)
 	if err != nil {
@@ -604,8 +604,8 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 	if strings.TrimSpace(args.CanvasID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId 必填")
 	}
-	if len(args.Nodes) == 0 || len(args.Nodes) > 8 {
-		return nil, InvalidArg("invalid_batch", "nodes 必须是 1..8 项的数组")
+	if len(args.Nodes) == 0 {
+		return nil, InvalidArg("invalid_batch", "nodes 至少需要 1 项")
 	}
 	drafts := make([]canvas.NodeDraft, 0, len(args.Nodes))
 	for _, node := range args.Nodes {

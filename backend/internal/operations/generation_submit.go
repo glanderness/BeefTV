@@ -205,7 +205,7 @@ func BuildGenerationOrderTargetViews(domain Domain, targets []GenerationTarget) 
 	return views
 }
 
-const generationSubmitParams = `{"type":"object","properties":{"canvasId":{"type":"string"},"proposalId":{"type":"string"},"orderId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8},"kind":{"type":"string","enum":["image","video","audio"]},"expectedRevision":{"type":"integer","minimum":1},"expectedModelConfigRevision":{"type":"integer","minimum":0}},"required":["canvasId","nodeIds"]}`
+const generationSubmitParams = `{"type":"object","properties":{"canvasId":{"type":"string"},"proposalId":{"type":"string"},"orderId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1},"kind":{"type":"string","enum":["image","video","audio"]},"expectedRevision":{"type":"integer","minimum":1},"expectedModelConfigRevision":{"type":"integer","minimum":0}},"required":["canvasId","nodeIds"]}`
 
 // generationAdmissionMode 区分两种付费受理。参数、校验和审批流程相同，
 // 只有节点旧结果的释放规则不同（见 generation_resubmit.go）。
@@ -246,8 +246,8 @@ func admitGeneration(ctx *Context, raw json.RawMessage, mode generationAdmission
 	if !external && ctx.TurnID == "" {
 		return nil, PermissionDenied("production_authorization_required", "请先确认本次制作方案")
 	}
-	if strings.TrimSpace(args.CanvasID) == "" || len(args.NodeIDs) == 0 || len(args.NodeIDs) > 8 {
-		return nil, InvalidArg("invalid_batch", "canvasId 和 1 至 8 个 nodeIds 必填")
+	if strings.TrimSpace(args.CanvasID) == "" || len(args.NodeIDs) == 0 {
+		return nil, InvalidArg("invalid_batch", "canvasId 和至少 1 个 nodeIds 必填")
 	}
 	approvalMode := ctx.Caller.EffectiveApprovalMode()
 	orderRecorder, hasOrderRecorder := ctx.Domain.(GenerationOrderRecorder)
@@ -538,8 +538,8 @@ func extractSubmittedTaskIDs(submitResult any) []string {
 // GenerationTargets is shared by proposal, UI confirmation and submission so
 // the model cannot replace approved prompt/model/quantity between those steps.
 func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]GenerationTarget, error) {
-	if len(ids) == 0 || len(ids) > 24 {
-		return nil, InvalidArg("invalid_batch", "制作素材须为1至24项")
+	if len(ids) == 0 {
+		return nil, InvalidArg("invalid_batch", "制作素材至少需要 1 项")
 	}
 	nodes := map[string]map[string]any{}
 	graph := generationDependencyGraph{nodes: nodes, incoming: map[string][]string{}, config: map[string]string{}}

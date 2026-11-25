@@ -52,29 +52,28 @@ func TestCanvasNodesConfigureWritesBatchInOneRevision(t *testing.T) {
 	}
 }
 
-func TestCanvasNodesConfigureAcceptsTwentyAndRejectsMore(t *testing.T) {
+func TestCanvasNodesConfigureAcceptsLargeBatchAndRejectsEmpty(t *testing.T) {
 	h := newHarness(t)
-	for index := 3; index <= 20; index++ {
+	for index := 3; index <= 30; index++ {
 		h.addNode(t, fmt.Sprintf("n%d", index), "image", fmt.Sprintf("镜头%d", index), map[string]any{"prompt": "原始"})
 	}
 	revision := h.revisionNow(t)
 	caller := operations.ExternalCaller(false)
 
-	nodes := make([]map[string]any, 0, 20)
-	for index := 1; index <= 20; index++ {
+	nodes := make([]map[string]any, 0, 30)
+	for index := 1; index <= 30; index++ {
 		nodes = append(nodes, configureNode(fmt.Sprintf("n%d", index), "image", fmt.Sprintf("批量%d", index)))
 	}
-	if _, err := h.execute(t, caller, "canvas.nodes.configure", "batch-20", batchConfigureParams(h.canvasID, revision, nodes...)); err != nil {
-		t.Fatalf("20 个节点应受理: %v", err)
+	if _, err := h.execute(t, caller, "canvas.nodes.configure", "batch-30", batchConfigureParams(h.canvasID, revision, nodes...)); err != nil {
+		t.Fatalf("30 个节点应受理: %v", err)
 	}
 	if got := h.revisionNow(t); got != revision+1 {
-		t.Fatalf("20 个节点应只增加一次版本: got %d want %d", got, revision+1)
+		t.Fatalf("30 个节点应只增加一次版本: got %d want %d", got, revision+1)
 	}
 
-	nodes = append(nodes, configureNode("n1", "image", "超出上限"))
-	_, err := h.execute(t, caller, "canvas.nodes.configure", "batch-21", batchConfigureParams(h.canvasID, revision+1, nodes...))
+	_, err := h.execute(t, caller, "canvas.nodes.configure", "batch-empty", batchConfigureParams(h.canvasID, revision+1))
 	if got := opErr(t, err); got.Reason != "invalid_batch" {
-		t.Fatalf("21 个节点应整批拒绝: %#v", got)
+		t.Fatalf("空节点列表应拒绝: %#v", got)
 	}
 	if got := h.revisionNow(t); got != revision+1 {
 		t.Fatal("被拒绝的批次不能推进版本")
@@ -204,12 +203,12 @@ func TestCanvasNodesGetReturnsRequestedNodesAndMissing(t *testing.T) {
 	if _, err := h.execute(t, operations.ExternalCaller(true), "canvas.nodes.get", "", map[string]any{"canvasId": h.canvasID, "nodeIds": []string{}}); err == nil {
 		t.Fatal("空 nodeIds 应拒绝")
 	}
-	tooMany := make([]string, 51)
-	for index := range tooMany {
-		tooMany[index] = fmt.Sprintf("n%d", index)
+	largeBatch := make([]string, 60)
+	for index := range largeBatch {
+		largeBatch[index] = fmt.Sprintf("n%d", index+1)
 	}
-	if _, err := h.execute(t, operations.ExternalCaller(true), "canvas.nodes.get", "", map[string]any{"canvasId": h.canvasID, "nodeIds": tooMany}); opErr(t, err).Reason != "invalid_batch" {
-		t.Fatal("超过 50 个 nodeId 应拒绝")
+	if _, err := h.execute(t, operations.ExternalCaller(true), "canvas.nodes.get", "", map[string]any{"canvasId": h.canvasID, "nodeIds": largeBatch}); err != nil {
+		t.Fatalf("大批量 nodeIds 应允许读取: %v", err)
 	}
 }
 
@@ -226,20 +225,24 @@ func TestCanvasNodesBatchReadOnlyAndAssistantBoundaries(t *testing.T) {
 		t.Fatalf("只读客户端不能批量写入: %#v", got)
 	}
 
+	listed := map[string]bool{}
+	for _, descriptor := range h.registry.List(h.assistant()) {
+		listed[descriptor.ID] = true
+	}
 	for _, id := range []string{"canvas.nodes.configure", "canvas.nodes.get"} {
-		for _, descriptor := range h.registry.List(h.assistant()) {
-			if descriptor.ID == id {
-				t.Fatalf("内置助手不应看到 %s", id)
-			}
+		if !listed[id] {
+			t.Fatalf("内置助手应看到 %s", id)
 		}
 	}
-	_, err = h.execute(t, h.assistant(), "canvas.nodes.configure", "assistant-write",
-		batchConfigureParams(h.canvasID, revision, configureNode("n1", "image", "助手不能写")))
-	if got := opErr(t, err); got.Code != operations.CodePermissionDenied {
-		t.Fatalf("内置助手不能调用批量写: %#v", got)
+	if _, err := h.execute(t, h.assistant(), "canvas.nodes.get", "", map[string]any{"canvasId": h.canvasID, "nodeIds": []string{"n1", "n2"}}); err != nil {
+		t.Fatalf("内置助手应能批量读取节点: %v", err)
 	}
-	if h.revisionNow(t) != revision {
-		t.Fatal("被拒绝的调用不能写画布")
+	if _, err := h.execute(t, h.assistant(), "canvas.nodes.configure", "assistant-write",
+		batchConfigureParams(h.canvasID, revision, configureNode("n1", "image", "助手批量写"))); err != nil {
+		t.Fatalf("内置助手应能批量配置节点: %v", err)
+	}
+	if h.revisionNow(t) != revision+1 {
+		t.Fatal("内置助手批量配置应推进版本")
 	}
 }
 

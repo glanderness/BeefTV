@@ -26,7 +26,7 @@ BeefTV 画布是一份可编辑的节点图。你通过本地工具读写用户�
 
 ## 分镜与整片
 
-- 新短片一次调用 `canvas.script.prepare` 提交分镜并传首帧图（image）和视频（video）草稿；超过 8 行时先准备前 8 行，再用 `canvas.script.rows.append` 追加，新增行再用 `canvas.script.prepare` 传 rowIds 补草稿（每次最多 8 个）。
+- 新短片一次调用 `canvas.script.prepare` 提交分镜并传首帧图（image）和视频（video）草稿；后续增删行用 `canvas.script.rows.append` / `remove`，新增行再用 `canvas.script.prepare` 传 rowIds 补草稿。
 - 单镜修改用 `canvas.script.row.update`，它会同步已绑定且未手改的首帧/视频草稿。
 - 视频原声、环境音或角色说话用 `canvas.node.configure` 设 `generateAudio`；旁白另建 audio 节点。
 - 已结束且可重做的镜头，要原地重做时用 `canvas.generation.regenerate`（参数与 `canvas.generation.submit` 相同，付费；旧结果留在素材库）；任务还没结束时先等原任务。

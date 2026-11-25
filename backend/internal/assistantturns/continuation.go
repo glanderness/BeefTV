@@ -58,7 +58,7 @@ func continuationView(row model.AssistantContinuation) ContinuationView {
 }
 
 func (s *Service) ArmContinuation(userID string, input ContinuationInput) (*ContinuationView, error) {
-	if len(input.NodeIDs) == 0 || len(input.NodeIDs) > 8 || (input.Kind != "image" && input.Kind != "video" && input.Kind != "audio") || !strings.HasPrefix(input.ProposalID, "gp-") {
+	if len(input.NodeIDs) == 0 || (input.Kind != "image" && input.Kind != "video" && input.Kind != "audio") || !strings.HasPrefix(input.ProposalID, "gp-") {
 		return nil, continuationError("invalid")
 	}
 	sum := sha256.Sum256([]byte(userID + "\x00" + input.SourceTurnID + "\x00" + input.ProposalID))
@@ -165,7 +165,7 @@ func (s *Service) RegisterContinuationManifest(userID, id string, manifest Conti
 				found = true
 			}
 		}
-		if !found || len(manifest.Submissions) == 0 || len(manifest.Submissions) > 8 {
+		if !found || len(manifest.Submissions) == 0 {
 			return continuationError("invalid")
 		}
 		prefix := "proposal:" + row.ProposalID + ":" + manifest.SourceNodeID
@@ -175,7 +175,7 @@ func (s *Service) RegisterContinuationManifest(userID, id string, manifest Conti
 			if len(manifest.Submissions) > 1 {
 				want = fmt.Sprintf("%s:%d", prefix, i)
 			}
-			if submission.OperationID != want || len(submission.OutputNodeIDs) == 0 || len(submission.OutputNodeIDs) > 8 {
+			if submission.OperationID != want || len(submission.OutputNodeIDs) == 0 {
 				return continuationError("invalid")
 			}
 			for _, node := range submission.OutputNodeIDs {

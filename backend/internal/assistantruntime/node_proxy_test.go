@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"infinite-canvas/backend/internal/desktopnet"
 )
 
 // Exercise the actual child environment with Node's built-in fetch and local
@@ -229,4 +231,140 @@ func TestModelOriginChangeRebuildsOwnedChildProxyEnvironment(t *testing.T) {
 		!strings.Contains(envValue(env, "NO_PROXY"), "new-model.invalid") || strings.Contains(envValue(env, "NO_PROXY"), "old-model.invalid") {
 		t.Fatal("restarted child retained stale model proxy projection")
 	}
+}
+
+func TestProxyChangeRestartsIdleOwnedChildAndPreservesBusyChild(t *testing.T) {
+	t.Cleanup(func() { _ = desktopnet.SetMode(desktopnet.ModeSystem) })
+	_ = desktopnet.SetMode(desktopnet.ModeSystem)
+
+	proxyEnv := []string{fixtureEnv + "=http", "HTTPS_PROXY=http://127.0.0.1:7890"}
+	host := fixtureHost(t, "http")
+	host.opts.Environ = func() []string { return append([]string{}, proxyEnv...) }
+	provider := fixtureProvider()
+	provider.BaseURL = "https://beeftv.app/v1"
+	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	firstPID := host.PID()
+	readChild := func() []string {
+		raw, err := os.ReadFile(filepath.Join(host.dataDir(), "child-env.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Split(string(raw), "\n")
+	}
+	if envValue(readChild(), "HTTPS_PROXY") != "http://127.0.0.1:7890" || envValue(readChild(), "NODE_USE_ENV_PROXY") != "1" {
+		t.Fatal("initial child did not inherit proxy environment")
+	}
+	if host.NeedsRestart(provider) {
+		t.Fatal("freshly launched child must not need restart")
+	}
+
+	// Switching app proxy preference to direct marks the running child stale.
+	if err := desktopnet.SetMode(desktopnet.ModeDirect); err != nil {
+		t.Fatal(err)
+	}
+	if !host.NeedsRestart(provider) {
+		t.Fatal("switching to direct mode must mark running child stale")
+	}
+	if launched, err := host.Ensure(provider, "http://127.0.0.1:18090/api", "", false); err != nil || launched || host.PID() != firstPID {
+		t.Fatal("busy child must not be restarted on proxy mode change")
+	}
+	restarted, err := host.EnsureFresh(context.Background(), provider, "http://127.0.0.1:18090/api", "")
+	if err != nil || !restarted || host.PID() == firstPID {
+		t.Fatalf("EnsureFresh did not restart idle child: restarted=%v err=%v pid=%d first=%d", restarted, err, host.PID(), firstPID)
+	}
+	env := readChild()
+	if envValue(env, "HTTPS_PROXY") != "" || envValue(env, "NO_PROXY") != "*" || envValue(env, "NODE_USE_ENV_PROXY") != "0" {
+		t.Fatalf("restarted direct child kept stale proxy env: https=%q no_proxy=%q use=%q",
+			envValue(env, "HTTPS_PROXY"), envValue(env, "NO_PROXY"), envValue(env, "NODE_USE_ENV_PROXY"))
+	}
+	if host.NeedsRestart(provider) {
+		t.Fatal("restarted direct child must match current proxy fingerprint")
+	}
+
+	// Switching back to system mode with a different proxy port triggers another restart.
+	secondPID := host.PID()
+	proxyEnv = []string{fixtureEnv + "=http", "HTTPS_PROXY=http://127.0.0.1:7897"}
+	if err := desktopnet.SetMode(desktopnet.ModeSystem); err != nil {
+		t.Fatal(err)
+	}
+	if !host.NeedsRestart(provider) {
+		t.Fatal("switching back to system proxy must mark child stale")
+	}
+	if launched, err := host.Ensure(provider, "http://127.0.0.1:18090/api", "", true); err != nil || !launched || host.PID() == secondPID {
+		t.Fatalf("Ensure did not restart idle child after proxy change: launched=%v err=%v", launched, err)
+	}
+	env = readChild()
+	if envValue(env, "HTTPS_PROXY") != "http://127.0.0.1:7897" || envValue(env, "NODE_USE_ENV_PROXY") != "1" {
+		t.Fatalf("restarted system child did not pick up new proxy port: https=%q use=%q",
+			envValue(env, "HTTPS_PROXY"), envValue(env, "NODE_USE_ENV_PROXY"))
+	}
+}
+
+func TestEnsureFreshPreservesBusyChildAndCoordinatesWithRestartAsync(t *testing.T) {
+	t.Cleanup(func() { _ = desktopnet.SetMode(desktopnet.ModeSystem) })
+	_ = desktopnet.SetMode(desktopnet.ModeSystem)
+
+	t.Run("busy child is never interrupted by EnsureFresh", func(t *testing.T) {
+		host := fixtureHost(t, "http")
+		host.opts.Environ = func() []string {
+			return []string{fixtureEnv + "=http", "BEEFTV_ASSISTANT_RUNTIME_BUSY=1", "HTTPS_PROXY=http://127.0.0.1:7890"}
+		}
+		provider := fixtureProvider()
+		provider.BaseURL = "https://beeftv.app/v1"
+		if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+			t.Fatal(err)
+		}
+		firstPID := host.PID()
+		if err := desktopnet.SetMode(desktopnet.ModeDirect); err != nil {
+			t.Fatal(err)
+		}
+		restarted, err := host.EnsureFresh(context.Background(), provider, "http://127.0.0.1:18090/api", "")
+		if err != nil || restarted || host.PID() != firstPID {
+			t.Fatalf("EnsureFresh must not restart busy child: restarted=%v err=%v pid=%d first=%d", restarted, err, host.PID(), firstPID)
+		}
+		if !host.NeedsRestart(provider) {
+			t.Fatal("busy child must remain marked needing restart until idle")
+		}
+	})
+
+	t.Run("EnsureFresh coordinates with concurrent RestartAsync without error or double restart", func(t *testing.T) {
+		_ = desktopnet.SetMode(desktopnet.ModeSystem)
+		host := fixtureHost(t, "http")
+		host.opts.Environ = func() []string {
+			return []string{fixtureEnv + "=http", "HTTPS_PROXY=http://127.0.0.1:7890"}
+		}
+		provider := fixtureProvider()
+		provider.BaseURL = "https://beeftv.app/v1"
+		if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+			t.Fatal(err)
+		}
+		firstPID := host.PID()
+		if err := desktopnet.SetMode(desktopnet.ModeDirect); err != nil {
+			t.Fatal(err)
+		}
+		if err := host.RestartAsync(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+			t.Fatalf("RestartAsync: %v", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := host.EnsureFresh(ctx, provider, "http://127.0.0.1:18090/api", ""); err != nil {
+			t.Fatalf("EnsureFresh during RestartAsync must not fail: %v", err)
+		}
+		if !waitUntil(5*time.Second, func() bool { return host.Running() && host.Endpoint() != "" && !host.State().Starting }) {
+			t.Fatalf("host did not settle running after coordinated restart: %+v", host.State())
+		}
+		if host.PID() == firstPID || host.NeedsRestart(provider) {
+			t.Fatalf("coordinated restart did not refresh child: pid=%d first=%d needsRestart=%v", host.PID(), firstPID, host.NeedsRestart(provider))
+		}
+		rawLaunches, err := os.ReadFile(filepath.Join(host.dataDir(), "child-launches.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(rawLaunches)), "\n")
+		if len(lines) != 2 {
+			t.Fatalf("expected exactly 2 child launches (initial + 1 restart), got %d: %v", len(lines), lines)
+		}
+	})
 }

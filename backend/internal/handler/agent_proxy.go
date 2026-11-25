@@ -41,8 +41,8 @@ type agentProxyService interface {
 // agentProxyMaxBody 限制转发体积；解析失败或超限都按真实失败返回。
 const agentProxyMaxBody = 64 << 10
 
-// agentProductionConfirmMaxBody 放宽整片制作确认请求体上限，避免多镜头长提示词方案撞 64 KiB 限制。
-const agentProductionConfirmMaxBody = 1 << 20
+// agentProductionConfirmMaxBody 放宽整片制作确认请求体上限，支持任意大批量生成方案。
+const agentProductionConfirmMaxBody = 8 << 20
 
 // hostStartGrace 是宿主从拉起到健康的宽限期：这段时间里状态是「正在启动」而不是「不可达」。
 const hostStartGrace = 20 * time.Second
@@ -50,6 +50,15 @@ const hostStartGrace = 20 * time.Second
 // agentHostClient 不跟随重定向：避免宿主凭据被转发到其他地址。
 func agentHostClient(host *assistantruntime.Host, timeout time.Duration) *http.Client {
 	return host.HTTPClient(timeout)
+}
+
+// assistantHostOpsURL 用请求自身的 Host 推导操作层基址：桌面形态监听随机端口，猜端口会指向别处。
+func assistantHostOpsURL(c *gin.Context) string {
+	return "http://" + c.Request.Host + "/api"
+}
+
+func assistantLaunchToken(c *gin.Context) string {
+	return strings.TrimSpace(c.GetHeader(httptransport.LaunchTokenHeader))
 }
 
 // assistantChatHeaderTimeout 只限制等宿主开始回应的时间：此前宿主要读取附件并确认回合归属。
@@ -134,9 +143,8 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 	// 助手行为设置改变脚本确认方式，写入必须与助手入口共用同一套身份与只读校验。
 	RegisterAssistantSettingsRoutes(r, svc, guard)
 
-	// hostOpsURL 用请求自身的 Host 推导操作层基址：桌面形态监听随机端口，猜端口会指向别处。
-	hostOpsURL := func(c *gin.Context) string { return "http://" + c.Request.Host + "/api" }
-	launchToken := func(c *gin.Context) string { return strings.TrimSpace(c.GetHeader(httptransport.LaunchTokenHeader)) }
+	hostOpsURL := assistantHostOpsURL
+	launchToken := assistantLaunchToken
 
 	unavailable := func(c *gin.Context, reason string) {
 		ok(c, gin.H{"available": false, "reason": reason})
@@ -161,9 +169,14 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 		health := host.Probe(c.Request.Context())
 		state = host.State()
 		if health.OK {
-			if state.Fingerprint != "" && state.Fingerprint != provider.Fingerprint() {
+			providerChanged := state.Fingerprint != "" && state.Fingerprint != provider.Fingerprint()
+			if providerChanged || host.NeedsRestart(provider) {
 				if health.Busy {
-					ok(c, gin.H{"available": false, "reason": "host_busy", "model": gin.H{"id": health.Model}})
+					if providerChanged {
+						ok(c, gin.H{"available": false, "reason": "host_busy", "model": gin.H{"id": health.Model}})
+						return
+					}
+					ok(c, gin.H{"available": true, "model": modelInfo})
 					return
 				}
 				if err := host.RestartAsync(provider, hostOpsURL(c), launchToken(c)); err != nil {
@@ -437,5 +450,5 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 		hostJSON(c, http.MethodGet, query, nil)
 	})
 
-	registerAgentProxyTurnRoutes(r, svc, host, client, guard, hostJSON, requireOwnedCanvas)
+	registerAgentProxyTurnRoutes(r, svc, host, client, guard, hostJSON, requireOwnedCanvas, hostOpsURL, launchToken)
 }
