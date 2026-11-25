@@ -230,6 +230,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	api := router.Group("/api")
 	status := newSystemStatus(db, svc, true)
 	registerSystemStatusRoutes(api, status)
+	var opsRegistry *agentops.Registry
 	canvasHandler.RegisterDesktopCanvasAPIWithDependencies(api, svc, canvasHandler.RuntimeDependencies{
 		RequestCoordinator: localKernel,
 		ProviderConfig:     localRoot.ProviderConfig,
@@ -245,9 +246,13 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		Diagnostics:        svc.DiagnosticsDomain(),
 		Eagle:              eagle.New(),
 		DesktopTrust:       desktopTrust(launchToken, uiBootstrapToken),
+		OnAgentOpsRegistry: func(reg *agentops.Registry) { opsRegistry = reg },
 	})
 	canvasHandler.RegisterMCPActivity(api, repo, owner.ID, svc, desktopTrust(launchToken, uiBootstrapToken))
 	businessCatalog := canvasHandler.NewBusinessCatalog(router.Routes())
+	if opsRegistry != nil {
+		opsRegistry.SetBusinessGateway(canvasHandler.NewBusinessGateway(router, businessCatalog))
+	}
 	canvasHandler.RegisterBusinessDiscovery(api, businessCatalog, svc)
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "msg": "请求不存在"})

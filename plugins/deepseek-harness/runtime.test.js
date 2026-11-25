@@ -852,14 +852,17 @@ test('task results feed the wake text and never mistake pending downloads for co
 })
 
 test('plugin settings keep defaults for bad files and reject invalid edits', () => {
+  assert.deepEqual(defaultPluginSettings, { autoContinue: true, stepLimit: 0 })
   assert.deepEqual(normalizeSettings(null), defaultPluginSettings)
   assert.deepEqual(normalizeSettings({ autoContinue: false, stepLimit: 12 }), { autoContinue: false, stepLimit: 12 })
-  assert.deepEqual(normalizeSettings({ autoContinue: 'no', stepLimit: 3 }), defaultPluginSettings)
+  assert.deepEqual(normalizeSettings({ autoContinue: true, stepLimit: 0 }), { autoContinue: true, stepLimit: 0 })
+  assert.deepEqual(normalizeSettings({ autoContinue: 'no', stepLimit: -1 }), defaultPluginSettings)
   assert.deepEqual(validatedSettingsPatch({ autoContinue: false }), { autoContinue: false })
+  assert.deepEqual(validatedSettingsPatch({ stepLimit: 0 }), { stepLimit: 0 })
   // 这些错误会直接显示在面板上，只能写用户看得懂的短句，不能出现实现词。
   assert.throws(() => validatedSettingsPatch({ autoContinue: 'yes' }), { message: '没能保存这项设置，请重试。' })
-  assert.throws(() => validatedSettingsPatch({ stepLimit: 4 }), { message: '每轮工具调用上限请填 5 到 200 之间的整数。' })
-  assert.throws(() => validatedSettingsPatch({ stepLimit: 41.5 }), { message: '每轮工具调用上限请填 5 到 200 之间的整数。' })
+  assert.throws(() => validatedSettingsPatch({ stepLimit: -1 }), { message: '每轮工具调用上限请填 0（不限）或 1 到 1000 之间的整数。' })
+  assert.throws(() => validatedSettingsPatch({ stepLimit: 41.5 }), { message: '每轮工具调用上限请填 0（不限）或 1 到 1000 之间的整数。' })
   assert.throws(() => validatedSettingsPatch({}), { message: '没有需要保存的改动。' })
 })
 
@@ -947,25 +950,16 @@ test('a busy session receives the completion inside the running turn', async con
   assert.match(injected[0].content[0].text, /busy-1/)
 })
 
-test('three consecutive auto-wakes defer the fourth until the user writes again', async context => {
+test('consecutive auto-wakes continue beyond three batches without artificial cap', async context => {
   const { call, listeners, workspace } = await startHost(context, { extraOps: [{ id: 'task.wait', readOnly: true }] })
   workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
   await call('POST', '/beeftv/connect', { mode: 'standalone' })
   const { agent, wakes } = fakeAgent()
-  for (const [index, taskId] of ['t1', 't2', 't3'].entries()) {
+  for (const [index, taskId] of ['t1', 't2', 't3', 't4', 't5'].entries()) {
     listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult([taskId]))
     await until(() => wakes.length === index + 1)
+    assert.match(wakes[index].content[0].text, new RegExp(taskId))
   }
-  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t4']))
-  await sleep(100)
-  assert.equal(wakes.length, 3)
-  // 用户自己发消息后预算恢复，被挡住的 t4 补投。
-  listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user-message', source: { kind: 'user' } } })
-  await until(() => wakes.length === 4)
-  assert.match(wakes[3].content[0].text, /t4/)
-  listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t5']))
-  await until(() => wakes.length === 5)
-  assert.match(wakes[4].content[0].text, /t5/)
 })
 
 test('a failed wake delivery keeps the result for the next user message', async context => {
@@ -1244,18 +1238,17 @@ test('a deferred completion does not follow the user into another workspace', as
   workspace.taskWait = ({ taskId }) => ({ status: 'succeeded', tasks: [succeededTask(taskId)] })
   await call('POST', '/beeftv/connect', { mode: 'standalone' })
   const { agent, wakes } = fakeAgent()
-  for (const [index, taskId] of ['t1', 't2', 't3'].entries()) {
-    listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult([taskId]))
-    await until(() => wakes.length === index + 1)
-  }
+  const originalFollowup = agent.followup
+  agent.followup = () => { throw new Error('会话暂时不可投递') }
   listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['t4']))
   await sleep(100)
-  assert.equal(wakes.length, 3)
+  assert.equal(wakes.length, 0)
+  agent.followup = originalFollowup
   workspace.workspaceId = 'another-workspace'
   await call('POST', '/beeftv/connect', { mode: 'local' })
   listeners.get('agent/inbox/claimed')({ agent, message: { id: 'real-user-message', source: { kind: 'user' } } })
   await sleep(100)
-  assert.equal(wakes.length, 3)
+  assert.equal(wakes.length, 0)
 })
 
 test('turning auto-continue off stops starting waits and saves the setting', async context => {
@@ -1263,15 +1256,16 @@ test('turning auto-continue off stops starting waits and saves the setting', asy
   await call('POST', '/beeftv/connect', { mode: 'standalone' })
   const settings = (await call('POST', '/beeftv/settings', { autoContinue: false })).body
   assert.equal(settings.autoContinue, false)
-  assert.equal(settings.stepLimit, 40)
-  assert.deepEqual(JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'settings.json'), 'utf8')), { autoContinue: false, stepLimit: 40 })
+  assert.equal(settings.stepLimit, 0)
+  assert.deepEqual(JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'settings.json'), 'utf8')), { autoContinue: false, stepLimit: 0 })
   const { agent, wakes } = fakeAgent()
   listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['quiet-1']))
   await sleep(100)
   assert.equal(wakes.length, 0)
   assert.equal(workspace.calls.some(item => item.op === 'task.wait'), false)
-  assert.equal((await call('POST', '/beeftv/settings', { stepLimit: 4 })).status, 503)
+  assert.equal((await call('POST', '/beeftv/settings', { stepLimit: -1 })).status, 503)
   assert.equal((await call('POST', '/beeftv/settings', { stepLimit: 12 })).body.stepLimit, 12)
+  assert.equal((await call('POST', '/beeftv/settings', { stepLimit: 0 })).body.stepLimit, 0)
 })
 
 test('the step limit stops only turns that belong to BeefTV', async context => {

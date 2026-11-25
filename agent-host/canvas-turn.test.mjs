@@ -195,6 +195,16 @@ describe("付费生成提议", () => {
             model: "wan3.0-video", modelKey: "beeftv::wan3.0-video", note: "两段镜头" }]);
     });
 
+    test("原地重做提议透传 regenerate: true，确保确认卡片向用户说明将原地替换", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 4);
+        collectTurnEffects(turn, "canvas.generation.propose", {
+            proposalId: "gp-regen", kind: "image", nodeIds: ["n1"],
+            model: "seedream-4", modelKey: "beeftv::seedream-4", regenerate: true,
+        });
+        expect(turn.proposals[0].regenerate).toBe(true);
+        expect(turnChange(turn)).toBeNull();
+    });
+
     test("技能脚本提议在需确认与本对话始终允许自动完成时均记入 turn.scriptProposals 且按 proposalId 去重", () => {
         const turn = resetTurnAccumulator(newTurnAccumulator(), 4);
         const pendingProposal = { proposalId: "sp-1", status: "pending", scriptPath: "scripts/a.js" };

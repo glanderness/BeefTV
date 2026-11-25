@@ -37,6 +37,25 @@ test('Go descriptors drive default Pi discovery, calls and durable replay', asyn
   expect(build('read-only').some(tool => tool.label === 'canvas.nodes.get')).toBe(true);
   expect(build('full-access').some(tool => tool.label === 'canvas.nodes.get')).toBe(true);
   expect(tools.some(tool => tool.label === 'canvas.document.commit')).toBe(false);
+  expect(tools.some(tool => tool.label === 'task.wait')).toBe(false);
+  expect(build('read-only').some(tool => tool.label === 'task.wait')).toBe(false);
+  expect(build('full-access').some(tool => tool.label === 'task.wait')).toBe(false);
+  expect(tools.some(tool => tool.label === 'file.read')).toBe(true);
+  expect(build('read-only').some(tool => tool.label === 'file.read')).toBe(true);
+  expect(tools.some(tool => tool.label === 'task.cancel')).toBe(true);
+  expect(build('read-only').some(tool => tool.label === 'task.cancel')).toBe(false);
+  expect(tools.some(tool => tool.label === 'canvas.generation.regenerate')).toBe(true);
+  expect(build('read-only').some(tool => tool.label === 'canvas.generation.regenerate')).toBe(false);
+  for (const id of ['canvas.create', 'business.list', 'business.call']) {
+   expect(tools.some(tool => tool.label === id)).toBe(false);
+   expect(build('read-only').some(tool => tool.label === id)).toBe(false);
+   expect(build('full-access').some(tool => tool.label === id)).toBe(true);
+  }
+  const createCanvas = build('full-access').find(tool => tool.label === 'canvas.create');
+  await createCanvas.execute('call-create-1', { title: '新画布' });
+  expect(writes[0].params.canvasId).toBeUndefined();
+  expect(writes[0].params.title).toBe('新画布');
+  writes.length = 0;
   expect(build('read-only').some(tool => tool.label === 'canvas.generation.propose')).toBe(false);
   expect(build('full-access').some(tool => tool.label === 'conversation.message.attach')).toBe(false);
   expect(tools.some(tool => tool.label === 'unknown.write')).toBe(false);

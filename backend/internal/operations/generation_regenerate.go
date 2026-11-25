@@ -8,7 +8,7 @@ import (
 // 唯一区别是目标节点上已经结束的旧任务可以释放，让新任务在原地接替它。
 // 旧结果仍留在素材库，操作重放也不会重复建任务或扣费。
 func registerGenerationRegenerate(r *Registry) {
-	r.Register(Op{ExternalOnly: true, ReplaySafe: true, SubmitsGeneration: true, ID: "canvas.generation.regenerate", Summary: "在原地重做已结束的画布生成并计费", Scope: ScopeCanvas,
+	r.Register(Op{AssistantCanvas: true, ReplaySafe: true, SubmitsGeneration: true, ID: "canvas.generation.regenerate", Summary: "在原地重做已结束的画布生成并计费", Scope: ScopeCanvas,
 		Params: json.RawMessage(generationSubmitParams), Handler: opGenerationRegenerate})
 }
 

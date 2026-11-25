@@ -1,13 +1,14 @@
 {
   "minAdjacentPrefixCoverageRatio": 0.95,
-  "maxHeaderChars": 2968,
-  "maxToolsChars": 21588,
-  "maxHeaderPlusToolsChars": 24532,
+  "maxHeaderChars": 2972,
+  "maxToolsChars": 22938,
+  "maxHeaderPlusToolsChars": 25910,
   "toolChars": {
     "asset_get": 176,
     "canvas_edge_create": 283,
     "canvas_edge_delete": 235,
-    "canvas_generation_propose": 534,
+    "canvas_generation_propose": 602,
+    "canvas_generation_regenerate": 466,
     "canvas_generation_submit": 462,
     "canvas_get": 653,
     "canvas_node_bind_asset": 357,
@@ -26,6 +27,7 @@
     "canvas_task_bind": 252,
     "canvas_timeline_render": 412,
     "canvas_timeline_update": 477,
+    "file_read": 555,
     "media_check": 486,
     "media_inspect": 706,
     "media_overview": 714,
@@ -42,6 +44,7 @@
     "skill_publish_prepare": 668,
     "skill_publish_status": 211,
     "skill_script_run": 677,
+    "task_cancel": 258,
     "task_get": 171,
     "canvas_timeline_deliver": 1848,
     "plan_update": 487,
@@ -57,6 +60,12 @@
       "reason": "开放 canvas_nodes_configure 与 canvas_nodes_get 给内置助手，取消单轮及批量人为上限",
       "maxToolsChars": 21588,
       "maxHeaderPlusToolsChars": 24532
+    },
+    {
+      "reason": "开放文档分页读取 file_read（含超长单行 byteOffset 续读）、原地重做 canvas_generation_regenerate、任务取消 task_cancel 及 propose regenerate 参数",
+      "maxHeaderChars": 2972,
+      "maxToolsChars": 22938,
+      "maxHeaderPlusToolsChars": 25910
     }
   ]
 }

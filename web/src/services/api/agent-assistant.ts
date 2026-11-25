@@ -55,6 +55,7 @@ export async function confirmAssistantProduction(canvasId: string, turnId: strin
     const normalized = normalizeAssistantProposal(proposal);
     return http.post<{ taskIds: string[]; continuationId: string; orderId?: string; order?: GenerationOrder }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(normalized.proposalId)}/production`, {
         canvasId, kind: normalized.kind, nodeIds: normalized.nodeIds, targets: normalized.production?.targets, continuePlan,
+        ...(normalized.regenerate ? { regenerate: true } : {}),
     }, { ...(await uiSessionConfig()), timeout: PRODUCTION_CONFIRM_TIMEOUT_MS });
 }
 

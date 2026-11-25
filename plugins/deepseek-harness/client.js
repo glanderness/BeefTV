@@ -879,9 +879,9 @@ ${themedScope('[class*="_step_"][data-state="error"]')} { --dsw-alias-label-prim
                       : h('button', { type: 'button', disabled: checkingUpdate || updatingRuntime, onClick: checkRuntimeUpdate }, checkingUpdate ? '正在检查更新…' : '检查运行环境更新')),
                     h('button', { type: 'button', onClick: returnToConversation }, '返回 DSH'),
                     h('button', { type: 'button', 'aria-pressed': autoContinue, onClick: () => saveSettings({ autoContinue: !autoContinue }) }, '生成完自动继续'),
-                    h('label', { className: 'beeftv-harness-setting' }, '每轮工具调用上限',
+                    h('label', { className: 'beeftv-harness-setting' }, '每轮工具调用上限（0 不限）',
                       h('input', {
-                        type: 'number', min: 5, max: 200, step: 5, defaultValue: status?.stepLimit || 40,
+                        type: 'number', min: 0, max: 1000, step: 1, defaultValue: status?.stepLimit ?? 0,
                         onBlur: event => {
                           if (skipStepSave.current) { skipStepSave.current = false; return }
                           saveSettings({ stepLimit: Number(event.currentTarget.value) })

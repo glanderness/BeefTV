@@ -165,6 +165,7 @@ func MarkGenerationOrderSubmittedInTx(
 	targets []GenerationTarget,
 	admitResult any,
 	continuationID, approvedBy string,
+	regenerate bool,
 ) error {
 	if strings.TrimSpace(proposalID) == "" {
 		return nil
@@ -226,6 +227,7 @@ func MarkGenerationOrderSubmittedInTx(
 			Targets:        targets,
 			TargetViews:    BuildGenerationOrderTargetViews(domain, targets),
 			SourceTurnID:   turnID,
+			Regenerate:     regenerate,
 			TaskIDs:        taskIDs,
 			ContinuationID: continuationID,
 			CreatedAt:      now,
@@ -410,12 +412,26 @@ func ValidateTurnOrderConflictInTx(tx *gorm.DB, userID, canvasID, turnID string,
 		return err
 	}
 	if submitted != nil {
-		existing := GenerationAuthorization{SourceTurnID: turnID, ProposalID: submitted.ProposalID, Targets: submitted.Targets}
+		existing := GenerationAuthorization{SourceTurnID: turnID, ProposalID: submitted.ProposalID, Targets: submitted.Targets, Regenerate: submitted.Regenerate}
 		if !existing.SamePlan(plan) {
 			return Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
 		}
 	}
 	return nil
+}
+
+// ResolveProposalRegenerateInTx returns the authoritative regenerate flag for
+// confirming a proposal: if a canonical GenerationOrder exists, its recorded
+// Regenerate flag wins (a caller cannot upgrade a non-regenerate order).
+func ResolveProposalRegenerateInTx(tx *gorm.DB, userID, proposalID string, requested bool) (bool, error) {
+	order, err := LookupGenerationOrderInTx(tx, userID, proposalID)
+	if err != nil {
+		return false, err
+	}
+	if order != nil {
+		return order.Regenerate, nil
+	}
+	return requested, nil
 }
 
 // LookupConfirmedOrderPlanInTx resolves a specific owner-confirmed (sourceTurnID, proposalID)
@@ -433,6 +449,7 @@ func LookupConfirmedOrderPlanInTx(tx *gorm.DB, userID, canvasID, sourceTurnID, p
 			SourceTurnID: order.SourceTurnID,
 			ProposalID:   order.ProposalID,
 			Targets:      order.Targets,
+			Regenerate:   order.Regenerate,
 		}, nil
 	}
 	return nil, nil
@@ -445,7 +462,7 @@ func ResolveAuthorizedOrderForTurnInTx(tx *gorm.DB, userID, canvasID, turnID str
 	if own, err := LookupTurnSubmittedOrderInTx(tx, userID, canvasID, turnID); err != nil {
 		return nil, err
 	} else if own != nil {
-		return &GenerationAuthorization{SourceTurnID: own.SourceTurnID, ProposalID: own.ProposalID, Targets: own.Targets}, nil
+		return &GenerationAuthorization{SourceTurnID: own.SourceTurnID, ProposalID: own.ProposalID, Targets: own.Targets, Regenerate: own.Regenerate}, nil
 	}
 	var cont model.AssistantContinuation
 	err := tx.Where("user_id = ? AND canvas_id = ? AND turn_id = ?", userID, canvasID, strings.TrimSpace(turnID)).First(&cont).Error

@@ -154,7 +154,7 @@ beforeEach(() => {
 
 test("real Sidebar handles file, paste, drop, attachment-only, purpose/range, draft restore and busy supplement", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } }); await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加参考素材"]')?.disabled);
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加文件或素材"]')?.disabled);
     await page.locator('input[type="file"]').setInputFiles({ name: "portrait.jpg", mimeType: "image/jpeg", buffer: jpeg });
     await page.getByRole("combobox", { name: "portrait.jpg 的用途" }).waitFor();
     await page.getByText("正在读取预览…", { exact: true }).waitFor({ timeout: 3000 }).catch(async error => { throw new Error(error.message + " BODY " + await page.locator("body").innerText() + " MEDIA " + JSON.stringify(mediaRequests)); });
@@ -219,7 +219,7 @@ test("real Sidebar handles file, paste, drop, attachment-only, purpose/range, dr
 test("asset registration failure remains unsent; explicit upload retry keeps its idempotency key and invalid range blocks send", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加参考素材"]')?.disabled);
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加文件或素材"]')?.disabled);
     const before = chats.length, firstKey = uploadKeys.length;
     failNextAsset = true;
     await page.locator('input[type="file"]').setInputFiles({ name: "retry.png", mimeType: "image/png", buffer: png });
@@ -264,7 +264,7 @@ test("asset registration failure remains unsent; explicit upload retry keeps its
 test("native-local Sidebar publishes accepted uploads for immediate @ reuse, and removal preserves ownership", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加参考素材"]')?.disabled);
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加文件或素材"]')?.disabled);
     expect(await page.evaluate(() => (window as any).assistantInputFixture.nativeLocal())).toBe(true);
     await page.locator('input[type="file"]').setInputFiles({ name: "reuse.jpg", mimeType: "image/jpeg", buffer: jpeg });
     await page.getByRole("combobox", { name: "reuse.jpg 的用途" }).waitFor();
@@ -295,7 +295,7 @@ test("native-local Sidebar publishes accepted uploads for immediate @ reuse, and
 test("missing resource duration is recovered from a real twelve-second WAV for registration, draft and range validation", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加参考素材"]')?.disabled);
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加文件或素材"]')?.disabled);
     await page.locator('input[type="file"]').setInputFiles({ name: "twelve-seconds.wav", mimeType: "audio/wav", buffer: longWav });
     await page.getByRole("combobox", { name: "twelve-seconds.wav 的用途" }).waitFor();
     await page.waitForFunction(async () => (await (window as any).assistantInputFixture.draft())?.attachments.some((item: any) => item.name === "twelve-seconds.wav" && item.durationMs === 12000));
@@ -599,3 +599,60 @@ test("cold-start 503 hides false failure banner until ready and deleting non-cur
     expect(await page.getByRole("button", { name: "删除会话 旧支线对话", exact: true }).count()).toBe(0);
     await page.close();
 }, 35000);
+
+test("real Sidebar attaches arbitrary document files without polluting asset library and sends resource references", async () => {
+    running = false;
+    cancelled = false;
+    turns.length = 0;
+    const beforeChats = chats.length;
+    const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
+    await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
+    await page.evaluate(() => new Promise<void>(resolve => {
+        const req = indexedDB.deleteDatabase("beeftv-assistant-input");
+        req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    }));
+    await page.reload();
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('button[aria-label="添加文件或素材"]')?.disabled);
+    const beforeMediaRequests = mediaRequests.length;
+    const mdBytes = Buffer.from("# 广告分镜脚本\n\n第 1 镜：清晨咖啡店窗边特写。\n", "utf-8");
+    const docxBytes = Buffer.from("PK\x03\x04fake-docx-payload-for-upload-test", "binary");
+    const xlsxBytes = Buffer.from("PK\x03\x04fake-xlsx-payload-for-long-name-overflow-check", "binary");
+    await page.locator('input[type="file"]').setInputFiles([
+        { name: "script-outline.md", mimeType: "text/markdown", buffer: mdBytes },
+        { name: "brand-brief.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: docxBytes },
+        { name: "2026-Q4-advertising-creative-breakdown-table-very-long-name.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: xlsxBytes },
+    ]);
+    await page.getByRole("combobox", { name: "script-outline.md 的用途" }).waitFor();
+    await page.getByRole("combobox", { name: "brand-brief.docx 的用途" }).waitFor();
+    await page.getByRole("combobox", { name: "2026-Q4-advertising-creative-breakdown-table-very-long-name.xlsx 的用途" }).waitFor();
+    expect(registeredAssets).toHaveLength(0);
+    expect(await page.evaluate(() => (window as any).assistantInputFixture.assets())).toEqual([]);
+    expect(mediaRequests.length).toBe(beforeMediaRequests);
+    expect(await page.locator(".canvas-assistant-file-card").count()).toBe(3);
+    expect((await page.locator(".canvas-assistant-file-ext").allInnerTexts()).sort()).toEqual(["DOCX", "MD", "XLSX"]);
+    expect(await page.getByRole("spinbutton").count()).toBe(0);
+    await page.getByRole("combobox", { name: "script-outline.md 的用途" }).click();
+    await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").getByText("参考资料", { exact: true }).waitFor();
+    const filePurposes = await (await page.waitForFunction(() => {
+        const labels = [...document.querySelectorAll(".ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option-content")].map(item => item.textContent);
+        return labels.length === 2 ? labels : null;
+    })).jsonValue();
+    expect(filePurposes).toEqual(["仅分析", "参考资料"]);
+    await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").getByText("参考资料", { exact: true }).click();
+    await page.waitForFunction(async () => (await (window as any).assistantInputFixture.draft())?.attachments.some((item: any) => item.name === "script-outline.md" && item.purpose === "reference"));
+    await page.reload();
+    await page.getByRole("combobox", { name: "script-outline.md 的用途" }).waitFor();
+    expect(await page.locator(".canvas-assistant-file-card").count()).toBe(3);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole("textbox", { name: "给助手的消息" }).fill("按这些文档拆解镜头");
+    const sent = page.waitForResponse(response => response.url().endsWith("/assistant/chat"));
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await sent;
+    await page.getByText("已读取提供的参考素材。", { exact: true }).last().waitFor();
+    const chat = chats[beforeChats];
+    expect(chat?.attachments).toHaveLength(3);
+    expect(chat?.attachments.every((item: any) => item.kind === "file" && !item.assetId && Boolean(item.resourceId))).toBe(true);
+    expect(chat?.attachments.find((item: any) => item.name === "script-outline.md")?.purpose).toBe("reference");
+    expect(chat?.references).toEqual(chat?.attachments.map((item: any) => ({ kind: "resource", id: item.resourceId })));
+    await page.close();
+}, 30000);

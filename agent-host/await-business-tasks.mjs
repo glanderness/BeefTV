@@ -1,5 +1,8 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
+const DEFAULT_AWAIT_IDLE_TIMEOUT_MS = 60 * 60 * 1000;
+const DEFAULT_TASK_WAIT_SLICE_MS = 5000;
+
 function taskPhase(task) {
   return typeof task?.outcome?.phase === 'string' ? task.outcome.phase : '';
 }
@@ -11,6 +14,7 @@ function isResultStateReady(task) {
 }
 
 function isTaskTerminalFailure(task) {
+  if (task?.state === 'failed') return task?.reason !== 'materialization_failed';
   if (task?.status === 'cancelled') return true;
   const phase = taskPhase(task);
   if (phase === 'retrievable' || phase === 'fetching' || phase === 'running') return false;
@@ -18,6 +22,7 @@ function isTaskTerminalFailure(task) {
 }
 
 function isTaskSaved(task) {
+  if (task?.state === 'completed') return true;
   if (task?.status !== 'succeeded') return false;
   const phase = taskPhase(task);
   if (phase && phase !== 'ready') return false;
@@ -26,6 +31,7 @@ function isTaskSaved(task) {
 }
 
 function isTaskMaterializationFailed(task) {
+  if (task?.state === 'failed' && task?.reason === 'materialization_failed') return true;
   if (task?.status !== 'succeeded') return false;
   const phase = taskPhase(task);
   if (phase === 'failed') return true;
@@ -35,10 +41,27 @@ function isTaskMaterializationFailed(task) {
     task.outputs.some(output => output.materializationErrorCode));
 }
 
+function normalizeObservedTask(task) {
+  if (!task || typeof task !== 'object') return task;
+  const id = task.id || task.taskId;
+  return id && !task.id ? { ...task, id } : task;
+}
+
 // Waiting is deterministic tool work owned by the official Durable task. A
 // restart replays Go's committed admission under the same operation identity.
 // No model call or new paid task is used to poll an already accepted result.
-export async function awaitBusinessTasks(data, { opsRequest, turnId, signal, canvasId, intervalMs = 1000, rendering = false, onProgress }) {
+export async function awaitBusinessTasks(data, {
+  opsRequest,
+  turnId,
+  signal,
+  canvasId,
+  intervalMs = 1000,
+  rendering = false,
+  onProgress,
+  useTaskWait = false,
+  taskWaitSliceMs = DEFAULT_TASK_WAIT_SLICE_MS,
+  maxIdleWaitMs = DEFAULT_AWAIT_IDLE_TIMEOUT_MS,
+}) {
   const result = data?.result;
   const ids = result?.taskIds || (result?.taskId ? [result.taskId] : []);
   if (!ids.length) return data;
@@ -50,25 +73,67 @@ export async function awaitBusinessTasks(data, { opsRequest, turnId, signal, can
     await onProgress?.(value);
     previousProgress = serialized;
   };
-  const deadline = Date.now() + 20 * 60 * 1000;
+  let preferTaskWait = Boolean(useTaskWait);
+  let lastSavedCount = 0;
+  let deadline = Date.now() + maxIdleWaitMs;
+  const observedById = new Map();
   try { while (Date.now() < deadline) {
     signal?.throwIfAborted();
-    const tasks = await Promise.all(ids.map(async (taskId) => {
-      const response = await opsRequest('POST', '/ops/task.get', { params: { taskId } }, signal, turnId);
-      if (!response?.result || typeof response.result !== 'object') throw new Error('task_observation_unavailable');
-      return response.result;
-    }));
-    const failed = tasks.find(isTaskTerminalFailure);
-    const saved = tasks.filter(isTaskSaved).length;
-    const settled = tasks.every(task => isTaskTerminalFailure(task) || isTaskSaved(task) || isTaskMaterializationFailed(task));
-    if (failed && settled) return { ...data, result: { ...result, status: failed.status, tasks, taskError: failed.error || '素材任务未成功，保留原任务，不重复生成' } };
-    const ready = tasks.every(isTaskSaved);
-    if (settled && !ready) return { ...data, result: { ...result, status: 'incomplete', tasks, materializationFailed: true,
+    let tasks;
+    let waitResult = null;
+    let waitedOnServer = false;
+    if (preferTaskWait) {
+      const remainingMs = Math.max(0, deadline - Date.now());
+      const timeoutMs = Math.min(25000, Math.max(0, Math.min(taskWaitSliceMs, remainingMs)));
+      try {
+        const response = await opsRequest('POST', '/ops/task.wait', { params: { taskIds: ids, timeoutMs } }, signal, turnId);
+        if (!Array.isArray(response?.result?.tasks) || response.result.observationFailed) {
+          throw new Error('task_observation_unavailable');
+        }
+        waitResult = response.result;
+        tasks = response.result.tasks.map(normalizeObservedTask);
+        waitedOnServer = true;
+      } catch (waitErr) {
+        if (signal?.aborted) throw waitErr;
+        if (waitErr?.reason === 'unknown_operation' || waitErr?.reason === 'scope_denied') {
+          preferTaskWait = false;
+        } else {
+          throw waitErr;
+        }
+      }
+    }
+    if (!tasks) {
+      tasks = await Promise.all(ids.map(async (taskId) => {
+        const response = await opsRequest('POST', '/ops/task.get', { params: { taskId } }, signal, turnId);
+        if (!response?.result || typeof response.result !== 'object') throw new Error('task_observation_unavailable');
+        return normalizeObservedTask({ id: taskId, ...response.result });
+      }));
+    }
+    const currentById = new Map();
+    for (const task of tasks) {
+      if (task?.id) {
+        currentById.set(task.id, task);
+        observedById.set(task.id, task);
+      }
+    }
+    const completeSnapshot = !waitResult?.cancelled && tasks.length === ids.length && ids.every((id) => currentById.has(id));
+    const progressTasks = completeSnapshot ? ids.map((id) => currentById.get(id)) : [...observedById.values()];
+    const saved = progressTasks.filter(isTaskSaved).length;
+    if (saved > lastSavedCount) {
+      lastSavedCount = saved;
+      deadline = Date.now() + maxIdleWaitMs;
+    }
+    const failed = completeSnapshot ? progressTasks.find(isTaskTerminalFailure) : undefined;
+    const settled = completeSnapshot && progressTasks.every(task => isTaskTerminalFailure(task) || isTaskSaved(task) || isTaskMaterializationFailed(task));
+    if (failed && settled) return { ...data, result: { ...result, status: failed.status, tasks: progressTasks, taskError: failed.error || '素材任务未成功，保留原任务，不重复生成' } };
+    const ready = completeSnapshot && progressTasks.every(isTaskSaved);
+    if (settled && !ready) return { ...data, result: { ...result, status: 'incomplete', tasks: progressTasks, materializationFailed: true,
       note: '生成结果尚未保存成功；保留原任务，只恢复原结果的保存，不能重新生成。' } };
-    const downloading = tasks.some(task =>
+    const downloading = progressTasks.some(task =>
+      task?.state === 'downloading' ||
       task?.delivery?.outputs?.some(output => ['downloading', 'retrying', 'waiting'].includes(output.state)) ||
       (task?.status === 'failed' && taskPhase(task) === 'retrievable'));
-    const saving = tasks.some(task => task?.status === 'succeeded' && !isTaskSaved(task) && !isTaskMaterializationFailed(task));
+    const saving = progressTasks.some(task => task?.state === 'saving' || (task?.status === 'succeeded' && !isTaskSaved(task) && !isTaskMaterializationFailed(task)));
     await progress(ready ? (result.nodeIds?.length ? 'binding' : 'saved') : downloading ? 'downloading' : saving ? 'saving' : rendering ? 'rendering' : 'processing', saved);
     if (ready) {
       let boundRevision;
@@ -85,9 +150,11 @@ export async function awaitBusinessTasks(data, { opsRequest, turnId, signal, can
         if (Number.isSafeInteger(canvas.revision) && canvas.revision > 0) boundRevision = canvas.revision;
       }
       const revision = boundRevision === undefined ? {} : { revision: boundRevision };
-      return { ...data, ...revision, result: { ...result, ...revision, status: 'succeeded', tasks } };
+      return { ...data, ...revision, result: { ...result, ...revision, status: 'succeeded', tasks: progressTasks } };
     }
-    await delay(intervalMs, undefined, { signal });
+    if (!waitedOnServer) {
+      await delay(intervalMs, undefined, { signal });
+    }
   } } catch (error) {
     if (signal?.aborted) throw error;
     // The progress store can be the failing observer. Returning the original

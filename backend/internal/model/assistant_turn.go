@@ -20,10 +20,11 @@ type AssistantTurn struct {
 	CreatedAt            time.Time `json:"createdAt"`
 	UpdatedAt            time.Time `json:"updatedAt"`
 	State                string    `json:"state" gorm:"size:16;not null"`
-	SelectedNodeIDs      string    `json:"-" gorm:"type:text"`
-	ReferencedAssetIDs   string    `json:"-" gorm:"type:text"`
-	ReferencedCanvasIDs  string    `json:"-" gorm:"type:text"`
-	AssociatedAssetIDs   string    `json:"-" gorm:"type:text"`
+	SelectedNodeIDs       string    `json:"-" gorm:"type:text"`
+	ReferencedAssetIDs    string    `json:"-" gorm:"type:text"`
+	ReferencedCanvasIDs   string    `json:"-" gorm:"type:text"`
+	ReferencedResourceIDs string    `json:"-" gorm:"type:text"`
+	AssociatedAssetIDs    string    `json:"-" gorm:"type:text"`
 	AssociatedTaskIDs    string    `json:"-" gorm:"type:text"`
 	SkillPinsJSON        string    `json:"-" gorm:"type:text"`
 	Undone               bool      `json:"undone"`

@@ -63,7 +63,7 @@ function heldTasks(state) {
 
 function checkState(state, ledger, where) {
   for (const session of Object.values(state.sessions)) {
-    assert.ok(session.wakeCount >= 0 && session.wakeCount <= maximumWakesPerSession, `${where}: 连续唤醒计数越界 ${session.wakeCount}`)
+    assert.ok(session.wakeCount >= 0 && (maximumWakesPerSession === 0 || session.wakeCount <= maximumWakesPerSession), `${where}: 连续唤醒计数越界 ${session.wakeCount}`)
     assert.ok(!session.deferred || session.deferred.outcomes.length <= 50, `${where}: deferred 超过上限`)
   }
   // 唤醒消息里的任务必须已经记账，且同一任务不能同时出现在两条消息里。
@@ -113,7 +113,7 @@ function checkDelivery(state, ledger, action, where) {
   const active = activeWorkspace(state)
   if (active) assert.equal(action.workspaceId ?? null, active, `${where}: 唤醒投到了别的工作区`)
   const session = state.sessions[action.sessionId]
-  assert.ok(!session || session.wakeCount < maximumWakesPerSession, `${where}: 超过连续自动唤醒上限仍在投递`)
+  assert.ok(!session || maximumWakesPerSession === 0 || session.wakeCount < maximumWakesPerSession, `${where}: 超过连续自动唤醒上限仍在投递`)
 }
 
 // 只允许在明确的场景里失去一个仍被记着的任务；其它任何消失都直接失败。
@@ -413,13 +413,25 @@ test('连续三次自动唤醒后第四次进入 deferred，用户消息补投',
   assert.equal(wake('t1'), true)
   assert.equal(wake('t2'), true)
   assert.equal(wake('t3'), true)
-  assert.equal(state.sessions.s1.wakeCount, 3)
-  assert.equal(wake('t4'), false)
-  assert.deepEqual(state.sessions.s1.deferred.outcomes.map(outcome => outcome.taskId), ['t4'])
+  assert.equal(wake('t4'), true)
+  assert.equal(state.sessions.s1.wakeCount, 4)
+  // 投递失败的结果仍会留在 deferred，等用户再次发消息时补投并重置计数。
+  state = transition(state, { type: 'tasksSubmitted', sessionId: 's1', workspaceId: 'w1', taskIds: ['t5'], agentStatus: 'idle' }).state
+  const finished5 = transition(state, {
+    type: 'taskFinished', sessionId: 's1', waitToken: state.waits.s1.token,
+    outcomes: [{ taskId: 't5', state: 'succeeded', reason: '' }], agentStatus: 'idle',
+  })
+  const deliver5 = finished5.actions.find(action => action.type === 'deliver')
+  assert.ok(deliver5)
+  state = transition(finished5.state, {
+    type: 'delivered', sessionId: 's1', messageId: null, ok: false,
+    outcomes: deliver5.outcomes, workspaceId: 'w1', source: 'wait',
+  }).state
+  assert.deepEqual(state.sessions.s1.deferred.outcomes.map(outcome => outcome.taskId), ['t5'])
   const user = transition(state, { type: 'userMessage', sessionId: 's1', agentStatus: 'idle' })
   const deliver = user.actions.find(action => action.type === 'deliver')
   assert.ok(deliver)
-  assert.deepEqual(deliver.outcomes.map(outcome => outcome.taskId), ['t4'])
+  assert.deepEqual(deliver.outcomes.map(outcome => outcome.taskId), ['t5'])
   assert.equal(user.state.sessions.s1.wakeCount, 0)
 })
 

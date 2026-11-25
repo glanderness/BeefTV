@@ -170,8 +170,61 @@ export function canvasWriteView(data, operation, params = {}) {
   if (operation === 'canvas.generation.propose' && data?.result && typeof data.result === 'object' && !Array.isArray(data.result)) {
     return { ...data, result: projectProposeResult(data.result) };
   }
-  if (operation === 'canvas.generation.submit' && data?.result && typeof data.result === 'object' && !Array.isArray(data.result) && Array.isArray(data.result.tasks)) {
+  if ((operation === 'canvas.generation.submit' || operation === 'canvas.generation.regenerate') && data?.result && typeof data.result === 'object' && !Array.isArray(data.result) && Array.isArray(data.result.tasks)) {
     return { ...data, result: projectSubmitResult(data.result) };
+  }
+  if (operation === 'business.list' && Array.isArray(data?.result?.tools)) {
+    const skeleton = {
+      ...data,
+      result: {
+        total: data.result.total,
+        offset: data.result.offset,
+        limit: data.result.limit,
+        tools: [],
+        omittedToolCount: 999999,
+      },
+    };
+    const budget = Math.max(0, MAX_WRITE_VIEW_BYTES - 512 - jsonBytes(skeleton));
+    const fitted = fitBudgetedArray(data.result.tools, budget, (tool) => ({
+      id: tool?.id,
+      method: tool?.method,
+      path: tool?.path,
+      readOnly: tool?.readOnly,
+      ...(tool?.submitsGeneration ? { submitsGeneration: true } : {}),
+      summary: previewShort(tool?.summary, 140),
+    }));
+    return {
+      ...data,
+      result: {
+        total: data.result.total,
+        offset: data.result.offset,
+        limit: data.result.limit,
+        tools: fitted.items,
+        ...(fitted.omitted > 0 ? { omittedToolCount: fitted.omitted } : {}),
+      },
+    };
+  }
+  if (operation === 'business.call' && data?.result !== undefined) {
+    const serialized = JSON.stringify(data);
+    const totalBytes = Buffer.byteLength(serialized, 'utf8');
+    if (totalBytes > MAX_WRITE_VIEW_BYTES) {
+      const buf = Buffer.from(serialized, 'utf8');
+      let cut = Math.min(buf.length, MAX_WRITE_VIEW_BYTES - 1024);
+      while (cut > 0 && (buf[cut] & 0xc0) === 0x80) cut -= 1;
+      const preview = buf.subarray(0, cut).toString('utf8');
+      return {
+        ...data,
+        result: {
+          tool: data.result?.tool,
+          method: data.result?.method,
+          path: data.result?.path,
+          truncated: true,
+          bytes: totalBytes,
+          preview: `${preview}…`,
+          note: '底层接口返回超过单次输出上限，请加分页或筛选参数缩小范围后再查。',
+        },
+      };
+    }
   }
   if (operation === 'canvas.task.bind' && typeof data?.result?.bindingStatus === 'string') {
     // Go retains the full document for replay and undo. Model/nested callers

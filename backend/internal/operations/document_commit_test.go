@@ -135,10 +135,21 @@ func TestDocumentCommitRequiresExpectedRevision(t *testing.T) {
 
 func TestCanvasCreateOperationAndReplay(t *testing.T) {
 	h := newHarness(t)
-	if _, err := h.execute(t, operations.AssistantCaller(&agentops.AssistantScope{CanvasID: h.canvasID, PermissionMode: "full-access"}, false), "canvas.create", "create-op-assistant", map[string]any{
-		"title": "内置助手不应能创建画布",
-	}); err == nil {
-		t.Fatal("expected assistant caller to be denied canvas.create")
+	for _, mode := range []string{"read-only", "canvas"} {
+		if _, err := h.execute(t, operations.AssistantCaller(&agentops.AssistantScope{CanvasID: h.canvasID, PermissionMode: mode}, false), "canvas.create", "create-op-assistant-"+mode, map[string]any{
+			"title": "非完全访问模式不应能创建画布",
+		}); err == nil {
+			t.Fatalf("expected assistant %s mode to be denied canvas.create", mode)
+		}
+	}
+	assistantCreated, err := h.execute(t, operations.AssistantCaller(&agentops.AssistantScope{CanvasID: h.canvasID, PermissionMode: "full-access"}, false), "canvas.create", "create-op-assistant-full", map[string]any{
+		"title": "完全访问内置助手创建画布",
+	})
+	if err != nil {
+		t.Fatalf("full-access assistant canvas.create: %v", err)
+	}
+	if res, _ := assistantCreated.Result.(map[string]any); res["canvasId"] == "" || res["title"] != "完全访问内置助手创建画布" {
+		t.Fatalf("unexpected full-access assistant canvas.create result: %#v", assistantCreated)
 	}
 	created, err := h.execute(t, operations.ExternalCaller(false), "canvas.create", "create-op-1", map[string]any{
 		"title": "外部创建画布",

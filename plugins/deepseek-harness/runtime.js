@@ -167,9 +167,9 @@ export function approvalReason(name, args, businessTools = [], quotes = new Map(
 
 // ---- 生成完接着做：设置、任务判定与唤醒文案 ----
 
-export const defaultPluginSettings = Object.freeze({ autoContinue: true, stepLimit: 40 })
-export const minimumStepLimit = 5
-export const maximumStepLimit = 200
+export const defaultPluginSettings = Object.freeze({ autoContinue: true, stepLimit: 0 })
+export const minimumStepLimit = 0
+export const maximumStepLimit = 1000
 
 // 设置文件来自本机磁盘，读坏或旧字段都以默认值继续，避免插件整体不可用。
 export function normalizeSettings(value) {
@@ -190,7 +190,7 @@ export function validatedSettingsPatch(value) {
   }
   if ('stepLimit' in value) {
     if (!Number.isInteger(value.stepLimit) || value.stepLimit < minimumStepLimit || value.stepLimit > maximumStepLimit) {
-      throw new Error(`每轮工具调用上限请填 ${minimumStepLimit} 到 ${maximumStepLimit} 之间的整数。`)
+      throw new Error(`每轮工具调用上限请填 0（不限）或 1 到 ${maximumStepLimit} 之间的整数。`)
     }
     patch.stepLimit = value.stepLimit
   }

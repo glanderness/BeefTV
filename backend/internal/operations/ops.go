@@ -27,6 +27,8 @@ func RegisterDefaultOps(r *Registry) {
 	registerModelCatalogOp(r)
 	registerGenerationEstimateOp(r)
 	registerMediaOps(r)
+	registerFileReadOp(r)
+	registerBusinessGatewayOps(r)
 	registerSkillOps(r)
 	registerSkillMarketOps(r)
 	registerSkillPublishingOps(r)
@@ -44,7 +46,7 @@ func RegisterDefaultOps(r *Registry) {
 	registerGenerationOrderListOp(r)
 	registerExternalWriteOps(r)
 	registerCanvasProjectExportOps(r)
-	r.Register(Op{ExternalOnly: true, ReplaySafe: true, ID: "canvas.create", Summary: "创建新画布", Scope: ScopeCanvas,
+	r.Register(Op{ReplaySafe: true, NoTurnCanvas: true, ID: "canvas.create", Summary: "创建新画布", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","description":"画布名称（默认：未命名画布）"},"canvasId":{"type":"string","description":"可选自定义画布 ID；省略时由服务端生成"},"projectId":{"type":"string","description":"可选关联项目 ID"},"folderId":{"type":"string","description":"可选画布文件夹 ID"}}}`),
 		Handler: opCanvasCreate})
 	r.Register(Op{AssistantCanvas: true, ID: "canvas.get", Summary: "读取画布内容（节点与连线）", ReadOnly: true, Scope: ScopeCanvas,
@@ -88,7 +90,7 @@ func RegisterDefaultOps(r *Registry) {
 		Handler: opCanvasDocumentPatch})
 	// 付费生成只提议不执行：这里校验目标并给出用户要确认的模型，真正的生成由界面在用户确认后发起。
 	r.Register(Op{AssistantProposal: true, AssistantCanvas: true, ID: "canvas.generation.propose", Summary: "按节点已保存参数冻结生成单与报价。核对返回的 targets.parameters 和 estimate 后再提交，参数或报价不一致时停止", ReadOnly: true, Scope: ScopeCanvas,
-		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1},"kind":{"type":"string","enum":["image","video","audio"]},"productionNodeIds":{"type":"array","items":{"type":"string"},"description":"本批生成的节点（不限数量，可一次列出全部计划素材）；nodeIds 只列已就绪首批"},"note":{"type":"string"}},"required":["canvasId","nodeIds","kind"]}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1},"kind":{"type":"string","enum":["image","video","audio"]},"productionNodeIds":{"type":"array","items":{"type":"string"},"description":"本批生成的节点（不限数量，可一次列出全部计划素材）；nodeIds 只列已就绪首批"},"regenerate":{"type":"boolean","description":"原地重做已结束节点，旧结果保留在素材库"},"note":{"type":"string"}},"required":["canvasId","nodeIds","kind"]}`),
 		Handler: opCanvasGenerationPropose})
 	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.task.bind", Summary: "把已交付任务产物绑定到节点", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"taskId":{"type":"string"},"nodeId":{"type":"string"},"outputIndex":{"type":"integer"}},"required":["canvasId","taskId","nodeId"]}`),
@@ -105,6 +107,7 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		Kind              string   `json:"kind"`
 		Note              string   `json:"note"`
 		ProductionNodeIDs []string `json:"productionNodeIds"`
+		Regenerate        bool     `json:"regenerate"`
 	}
 	if err := decodeParams(params, &args); err != nil {
 		return nil, err
@@ -242,6 +245,9 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		"note": strings.TrimSpace(args.Note), "targets": targetsSummary,
 		"source": map[string]any{"canvasId": args.CanvasID, "canvasRevision": doc["revision"], "modelConfigRevision": resolved.Revision},
 	}
+	if args.Regenerate {
+		result["regenerate"] = true
+	}
 	var proposedTargets []GenerationTarget
 	if len(args.ProductionNodeIDs) > 0 {
 		targets, err := GenerationTargets(ctx.Domain, doc, args.ProductionNodeIDs)
@@ -298,6 +304,7 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		Targets:             proposedTargets,
 		TargetViews:         BuildGenerationOrderTargetViews(ctx.Domain, proposedTargets),
 		SourceTurnID:        strings.TrimSpace(ctx.TurnID),
+		Regenerate:          args.Regenerate,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}

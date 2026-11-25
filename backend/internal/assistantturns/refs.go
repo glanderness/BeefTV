@@ -23,6 +23,7 @@ func AssociatedReferences(raw json.RawMessage) ([]string, []string) {
 	var payload struct {
 		Nodes []struct {
 			Metadata struct {
+				TaskID          string `json:"taskId"`
 				GenerationBatch struct {
 					TaskID       string `json:"taskId"`
 					Continuation struct {
@@ -34,6 +35,9 @@ func AssociatedReferences(raw json.RawMessage) ([]string, []string) {
 	}
 	if json.Unmarshal(raw, &payload) == nil {
 		for _, node := range payload.Nodes {
+			if id := strings.TrimSpace(node.Metadata.TaskID); id != "" {
+				tasks = append(tasks, id)
+			}
 			if id := strings.TrimSpace(node.Metadata.GenerationBatch.TaskID); id != "" {
 				tasks = append(tasks, id)
 			}

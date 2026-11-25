@@ -46,15 +46,19 @@ func TestMissingPermissionModeKeepsLegacyCanvasAuthority(t *testing.T) {
 	}
 }
 
-func TestCanvasRoundHTTPDiscoveryHidesTaskWait(t *testing.T) {
+func TestCanvasRoundHTTPDiscoveryExposesTaskWaitAndHidesFullAccessOps(t *testing.T) {
 	env := newAssistantTestEnv(t, nil)
 	const turn = "abcdef0099aabbcc"
 	env.beginTurn(t, turn, app.AssistantTurnInput{PermissionMode: "canvas"})
 	listed := getOps(t, env, map[string]string{"X-Beeftv-Agent-Token": assistantTestHostToken, "X-Beeftv-Agent-Turn": turn})
-	if listingHas(listed, "task.wait") {
-		t.Fatalf("当前画布模式不应向内置模型暴露等待任务操作: %v", listed)
+	for _, id := range []string{"task.wait", "task.get", "task.cancel", "file.read", "canvas.generation.regenerate"} {
+		if !listingHas(listed, id) {
+			t.Fatalf("当前画布模式应允许宿主调用 %s: %v", id, listed)
+		}
 	}
-	if !listingHas(listed, "task.get") {
-		t.Fatalf("当前画布模式仍应能查询任务: %v", listed)
+	for _, id := range []string{"canvas.create", "business.list", "business.call"} {
+		if listingHas(listed, id) {
+			t.Fatalf("当前画布模式不应暴露完全访问操作 %s: %v", id, listed)
+		}
 	}
 }

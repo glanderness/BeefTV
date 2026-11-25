@@ -169,6 +169,7 @@ export function createOperationBridge({
     const mode = generation.permissionMode || 'canvas';
     const tools = [...descriptors.entries()].filter(([,d]) =>
       d.id !== 'skill.get' &&
+      d.id !== 'task.wait' &&
       Array.isArray(d.assistantModes) &&
       d.assistantModes.includes(mode)
     ).map(([toolName, descriptor]) => ({
@@ -220,6 +221,9 @@ export function createOperationBridge({
             params.canvasId = params.projectId;
             delete params.projectId;
           }
+        } else if (descriptor.id === 'canvas.create') {
+          // canvas.create accepts an optional custom canvasId for the newly created
+          // canvas; never inject the current session canvasId here.
         } else if (Object.hasOwn(descriptor.params?.properties || {}, 'canvasId')) {
           if ((generation.permissionMode || 'canvas') === 'canvas' && descriptor.id !== 'canvas.get' && descriptor.id !== 'canvas.nodes.get' && params.canvasId !== undefined && params.canvasId !== canvasId) {
             throw new Error(`scope_denied: 画布参数与当前会话不一致（${params.canvasId} ≠ ${canvasId}）`);
@@ -295,9 +299,26 @@ export function createOperationBridge({
               },
             };
           }
-          if (descriptor.id === 'canvas.generation.submit' || descriptor.id === 'canvas.timeline.render') {
+          if (descriptor.id === 'file.read' && data?.result?.pagination && typeof data.result.content === 'string') {
+            const p = data.result.pagination;
+            if (p.truncated) {
+              const nextLine = p.firstLineExceedsLimit ? (p.startLine + 1) : (p.endLine + 1);
+              let footer;
+              if (p.nextByteOffset > 0) {
+                const nextLineHint = p.startLine < p.totalLines ? `；或跳过本行传 offset=${nextLine} 读后续行` : '';
+                footer = `\n\n[第 ${p.startLine} 行共 ${p.firstLineBytes} 字节，已按单页上限截断；文件共 ${p.totalLines} 行。如需继续阅读本行剩余内容，请传 offset=${p.startLine}, byteOffset=${p.nextByteOffset} 调用 file_read（resourceId="${params.resourceId}"）${nextLineHint}。]`;
+              } else if (p.firstLineExceedsLimit) {
+                footer = `\n\n[第 ${p.startLine} 行共 ${p.firstLineBytes} 字节，已按单页上限截断；文件共 ${p.totalLines} 行。${p.startLine < p.totalLines ? `如需继续阅读，请传 offset=${nextLine} 调用 file_read（resourceId="${params.resourceId}"）。` : ''}]`;
+              } else {
+                footer = `\n\n[当前显示第 ${p.startLine}-${p.endLine} 行（共 ${p.totalLines} 行）。如需继续阅读后续内容，请传 offset=${nextLine} 调用 file_read（resourceId="${params.resourceId}"）。]`;
+              }
+              data = { ...data, result: { ...data.result, content: data.result.content + footer } };
+            }
+          }
+          if (descriptor.id === 'canvas.generation.submit' || descriptor.id === 'canvas.generation.regenerate' || descriptor.id === 'canvas.timeline.render') {
             data = await awaitBusinessTasks(data, { opsRequest, turnId: turn.turnId, signal, canvasId: params.canvasId,
-              rendering: descriptor.id === 'canvas.timeline.render', onProgress: api.reportProgress });
+              rendering: descriptor.id === 'canvas.timeline.render', onProgress: api.reportProgress,
+              useTaskWait: descriptors.has('task_wait') });
           }
           // A replay can recover the receipt lost between business commit and
           // the durable checkpoint. Only our persisted request may advance

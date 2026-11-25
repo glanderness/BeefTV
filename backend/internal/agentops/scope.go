@@ -19,6 +19,7 @@ type AssistantScope struct {
 	CanvasID       string
 	AssetIDs       map[string]bool
 	CanvasIDs      map[string]bool
+	ResourceIDs    map[string]bool
 	TaskIDs        map[string]bool
 	// SkillPins holds exact pin identities selected in this round or in an
 	// earlier round of the same conversation; a loaded skill stays readable.
@@ -48,13 +49,15 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 		return denied("本轮助手权限不允许该操作")
 	}
 	var args struct {
-		CanvasID    string `json:"canvasId"`
-		NodeID      string `json:"nodeId"`
-		AssetID     string `json:"assetId"`
-		TaskID      string `json:"taskId"`
-		SkillID     string `json:"skillId"`
-		VersionID   string `json:"versionId"`
-		ContentHash string `json:"contentHash"`
+		CanvasID    string   `json:"canvasId"`
+		NodeID      string   `json:"nodeId"`
+		AssetID     string   `json:"assetId"`
+		ResourceID  string   `json:"resourceId"`
+		TaskID      string   `json:"taskId"`
+		TaskIDs     []string `json:"taskIds"`
+		SkillID     string   `json:"skillId"`
+		VersionID   string   `json:"versionId"`
+		ContentHash string   `json:"contentHash"`
 	}
 	if len(params) > 0 {
 		_ = json.Unmarshal(params, &args)
@@ -132,11 +135,37 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 			return nil
 		}
 		return denied("这个媒体未关联到当前画布或本次对话")
-	case "task.get":
+	case "file.read":
+		if s.ResourceIDs[strings.TrimSpace(args.ResourceID)] {
+			return nil
+		}
+		return denied("这个文件没有在本次对话中附带")
+	case "task.get", "task.cancel":
 		if s.TaskIDs[strings.TrimSpace(args.TaskID)] {
 			return nil
 		}
 		return denied("这个任务与当前画布无关")
+	case "task.wait":
+		if canvasID := strings.TrimSpace(args.CanvasID); canvasID != "" && !s.canvasAllowed(canvasID) {
+			return denied("这个画布不在本次对话范围内")
+		}
+		rawIDs := args.TaskIDs
+		if id := strings.TrimSpace(args.TaskID); id != "" {
+			rawIDs = []string{id}
+		}
+		if len(rawIDs) == 0 {
+			return nil
+		}
+		for _, id := range rawIDs {
+			trimmed := strings.TrimSpace(id)
+			if trimmed == "" {
+				continue
+			}
+			if !s.TaskIDs[trimmed] {
+				return denied("这个任务与当前画布无关")
+			}
+		}
+		return nil
 	default:
 		return denied("内置助手不能调用该操作")
 	}

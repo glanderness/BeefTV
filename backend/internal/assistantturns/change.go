@@ -14,10 +14,22 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func isNonCanvasMutationOp(op string) bool {
+	switch op {
+	case "task.cancel", "canvas.create", "business.call":
+		return true
+	default:
+		return false
+	}
+}
+
 func changeFromReceipts(record Record, receipts []model.AgentOpRecord) (*Change, error) {
 	if len(record.CanvasSnapshots) > 0 {
 		groups := map[string][]model.AgentOpRecord{}
 		for _, receipt := range receipts {
+			if isNonCanvasMutationOp(receipt.Op) {
+				continue
+			}
 			var p struct {
 				CanvasID string `json:"canvasId"`
 			}
@@ -75,6 +87,9 @@ func changeFromReceipts(record Record, receipts []model.AgentOpRecord) (*Change,
 	}
 	steps := make([]step, 0, len(receipts))
 	for _, receipt := range receipts {
+		if isNonCanvasMutationOp(receipt.Op) {
+			continue
+		}
 		var payload map[string]any
 		if json.Unmarshal([]byte(receipt.ResultJSON), &payload) != nil {
 			return nil, errors.New("助手操作回执损坏，已保留撤销快照")

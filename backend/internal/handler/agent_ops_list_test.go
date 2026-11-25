@@ -53,16 +53,17 @@ func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
 
 	hostListing := getOps(t, env, map[string]string{"X-Beeftv-Agent-Token": assistantTestHostToken})
 	wantHost := make([]string, 0)
-	for _, descriptor := range registry.List(operations.ManualCaller(false)) {
-		if len(descriptor.AssistantModes) > 0 {
-			wantHost = append(wantHost, descriptor.ID)
-		}
+	for _, descriptor := range registry.List(operations.AssistantCaller(&agentops.AssistantScope{PermissionMode: "full-access"}, false)) {
+		wantHost = append(wantHost, descriptor.ID)
 	}
 	if !reflect.DeepEqual(hostListing, wantHost) {
 		t.Fatalf("宿主回合外能力发现应为 %v，得到 %v", wantHost, hostListing)
 	}
-	if !listingHas(hostListing, "asset.list") || !listingHas(hostListing, "canvas.search") || !listingHas(hostListing, "canvas.document.commit") {
-		t.Fatalf("宿主应能装载完整画布能力，回合内再按Go权限选择: %v", hostListing)
+	if !listingHas(hostListing, "asset.list") || !listingHas(hostListing, "canvas.search") || !listingHas(hostListing, "canvas.document.commit") || !listingHas(hostListing, "business.list") || !listingHas(hostListing, "business.call") {
+		t.Fatalf("宿主应能装载完整助手能力，回合内再按Go权限选择: %v", hostListing)
+	}
+	if listingHas(externalListing, "business.list") || listingHas(externalListing, "business.call") {
+		t.Fatalf("外部客户端不应看到内置助手专属的 business 网关操作: %v", externalListing)
 	}
 }
 

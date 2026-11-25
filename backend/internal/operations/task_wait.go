@@ -24,12 +24,11 @@ var errTaskWaitCanvasUnreadable = errors.New("画布内容不可读")
 
 func registerTaskWaitOp(r *Registry) {
 	r.Register(Op{
-		ID:       "task.wait",
-		Summary:  "等待生成任务完成；超时返回 pending 和原 taskId，不返回错误",
-		ReadOnly: true,
-		Scope:    ScopeWorkspaceRead,
-		// 外部客户端先用；内置宿主迁移到 task.wait 前，不把等待工具暴露给内置模型。
-		ExternalOnly: true,
+		ID:              "task.wait",
+		Summary:         "等待生成任务完成；超时返回 pending 和原 taskId，不返回错误",
+		ReadOnly:        true,
+		Scope:           ScopeWorkspaceRead,
+		AssistantCanvas: true,
 		Params: json.RawMessage(`{"type":"object","properties":{` +
 			`"taskId":{"type":"string","description":"单个任务 ID"},` +
 			`"taskIds":{"type":"array","items":{"type":"string"},"description":"要等待的任务 ID 列表"},` +
@@ -309,14 +308,26 @@ func awaitTaskIDs(ctx context.Context, domain Domain, userID string, ids []strin
 	}
 	deadline := time.Now().Add(timeout)
 	firstPass := true
+	var lastComplete *taskWaitObservation
 	for {
 		observation := readTaskWaitObservation(ctx, domain, userID, ids, deadline, firstPass)
 		firstPass = false
-		if observation.cancelled {
-			observation.pending = true
+		if len(observation.missing) > 0 {
 			return observation
 		}
-		if len(observation.missing) > 0 {
+		if !observation.cancelled && !observation.deadlineReached && len(observation.views) == len(ids) {
+			copied := observation
+			copied.views = append([]taskWaitTaskView(nil), observation.views...)
+			copied.failedTaskIDs = append([]string(nil), observation.failedTaskIDs...)
+			lastComplete = &copied
+		}
+		if observation.cancelled {
+			if len(observation.views) < len(ids) && lastComplete != nil {
+				observation.views = append([]taskWaitTaskView(nil), lastComplete.views...)
+				observation.failedTaskIDs = append([]string(nil), lastComplete.failedTaskIDs...)
+				observation.observationFailed = lastComplete.observationFailed
+			}
+			observation.pending = true
 			return observation
 		}
 		if observation.settled(len(ids)) {
@@ -325,6 +336,11 @@ func awaitTaskIDs(ctx context.Context, domain Domain, userID string, ids []strin
 			return observation
 		}
 		if observation.deadlineReached || !time.Now().Before(deadline) {
+			if len(observation.views) < len(ids) && lastComplete != nil {
+				observation.views = append([]taskWaitTaskView(nil), lastComplete.views...)
+				observation.failedTaskIDs = append([]string(nil), lastComplete.failedTaskIDs...)
+				observation.observationFailed = lastComplete.observationFailed
+			}
 			observation.pending = true
 			observation.timedOut = true
 			return observation

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/appearance"
 	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/beeftv"
@@ -61,6 +62,9 @@ type RuntimeDependencies struct {
 	// DesktopTrust verifies both the launch token and the separate Wails UI bootstrap credential.
 	// 桌面形态用它代替开发引导开关签发 UI 会话；服务端形态为 nil。
 	DesktopTrust func(*http.Request) bool
+	// OnAgentOpsRegistry receives the registered ops registry so bootstrap can
+	// attach the mounted BusinessGateway after all API routes are registered.
+	OnAgentOpsRegistry func(*agentops.Registry)
 }
 
 type serviceRuntimeAdapter struct {

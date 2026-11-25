@@ -122,3 +122,93 @@ test('transient task observation error reports observation_unavailable without f
   expect(result.result.observationFailed).toBe(true);
   expect(progress).toEqual(['observation_unavailable']);
 });
+
+test('useTaskWait batches multiple tasks into server-side task.wait requests', async () => {
+  const calls = [];
+  const progress = [];
+  const responses = [
+    {
+      result: {
+        pending: true,
+        timedOut: true,
+        tasks: [
+          { taskId: 't1', status: 'succeeded', state: 'completed', outputs: [{ resourceId: 'r1' }] },
+          { taskId: 't2', status: 'running', state: 'running', outputs: [] },
+        ],
+      },
+    },
+    {
+      result: {
+        pending: false,
+        completed: true,
+        tasks: [
+          { taskId: 't1', status: 'succeeded', state: 'completed', outputs: [{ resourceId: 'r1' }] },
+          { taskId: 't2', status: 'succeeded', state: 'completed', outputs: [{ resourceId: 'r2' }] },
+        ],
+      },
+    },
+  ];
+  const result = await awaitBusinessTasks({ result: { taskIds: ['t1', 't2'] } }, {
+    useTaskWait: true,
+    taskWaitSliceMs: 10,
+    onProgress: async value => progress.push(value),
+    opsRequest: async (_method, path, body) => {
+      calls.push({ path, params: body.params });
+      return responses.shift();
+    },
+  });
+  expect(calls.every(item => item.path === '/ops/task.wait')).toBe(true);
+  expect(calls.length).toBe(2);
+  expect(calls[0].params.taskIds).toEqual(['t1', 't2']);
+  expect(result.result.status).toBe('succeeded');
+  expect(result.result.tasks.map(t => t.id)).toEqual(['t1', 't2']);
+  expect(progress).toEqual([
+    { stage: 'processing', saved: 1, total: 2 },
+    { stage: 'saved', saved: 2, total: 2 },
+  ]);
+});
+
+test('useTaskWait falls back cleanly to task.get if backend rejects task.wait', async () => {
+  const paths = [];
+  const result = await awaitBusinessTasks({ result: { taskIds: ['t1'] } }, {
+    useTaskWait: true,
+    intervalMs: 1,
+    opsRequest: async (_method, path) => {
+      paths.push(path);
+      if (path === '/ops/task.wait') {
+        const err = new Error('unknown_operation: 未知操作');
+        err.reason = 'unknown_operation';
+        throw err;
+      }
+      return { result: { id: 't1', status: 'succeeded', outputs: [{ resourceId: 'r1' }] } };
+    },
+  });
+  expect(paths).toEqual(['/ops/task.wait', '/ops/task.get']);
+  expect(result.result.status).toBe('succeeded');
+});
+
+test('useTaskWait ignores partial or cancelled task.wait batches until every task is observed', async () => {
+  let calls = 0;
+  const responses = [
+    // Slice timeout mid-pass returned only the failed first task while t2 is still running.
+    { result: { pending: true, timedOut: true, tasks: [{ taskId: 't1', status: 'failed', state: 'failed', error: 'quota' }] } },
+    // Cancelled empty slice must not trigger vacuous every() success either.
+    { result: { pending: true, cancelled: true, tasks: [] } },
+    // Complete snapshot: t1 failed, t2 still running -> keep waiting.
+    { result: { pending: true, timedOut: true, tasks: [{ taskId: 't1', status: 'failed', state: 'failed', error: 'quota' }, { taskId: 't2', status: 'running', state: 'running' }] } },
+    // Complete final snapshot: t1 failed, t2 saved -> now settled.
+    { result: { pending: false, completed: false, failed: true, tasks: [{ taskId: 't1', status: 'failed', state: 'failed', error: 'quota' }, { taskId: 't2', status: 'succeeded', state: 'completed' }] } },
+  ];
+  const result = await awaitBusinessTasks({ result: { taskIds: ['t1', 't2'] } }, {
+    useTaskWait: true,
+    taskWaitSliceMs: 10,
+    opsRequest: async (_method, path) => {
+      expect(path).toBe('/ops/task.wait');
+      calls += 1;
+      return responses.shift();
+    },
+  });
+  expect(calls).toBe(4);
+  expect(result.result.status).toBe('failed');
+  expect(result.result.tasks.map(t => t.id)).toEqual(['t1', 't2']);
+});

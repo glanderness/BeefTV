@@ -79,6 +79,115 @@
     "replay": "safe"
   },
   {
+    "id": "business.call",
+    "summary": "调用 business_list 列出的工作区底层业务接口（仅完全访问模式；提交计费生成须走 canvas_generation_propose）",
+    "readOnly": false,
+    "scope": "workspace_read",
+    "params": {
+      "properties": {
+        "body": {
+          "additionalProperties": true,
+          "description": "JSON 请求体",
+          "type": "object"
+        },
+        "file": {
+          "additionalProperties": false,
+          "properties": {
+            "data": {
+              "description": "Base64 文件字节",
+              "type": "string"
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "data"
+          ],
+          "type": "object"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "path": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "路径参数",
+          "type": "object"
+        },
+        "query": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "查询参数",
+          "type": "object"
+        },
+        "tool": {
+          "description": "business_list 返回的接口 ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [
+      "full-access"
+    ],
+    "replay": "unsafe"
+  },
+  {
+    "id": "business.list",
+    "summary": "列出当前工作区可调用的底层业务接口（仅完全访问模式，支持关键词/方法筛选与分页）",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "按接口名、路径或说明筛选"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ],
+          "description": "按 HTTP 方法筛选"
+        },
+        "readOnly": {
+          "type": "boolean",
+          "description": "只列只读接口"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "assistantModes": [
+      "full-access"
+    ],
+    "replay": "safe"
+  },
+  {
     "id": "canvas.create",
     "summary": "创建新画布",
     "readOnly": false,
@@ -111,7 +220,9 @@
       ],
       "type": "object"
     },
-    "assistantModes": [],
+    "assistantModes": [
+      "full-access"
+    ],
     "replay": "safe"
   },
   {
@@ -399,6 +510,10 @@
           },
           "description": "本批生成的节点（不限数量，可一次列出全部计划素材）；nodeIds 只列已就绪首批"
         },
+        "regenerate": {
+          "type": "boolean",
+          "description": "原地重做已结束节点，旧结果保留在素材库"
+        },
         "note": {
           "type": "string"
         }
@@ -466,7 +581,10 @@
       ],
       "type": "object"
     },
-    "assistantModes": [],
+    "assistantModes": [
+      "full-access",
+      "canvas"
+    ],
     "replay": "safe",
     "submitsGeneration": true
   },
@@ -1951,6 +2069,50 @@
     "replay": "unsafe"
   },
   {
+    "id": "file.read",
+    "summary": "分页读取用户上传的文档或文本内容（支持纯文本/Markdown/CSV/JSON/SRT/代码/DOCX/XLSX/PPTX/PDF）",
+    "readOnly": true,
+    "scope": "canvas",
+    "params": {
+      "type": "object",
+      "properties": {
+        "resourceId": {
+          "type": "string",
+          "description": "已上传文件的资源 ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "可选原始文件名，用于识别格式"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "起始行号（从 1 开始）"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000,
+          "description": "读取行数（单次最多 2000 行、50KB）"
+        },
+        "byteOffset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "超长单行续读字节偏移"
+        }
+      },
+      "required": [
+        "resourceId"
+      ]
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
     "id": "generation.estimate",
     "summary": "估算一组生成的费用（官方渠道优先使用服务端估价接口，离线或自建渠道回退到本地目录）；不写入、不建任务，没有价格的项目会写明原因",
     "readOnly": true,
@@ -2835,7 +2997,10 @@
       ],
       "type": "object"
     },
-    "assistantModes": [],
+    "assistantModes": [
+      "full-access",
+      "canvas"
+    ],
     "replay": "safe"
   },
   {
@@ -2896,7 +3061,11 @@
         }
       }
     },
-    "assistantModes": [],
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
     "replay": "safe"
   }
 ]
