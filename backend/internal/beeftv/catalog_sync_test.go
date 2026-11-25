@@ -545,3 +545,96 @@ func TestCatalogSyncRecoversFromStartupCatalogFailedAndPreservesUserConfig(t *te
 		t.Fatalf("atomic catalog write dropped user custom channel")
 	}
 }
+
+func TestCatalogSyncInFlight304PreservesNewerPendingETagAndTriggersFollowUp(t *testing.T) {
+	var mu sync.Mutex
+	etag := `"beeftv-cat-v1"`
+	includeV2 := false
+	inFlightEntered := make(chan struct{})
+	release304 := make(chan struct{})
+	var enteredOnce sync.Once
+	var modelsCalls atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		call := modelsCalls.Add(1)
+		if call == 2 {
+			// Hold the conditional v1 refresh in-flight while a newer v2 ETag arrives via piggyback.
+			enteredOnce.Do(func() { close(inFlightEntered) })
+			<-release304
+			w.Header().Set("ETag", `"beeftv-cat-v1"`)
+			w.Header().Set(CatalogETagHeader, `"beeftv-cat-v1"`)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		mu.Lock()
+		curETag := etag
+		withV2 := includeV2
+		mu.Unlock()
+		w.Header().Set("ETag", curETag)
+		w.Header().Set(CatalogETagHeader, curETag)
+		if r.Header.Get("If-None-Match") == curETag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		models := []map[string]any{
+			{
+				"id": "hy-image-v3", "model_type": "image", "supported_endpoint_types": []string{"image-generation"},
+				"pricing": map[string]any{"model_name": "hy-image-v3", "mode": "per_request", "per_request_cny": 0.2, "display_kind": "image"},
+			},
+		}
+		if withV2 {
+			models = append(models, map[string]any{
+				"id": "gpt-image-2.5", "model_type": "image", "supported_endpoint_types": []string{"image-generation"},
+				"pricing": map[string]any{"model_name": "gpt-image-2.5", "mode": "per_request", "per_request_cny": 0.35, "display_kind": "image"},
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": models})
+	}))
+	t.Cleanup(server.Close)
+
+	svc, store, _ := seedConnectedCatalogService(t, server, nil, nil)
+	before, err := svc.SyncCatalogIfNeeded(context.Background(), CatalogSyncOptions{Force: true})
+	if err != nil {
+		t.Fatalf("initial v1 sync failed: %v", err)
+	}
+
+	// Start conditional v1 refresh (call #2) that will return 304 after we inject v2 piggyback ETag.
+	syncDone := make(chan error, 1)
+	go func() {
+		_, syncErr := svc.SyncCatalogIfNeeded(context.Background(), CatalogSyncOptions{Force: true})
+		syncDone <- syncErr
+	}()
+
+	select {
+	case <-inFlightEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight conditional refresh did not reach server")
+	}
+
+	mu.Lock()
+	etag = `"beeftv-cat-v2"`
+	includeV2 = true
+	mu.Unlock()
+	svc.NoteRemoteCatalogETag(`"beeftv-cat-v2"`)
+	close(release304)
+
+	if err := <-syncDone; err != nil {
+		t.Fatalf("conditional 304 sync failed: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if svc.Status().CatalogConfigRevision > before.CatalogConfigRevision && catalogProfileOrNil(store, "gpt-image-2.5") != nil {
+			if gotCalls := modelsCalls.Load(); gotCalls < 3 {
+				t.Fatalf("expected follow-up /v1/models fetch after 304, got %d calls", gotCalls)
+			}
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatalf("in-flight 304 dropped newer pending ETag v2 (calls=%d rev=%d)", modelsCalls.Load(), svc.Status().CatalogConfigRevision)
+}

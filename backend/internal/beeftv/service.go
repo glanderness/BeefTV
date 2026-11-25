@@ -114,7 +114,7 @@ func New(opts Options) (*Service, error) {
 		now: now, sleep: sleep, provider: opts.Provider, clientVersion: clientVersion,
 		hostname: hostname, fetchCatalog: opts.FetchCatalog, persistFn: opts.Persist,
 		catalogSyncInterval: syncInterval,
-		state: state, lifecycle: lifecycle, shutdown: shutdown,
+		state:               state, lifecycle: lifecycle, shutdown: shutdown,
 	}
 	if svc.httpClient == nil {
 		svc.httpClient = defaultHTTPClient(func() {
@@ -582,14 +582,14 @@ func (s *Service) setError(status, message string) {
 
 func (s *Service) summaryLocked() Summary {
 	summary := Summary{
-		State:           s.state.Status,
-		Market:          s.state.Market,
-		KeyName:         s.state.KeyName,
-		TokenID:         s.state.TokenID,
-		Balance:         s.state.Balance,
-		ErrorReason:     s.state.LastError,
-		ConnectedAt:     s.state.ConnectedAt,
-		HasCredential:   s.state.hasCredential(),
+		State:                 s.state.Status,
+		Market:                s.state.Market,
+		KeyName:               s.state.KeyName,
+		TokenID:               s.state.TokenID,
+		Balance:               s.state.Balance,
+		ErrorReason:           s.state.LastError,
+		ConnectedAt:           s.state.ConnectedAt,
+		HasCredential:         s.state.hasCredential(),
 		CatalogFailed:         s.state.Status == StateCatalogFailed || (s.state.hasCredential() && !s.state.CatalogOK && s.state.Status != StatePending),
 		CatalogConfigRevision: s.state.CatalogConfigRevision,
 		CatalogSyncing:        s.startupVerifyPending || s.catalogInFlight != nil,

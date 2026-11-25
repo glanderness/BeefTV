@@ -45,13 +45,15 @@ type Summary struct {
 	WalletURL       string   `json:"walletUrl,omitempty"`
 	Balance         string   `json:"balance,omitempty"`
 	BalanceCNY      string   `json:"balanceCny,omitempty"`
-	CatalogFailed         bool     `json:"catalogFailed,omitempty"`
-	CatalogConfigRevision int64    `json:"catalogConfigRevision,omitempty"`
-	CatalogSyncing        bool     `json:"catalogSyncing,omitempty"`
-	ErrorReason           string   `json:"errorReason,omitempty"`
-	ConnectedAt     string   `json:"connectedAt,omitempty"`
-	CredentialRef   string   `json:"credentialRef,omitempty"`
-	HasCredential   bool     `json:"hasCredential"`
+	CatalogFailed   bool     `json:"catalogFailed,omitempty"`
+	// CatalogConfigRevision shares the monotonic revision space of local-model-config.json
+	// (advanced only when a managed catalog write changes config); do not add a parallel counter.
+	CatalogConfigRevision int64  `json:"catalogConfigRevision,omitempty"`
+	CatalogSyncing        bool   `json:"catalogSyncing,omitempty"`
+	ErrorReason           string `json:"errorReason,omitempty"`
+	ConnectedAt           string `json:"connectedAt,omitempty"`
+	CredentialRef         string `json:"credentialRef,omitempty"`
+	HasCredential         bool   `json:"hasCredential"`
 }
 
 type Credential struct {

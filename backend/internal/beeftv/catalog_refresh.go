@@ -48,10 +48,12 @@ func (s *Service) catalogETagFreshLocked(etag string) bool {
 		strings.TrimSpace(s.state.CatalogClientVersion) == strings.TrimSpace(s.clientVersion)
 }
 
-func (s *Service) markCatalogFreshLocked(now time.Time, forcePersist bool) {
+func (s *Service) markCatalogFreshLocked(now time.Time, confirmedETag string, forcePersist bool) {
 	s.lastCatalogCheckAt = now
 	s.catalogFailures = 0
-	s.pendingCatalogETag = ""
+	if confirmedETag != "" && s.pendingCatalogETag == confirmedETag {
+		s.pendingCatalogETag = ""
+	}
 	syncedAt := parseTime(s.state.CatalogSyncedAt)
 	if forcePersist || syncedAt.IsZero() || now.Sub(syncedAt) >= catalogSyncPersistInterval {
 		s.state.CatalogSyncedAt = now.UTC().Format(time.RFC3339Nano)
@@ -183,7 +185,7 @@ func (s *Service) NoteRemoteCatalogETag(raw string) {
 	}
 	now := s.now()
 	if s.catalogETagFreshLocked(etag) {
-		s.markCatalogFreshLocked(now, false)
+		s.markCatalogFreshLocked(now, etag, false)
 		return
 	}
 	s.pendingCatalogETag = etag
@@ -333,7 +335,7 @@ func (s *Service) executeCatalogRefresh(ctx context.Context, req catalogSyncRequ
 		if res.ETag != "" {
 			s.state.CatalogETag = res.ETag
 		}
-		s.markCatalogFreshLocked(now, true)
+		s.markCatalogFreshLocked(now, s.state.CatalogETag, true)
 		return nil, nil
 	}
 	for _, model := range res.Models {
@@ -449,10 +451,11 @@ func (s *Service) verifyRemote() {
 		if matches {
 			now := s.now()
 			s.lastCatalogAttemptAt = now
-			s.markCatalogFreshLocked(now, true)
+			s.markCatalogFreshLocked(now, remoteETag, true)
 		}
+		hasNewerPending := matches && s.pendingCatalogETag != "" && s.pendingCatalogETag != s.state.CatalogETag
 		s.mu.Unlock()
-		if matches {
+		if matches && !hasNewerPending {
 			return
 		}
 		_, _ = s.SyncCatalogIfNeeded(s.lifecycle, CatalogSyncOptions{Force: true})
