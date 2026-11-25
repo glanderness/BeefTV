@@ -1,13 +1,10 @@
 package plugins
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"infinite-canvas/backend/internal/protocol"
 )
 
 // promoteStagedPackageRoot 把 npm install --prefix 安装在 stageDir/node_modules/<name>
@@ -81,116 +78,4 @@ func mergeHoistedNodeModules(srcNM, dstNM string) error {
 		}
 	}
 	return nil
-}
-
-// migrateNestedPackageDir upgrades legacy npm-prefix plugin installs whose stored
-// PackageDir points inside `<dataDir>/plugins/<expectedID>/node_modules/<pkg>`
-// to live directly at `<dataDir>/plugins/<expectedID>`, self-healing crash windows
-// and rolling back cleanly on any filesystem or manifest validation error.
-func migrateNestedPackageDir(dataDir, expectedID, packageDir string) (string, bool, error) {
-	dataDir = filepath.Clean(strings.TrimSpace(dataDir))
-	expectedID = strings.TrimSpace(expectedID)
-	cleaned := filepath.Clean(strings.TrimSpace(packageDir))
-	if dataDir == "" || dataDir == "." || expectedID == "" || cleaned == "" || cleaned == "." {
-		return packageDir, false, nil
-	}
-	if expectedID == "." || expectedID == ".." || strings.HasPrefix(expectedID, ".") || filepath.Base(expectedID) != expectedID || strings.ContainsAny(expectedID, `/\`) {
-		return packageDir, false, nil
-	}
-	pluginsRoot := filepath.Join(dataDir, "plugins")
-	expectedRoot := filepath.Join(pluginsRoot, expectedID)
-	if relRoot, err := filepath.Rel(pluginsRoot, expectedRoot); err != nil || relRoot != expectedID || strings.HasPrefix(relRoot, "..") {
-		return packageDir, false, nil
-	}
-	nestedBase := filepath.Join(expectedRoot, "node_modules")
-	relUnderNM, err := filepath.Rel(nestedBase, cleaned)
-	if err != nil || relUnderNM == "." || relUnderNM == ".." || strings.HasPrefix(relUnderNM, ".."+string(os.PathSeparator)) {
-		return packageDir, false, nil
-	}
-
-	// Leading-dot namespace cannot collide with any valid plugin ID.
-	backupDir := filepath.Join(pluginsRoot, ".migrating-layout-"+expectedID)
-	stagedNested := filepath.Join(backupDir, "node_modules", relUnderNM)
-	promotedDir := filepath.Join(backupDir, ".promoted-root")
-
-	// Crash-window self-heal #1: files were already promoted to expectedRoot, only the stored
-	// registry record still points to the legacy nested node_modules/<pkg> path.
-	if pkg, err := protocol.ParsePluginPackageDir(expectedRoot); err == nil && pkg.Manifest.Metadata.ID == expectedID {
-		_ = os.RemoveAll(backupDir)
-		return expectedRoot, true, nil
-	}
-
-	// Crash-window self-heal #2: process crashed mid-migration after moving expectedRoot
-	// to backupDir and before placing the promoted root back at expectedRoot.
-	if _, rootErr := os.Stat(expectedRoot); os.IsNotExist(rootErr) {
-		if info, bakErr := os.Stat(backupDir); bakErr == nil && info.IsDir() {
-			if pkg, parseErr := protocol.ParsePluginPackageDir(promotedDir); parseErr == nil && pkg.Manifest.Metadata.ID == expectedID {
-				if err := os.Rename(promotedDir, expectedRoot); err != nil {
-					return packageDir, false, fmt.Errorf("恢复已提升插件目录失败：%w", err)
-				}
-				_ = os.RemoveAll(backupDir)
-				return expectedRoot, true, nil
-			}
-			// Restore unfinished promotion back to expectedRoot so the migration below can run cleanly.
-			if _, promErr := os.Stat(promotedDir); promErr == nil {
-				if err := os.MkdirAll(filepath.Dir(stagedNested), 0o755); err != nil {
-					return packageDir, false, fmt.Errorf("恢复中断迁移目录失败：%w", err)
-				}
-				if err := os.Rename(promotedDir, stagedNested); err != nil {
-					return packageDir, false, fmt.Errorf("恢复中断迁移包失败：%w", err)
-				}
-			}
-			if err := os.Rename(backupDir, expectedRoot); err != nil {
-				return packageDir, false, fmt.Errorf("恢复迁移备份目录失败：%w", err)
-			}
-		}
-	}
-
-	if info, err := os.Stat(cleaned); err != nil || !info.IsDir() {
-		return packageDir, false, nil
-	}
-
-	if err := os.RemoveAll(backupDir); err != nil {
-		return packageDir, false, err
-	}
-	if err := os.Rename(expectedRoot, backupDir); err != nil {
-		return packageDir, false, err
-	}
-	rollback := func(cause error) error {
-		var rollbackErrs []error
-		if _, err := os.Stat(promotedDir); err == nil {
-			if mkErr := os.MkdirAll(filepath.Dir(stagedNested), 0o755); mkErr != nil {
-				rollbackErrs = append(rollbackErrs, mkErr)
-			} else if rnErr := os.Rename(promotedDir, stagedNested); rnErr != nil {
-				rollbackErrs = append(rollbackErrs, rnErr)
-			}
-		}
-		if rnErr := os.Rename(backupDir, expectedRoot); rnErr != nil {
-			rollbackErrs = append(rollbackErrs, rnErr)
-		}
-		if len(rollbackErrs) > 0 {
-			return errors.Join(cause, fmt.Errorf("迁移回滚失败：%w", errors.Join(rollbackErrs...)))
-		}
-		return cause
-	}
-
-	promoted, err := promoteStagedPackageRoot(backupDir, stagedNested)
-	if err != nil {
-		return packageDir, false, rollback(err)
-	}
-	pkg, err := protocol.ParsePluginPackageDir(promoted)
-	if err != nil || pkg.Manifest.Metadata.ID != expectedID {
-		cause := err
-		if cause == nil {
-			cause = fmt.Errorf("迁移后插件包 ID 不匹配：got %q, want %q", pkg.Manifest.Metadata.ID, expectedID)
-		} else {
-			cause = fmt.Errorf("迁移后插件包校验失败：%w", cause)
-		}
-		return packageDir, false, rollback(cause)
-	}
-	if err := os.Rename(promoted, expectedRoot); err != nil {
-		return packageDir, false, rollback(err)
-	}
-	_ = os.RemoveAll(backupDir)
-	return expectedRoot, true, nil
 }

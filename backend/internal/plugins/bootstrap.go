@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -241,10 +240,10 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 				if _, keep := retained[record.ID]; !keep {
 					continue
 				}
-				record = reconcileStoredRecordOnStartup(c.dataDir, record)
+				record = reconcileStoredRecordOnStartup(record)
 			}
 		} else {
-			record = reconcileStoredRecordOnStartup(c.dataDir, record)
+			record = reconcileStoredRecordOnStartup(record)
 		}
 		result = append(result, record)
 	}
@@ -294,15 +293,9 @@ func enableMergeTargets(byID map[string]RegistryRecord, targets []string) {
 	}
 }
 
-func reconcileStoredRecordOnStartup(dataDir string, record RegistryRecord) RegistryRecord {
+func reconcileStoredRecordOnStartup(record RegistryRecord) RegistryRecord {
 	now := time.Now().UTC()
 	if record.Source == OriginPackage && strings.TrimSpace(record.PackageDir) != "" {
-		if migratedDir, migrated, err := migrateNestedPackageDir(dataDir, record.ID, record.PackageDir); err != nil {
-			log.Printf("plugins: failed to migrate legacy nested layout for %q (%s): %v", record.ID, record.PackageDir, err)
-		} else if migrated {
-			record.PackageDir = migratedDir
-			record.UpdatedAt = now
-		}
 		if pkg, err := protocol.ParsePluginPackageDir(record.PackageDir); err == nil && pkg.Manifest.Metadata.ID == record.ID {
 			manifest := pkg.Manifest
 			if len(record.Raw) > 0 {

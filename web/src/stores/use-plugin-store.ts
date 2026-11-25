@@ -15,8 +15,7 @@ export const LEGACY_PLUGIN_ID_MAP: Readonly<Record<string, string>> = Object.fre
     "media-conversion": "beeftv-plugin-media-conversion",
 });
 
-export type PluginLifecycleReason = "sync" | "enable" | "disable" | "remove" | "update" | "status";
-type PluginLifecycleListener = (pluginId?: string, reason?: PluginLifecycleReason) => void;
+type PluginLifecycleListener = (pluginId?: string) => void;
 const lifecycleListeners = new Set<PluginLifecycleListener>();
 
 export function onPluginStoreLifecycleChange(listener: PluginLifecycleListener): () => void {
@@ -26,10 +25,10 @@ export function onPluginStoreLifecycleChange(listener: PluginLifecycleListener):
     };
 }
 
-function notifyLifecycle(pluginId?: string, reason?: PluginLifecycleReason): void {
+function notifyLifecycle(pluginId?: string): void {
     for (const listener of lifecycleListeners) {
         try {
-            listener(pluginId, reason);
+            listener(pluginId);
         } catch (err) {
             console.warn("[use-plugin-store] Lifecycle listener failed:", err);
         }
@@ -156,7 +155,6 @@ export const usePluginStore = create<PluginStore>()(
             runtimeStatuses: {},
             pluginStates: {},
             ensurePlugin: (manifest) => {
-                let manifestChanged = false;
                 set((state) => {
                     const canonicalId = LEGACY_PLUGIN_ID_MAP[manifest.id] ?? manifest.id;
                     const normalizedManifest = canonicalId === manifest.id ? manifest : { ...manifest, id: canonicalId };
@@ -165,7 +163,6 @@ export const usePluginStore = create<PluginStore>()(
                     if (current && sameManifestRevision(current.manifest, normalizedManifest) && migrated.length === state.installations.length) {
                         return { hydrated: true };
                     }
-                    manifestChanged = true;
                     const timestamp = now();
                     const next: PluginInstallation = current
                         ? { ...current, manifest: normalizedManifest, updatedAt: timestamp }
@@ -177,7 +174,7 @@ export const usePluginStore = create<PluginStore>()(
                         ...(nextRuntimeStatuses !== state.runtimeStatuses ? { runtimeStatuses: nextRuntimeStatuses } : {}),
                     };
                 });
-                notifyLifecycle(manifest.id, manifestChanged ? "update" : "sync");
+                notifyLifecycle(manifest.id);
             },
             // 整张表一次写完。每次写入都会把所有清单存一遍，逐个插件写会让页面卡住好几秒。
             syncBackendPlugins: (plugins, states) => {
@@ -206,7 +203,7 @@ export const usePluginStore = create<PluginStore>()(
                         ...(nextRuntimeStatuses !== state.runtimeStatuses ? { runtimeStatuses: nextRuntimeStatuses } : {}),
                     };
                 });
-                notifyLifecycle(undefined, "sync");
+                notifyLifecycle();
             },
             setEnabled: (pluginId, enabled) => {
                 const canonicalId = LEGACY_PLUGIN_ID_MAP[pluginId] ?? pluginId;
@@ -234,16 +231,16 @@ export const usePluginStore = create<PluginStore>()(
                         ...(nextRuntimeStatuses !== state.runtimeStatuses ? { runtimeStatuses: nextRuntimeStatuses } : {}),
                     };
                 });
-                notifyLifecycle(canonicalId, enabled ? "enable" : "disable");
+                notifyLifecycle(canonicalId);
             },
             setRuntimeStatuses: (runtimeStatuses) => {
                 if (shallowEqualRecord(get().runtimeStatuses, runtimeStatuses)) return;
                 set({ runtimeStatuses });
-                notifyLifecycle(undefined, "status");
+                notifyLifecycle();
             },
             setPluginStates: (pluginStates) => {
                 set({ pluginStates });
-                notifyLifecycle(undefined, "sync");
+                notifyLifecycle();
             },
             updateConfig: (pluginId, config) => {
                 const canonicalId = LEGACY_PLUGIN_ID_MAP[pluginId] ?? pluginId;
@@ -277,7 +274,7 @@ export const usePluginStore = create<PluginStore>()(
                         runtimeStatuses: nextRuntimeStatuses,
                     };
                 });
-                notifyLifecycle(canonicalId, "remove");
+                notifyLifecycle(canonicalId);
             },
         }),
         {
@@ -292,7 +289,7 @@ export const usePluginStore = create<PluginStore>()(
                             ? { hydrated: true, installations: migrateLegacyPluginInstallations(state.installations) }
                             : { hydrated: true },
                     );
-                    notifyLifecycle(undefined, "sync");
+                    notifyLifecycle();
                 }
             },
         },
