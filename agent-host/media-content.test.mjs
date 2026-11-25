@@ -147,6 +147,32 @@ test('attachmentContent uses media.inspect when preview is marked inspectable an
   expect(oversizeContent.filter(part => part.type === 'image')).toEqual([{ type: 'image', data: 'PREVIEW_ONLY', mimeType: 'image/jpeg' }]);
 });
 
+test('attached video and audio instruct media_overview before media_inspect without pre-reading bytes', async () => {
+  const requests = [];
+  const opsRequest = async (_method, path) => {
+    requests.push(path);
+    throw new Error('should not pre-read video/audio attachments');
+  };
+  const content = await attachmentContent({
+    canvasId: 'c1',
+    message: '分析这两段素材',
+    attachments: [
+      { kind: 'video', assetId: 'a-vid', resourceId: 'r-vid', name: 'clip.mp4' },
+      { kind: 'audio', nodeId: 'n-aud', resourceId: 'r-aud', name: 'voice.wav' },
+    ],
+  }, 't1', opsRequest);
+  expect(requests).toEqual([]);
+  const notes = content.slice(1).map(part => part.text);
+  expect(notes).toHaveLength(2);
+  for (const note of notes) {
+    expect(note).toContain('media_overview');
+    expect(note).toContain('source.version');
+    expect(note).toContain('expectedVersion');
+    expect(note).toContain('media_inspect');
+    expect(note).not.toContain('使用 media.inspect');
+  }
+});
+
 test('Anthropic adapter preserves signed thinking blocks and ephemeral cache_control when pinned, and downgrades unpinned pre-upgrade signatures', () => {
   const payload = {
     model: 'claude-opus-5-5',

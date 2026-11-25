@@ -140,8 +140,16 @@ export function createOperationBridge({
     let envelope = null;
     try { envelope = JSON.parse(text); } catch { /* 非 JSON */ }
     if (!response.ok || !envelope || envelope.code !== 0) {
-      const error = new Error(`${envelope?.reason || `http_${response.status}`}: ${envelope?.msg || text.slice(0, 200)}`);
-      error.reason = envelope?.reason || `http_${response.status}`;
+      const reason = envelope?.reason || `http_${response.status}`;
+      const baseMsg = envelope?.msg || text.slice(0, 200);
+      const currentVersion = reason === 'stale_media_version' && typeof envelope?.details?.currentVersion === 'string'
+        ? envelope.details.currentVersion.trim()
+        : '';
+      const msg = currentVersion && !baseMsg.includes(currentVersion)
+        ? `${baseMsg}（currentVersion=${currentVersion}）`
+        : baseMsg;
+      const error = new Error(`${reason}: ${msg}`);
+      error.reason = reason;
       error.details = envelope?.details || null;
       throw error;
     }
