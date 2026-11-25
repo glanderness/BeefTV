@@ -162,3 +162,50 @@ func TestVideoDownloadResumesThroughHTTPProxy(t *testing.T) {
 		t.Fatalf("proxied resume requests=%d bytes=%d err=%v", requests, len(data), err)
 	}
 }
+
+func TestNonGETVideoDownloadIdleTimeoutRaceAndSingleReceipt(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	const chunk = "partial-video-chunk"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte(chunk))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	for i := 0; i < 5; i++ {
+		cacheDir := t.TempDir()
+		receipts := &recordingReceipts{}
+		ctx := WithRuntime(context.Background(), Runtime{
+			Receipts:      receipts,
+			DownloadCache: videoTestCache(filepath.Join(cacheDir, "video.part")),
+			Call:          CallMeta{ChannelID: "video", RequestKind: "download"},
+		})
+		ctx = context.WithValue(ctx, videoDeliveryRequestContext{}, 60*time.Millisecond)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/result", bytes.NewReader([]byte(`{"id":"task-1"}`)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		filePath, _, err := executeVideoRequestToFile(req)
+		if filePath != "" {
+			_ = os.Remove(filePath)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("iter %d: err = %v, want context.DeadlineExceeded", i, err)
+		}
+		observed := receipts.snapshot()
+		if len(observed) != 1 {
+			t.Fatalf("iter %d: receipts count = %d, want 1", i, len(observed))
+		}
+		if observed[0].ReceivedBytes != int64(len(chunk)) || observed[0].Err == nil {
+			t.Fatalf("iter %d: unexpected observation = %+v", i, observed[0])
+		}
+		if entries, _ := os.ReadDir(cacheDir); len(entries) != 0 {
+			t.Fatalf("iter %d: leftover temp files: %v", i, entries)
+		}
+	}
+}

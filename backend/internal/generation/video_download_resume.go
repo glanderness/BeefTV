@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/outbound"
@@ -74,7 +75,16 @@ func executeVideoRequestToFile(req *http.Request) (string, string, error) {
 		}
 		return "", "", err
 	}
-	defer resp.Body.Close()
+	var streamErr error
+	if obs, ok := resp.Body.(*videoObservedBody); ok {
+		obs.observeOnEnd = true
+		defer func() {
+			_ = resp.Body.Close()
+			obs.observe(streamErr)
+		}()
+	} else {
+		defer resp.Body.Close()
+	}
 	res, err := outbound.StreamResponseToFile(ctx, resp, outbound.StreamFileOptions{
 		Dir:         filepath.Dir(partial),
 		MaxBytes:    outbound.ExclusiveByteLimit(limit),
@@ -82,6 +92,7 @@ func executeVideoRequestToFile(req *http.Request) (string, string, error) {
 		Cancel:      func() { reqCancel(context.DeadlineExceeded) },
 	})
 	if err != nil {
+		streamErr = err
 		return "", "", err
 	}
 	return res.Path, res.MimeType, nil
@@ -262,7 +273,7 @@ func openVideoDownloadResponse(req *http.Request, limit int64) (*http.Response, 
 				resultErr = fmt.Errorf("%w: %w", outbound.ErrResumeRestart, resultErr)
 			}
 		}
-		body.observation.Err = resultErr
+		body.setErr(resultErr)
 		_ = body.Close()
 		return nil, resultErr
 	}
@@ -271,23 +282,49 @@ func openVideoDownloadResponse(req *http.Request, limit int64) (*http.Response, 
 
 type videoObservedBody struct {
 	io.ReadCloser
-	observation TransportObservation
-	receipts    ReceiptPort
+	mu           sync.Mutex
+	observation  TransportObservation
+	receipts     ReceiptPort
+	observeOnEnd bool
+	observeOnce  sync.Once
 }
 
 func (b *videoObservedBody) Read(data []byte) (int, error) {
 	n, err := b.ReadCloser.Read(data)
+	b.mu.Lock()
 	b.observation.ReceivedBytes += int64(n)
 	if err != nil && !errors.Is(err, io.EOF) {
 		b.observation.Err = err
 	}
+	b.mu.Unlock()
 	return n, err
+}
+
+func (b *videoObservedBody) setErr(err error) {
+	b.mu.Lock()
+	b.observation.Err = err
+	b.mu.Unlock()
+}
+
+func (b *videoObservedBody) observe(finalErr error) {
+	b.observeOnce.Do(func() {
+		if b.receipts == nil {
+			return
+		}
+		b.mu.Lock()
+		if b.observation.Err == nil && finalErr != nil {
+			b.observation.Err = finalErr
+		}
+		obs := b.observation
+		b.mu.Unlock()
+		b.receipts.Observe(obs)
+	})
 }
 
 func (b *videoObservedBody) Close() error {
 	err := b.ReadCloser.Close()
-	if b.receipts != nil {
-		b.receipts.Observe(b.observation)
+	if !b.observeOnEnd {
+		b.observe(nil)
 	}
 	return err
 }
