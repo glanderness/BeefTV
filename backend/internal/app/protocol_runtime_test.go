@@ -177,8 +177,8 @@ func TestPluginRuntimeUpgradesInstalledWanMediaTransport(t *testing.T) {
 		t.Fatal("installed Wan provider missing")
 	}
 	metadata := adapter.Metadata()
-	if metadata.Version != "2.0.1" || metadata.MediaTransport["image"] != "inline" || metadata.MediaTransport["audio"] != "url" {
-		t.Fatalf("installed provider retained stale transport: %#v", metadata)
+	if metadata.Version != pkg.Manifest.Metadata.Version || metadata.MediaTransport["image"] != "inline" || metadata.MediaTransport["audio"] != "url" || metadata.MediaTransport["video"] != "url" {
+		t.Fatalf("installed provider retained stale transport: %#v (expected version %q)", metadata, pkg.Manifest.Metadata.Version)
 	}
 }
 
