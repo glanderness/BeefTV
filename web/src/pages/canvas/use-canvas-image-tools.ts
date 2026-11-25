@@ -36,6 +36,7 @@ import type { GenerationTask } from "@/services/api/task-center";
 import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
+import { canvasGenerationFailureMetadata } from "./canvas-generation-failure";
 import type { createCanvasMediaOperation } from "./canvas-media-operation";
 
 const NODE_STATUS_LOADING = "loading" as const;
@@ -397,9 +398,21 @@ export function useCanvasImageTools({
                         if (!operation.isCurrent()) return;
                         if (isGenerationCanceled(error)) return;
                         failureCount += outputNodeIds.filter((id) => !completedOutputIds.has(id)).length;
-                        const details = generationErrorMessage(error);
+                        const failure = canvasGenerationFailureMetadata(error, {
+                            mode: "image",
+                            prompt: effectivePrompt,
+                            referenceImages: [source],
+                            ...(maskReference ? { mask: maskReference } : {}),
+                        });
+                        const details = failure.errorDetails || generationErrorMessage(error);
                         representativeError = details;
-                        setNodes((current) => current.map((item) => (outputNodeIds.includes(item.id) && !completedOutputIds.has(item.id) ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: details } } : item)));
+                        setNodes((current) =>
+                            current.map((item) =>
+                                outputNodeIds.includes(item.id) && !completedOutputIds.has(item.id)
+                                    ? { ...item, metadata: { ...item.metadata, ...failure, status: NODE_STATUS_ERROR, errorDetails: details } }
+                                    : item,
+                            ),
+                        );
                     } finally {
                         if (operation.isCurrent()) outputNodeIds.forEach((id) => finishGenerationRequest(id, controller));
                     }

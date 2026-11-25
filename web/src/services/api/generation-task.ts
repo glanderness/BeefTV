@@ -2,7 +2,7 @@ import { createClientId } from "@/lib/client-id";
 import { getMediaBlob } from "@/services/file-storage";
 import { resolveReferenceMediaDuration } from "@/lib/reference-media-metadata";
 import { getImageBlob } from "@/services/image-storage";
-import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
+import { ownedResourceStorageKey, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { createGenerationTask, findGenerationTaskByOperation, waitForGenerationTask, type GenerationTask, type GenerationTaskOutput, type CreateTaskInput } from "@/services/api/task-center";
 import { submitGenerationCommand } from "./generation-submission";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
@@ -381,14 +381,23 @@ function generationMetadata(config: AiConfig, metadata?: Record<string, unknown>
     return { ...metadata, providerOptions: { ...existing, [protocol]: { ...defaults, ...namespace } } };
 }
 
+async function fetchReferenceBlob(url: string, label: string) {
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`${label}无法读取（HTTP ${response.status}），请重新上传后再生成`);
+    }
+    return response.blob();
+}
+
 async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAudio) {
     media = await resolveReferenceMediaDuration(media);
-    if (resourceIdFromStorageKey(media.storageKey)) return backendMediaReference(media, { storageKey: media.storageKey });
     const url = media.url || "";
+    const ownedStorageKey = ownedResourceStorageKey(media.storageKey, url);
+    if (resourceIdFromStorageKey(ownedStorageKey)) return backendMediaReference(media, { storageKey: ownedStorageKey });
     if (/^https?:\/\//i.test(url)) return backendMediaReference(media, { url });
     let blob: Blob | null = null;
     if (media.storageKey) blob = await getMediaBlob(media.storageKey);
-    if (!blob && (url.startsWith("blob:") || url.startsWith("data:"))) blob = await (await fetch(url)).blob();
+    if (!blob && (url.startsWith("blob:") || url.startsWith("data:"))) blob = await fetchReferenceBlob(url, "参考媒体");
     if (!blob) throw new Error("参考媒体尚未保存，请重新上传后再生成");
     try {
         const kind: "video" | "audio" | "file" = blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
@@ -401,10 +410,11 @@ async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAud
 
 async function prepareBackendImageReference(image: ReferenceImage, preferArkAssetUrl = false) {
     if (preferArkAssetUrl && image.arkAssetId) return backendImageReference(image, { url: `asset://${image.arkAssetId}` });
-    if (resourceIdFromStorageKey(image.storageKey)) return backendImageReference(image, { storageKey: image.storageKey });
     const sourceUrl = image.url || image.dataUrl;
+    const ownedStorageKey = ownedResourceStorageKey(image.storageKey, sourceUrl);
+    if (resourceIdFromStorageKey(ownedStorageKey)) return backendImageReference(image, { storageKey: ownedStorageKey });
     if (/^https?:\/\//i.test(sourceUrl)) return backendImageReference(image, { url: sourceUrl });
-    const blob = image.storageKey ? await getImageBlob(image.storageKey) : sourceUrl ? await (await fetch(sourceUrl)).blob() : null;
+    const blob = image.storageKey ? await getImageBlob(image.storageKey) : sourceUrl ? await fetchReferenceBlob(sourceUrl, "参考图片") : null;
     if (!blob) throw new Error("参考图片尚未保存，请重新上传后再生成");
     try {
         const resource = await uploadResourceFile(blob, "image", { fileName: image.name });

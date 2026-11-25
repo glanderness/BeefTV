@@ -1,4 +1,4 @@
-export function resolveMediaUrl(storageKey?: string, fallback = "") {
+export function resolvePreviewImageUrl(storageKey?: string, fallback = "") {
     const win = window as unknown as {
         __angleMediaCalls?: Array<{ storageKey?: string; fallback: string }>;
         __resolveAngleMedia?: (url: string) => void;

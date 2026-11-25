@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Slider } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { motion, useReducedMotion } from "motion/react";
@@ -8,10 +8,14 @@ import { CanvasAngleScene } from "@/components/canvas/canvas-angle-scene";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { isProtectedResourceFileUrl, ownedResourceStorageKey } from "@/services/api/resources";
-import { resolveMediaUrl } from "@/services/file-storage";
+import {
+    isProtectedResourceFileUrl,
+    ownedResourceStorageKey,
+    resourceIdFromStorageKey,
+} from "@/services/api/resources";
 import { resolvePreviewImageUrl } from "@/services/image-storage";
-import { peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
+import { canUseSameOriginResourceAsset, resourcePreviewAssetUrl } from "@/services/media-asset-url";
+import { cacheResourceObjectUrl, peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 
 export type CanvasImageAngleParams = {
@@ -39,6 +43,19 @@ function distanceLabel(value: number) {
     return "中景";
 }
 
+const ANGLE_PREVIEW_SIZE = 512;
+
+function initialAnglePreviewSrc(storageKey: string, safeFallback: string) {
+    const resourceId = resourceIdFromStorageKey(storageKey);
+    if (resourceId && canUseSameOriginResourceAsset()) {
+        return resourcePreviewAssetUrl(resourceId, ANGLE_PREVIEW_SIZE);
+    }
+    if (storageKey) {
+        return peekCachedResourceObjectUrl(storageKey, ANGLE_PREVIEW_SIZE) || peekCachedResourceObjectUrl(storageKey) || safeFallback;
+    }
+    return safeFallback;
+}
+
 export function CanvasNodeAnglePanel({
     dataUrl,
     storageKey: rawStorageKey,
@@ -56,17 +73,20 @@ export function CanvasNodeAnglePanel({
     const [mode, setMode] = useState<"camera" | "skybox">("camera");
     const storageKey = ownedResourceStorageKey(rawStorageKey, dataUrl);
     const safeFallback = isProtectedResourceFileUrl(dataUrl) ? "" : dataUrl;
-    const [resolvedSrc, setResolvedSrc] = useState(() => (storageKey ? peekCachedResourceObjectUrl(storageKey) : "") || safeFallback);
+    const [resolvedSrc, setResolvedSrc] = useState(() => initialAnglePreviewSrc(storageKey, safeFallback));
+    const fallbackAttemptedRef = useRef<string>("");
+    const activeTargetRef = useRef<string>("");
 
     useEffect(() => {
         let cancelled = false;
-        const initial = (storageKey ? peekCachedResourceObjectUrl(storageKey) : "") || safeFallback;
+        const targetId = `${storageKey}::${dataUrl}`;
+        activeTargetRef.current = targetId;
+        fallbackAttemptedRef.current = "";
+        const initial = initialAnglePreviewSrc(storageKey, safeFallback);
         setResolvedSrc(initial);
-        if (storageKey) {
-            const loader = storageKey.startsWith("image:")
-                ? resolvePreviewImageUrl(storageKey, dataUrl, { renderable: true })
-                : resolveMediaUrl(storageKey, dataUrl, { renderable: true });
-            void loader
+        const resourceId = resourceIdFromStorageKey(storageKey);
+        if (storageKey && !(resourceId && canUseSameOriginResourceAsset())) {
+            void resolvePreviewImageUrl(storageKey, dataUrl, { cacheMiss: true, renderable: true })
                 .then((url) => {
                     if (!cancelled) {
                         setResolvedSrc(isProtectedResourceFileUrl(url) ? safeFallback : url || safeFallback);
@@ -80,6 +100,33 @@ export function CanvasNodeAnglePanel({
             cancelled = true;
         };
     }, [dataUrl, safeFallback, storageKey]);
+
+    const handleImageError = useCallback(
+        (failedUrl: string) => {
+            if (!storageKey) return;
+            const targetId = `${storageKey}::${dataUrl}`;
+            if (fallbackAttemptedRef.current === targetId) return;
+            fallbackAttemptedRef.current = targetId;
+            const resourceId = resourceIdFromStorageKey(storageKey);
+            const fallbackPromise = resourceId
+                ? cacheResourceObjectUrl(storageKey, failedUrl.startsWith("blob:"))
+                : resolvePreviewImageUrl(storageKey, dataUrl, { cacheMiss: true, renderable: true });
+            void fallbackPromise
+                .then((url) => {
+                    if (activeTargetRef.current !== targetId) return;
+                    const nextUrl = isProtectedResourceFileUrl(url) ? safeFallback : url || safeFallback;
+                    if (nextUrl && nextUrl !== failedUrl) {
+                        setResolvedSrc(nextUrl);
+                    }
+                })
+                .catch(() => {
+                    if (activeTargetRef.current === targetId && safeFallback && safeFallback !== failedUrl) {
+                        setResolvedSrc(safeFallback);
+                    }
+                });
+        },
+        [dataUrl, safeFallback, storageKey],
+    );
 
     const update = <Key extends keyof CanvasImageAngleParams>(key: Key, value: CanvasImageAngleParams[Key]) => setParams((current) => ({ ...current, [key]: value }));
     const activePreset = presets.find((preset) => preset.horizontalAngle === params.horizontalAngle && preset.pitchAngle === params.pitchAngle);
@@ -137,6 +184,7 @@ export function CanvasNodeAnglePanel({
                         }}
                         onRotateChange={(value) => update("horizontalAngle", value)}
                         onTiltChange={(value) => update("pitchAngle", value)}
+                        onImageError={handleImageError}
                     />
                 </div>
                 <div className="flex min-w-0 flex-col justify-center gap-2 rounded-[var(--r-lg)] border px-2.5 py-2" style={{ background: theme.toolbar.itemHover, borderColor: theme.toolbar.border }}>
