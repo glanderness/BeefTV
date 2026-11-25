@@ -309,7 +309,12 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
             taskType,
         });
     }
-    if (metadata.status === "loading" || taskStatus === "queued" || taskStatus === "running") {
+    if (
+        metadata.status === "loading" ||
+        metadata.generationSubmissionState === "submitting" ||
+        taskStatus === "queued" ||
+        taskStatus === "running"
+    ) {
         if (taskStatus === "succeeded" || taskStage === "正在取回生成结果") {
             return fetchingTaskOutcome();
         }

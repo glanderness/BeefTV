@@ -522,6 +522,23 @@ test("useCanvasGenerationRetry refuses partial-success, missing-child, and non-b
         const readyRes = await runCase([sourceNode, partialRoot, ...readyNoContentChildren], readyNoContentChildren[0]!);
         expect(readyRes.regenerateCalls).toBe(0);
         expect(consumerSpy).not.toHaveBeenCalled();
+
+        // 7. Child in generationSubmissionState="submitting" without taskId must block fixedOutputs batch retry.
+        const submittingChildren: CanvasNodeData[] = childIds.map((id, index) => ({
+            ...emotionNode,
+            id,
+            metadata: {
+                ...emotionNode.metadata,
+                batchRootId: partialRoot.id,
+                taskOutputIndex: index,
+                status: "error",
+                ...(index === 2 ? { generationSubmissionState: "submitting" as const } : {}),
+            },
+        }));
+        const submittingRes = await runCase([sourceNode, partialRoot, ...submittingChildren], submittingChildren[0]!);
+        expect(submittingRes.regenerateCalls).toBe(0);
+        expect(consumerSpy).not.toHaveBeenCalled();
+        expect(submittingRes.nodes.find((n) => n.id === "p-0")?.metadata?.errorDetails).toContain("仍在生成或结果待确认");
     } finally {
         buildConfigSpy.mockRestore();
         capabilitySpy.mockRestore();
@@ -688,6 +705,85 @@ test("useCanvasGenerationRetry refuses maskEdit retry when mask cannot be recove
         const updated = nodesRef.current.find((item) => item.id === "mask-missing");
         expect(updated?.metadata?.status).toBe("error");
         expect(updated?.metadata?.errorDetails).toContain("局部重绘蒙版已丢失");
+    } finally {
+        buildConfigSpy.mockRestore();
+        capabilitySpy.mockRestore();
+        consumerSpy.mockRestore();
+    }
+});
+
+test("useCanvasGenerationRetry trusts authoritative taskOutcome over stale legacy taskStatus on fixedOutputs batch children", async () => {
+    const { config, sourceNode, profile } = makeEmotionRetryFixture(1);
+    const fixedProfile = { ...profile, maxOutputs: 4, fixedOutputs: 4 };
+    const childIds = ["auth-0", "auth-1", "auth-2", "auth-3"];
+    const rootNode: CanvasNodeData = {
+        id: "auth-root",
+        type: CanvasNodeType.Image,
+        title: "局部重绘结果",
+        position: { x: 600, y: 0 },
+        width: 512,
+        height: 512,
+        metadata: {
+            prompt: "换一件黑色风衣",
+            status: "error",
+            taskOutcome: notChargedTaskOutcome(),
+            model: config.model,
+            isBatchRoot: true,
+            batchChildIds: childIds,
+            maskEdit: { sourceNodeId: sourceNode.id, editMode: "local-composite", maskStorageKey: "resource:saved-mask-auth" },
+        },
+    };
+    const childNodes: CanvasNodeData[] = childIds.map((id, index) => ({
+        ...rootNode,
+        id,
+        metadata: {
+            prompt: rootNode.metadata?.prompt,
+            status: "error",
+            // 陈旧遗留字段残留 taskStatus=running，但后端权威 taskOutcome 已明确判定 not_charged 可重试
+            taskStatus: index === 1 ? ("running" as const) : ("failed" as const),
+            taskOutcome: notChargedTaskOutcome(),
+            model: config.model,
+            batchRootId: rootNode.id,
+            taskOutputIndex: index,
+            maskEdit: { sourceNodeId: sourceNode.id, editMode: "local-composite", maskStorageKey: "resource:saved-mask-auth" },
+        },
+    }));
+
+    const consumerCalls: Array<Parameters<typeof canvasProjectGeneration.runCanvasGenerationTaskToConsumer>[0]> = [];
+    const buildConfigSpy = spyOn(canvasProjectGeneration, "buildGenerationConfig").mockReturnValue(config);
+    const capabilitySpy = spyOn(modelCapabilities, "modelCapabilityConfigFor").mockReturnValue({ version: 1, image: fixedProfile });
+    const consumerSpy = spyOn(canvasProjectGeneration, "runCanvasGenerationTaskToConsumer").mockImplementation(async (input) => {
+        consumerCalls.push(input);
+    });
+
+    const nodesRef = { current: [sourceNode, rootNode, ...childNodes] };
+    let retry!: ReturnType<typeof useCanvasGenerationRetry>;
+    function Harness() {
+        retry = useCanvasGenerationRetry({
+            projectId: "project-auth-outcome",
+            addedSkills: [],
+            assets: [],
+            nodesRef,
+            connectionsRef: { current: [] },
+            setNodes: (updater) => {
+                nodesRef.current = typeof updater === "function" ? updater(nodesRef.current) : updater;
+            },
+            setRunningNodeId: () => {},
+            startGenerationRequest: () => new AbortController(),
+            finishGenerationRequest: () => {},
+            bindGenerationTask: () => {},
+            applyGenerationTaskResult: async () => {},
+            regenerateImageBatch: async () => {},
+        });
+        return null;
+    }
+
+    try {
+        renderToStaticMarkup(createElement(Harness));
+        await retry(childNodes[0]!);
+        expect(consumerCalls).toHaveLength(1);
+        expect(consumerCalls[0]?.config.count).toBe("4");
+        expect(consumerCalls[0]?.metadata?.edit).toBe("mask");
     } finally {
         buildConfigSpy.mockRestore();
         capabilitySpy.mockRestore();

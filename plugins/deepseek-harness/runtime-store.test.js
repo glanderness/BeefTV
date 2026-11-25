@@ -1,19 +1,20 @@
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, sign as signBytes } from 'node:crypto'
 import { createServer } from 'node:http'
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { inspectLocalApp, minimumLocalAppVersion, supportsHarnessVersion } from './platform-app.js'
 import {
+  ARCHIVE_SAFETY_ERROR_CODE,
   createRuntimeStore,
   extractZipArchive,
-  inspectZipSafety,
   orderCandidateURLs,
   platformKey,
   preferDomesticMirror,
   probeRuntimeDir,
+  rejectExtractedSymlinks,
   verifyFeedEnvelope,
 } from './runtime-store.js'
 import { KNOWN_PLATFORMS, validateDownloadURL, validateRedirectURL } from './runtime-verify.js'
@@ -234,46 +235,127 @@ test('orderCandidateURLs prioritizes domestic mirror in mainland China and offic
   assert.equal(preferDomesticMirror({ timeZone: 'Asia/Taipei', locale: 'zh-TW' }), false)
 })
 
-test('inspectZipSafety rejects traversal, absolute paths, drive letters, and symlinks', async context => {
+test('rejectExtractedSymlinks and runtime store reject symlinks, verify SHA256 before extraction, and preserve active runtime on failure', async context => {
   const dir = await mkdtemp(join(tmpdir(), 'beeftv-zip-safety-'))
   context.after(() => rm(dir, { recursive: true, force: true }))
 
-  const goodPath = join(dir, 'good.zip')
-  await writeFile(goodPath, validRuntimeZipFor('darwin-arm64'))
-  const info = await inspectZipSafety(goodPath)
-  assert.equal(info.entryCount, 2)
+  // 1. 正常目录树放行，包含符号链接（或 Windows junction）时拒绝
+  const cleanTree = join(dir, 'clean')
+  await mkdir(join(cleanTree, 'sub'), { recursive: true })
+  await writeFile(join(cleanTree, 'sub', 'ok.txt'), 'ok')
+  await rejectExtractedSymlinks(cleanTree)
 
-  for (const [label, entries, expected] of [
-    ['traversal', [{ name: 'a/../../evil.sh', data: 'x' }], /路径穿越/],
-    ['absolute', [{ name: '/etc/passwd', data: 'x' }], /不安全路径/],
-    ['drive', [{ name: 'C:\\Windows\\evil.exe', data: 'x' }], /不安全路径/],
-    ['symlink', [{ name: 'BeefTV.app/link', data: '/tmp', mode: 0o120777 }], /符号链接/],
-  ]) {
-    const badPath = join(dir, `${label}.zip`)
-    await writeFile(badPath, buildZip(entries))
-    await assert.rejects(() => inspectZipSafety(badPath), expected)
-  }
+  const outsideDir = join(dir, 'outside')
+  await mkdir(outsideDir, { recursive: true })
+  const linkTree = join(dir, 'with-symlink')
+  await mkdir(join(linkTree, 'nested'), { recursive: true })
+  const linkType = process.platform === 'win32' ? 'junction' : undefined
+  await symlink(outsideDir, join(linkTree, 'nested', 'rogue-link'), linkType)
+  await assert.rejects(
+    () => rejectExtractedSymlinks(linkTree),
+    error => error?.code === ARCHIVE_SAFETY_ERROR_CODE && /不能包含符号链接|解压路径越界/.test(error.message),
+  )
 
-  // EOCD 条目计数小于真实中央目录记录数时必须拒绝（防止尾部藏匿未检验条目）。
-  const twoEntries = buildZip([
-    { name: 'safe.txt', data: 'ok' },
-    { name: 'hidden/../../evil.sh', data: 'bad' },
-  ])
-  const forgedCount = Buffer.from(twoEntries)
-  const eocdOffset = forgedCount.length - 22
-  forgedCount.writeUInt16LE(1, eocdOffset + 8)
-  forgedCount.writeUInt16LE(1, eocdOffset + 10)
-  const forgedCountPath = join(dir, 'forged-count.zip')
-  await writeFile(forgedCountPath, forgedCount)
-  await assert.rejects(() => inspectZipSafety(forgedCountPath), /条目数量与目录大小不一致/)
+  // 2. extractZipArchive 解压出符号链接或解压命令中途失败时，必须清理整个暂存目录
+  const symlinkOut = join(dir, 'stage-symlink')
+  await assert.rejects(
+    () => extractZipArchive('/tmp/pkg.zip', symlinkOut, {
+      platform: 'linux',
+      runCmd: async (_cmd, _args) => {
+        await writeFile(join(symlinkOut, 'BeefTV'), 'stub')
+        await symlink(outsideDir, join(symlinkOut, 'escape'), linkType)
+      },
+    }),
+    error => error?.code === ARCHIVE_SAFETY_ERROR_CODE && /不能包含符号链接|解压路径越界/.test(error.message),
+  )
+  await assert.rejects(() => stat(symlinkOut))
 
-  // Local File Header 文件名与 Central Directory 名称不一致时必须拒绝。
-  const mismatchBuf = Buffer.from(buildZip([{ name: 'good.txt', data: 'ok' }]))
-  const lfhNameIdx = mismatchBuf.indexOf(Buffer.from('good.txt'))
-  Buffer.from('evil.txt').copy(mismatchBuf, lfhNameIdx)
-  const mismatchPath = join(dir, 'lfh-mismatch.zip')
-  await writeFile(mismatchPath, mismatchBuf)
-  await assert.rejects(() => inspectZipSafety(mismatchPath), /本地文件头名称与目录不一致/)
+  const failOut = join(dir, 'stage-fail')
+  await assert.rejects(
+    () => extractZipArchive('/tmp/pkg.zip', failOut, {
+      platform: 'darwin',
+      runCmd: async () => {
+        await writeFile(join(failOut, 'partial.bin'), 'half')
+        throw new Error('ditto failed')
+      },
+    }),
+    /ditto failed/,
+  )
+  await assert.rejects(() => stat(failOut))
+
+  // 3. runtime store 必须先完成 Ed25519 + SHA256 校验才解压，且解压后发现符号链接时清理暂存目录、绝不切换已激活版本
+  const pluginHome = await mkdtemp(join(tmpdir(), 'beeftv-store-safety-'))
+  context.after(() => rm(pluginHome, { recursive: true, force: true }))
+  const { rawPublic, privateKey } = makeSigningKey()
+  const plat = platformKey()
+  assert.ok(plat, 'test host must be a supported platform')
+  const zipV1 = validRuntimeZipFor(plat)
+  const shaV1 = createHash('sha256').update(zipV1).digest('hex')
+  const badShaBytes = Buffer.from('corrupted-payload')
+  const zipV2 = validRuntimeZipFor(plat)
+  const shaV2 = createHash('sha256').update(zipV2).digest('hex')
+
+  let mode = 'bad-sha'
+  let origin = ''
+  origin = await startFixtureServer(context, (req, res) => {
+    if (req.url === '/feed.json') {
+      const version = mode === 'v2-symlink' ? 'v2.4.4' : 'v2.4.3'
+      const sha = mode === 'v2-symlink' ? shaV2 : shaV1
+      const size = mode === 'bad-sha' ? badShaBytes.length : (mode === 'v2-symlink' ? zipV2.length : zipV1.length)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(signFeed({
+        schema: 2,
+        version,
+        commit: '67becaab7cfd2abe0cb394ec3da81c16115cae7f',
+        platforms: { [plat]: { urls: [`${origin}/${mode}.zip`], sha256: sha, size } },
+      }, privateKey))
+      return
+    }
+    const body = mode === 'bad-sha' ? badShaBytes : (mode === 'v2-symlink' ? zipV2 : zipV1)
+    res.writeHead(200, { 'content-length': String(body.length) })
+    res.end(body)
+  })
+
+  let extractCalls = 0
+  const store = createRuntimeStore({
+    pluginHome,
+    feedURL: `${origin}/feed.json`,
+    publicKey: rawPublic,
+    extractImpl: async (zipPath, targetDir, options) => {
+      extractCalls += 1
+      if (mode === 'v2-symlink') {
+        return extractZipArchive(zipPath, targetDir, {
+          ...options,
+          runCmd: async () => {
+            await symlink(outsideDir, join(targetDir, 'escape'), linkType)
+          },
+        })
+      }
+      return extractZipArchive(zipPath, targetDir, options)
+    },
+  })
+
+  // SHA256 不匹配必须在解压前失败，extractImpl 零调用
+  await assert.rejects(() => store.ensureInstalled(), /SHA256 校验不通过/)
+  assert.equal(extractCalls, 0)
+
+  // 安装合法 v2.4.3 并激活
+  mode = 'v1-good'
+  const installed = await store.ensureInstalled()
+  assert.equal(installed.version, 'v2.4.3')
+  assert.equal(extractCalls, 1)
+
+  // 升级到 v2.4.4 时暂存目录检出符号链接：拒绝升级、清空暂存目录、保持当前版本 v2.4.3
+  mode = 'v2-symlink'
+  await assert.rejects(
+    () => store.ensureInstalled({ forceUpdate: true }),
+    error => error?.code === ARCHIVE_SAFETY_ERROR_CODE && /不能包含符号链接|解压路径越界/.test(error.message),
+  )
+  const pointer = JSON.parse(await readFile(join(pluginHome, 'runtimes', 'current.json'), 'utf8'))
+  assert.equal(pointer.version, 'v2.4.3')
+  assert.equal((await store.status()).version, 'v2.4.3')
+  const runtimeEntries = await readdir(join(pluginHome, 'runtimes'))
+  assert.equal(runtimeEntries.some(name => name.startsWith('.staging-') || name.startsWith('.download-') || name.startsWith('v2.4.4-')), false)
 })
 
 test('runtime store downloads, falls back on corrupt mirror, verifies SHA256, extracts atomically, and updates cleanly', async context => {
@@ -598,29 +680,67 @@ test('runtime store stages unverified installs without moving current.json, acti
   assert.equal(reused.version, 'v2.4.3')
 })
 
-test('extractZipArchive handles Windows tar.exe/PowerShell fallback, Linux unzip/bsdtar/python3 fallback, and layout probing', async context => {
+test('extractZipArchive dispatches OS-native extractors across darwin, win32, and linux with clean fallbacks and layout probing', async context => {
   const root = await mkdtemp(join(tmpdir(), 'beeftv-extract-'))
   context.after(() => rm(root, { recursive: true, force: true }))
 
+  // macOS: /usr/bin/ditto -xk
+  const macCalls = []
+  const macOut = join(root, 'mac')
+  await extractZipArchive('/tmp/app.zip', macOut, {
+    platform: 'darwin',
+    runCmd: async (cmd, args) => { macCalls.push({ cmd, args }) },
+  })
+  assert.deepEqual(macCalls, [{ cmd: '/usr/bin/ditto', args: ['-xk', '/tmp/app.zip', macOut] }])
+
   // Windows: tar.exe primary path
   const winCalls1 = []
-  await extractZipArchive('C:\\tmp\\app.zip', join(root, 'win1'), {
+  const winOut1 = join(root, 'win1')
+  await extractZipArchive('C:\\tmp\\app.zip', winOut1, {
     platform: 'win32',
     runCmd: async (cmd, args) => { winCalls1.push({ cmd, args }) },
   })
-  assert.equal(winCalls1[0].cmd, 'tar.exe')
+  assert.deepEqual(winCalls1, [{ cmd: 'tar.exe', args: ['-xf', 'C:\\tmp\\app.zip', '-C', winOut1] }])
 
-  // Windows: tar.exe fails -> PowerShell Expand-Archive fallback
+  // Windows: tar.exe fails -> cleans partial staging files and falls back to UTF-16LE Base64 PowerShell Expand-Archive
   const winCalls2 = []
-  await extractZipArchive("C:\\tmp\\a'b.zip", join(root, 'win2'), {
+  const winOut2 = join(root, 'win2')
+  await extractZipArchive("C:\\tmp\\中文 a'b.zip", winOut2, {
     platform: 'win32',
     runCmd: async (cmd, args) => {
       winCalls2.push({ cmd, args })
-      if (cmd === 'tar.exe') throw new Error('tar failed')
+      if (cmd === 'tar.exe') {
+        await writeFile(join(winOut2, 'stale.tmp'), 'partial')
+        throw new Error('tar failed')
+      }
+      await assert.rejects(() => stat(join(winOut2, 'stale.tmp')))
     },
   })
   assert.deepEqual(winCalls2.map(c => c.cmd), ['tar.exe', 'powershell.exe'])
-  assert.match(winCalls2[1].args[3], /a''b\.zip/)
+  assert.deepEqual(winCalls2[1].args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand'])
+  const expandPs = Buffer.from(winCalls2[1].args[3], 'base64').toString('utf16le')
+  assert.match(expandPs, /\$ProgressPreference = 'SilentlyContinue'/)
+  assert.match(expandPs, /\$ErrorActionPreference = 'Stop'/)
+  assert.match(expandPs, /Expand-Archive -LiteralPath 'C:\\tmp\\中文 a''b\.zip' -DestinationPath '.*win2' -Force/)
+
+  // Windows: aborted tar.exe must not fall back to PowerShell and cleans up staging dir
+  const winAbort = new AbortController()
+  const winAbortCalls = []
+  const winAbortOut = join(root, 'win-abort')
+  await assert.rejects(
+    () => extractZipArchive('C:\\tmp\\app.zip', winAbortOut, {
+      platform: 'win32',
+      signal: winAbort.signal,
+      runCmd: async cmd => {
+        winAbortCalls.push(cmd)
+        winAbort.abort()
+        throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+      },
+    }),
+    /aborted/,
+  )
+  assert.deepEqual(winAbortCalls, ['tar.exe'])
+  await assert.rejects(() => stat(winAbortOut))
 
   // Windows layout probe
   const winLayoutDir = join(root, 'win-layout')
@@ -631,21 +751,52 @@ test('extractZipArchive handles Windows tar.exe/PowerShell fallback, Linux unzip
   assert.equal(probedWin?.executable, join(winLayoutDir, 'BeefTV.exe'))
   assert.equal(probedWin?.cli, join(winLayoutDir, 'cli', 'beeftv.exe'))
 
-  // Linux: unzip ENOENT -> bsdtar ENOENT -> python3 fallback, and all-missing clear error
+  // Linux: unzip primary path
+  const linPrimary = []
+  const linOut0 = join(root, 'lin0')
+  await extractZipArchive('/tmp/app.zip', linOut0, {
+    platform: 'linux',
+    runCmd: async (cmd, args) => { linPrimary.push({ cmd, args }) },
+  })
+  assert.deepEqual(linPrimary, [{ cmd: 'unzip', args: ['-q', '-o', '/tmp/app.zip', '-d', linOut0] }])
+
+  // Linux: unzip fails -> cleans partial files and falls back to bsdtar
   const linuxCalls = []
-  await extractZipArchive('/tmp/app.zip', join(root, 'lin1'), {
+  const linOut1 = join(root, 'lin1')
+  await extractZipArchive('/tmp/app.zip', linOut1, {
     platform: 'linux',
     runCmd: async (cmd, args) => {
-      linuxCalls.push(cmd)
-      if (cmd === 'unzip' || cmd === 'bsdtar') throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      linuxCalls.push({ cmd, args })
+      if (cmd === 'unzip') {
+        await writeFile(join(linOut1, 'stale.tmp'), 'partial')
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      }
+      await assert.rejects(() => stat(join(linOut1, 'stale.tmp')))
     },
   })
-  assert.deepEqual(linuxCalls, ['unzip', 'bsdtar', 'python3'])
+  assert.deepEqual(linuxCalls, [
+    { cmd: 'unzip', args: ['-q', '-o', '/tmp/app.zip', '-d', linOut1] },
+    { cmd: 'bsdtar', args: ['-xf', '/tmp/app.zip', '-C', linOut1] },
+  ])
 
-  await assert.rejects(() => extractZipArchive('/tmp/app.zip', join(root, 'lin2'), {
+  // Linux: both unzip & bsdtar missing -> clear install hint and staging cleanup
+  const linOut2 = join(root, 'lin2')
+  await assert.rejects(() => extractZipArchive('/tmp/app.zip', linOut2, {
     platform: 'linux',
     runCmd: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }) },
   }), /系统缺少 unzip/)
+  await assert.rejects(() => stat(linOut2))
+
+  // Linux: unzip fails with archive error while bsdtar is missing -> surface original unzip error
+  const linOut3 = join(root, 'lin3')
+  await assert.rejects(() => extractZipArchive('/tmp/bad.zip', linOut3, {
+    platform: 'linux',
+    runCmd: async cmd => {
+      if (cmd === 'unzip') throw Object.assign(new Error('CRC error'), { code: 2 })
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+    },
+  }), /CRC error/)
+  await assert.rejects(() => stat(linOut3))
 })
 
 test('platform-app checks platform minimum versions and discovers Windows/Linux installs from env dir', async context => {

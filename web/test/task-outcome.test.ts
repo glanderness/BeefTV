@@ -429,4 +429,28 @@ describe("task-outcome", () => {
         expect(uncertainConfirmCopy.confirmTitle).toContain("未能确认取消");
         expect(uncertainConfirmCopy.confirmContent).toContain("可能会再扣一次");
     });
+
+    it("treats generationSubmissionState=submitting without explicit terminal state as running and blocks regeneration", () => {
+        expect(readNodeTaskOutcome({ generationSubmissionState: "submitting" })).toEqual(runningTaskOutcome());
+        expect(readNodeTaskOutcome({ status: "error", generationSubmissionState: "submitting" })).toEqual(runningTaskOutcome());
+        expect(isTaskOutcomeWorking(readNodeTaskOutcome({ status: "error", generationSubmissionState: "submitting" }))).toBe(true);
+        expect(isNodeRegenerateBlocked({ status: "error", generationSubmissionState: "submitting" })).toBe(true);
+
+        // Authoritative backend taskOutcome or explicit terminal taskStatus still takes precedence.
+        expect(
+            readNodeTaskOutcome({
+                status: "error",
+                generationSubmissionState: "submitting",
+                taskOutcome: notChargedTaskOutcome(),
+            }),
+        ).toEqual(notChargedTaskOutcome());
+        expect(
+            readNodeTaskOutcome({
+                status: "error",
+                generationSubmissionState: "submitting",
+                taskStatus: "failed",
+                generationErrorCode: "request_not_sent",
+            }),
+        ).toEqual(notChargedTaskOutcome());
+    });
 });
