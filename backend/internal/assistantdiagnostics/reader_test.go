@@ -227,7 +227,7 @@ func TestDurableSchemaVersion2AndModelOutcomeLedgerAreReadCleanly(t *testing.T) 
 		b, _ := json.Marshal(row)
 		body = append(append(body, b...), '\n')
 	}
-	if err := os.WriteFile(filepath.Join(dir, "agent-model-outcomes.jsonl"), body, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "agent-requests.jsonl"), body, 0600); err != nil {
 		t.Fatal(err)
 	}
 	result, err := New(dir).DiagnosticAssistantEvidence("owner-1", stamp.Add(-time.Hour), stamp.Add(time.Hour), []diagnostics.AssistantTurnEvidence{turn})

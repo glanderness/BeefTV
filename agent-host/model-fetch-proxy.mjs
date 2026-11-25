@@ -14,7 +14,6 @@ export function installModelFetchProxy({
   nativePartStore,
   lifetimeBudget,
   dispatchDiagnostics,
-  outcomeDiagnostics,
   getOps,
 }) {
   const outbound = [];
@@ -103,7 +102,7 @@ export function installModelFetchProxy({
       return await fetchModelWithProgressIdle(input, options, {
         fetch: realFetch,
         onSettled: ({ ok, httpStatus, error }) => {
-          outcomeDiagnostics.record({
+          dispatchDiagnostics.record({
             ...entry,
             status: ok ? 'ok' : 'error',
             ...(httpStatus ? { httpStatus } : {}),

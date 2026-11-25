@@ -116,48 +116,6 @@ function observer(protocol, progress, onTerminal) {
   return push;
 }
 
-function observeNonStreamResponse(response, settle, caller) {
-  if (!response.ok || !response.body) {
-    settle({ ok: response.ok, httpStatus: response.status });
-    return response;
-  }
-  const reader = response.body.getReader();
-  let finished = false;
-  const body = new ReadableStream({
-    async pull(controller) {
-      try {
-        const next = await reader.read();
-        if (finished) return;
-        if (next.done) {
-          finished = true;
-          settle({ ok: true, httpStatus: response.status });
-          controller.close();
-          return;
-        }
-        controller.enqueue(next.value);
-      } catch (error) {
-        if (finished) return;
-        finished = true;
-        settle({ ok: false, httpStatus: response.status, error });
-        controller.error(error);
-      }
-    },
-    cancel(reason) {
-      if (finished) return;
-      finished = true;
-      if (caller?.aborted) {
-        settle({ ok: false, httpStatus: response.status, error: caller.reason || new DOMException('Aborted', 'AbortError') });
-      } else if (reason instanceof Error) {
-        settle({ ok: false, httpStatus: response.status, error: reason });
-      } else {
-        settle({ ok: true, httpStatus: response.status });
-      }
-      return reader.cancel(reason).catch(() => {});
-    },
-  });
-  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
-}
-
 export async function fetchModelWithProgressIdle(input, options = {}, {fetch: transport = globalThis.fetch, timeoutMs = DEFAULT_MODEL_STREAM_IDLE_MS, onSettled} = {}) {
   let settled = false;
   const settle = info => {
@@ -171,7 +129,9 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
   if (!protocol) {
     try {
       const response = await transport(input, options);
-      return onSettled ? observeNonStreamResponse(response, settle, caller) : response;
+      // Non-SSE responses settle diagnostic outcomes on response headers without wrapping the body stream.
+      settle({ ok: response.ok, httpStatus: response.status });
+      return response;
     } catch (error) {
       settle({ ok: false, error });
       throw error;
@@ -202,7 +162,9 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
     throw error;
   }
   if (!response.ok || !response.body || !/^text\/event-stream(?:\s*;|\s*$)/i.test(response.headers.get('content-type') || '')) {
-    return onSettled ? observeNonStreamResponse(response, settle, caller) : response;
+    // Non-SSE responses settle diagnostic outcomes on response headers without wrapping the body stream.
+    settle({ ok: response.ok, httpStatus: response.status });
+    return response;
   }
   const reader = response.body.getReader(); let timer, finished = false, sawTerminal = false, controller;
   const cleanup = () => { clearTimeout(timer); caller?.removeEventListener('abort', onAbort); };

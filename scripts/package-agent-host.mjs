@@ -10,7 +10,8 @@ const targets = { 'darwin/arm64': ['darwin', 'arm64'], 'darwin/amd64': ['darwin'
 const runtimeModules = ['session-identity.mjs', 'canvas-turn.mjs', 'request-budget.mjs', 'durable-request-budget.mjs',
   'durable-session-owner.mjs', 'durable-session-repository.mjs', 'durable-turn-admission.mjs', 'durable-pointer-resolver.mjs', 'durable-detached-reconciler.mjs', 'durable-turn-projection.mjs', 'durable-extensions.mjs', 'durable-watch-observer.mjs', 'business-progress.mjs', 'durable-turn-budget.mjs', 'media-content.mjs', 'native-part-store.mjs', 'native-history.mjs', 'skill-resource.mjs', 'active-skills.mjs',
   'operation-bridge.mjs', 'await-business-tasks.mjs', 'timeline-delivery.mjs', 'canvas-read-view.mjs', 'canvas-write-view.mjs', 'session-owner.mjs', 'system-prompt.mjs', 'model-stream-idle.mjs', 'model-transport-error.mjs', 'model-fetch-proxy.mjs', 'http-utils.mjs', 'events-route.mjs', 'plan.mjs', 'studio-digest.mjs', 'dispatch-diagnostics.mjs', 'plugin-packages.mjs'];
-const sourceFiles = ['server.mjs', 'plugin-host.mjs', ...runtimeModules, 'model-outcome-reasons.json', 'package.json', 'bun.lock'];
+const sourceFiles = ['server.mjs', 'plugin-host.mjs', ...runtimeModules, 'package.json', 'bun.lock'];
+const outcomeReasonsSource = path.join(root, 'backend', 'internal', 'assistantdiagnostics', 'model_outcome_reasons.json');
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', timeout: 180000 });
@@ -84,9 +85,11 @@ export function packageAgentHost({ runtime, target, destination, source = path.j
   for (const name of sourceFiles) {
     if (!existsSync(path.join(source, name))) throw new Error(`Missing agent-host source: ${name}`);
   }
+  if (!existsSync(outcomeReasonsSource)) throw new Error(`Missing model outcome reasons source: ${outcomeReasonsSource}`);
   const stage = mkdtempSync(path.join(tmpdir(), 'beeftv agent host '));
   try {
     for (const name of sourceFiles) cpSync(path.join(source, name), path.join(stage, name));
+    cpSync(outcomeReasonsSource, path.join(stage, 'model-outcome-reasons.json'));
     // Install from the committed lock into a clean tree, never from developer node_modules.
     const bunBin = process.versions.bun ? process.execPath : (process.env.BUN_BIN || 'bun');
     run(bunBin, ['install', '--production', '--frozen-lockfile', '--backend', 'copyfile', '--os', targets[target][0], '--cpu', targets[target][1]], stage);
