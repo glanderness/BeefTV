@@ -4,16 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
 var testReferencePreparationCopies = map[string]struct{ reason, action string }{
-	"image_reference_upload_failed": {"参考图片上传失败，本次尚未开始生成", "请稍后重试"},
-	"reference_media_upload_failed": {"参考素材上传失败，本次尚未开始生成", "请检查对象存储配置和公开读取权限后重试"},
-	"reference_preupload_failed":    {"参考素材上传失败，本次尚未开始生成", "请检查网络或稍后重试"},
+	"image_reference_upload_failed": {"参考图片上传失败，" + unsentPreparationMarker, "请稍后重试"},
+	"reference_media_upload_failed": {"参考素材上传失败，" + unsentPreparationMarker, "请检查对象存储配置和公开读取权限后重试"},
+	"reference_preupload_failed":    {"参考素材上传失败，" + unsentPreparationMarker, "请检查网络或稍后重试"},
+	"reference_upload_failed":       {"参考素材上传失败，" + unsentPreparationMarker, "请检查对象存储配置和公开读取权限后重试"},
 }
 
 func TestReferencePreparationSavedCodeSeparatesManualAndAutomaticRetry(t *testing.T) {
+	if !strings.Contains(categoryCopies[CategoryReferenceUploadFailed].Reason, unsentPreparationMarker) {
+		t.Fatalf("CategoryReferenceUploadFailed copy missing unsent marker %q: %+v", unsentPreparationMarker, categoryCopies[CategoryReferenceUploadFailed])
+	}
 	for code, copy := range testReferencePreparationCopies {
 		original := Failure{Category: CategoryReferenceUploadFailed, ProviderCode: code, Reason: copy.reason, Action: copy.action, RequestID: "request-123456", TaskID: "task-123456"}
 		for _, text := range []string{original.UserMessage(), copy.reason + "。" + copy.action + "。"} {

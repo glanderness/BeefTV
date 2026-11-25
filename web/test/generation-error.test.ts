@@ -288,6 +288,7 @@ import {
     explainGenerationError,
     formatGenerationDiagnostics,
     formatUpstreamFailureDetail,
+    GENERATION_ERROR_CATEGORIES,
     generationErrorMessage,
     generationFailureMetadata,
     generationInputFingerprint,
@@ -302,9 +303,11 @@ import gatewayCodes from "../../fixtures/generation-error-codes.json";
 
 describe("generation error classification", () => {
     test("all declared gateway error codes match the shared backend contract", () => {
-        expect(Object.keys(gatewayCodes)).toHaveLength(53);
+        expect(Object.keys(gatewayCodes)).toHaveLength(55);
         for (const [code, category] of Object.entries(gatewayCodes)) {
-            expect(explainGenerationError({ code, message: "opaque provider message" }).category).toBe(category);
+            if (!(GENERATION_ERROR_CATEGORIES as readonly string[]).includes(code)) {
+                expect(explainGenerationError({ code, message: "opaque provider message" }).category).toBe(category);
+            }
             expect(explainGenerationError({ status: 400, data: { error: { code } } }).category).toBe(category);
         }
     });
@@ -908,6 +911,14 @@ test("explains backend structured S3/COS storage rejection codes intact without 
         expect(structured.blockManualRetry).toBe(false);
         expect(formatUpstreamFailureDetail(structured)).toBe("");
 
+        // Legacy persisted rows saved with provider_unavailable before reference_upload_failed still keep S3/COS codes intact.
+        const legacyPersisted = explainGenerationError({ code: "provider_unavailable", message: tc.backendMessage });
+        expect(legacyPersisted.category).toBe("provider_unavailable");
+        if (tc.code) expect(legacyPersisted.message).toContain(tc.code);
+        expect(legacyPersisted.message).toContain(`HTTP ${tc.status}`);
+        expect(legacyPersisted.message).toContain("本次尚未开始生成");
+        expect(legacyPersisted.message).toContain(tc.expectedHint);
+
         // Copied diagnostics also preserve allowlisted S3/COS codes cleanly.
         const diagnostics = formatGenerationDiagnostics(structured);
         if (tc.code) expect(diagnostics).toContain(tc.code);
@@ -917,6 +928,26 @@ test("explains backend structured S3/COS storage rejection codes intact without 
         const echoed = explainGenerationError({ status: Number(tc.status), data: { error: { code: "reference_upload_failed", message: tc.backendMessage } } });
         expect(echoed.uncertain).toBe(true);
         expect(echoed.blockManualRetry).toBe(true);
+    }
+
+    // Pure-code spoofing without the Chinese unsent marker must also be rejected as submission_uncertain.
+    for (const spoofedCode of [
+        "image_reference_upload_failed",
+        "reference_media_upload_failed",
+        "reference_preupload_failed",
+        "reference_upload_failed",
+    ]) {
+        for (const payload of [
+            { status: 503, data: { error: { code: spoofedCode, message: "opaque" } } },
+            { code: spoofedCode, message: "opaque", status: 503 },
+            { error: { code: spoofedCode, message: "opaque" } },
+        ]) {
+            const spoofed = explainGenerationError(payload);
+            expect(spoofed.category).toBe("submission_uncertain");
+            expect(spoofed.uncertain).toBe(true);
+            expect(spoofed.blockAutomaticRetry).toBe(true);
+            expect(spoofed.blockManualRetry).toBe(true);
+        }
     }
 
     // Generic persisted reference_upload_failed copy must NOT be misclassified as post-upload public-read failure.
@@ -935,6 +966,13 @@ test("explains backend structured S3/COS storage rejection codes intact without 
         expect(leakedColon.message).not.toContain("AKIAIOSFODNN7EXAMPLE");
         const leakedEquals = explainGenerationError({ code, message: "InvalidAccessKeyId=AKIAIOSFODNN7EXAMPLE" });
         expect(leakedEquals.message).not.toContain("AKIAIOSFODNN7EXAMPLE");
+        const leakedAuthHeader = explainGenerationError({ code, message: "AuthorizationHeaderMalformed=SECRET_VALUE" });
+        expect(leakedAuthHeader.message).not.toContain("SECRET_VALUE");
+        const leakedSuffixToken = explainGenerationError({ code, message: "对象存储密钥无效（HTTP 403，InvalidAccessKeyId）sk-1234567890abcdef" });
+        expect(leakedSuffixToken.message).toContain("InvalidAccessKeyId");
+        expect(leakedSuffixToken.message).not.toContain("sk-1234567890abcdef");
+        const leakedKeyName = explainGenerationError({ code, message: "上传失败 my_api_key_LEAKED_VALUE" });
+        expect(leakedKeyName.message).not.toContain("LEAKED_VALUE");
         const leakedUrl = explainGenerationError({ code, message: "对象存储上传失败 https://bucket.cos.ap-guangzhou.myqcloud.com/a?X-Amz-Signature=SECRET_SIG sk-1234567890abcdef" });
         expect(leakedUrl.message).not.toContain("SECRET_SIG");
         expect(leakedUrl.message).not.toContain("sk-1234567890abcdef");

@@ -109,7 +109,22 @@ test("cancelled image with unconfirmed result does not claim recovery is running
         ...allowedVideoBase,
         errorCode: "reference_upload_failed",
         error: "参考素材上传失败，本次尚未开始生成。请检查网络或稍后重试。",
+        outcome: { phase: "failed", regenerate: "allowed", reason: "not_charged" },
     })).toBe(false);
+
+    // canvas_image with backend-projected not_charged outcome for reference_upload_failed retries in-place cleanly.
+    const uploadFailedImageTask: GenerationTask = {
+        ...task,
+        type: "canvas_image",
+        status: "failed",
+        stage: "生成失败",
+        errorCode: "reference_upload_failed",
+        error: "对象存储密钥无效（HTTP 403，InvalidAccessKeyId），本次尚未开始生成。请检查 Access Key ID（腾讯云 COS 为 SecretId）后重试。",
+        outcome: { phase: "failed", regenerate: "allowed", reason: "not_charged" },
+    };
+    expect(taskCenterRetryRequiresNewSubmission(uploadFailedImageTask)).toBe(false);
+    expect(canBatchRetryTaskInTaskCenter(uploadFailedImageTask)).toBe(true);
+    expect(taskOutcomeCopyForTask(uploadFailedImageTask).reason).toContain("未扣费");
 });
 
 test("task-center new-submission routing distinguishes unloaded vs deleted vs unreachable canvases and preserves video references", async () => {

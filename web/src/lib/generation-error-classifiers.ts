@@ -52,6 +52,8 @@ export const LOCAL_TASK_ADMISSION_FAILURE: CategoryCopy = {
     action: "请重启应用后重试；若仍失败，请保留排查信息并联系支持",
 };
 
+export const UNSENT_PREPARATION_MARKER = "本次尚未开始生成";
+
 export const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     auth: { reason: "模型服务鉴权失败", action: "请检查 API Key 后重试" },
     permission: { reason: "当前渠道没有使用该模型的权限", action: "请更换模型或检查渠道权限" },
@@ -76,7 +78,7 @@ export const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     throttled: { reason: "请求过于频繁", action: "请稍后再试" },
     concurrency: { reason: "同时进行的生成过多", action: "请等待已有任务完成后再试" },
     provider_unavailable: { reason: "模型服务暂时不可用", action: "请稍后重试" },
-    reference_upload_failed: { reason: "参考素材上传失败，本次尚未开始生成", action: "请检查对象存储配置和公开读取权限后重试" },
+    reference_upload_failed: { reason: `参考素材上传失败，${UNSENT_PREPARATION_MARKER}`, action: "请检查对象存储配置和公开读取权限后重试" },
     network: { reason: "网络连接失败", action: "请检查网络并核对原任务状态后，再决定是否重新生成" },
     request_not_sent: { reason: "未能连接服务，本次请求尚未提交", action: "请检查网络或代理后重试" },
     timeout: { reason: "模型服务响应超时", action: "请稍后查询原任务，不要立即重新提交" },
@@ -253,7 +255,10 @@ const UNSTRUCTURED_PROMPT_TAIL = new RegExp(
     "i",
 );
 const SIGNED_QUERY = /(?:[?&](?:signature|x-amz-signature|x-oss-signature|token|key)=)[^\s&]+/gi;
-const TOKEN_SECRET_PATTERN = /(?:\bbearer\s+[^\s,;]+|\bsk-[A-Za-z0-9_-]{8,}|\beyJ[A-Za-z0-9_.-]{20,})[^\s,;]*/gi;
+const ALLOWLISTED_STORAGE_ERROR_CODES: ReadonlySet<string> = new Set([
+    "AccessDenied", "SignatureDoesNotMatch", "InvalidAccessKeyId", "NoSuchBucket",
+    "InvalidBucketName", "RequestTimeTooSkewed", "AuthorizationHeaderMalformed", "PermanentRedirect",
+]);
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$/;
 const UNSAFE_ID = /secret|token|password|apikey|api-key|bearer|sk-/i;
 
@@ -571,7 +576,16 @@ export function sanitizeProviderCode(value: string) {
     return /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(text) && !/^(?:sk-|eyJ)|secret|password|bearer/i.test(text) ? text : "";
 }
 
-export function sanitizeProviderText(value: string, options?: { preserveStorageCode?: boolean }) {
+function stripSecretsPreservingStorageCodes(text: string): string {
+    return text.replace(SECRET_PATTERN, (match) => {
+        const head = match.match(/^[A-Za-z0-9_-]+/)?.[0] || "";
+        if (!ALLOWLISTED_STORAGE_ERROR_CODES.has(head)) return "";
+        const rest = match.slice(head.length);
+        return !rest ? head : /^[)）\]】」』，。、！？]/u.test(rest) ? head + stripSecretsPreservingStorageCodes(rest) : "";
+    });
+}
+
+export function sanitizeProviderText(value: string) {
     let text = value.trim();
     if (!text || HTML_BODY.test(text) || /<\/?[a-z!][^>]*>/i.test(text)) return "";
     text = text.replace(URL_PATTERN, "");
@@ -580,10 +594,7 @@ export function sanitizeProviderText(value: string, options?: { preserveStorageC
     // since a whitespace-based token matcher cannot know where a secret ends.
     text = stripCredentialTail(text).replace(UNSTRUCTURED_PROMPT_TAIL, "[已隐藏]");
     text = redactLocalPaths(text, "[路径已隐藏]");
-    text = text
-        .replace(SIGNED_QUERY, "")
-        .replace(options?.preserveStorageCode ? TOKEN_SECRET_PATTERN : SECRET_PATTERN, "")
-        .replace(PROMPT_ECHO, "$1[已隐藏]");
+    text = stripSecretsPreservingStorageCodes(text.replace(SIGNED_QUERY, "")).replace(PROMPT_ECHO, "$1[已隐藏]");
     text = text.replace(/\s+/g, " ").trim();
     if (text.startsWith("{") || text.startsWith("[") || text.startsWith("<")) return "";
     return text.slice(0, 240);

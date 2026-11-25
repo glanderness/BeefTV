@@ -87,6 +87,23 @@ describe("generation-failure-ux", () => {
                 explanation: explainGenerationError({ code: "request_not_sent", message: "未能连接服务" }),
             }),
         ).toEqual({ label: "本次未扣费", tone: "safe" });
+
+        const uploadFailure = explainGenerationError({
+            code: "reference_upload_failed",
+            message: "对象存储密钥无效（HTTP 403，InvalidAccessKeyId），本次尚未开始生成。请检查 Access Key ID（腾讯云 COS 为 SecretId）后重试。",
+        });
+        expect(
+            resolveFailureBillingBadge({
+                explanation: uploadFailure,
+                outcome: notChargedTaskOutcome(),
+                taskId: "task-upload-1",
+            }),
+        ).toEqual({ label: "本次未扣费", tone: "safe" });
+        expect(
+            resolveFailureBillingBadge({
+                explanation: uploadFailure,
+            }),
+        ).toEqual({ label: "本次未扣费", tone: "safe" });
     });
 
     test("returns output-stage reassurance hint only for moderation_output", () => {

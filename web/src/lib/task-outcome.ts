@@ -194,7 +194,7 @@ function readLegacyTerminalOutcome({ status, stage, errorCode, providerRequestId
             return { phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" };
         }
     }
-    if (errorCode === "request_not_sent" || stage === "request_not_sent" || errorCode === "reference_upload_failed") {
+    if (errorCode === "request_not_sent" || stage === "request_not_sent") {
         return notChargedTaskOutcome();
     }
     if (isDepthCapture) {

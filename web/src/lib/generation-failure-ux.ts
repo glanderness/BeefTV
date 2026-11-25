@@ -37,6 +37,7 @@ const LOCAL_UNSENT_CATEGORIES: ReadonlySet<GenerationErrorCategory> = new Set([
     "local_storage",
     "local_disk_full",
     "local_credential",
+    "reference_upload_failed",
 ]);
 
 export function isCreativeInputFailureCategory(category: GenerationErrorCategory): boolean {
