@@ -332,33 +332,6 @@ func TestSQLiteUnknownResourceDoesNotInsert(t *testing.T) {
 	}
 }
 
-type sqliteAudioResourcePort struct {
-	generation.ResourcePort
-	user string
-	id   string
-	data []byte
-}
-
-func (p sqliteAudioResourcePort) Lookup(user, id string) (generation.ResourceInfo, error) {
-	if user != p.user || id != p.id {
-		return generation.ResourceInfo{}, errors.New("resource not owned")
-	}
-	return generation.ResourceInfo{
-		ID: id, UserID: user, Status: "ready", Kind: "video", MimeType: "video/mp4",
-		Size: int64(len(p.data)), Width: 64, Height: 48, DurationMs: 1000,
-	}, nil
-}
-
-func (p sqliteAudioResourcePort) Open(user, id string) (generation.ResourceInfo, io.ReadCloser, error) {
-	info, err := p.Lookup(user, id)
-	if err != nil {
-		return info, nil, err
-	}
-	return info, io.NopCloser(bytes.NewReader(p.data)), nil
-}
-
-func (p sqliteAudioResourcePort) LocalMode() bool { return true }
-
 func sqliteTestClip(t *testing.T, width, height int, audio bool) []byte {
 	t.Helper()
 	bin, err := mediatools.ResolveFFmpeg()
@@ -392,6 +365,10 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	_, db, _ := specializedSQLite(t, nil)
 	sourceWithAudio := sqliteTestClip(t, 64, 48, true)
+	sourcePath := filepath.Join(t.TempDir(), "source-audio.mp4")
+	if err := os.WriteFile(sourcePath, sourceWithAudio, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	mutedOutput := sqliteTestClip(t, 64, 48, false)
 	inputJSON := `{"mode":"video","config":{"channelId":"beeftv","model":"video-subtitle-erase"},"subtitleErase":{"eraseMethod":"auto","subtitleModel":"standard"},"referenceVideos":[{"storageKey":"resource:source"}]}`
 	if err := db.Create(&model.Task{
@@ -407,7 +384,7 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 	bindRuntime := func(ctx context.Context, meta generation.CallMeta) context.Context {
 		return generation.WithRuntime(ctx, generation.Runtime{
 			Call:      meta,
-			Resources: sqliteAudioResourcePort{user: "owner", id: "source", data: sourceWithAudio},
+			Resources: localFileAudioResourcePort{user: "owner", id: "source", path: sourcePath},
 		})
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -470,10 +447,6 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 		if out, mErr := exec.Command(bin, "-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=24:duration=1", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "-f", "mov", srcMovPath).CombinedOutput(); mErr != nil {
 			t.Fatalf("src mov fixture: %s %v", out, mErr)
 		}
-		srcMovBytes, rErr := os.ReadFile(srcMovPath)
-		if rErr != nil {
-			t.Fatal(rErr)
-		}
 		mutedMovPath := filepath.Join(t.TempDir(), "muted.mov")
 		if out, mErr := exec.Command(bin, "-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=24:duration=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-f", "mov", mutedMovPath).CombinedOutput(); mErr != nil {
 			t.Fatalf("muted mov fixture: %s %v", out, mErr)
@@ -490,7 +463,7 @@ func TestRestoreManagedUpscaleAudioPreservesSubtitleEraseAudio(t *testing.T) {
 		deps.BindRuntime = func(ctx context.Context, meta generation.CallMeta) context.Context {
 			return generation.WithRuntime(ctx, generation.Runtime{
 				Call:      meta,
-				Resources: sqliteAudioResourcePort{user: "owner", id: "source", data: srcMovBytes},
+				Resources: localFileAudioResourcePort{user: "owner", id: "source", path: srcMovPath},
 			})
 		}
 		movArtifact, movCleanup, dErr := decodeRemoteVideoArtifactToFile(

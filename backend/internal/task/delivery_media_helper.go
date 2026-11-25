@@ -247,7 +247,7 @@ func decodeRemoteVideoArtifactToFile(deps DeliveryMediaDeps, userID, identity, m
 
 	finalPath := fileResult.Path
 	mimeType := fileResult.MimeType
-	head, headErr := generation.ReadFileHeaderBytes(finalPath, videoHeaderSniffLimit)
+	head, headErr := outbound.ReadFilePrefix(finalPath, videoHeaderSniffLimit)
 	if headErr != nil {
 		runCleanups()
 		retErr = headErr
@@ -270,7 +270,7 @@ func decodeRemoteVideoArtifactToFile(deps DeliveryMediaDeps, userID, identity, m
 		}
 		if remuxedPath != finalPath {
 			finalPath = remuxedPath
-			head, headErr = generation.ReadFileHeaderBytes(finalPath, videoHeaderSniffLimit)
+			head, headErr = outbound.ReadFilePrefix(finalPath, videoHeaderSniffLimit)
 			if headErr != nil {
 				runCleanups()
 				retErr = headErr

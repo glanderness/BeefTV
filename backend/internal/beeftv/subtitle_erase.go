@@ -280,20 +280,6 @@ func (c *MediaClient) QuerySubtitleErase(ctx context.Context, id, model string) 
 	return task, nil
 }
 
-func (c *MediaClient) SubtitleEraseContent(ctx context.Context, id string, limit int64) ([]byte, string, error) {
-	path, err := SubtitleEraseTaskPath(id)
-	if err != nil {
-		return nil, "", err
-	}
-	req, err := c.request(ctx, http.MethodGet, path+"/content", nil)
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Del(MediaProtocolHeader)
-	data, header, err := c.sendWith(c.storageClient("去字幕结果重定向次数过多"), req, limit)
-	return data, header.Get("Content-Type"), err
-}
-
 func (c *MediaClient) SubtitleEraseContentToFile(ctx context.Context, id, destDir string, limit int64) (string, string, int64, error) {
 	path, err := SubtitleEraseTaskPath(id)
 	if err != nil {

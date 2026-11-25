@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1041,6 +1042,147 @@ func TestSweepResumableArtifactsReclaimsStaleFilesAndKeepsFresh(t *testing.T) {
 	if _, err := os.Stat(unrelated); err != nil {
 		t.Fatalf("unrelated file should not be swept: %v", err)
 	}
+}
+
+func TestStreamResponseToFileLimitsIdleTimeoutCancelAndCleanup(t *testing.T) {
+	t.Run("exact at limit and over limit", func(t *testing.T) {
+		payload := bytes.Repeat([]byte("a"), 1024)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "video/mp4")
+			if r.URL.Path == "/over" {
+				_, _ = w.Write(append(payload, 'x'))
+				return
+			}
+			_, _ = w.Write(payload)
+		}))
+		defer srv.Close()
+
+		dir := t.TempDir()
+		reqCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, srv.URL+"/exact.mp4", nil)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		res, err := StreamResponseToFile(context.Background(), resp, StreamFileOptions{
+			Dir: dir, MaxBytes: ExclusiveByteLimit(1024), IdleTimeout: time.Second, Cancel: cancel,
+		})
+		if err != nil {
+			t.Fatalf("exact at-limit stream failed: %v", err)
+		}
+		if res.Size != 1024 || res.MimeType != "video/mp4" || !strings.HasSuffix(res.Path, ".part") {
+			t.Fatalf("unexpected exact stream result: %+v", res)
+		}
+		got, err := os.ReadFile(res.Path)
+		_ = os.Remove(res.Path)
+		if err != nil || !bytes.Equal(got, payload) {
+			t.Fatalf("streamed bytes mismatch: len=%d err=%v", len(got), err)
+		}
+
+		overReq, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, srv.URL+"/over", nil)
+		overResp, err := srv.Client().Do(overReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer overResp.Body.Close()
+		if _, err := StreamResponseToFile(context.Background(), overResp, StreamFileOptions{
+			Dir: dir, MaxBytes: ExclusiveByteLimit(1024), IdleTimeout: time.Second, Cancel: cancel,
+		}); !errors.Is(err, ErrResourceTooLarge) {
+			t.Fatalf("over-limit err = %v, want ErrResourceTooLarge", err)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Fatalf("over-limit left temp files: %v", entries)
+		}
+	})
+
+	t.Run("idle stall times out and removes temp file", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("partial"))
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		}))
+		defer srv.Close()
+
+		dir := t.TempDir()
+		reqCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, srv.URL+"/stall", nil)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		_, err = StreamResponseToFile(context.Background(), resp, StreamFileOptions{
+			Dir: dir, MaxBytes: ExclusiveByteLimit(1 << 20), IdleTimeout: 80 * time.Millisecond, Cancel: cancel,
+		})
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("stall err = %v, want DeadlineExceeded", err)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Fatalf("stalled stream left temp files: %v", entries)
+		}
+	})
+
+	t.Run("caller cancel returns Canceled and removes temp file", func(t *testing.T) {
+		entered := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("partial"))
+			w.(http.Flusher).Flush()
+			close(entered)
+			<-r.Context().Done()
+		}))
+		defer srv.Close()
+
+		dir := t.TempDir()
+		parentCtx, parentCancel := context.WithCancel(context.Background())
+		defer parentCancel()
+		req, _ := http.NewRequestWithContext(parentCtx, http.MethodGet, srv.URL+"/cancel", nil)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		go func() { <-entered; parentCancel() }()
+		_, err = StreamResponseToFile(parentCtx, resp, StreamFileOptions{
+			Dir: dir, MaxBytes: ExclusiveByteLimit(1 << 20), IdleTimeout: 5 * time.Second, Cancel: parentCancel,
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancel err = %v, want Canceled", err)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Fatalf("canceled stream left temp files: %v", entries)
+		}
+	})
+
+	t.Run("truncated body reports unexpected EOF and cleans up", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Length", "4096")
+			_, _ = w.Write([]byte("short"))
+			w.(http.Flusher).Flush()
+		}))
+		defer srv.Close()
+
+		dir := t.TempDir()
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/short", nil)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		_, err = StreamResponseToFile(context.Background(), resp, StreamFileOptions{
+			Dir: dir, MaxBytes: ExclusiveByteLimit(1 << 20), IdleTimeout: time.Second,
+		})
+		if !errors.Is(err, io.ErrUnexpectedEOF) || !IsConnectionDrop(err) {
+			t.Fatalf("short body err = %v, want connection drop / ErrUnexpectedEOF", err)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Fatalf("short body left temp files: %v", entries)
+		}
+	})
 }
 
 // ResumableResult and DownloadResumable are test-only materializing wrappers

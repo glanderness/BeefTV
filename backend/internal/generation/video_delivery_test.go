@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -16,10 +17,35 @@ func videoResultDownloader(config Config, rawURL, taskID string, renew ...videoR
 	if len(renew) > 0 {
 		resolver = func(ctx context.Context) (VideoResultSource, error) {
 			freshURL, err := renew[0](ctx)
-			return videoURLSource(config, freshURL), err
+			return VideoResultSource{URL: freshURL}, err
 		}
 	}
-	return VideoResultDownloader(config, taskID, videoURLSource(config, rawURL), resolver)
+	fileDownload := videoResultFileDownloader(config, taskID, VideoResultSource{URL: rawURL}, resolver)
+	return func(ctx context.Context) ([]byte, string, error) {
+		filePath, mimeType, err := fileDownload(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		defer os.Remove(filePath)
+		data, err := os.ReadFile(filePath)
+		return data, mimeType, err
+	}
+}
+
+func getVideoBinaryWithIdleTimeout(ctx context.Context, config Config, rawURL string, idle time.Duration) ([]byte, string, error) {
+	filePath, mimeType, err := getProviderExternalVideoFile(context.WithValue(ctx, videoDeliveryRequestContext{}, idle), config, rawURL)
+	if err != nil {
+		return nil, "", err
+	}
+	defer os.Remove(filePath)
+	data, err := os.ReadFile(filePath)
+	return data, mimeType, err
+}
+
+func downloadVideoResultForTest(ctx context.Context, config Config, rawURL, taskID string) ([]byte, string, error) {
+	policy := videoPollPolicyForConfig(ctx, config, DefaultVideoPollPolicy())
+	data, mimeType, err := RunVideoDownload(ctx, taskID, policy, videoResultDownloader(config, rawURL, taskID))
+	return data, NormalizedMediaMIMEType(mimeType, data), err
 }
 
 func TestSeedanceDispatchUsesGatewayDeliveryFallback(t *testing.T) {
@@ -110,11 +136,11 @@ func TestCompletedVideoDownloadDoesNotUseGenerationCircuit(t *testing.T) {
 			defer server.Close()
 			limits := &deliveryCircuitLimits{}
 			ctx := WithRuntime(context.Background(), Runtime{Limits: limits, Call: CallMeta{ChannelID: "video", RequestKind: "download"}})
-			_, _, err := GetBinary(ctx, Config{BaseURL: server.URL}, "/videos/original/content")
+			_, _, err := GetProviderExternalBinary(ctx, Config{BaseURL: server.URL}, "/videos/original/content")
 			if (err != nil) != (status != 200) || hits != 1 || limits.checks != 0 || limits.results != 0 || limits.acquired != 1 || limits.released != 1 {
 				t.Fatalf("download err=%v hits=%d limits=%+v", err, hits, limits)
 			}
-			_, _, err = GetBinary(WithRequestKind(ctx, "poll"), Config{BaseURL: server.URL}, "/videos/original")
+			_, _, err = GetProviderExternalBinary(WithRequestKind(ctx, "poll"), Config{BaseURL: server.URL}, "/videos/original")
 			if err == nil || hits != 1 || limits.checks != 1 || limits.acquired != 1 {
 				t.Fatalf("generation circuit no longer protects polling: %v %+v", err, limits)
 			}

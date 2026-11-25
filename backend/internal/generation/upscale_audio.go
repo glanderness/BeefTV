@@ -3,7 +3,6 @@ package generation
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/mediatools"
+	"infinite-canvas/backend/internal/outbound"
 )
 
 func validateUpscaleVideoFacts(facts mediatools.MediaMetadata) error {
@@ -23,22 +23,6 @@ func validateUpscaleVideoFacts(facts mediatools.MediaMetadata) error {
 		}
 	}
 	return nil
-}
-
-// ReadFileHeaderBytes reads up to maxBytes from the start of path without
-// loading the rest of the file into memory.
-func ReadFileHeaderBytes(path string, maxBytes int) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	buf := make([]byte, maxBytes)
-	n, err := io.ReadFull(f, buf)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, err
-	}
-	return buf[:n], nil
 }
 
 // PreserveUpscaleAudioFile preserves sourcePath's audio track onto outputPath
@@ -65,7 +49,7 @@ func PreserveUpscaleAudioFile(ctx context.Context, sourcePath, outputPath string
 	if err != nil {
 		return "", noop, err
 	}
-	head, err := ReadFileHeaderBytes(outputPath, 512)
+	head, err := outbound.ReadFilePrefix(outputPath, 512)
 	if err != nil {
 		return "", noop, err
 	}
