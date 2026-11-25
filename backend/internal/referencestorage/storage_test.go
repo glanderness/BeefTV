@@ -257,6 +257,13 @@ func TestUploadRejectionParsesAllowlistedS3CodesWithoutLeakingXML(t *testing.T) 
 			wantNotContain: "SECRET_SIGN",
 		},
 		{
+			name:           "InvalidAccessKeyId gives SecretId hint",
+			status:         403,
+			xmlBody:        `<Error><Code>InvalidAccessKeyId</Code><AWSAccessKeyId>AKIA_PRIVATE_KEY</AWSAccessKeyId></Error>`,
+			wantContain:    "SecretId",
+			wantNotContain: "AKIA_PRIVATE_KEY",
+		},
+		{
 			name:           "NoSuchBucket gives APPID hint",
 			status:         404,
 			xmlBody:        `<Error><Code>NoSuchBucket</Code><BucketName>private-bucket</BucketName></Error>`,
@@ -264,11 +271,46 @@ func TestUploadRejectionParsesAllowlistedS3CodesWithoutLeakingXML(t *testing.T) 
 			wantNotContain: "private-bucket",
 		},
 		{
-			name:           "Unknown XML code falls back cleanly",
+			name:           "InvalidBucketName gives APPID hint",
+			status:         400,
+			xmlBody:        `<Error><Code>InvalidBucketName</Code><BucketName>bad-bucket</BucketName></Error>`,
+			wantContain:    "InvalidBucketName",
+			wantNotContain: "bad-bucket",
+		},
+		{
+			name:           "RequestTimeTooSkewed gives clock hint",
+			status:         403,
+			xmlBody:        `<Error><Code>RequestTimeTooSkewed</Code><RequestId>secret-req</RequestId></Error>`,
+			wantContain:    "系统时间",
+			wantNotContain: "secret-req",
+		},
+		{
+			name:           "AuthorizationHeaderMalformed gives endpoint/region hint",
+			status:         400,
+			xmlBody:        `<Error><Code>AuthorizationHeaderMalformed</Code><Region>private-region</Region></Error>`,
+			wantContain:    "AuthorizationHeaderMalformed",
+			wantNotContain: "private-region",
+		},
+		{
+			name:           "PermanentRedirect gives endpoint/region hint",
+			status:         301,
+			xmlBody:        `<Error><Code>PermanentRedirect</Code><Endpoint>https://private.cos.test</Endpoint></Error>`,
+			wantContain:    "PermanentRedirect",
+			wantNotContain: "private.cos.test",
+		},
+		{
+			name:           "Unknown XML code falls back cleanly on 403",
 			status:         403,
 			xmlBody:        `<Error><Code>InternalVendorCode</Code><Message>raw-internal</Message></Error>`,
 			wantContain:    "HTTP 403",
 			wantNotContain: "InternalVendorCode",
+		},
+		{
+			name:           "Unknown 500 falls back cleanly without leaking body",
+			status:         500,
+			xmlBody:        `<Error><Code>InternalError</Code><Message>https://secret.cos/?X-Amz-Signature=PRIV</Message></Error>`,
+			wantContain:    "HTTP 500",
+			wantNotContain: "PRIV",
 		},
 	}
 	for _, tc := range cases {

@@ -1,7 +1,9 @@
 {
   "local_storage_failed": "local_storage",
-  "image_reference_upload_failed": "provider_unavailable",
-  "reference_media_upload_failed": "provider_unavailable",
+  "image_reference_upload_failed": "submission_uncertain",
+  "reference_media_upload_failed": "submission_uncertain",
+  "reference_preupload_failed": "submission_uncertain",
+  "reference_upload_failed": "submission_uncertain",
   "ContentSecurityDetectionError": "provider_unavailable",
   "AccountOverdueError": "quota_upstream",
   "OperationDenied.ServiceOverdue": "quota_upstream",

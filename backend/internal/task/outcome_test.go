@@ -33,20 +33,28 @@ func TestComputeOutcome(t *testing.T) {
 		{"部分输出未入库", with(func(t *model.Task) { t.Status = model.TaskStatusSucceeded }), ResultStatePendingMaterialization, OutcomeFacts{}, want("fetching", "blocked", "result_fetching")},
 		{"下载暂时失败", with(func(t *model.Task) { t.Status = model.TaskStatusSucceeded }), ResultStateFailedRetryable, OutcomeFacts{}, want("retrievable", "blocked", "delivery_pending")},
 		{"入库确定失败", with(func(t *model.Task) { t.Status = model.TaskStatusSucceeded }), ResultStateFailedPermanent, OutcomeFacts{}, want("failed", "confirm", "result_unrecoverable")},
-		{"尚未派发", failed, "", OutcomeFacts{DispatchState: "not_sent"}, want("failed", "allowed", "task_failed")},
-		{"本地准备失败", failed, "", OutcomeFacts{RequestNotSent: true}, want("failed", "allowed", "task_failed")},
+		{"尚未派发", failed, "", OutcomeFacts{DispatchState: "not_sent"}, want("failed", "allowed", ReasonNotCharged)},
+		{"本地准备失败", failed, "", OutcomeFacts{RequestNotSent: true}, want("failed", "allowed", ReasonNotCharged)},
+		{"参考素材上传失败允许直接重生成", with(func(t *model.Task) { t.ErrorCode = "reference_upload_failed" }), "", OutcomeFacts{}, want("failed", "allowed", ReasonNotCharged)},
+		{"参考素材上传失败不覆盖submission_unknown", with(func(t *model.Task) { t.ErrorCode = "reference_upload_failed"; t.Stage = "submission_unknown" }), "", OutcomeFacts{}, want("retrievable", "blocked", "image_recovery_pending")},
+		{"参考素材上传失败不覆盖已接受证据", with(func(t *model.Task) { t.ErrorCode = "reference_upload_failed" }), "", OutcomeFacts{DispatchState: "accepted"}, want("retrievable", "blocked", "image_recovery_pending")},
+		{"参考素材上传失败不覆盖已有上游视频任务号", with(func(t *model.Task) {
+			t.Type = "canvas_video"
+			t.ErrorCode = "reference_upload_failed"
+			t.ProviderRequestID = "vid-1"
+		}), "", OutcomeFacts{}, want("retrievable", "blocked", "provider_result_pending")},
 		{"阶段文字不参与判断", with(func(t *model.Task) { t.Stage = "请求尚未提交" }), "", OutcomeFacts{}, want("failed", "confirm", "task_failed")},
 		{"未发出但上游已有任务号", with(func(t *model.Task) { t.ProviderRequestID = "upstream" }), "", OutcomeFacts{RequestNotSent: true}, want("retrievable", "blocked", "provider_result_pending")},
 		{"未发出阶段被接受证据推翻", failed, "", OutcomeFacts{RequestNotSent: true, DispatchState: "accepted"}, want("retrievable", "blocked", "image_recovery_pending")},
 		{"明确没建任务", with(func(t *model.Task) { t.RecoveryOutcome = &noResult }), "", OutcomeFacts{DispatchState: "rejected_no_job"}, want("failed", "allowed", "no_result")},
-		{"明确拒绝未建任务但已有POST调用日志", failed, "", OutcomeFacts{HasImageReceipt: true, DispatchState: "rejected_no_job"}, want("failed", "allowed", "task_failed")},
+		{"明确拒绝未建任务但已有POST调用日志", failed, "", OutcomeFacts{HasImageReceipt: true, DispatchState: "rejected_no_job"}, want("failed", "allowed", ReasonNotCharged)},
 		{"明确失败不代表退款", with(func(t *model.Task) { t.RecoveryOutcome = &noResult }), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "no_result")},
 		{"旧回执没有路由", failed, "", OutcomeFacts{HasImageReceipt: true}, want("retrievable", "blocked", "image_recovery_pending")},
 		{"已接受", failed, "", OutcomeFacts{DispatchState: "accepted"}, want("retrievable", "blocked", "image_recovery_pending")},
 		{"取消后提交未确认不假装自动取回且需确认重生成", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "submission_unknown"}, want("failed", "confirm", "cancelled_result_unconfirmed")},
 		{"取消后已接受仍需核对原请求并在确认后可重生成", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "cancelled_result_unconfirmed")},
 		{"取消后证据读取失败保留evidence_unavailable不误报未确认", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{Unreadable: true}, want("retrievable", "blocked", "evidence_unavailable")},
-		{"取消前确认未发送可重新生成", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "not_sent"}, want("failed", "allowed", "task_failed")},
+		{"取消前确认未发送可重新生成", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled }), "", OutcomeFacts{DispatchState: "not_sent"}, want("failed", "allowed", ReasonNotCharged)},
 		{"取消后确认无结果保留终态", with(func(t *model.Task) { t.Status = model.TaskStatusCancelled; t.RecoveryOutcome = &noResult }), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "no_result")},
 		{"取消后BeefTV视频已确认扣费保留已扣费结论并退出活跃轮询", with(func(t *model.Task) {
 			u := "completed"
@@ -245,7 +253,7 @@ func TestComputeOutcome(t *testing.T) {
 		}), "", OutcomeFacts{DispatchState: "accepted"}, want("failed", "confirm", "result_unrecoverable")},
 		{"BeefTV图片无job_id且未发出按第三方兜底允许重生成", with(func(t *model.Task) {
 			t.BeefBillingState = nil
-		}), "", OutcomeFacts{DispatchState: "not_sent"}, want("failed", "allowed", "task_failed")},
+		}), "", OutcomeFacts{DispatchState: "not_sent"}, want("failed", "allowed", ReasonNotCharged)},
 		{"Ark成片版权拦截且已退款标记输入拒绝并允许直接重生成", with(func(t *model.Task) {
 			u := "failed"
 			t.Type = "canvas_video"

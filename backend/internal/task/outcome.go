@@ -14,6 +14,7 @@ const (
 	RecoveryNoResult      = "no_result"
 	RecoveryUnrecoverable = "unrecoverable"
 
+	ReasonNotCharged                 = "not_charged"
 	ReasonSettlementPending          = "settlement_pending"
 	ReasonChargedResultUnrecoverable = "charged_result_unrecoverable"
 	ReasonCancelledResultUnconfirmed = "cancelled_result_unconfirmed"
@@ -55,8 +56,9 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 	if outcome, ok := computeProviderSettlementOutcome(task); ok {
 		return outcome
 	}
+	notSubmitted := provablyNotSubmitted(task, facts)
 	regenerate := "confirm"
-	if task.Type == model.TaskTypeDepthCapture || provablyNotSubmitted(task, facts) {
+	if task.Type == model.TaskTypeDepthCapture || notSubmitted {
 		regenerate = "allowed"
 	}
 	// 只读结构化上游错误码；不从 Error 文案重新推断审核或计费。
@@ -84,6 +86,9 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 			return out("retrievable", "blocked", "image_recovery_pending")
 		}
 		return out("retrievable", "blocked", "provider_result_pending")
+	}
+	if notSubmitted {
+		return out("failed", "allowed", ReasonNotCharged)
 	}
 	return out("failed", regenerate, "task_failed")
 }
@@ -122,7 +127,10 @@ func provablyNotSubmitted(task model.Task, facts OutcomeFacts) bool {
 	case "accepted", "submission_unknown":
 		return false
 	}
-	return facts.RequestNotSent
+	if facts.RequestNotSent {
+		return true
+	}
+	return task.ErrorCode == "reference_upload_failed" && task.Stage != "submission_unknown" && !facts.HasImageReceipt
 }
 
 var arkPolicyRejectedCodePattern = regexp.MustCompile(

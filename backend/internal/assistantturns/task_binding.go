@@ -93,7 +93,7 @@ func ProjectTaskInTx(tx *gorm.DB, userID string, task model.Task) (taskdelivery.
 			}
 		}
 	}
-	failedRetryBlocked := task.Stage != taskStageRequestNotSent && (task.Stage == "submission_unknown" || generation.ClassifyText(task.Error).BlocksManualRetry())
+	failedRetryBlocked := generation.PersistedFailureBlocksRetry(task.Error, task.Stage, task.ErrorCode)
 	proj := taskdelivery.ProjectWithFacts(task, stored, nil, failedRetryBlocked, facts)
 	return proj, storedByIndex, readyResources, nil
 }

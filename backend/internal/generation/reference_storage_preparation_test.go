@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 func TestReferenceStorageFailureProvesNoModelSubmission(t *testing.T) {
@@ -33,12 +35,29 @@ func TestReferenceStorageFailureProvesNoModelSubmission(t *testing.T) {
 				t.Fatalf("lost preparation evidence: %v", err)
 			}
 			failure := ClassifyError(err)
-			if failure.Category != CategoryProviderUnavailable || failure.ProviderCode != "reference_media_upload_failed" || failure.Uncertain || failure.Retryable {
+			if failure.Category != CategoryReferenceUploadFailed || failure.ProviderCode != "reference_media_upload_failed" || failure.Uncertain || failure.Retryable {
 				t.Fatalf("storage failure became provider rejection or unknown submission: %#v", failure)
 			}
 			message := failure.UserMessage()
 			if !strings.Contains(message, "本次尚未开始生成") || !strings.Contains(message, "公开读取权限") || strings.Contains(message, "private.invalid") || strings.Contains(message, "secret") || strings.Contains(message, "模型的权限") {
 				t.Fatalf("unsafe or misleading failure: %q", message)
+			}
+			task := &model.Task{Stage: "准备参考素材"}
+			CaptureTaskFailureDiagnostics(task, err, "unknown")
+			if task.FailureDiagnostics == nil || task.FailureDiagnostics.Source != "reference_upload" {
+				t.Fatalf("storage diagnostics = %+v", task.FailureDiagnostics)
+			}
+			if strings.Contains(task.FailureDiagnostics.Summary, "private.invalid") || strings.Contains(task.FailureDiagnostics.Summary, "secret") {
+				t.Fatalf("storage diagnostics leaked sensitive detail: %q", task.FailureDiagnostics.Summary)
+			}
+			if task.FailureDiagnostics.Summary == message {
+				t.Fatalf("storage diagnostics overwrote root cause with generic user message: %q", task.FailureDiagnostics.Summary)
+			}
+			if errors.Is(cause, context.DeadlineExceeded) && !strings.Contains(task.FailureDiagnostics.Summary, "context deadline exceeded") {
+				t.Fatalf("storage diagnostics lost deadline root cause: %q", task.FailureDiagnostics.Summary)
+			}
+			if strings.Contains(cause.Error(), "HTTP 502") && !strings.Contains(task.FailureDiagnostics.Summary, "HTTP 502") {
+				t.Fatalf("storage diagnostics lost HTTP 502 root cause: %q", task.FailureDiagnostics.Summary)
 			}
 			var unknown SubmissionUnknownError
 			if errors.As(UncertainVideoSubmission(ctx, err), &unknown) {

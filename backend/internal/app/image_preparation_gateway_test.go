@@ -25,7 +25,7 @@ func TestImageGatewayPreparationFailureDoesNotBecomeUnknownOrResend(t *testing.T
 		t.Fatalf("calls=%d err=%v", calls, err)
 	}
 	failure := classifyTaskFailure(err)
-	if failure.Uncertain || failure.Retryable || !failure.BlocksAutomaticRetry() || failure.Category != generation.CategoryProviderUnavailable || failure.Action != "请稍后重试" {
+	if failure.Uncertain || failure.Retryable || !failure.BlocksAutomaticRetry() || failure.Category != generation.CategoryReferenceUploadFailed || failure.Action != "请稍后重试" {
 		t.Fatalf("preparation failure misclassified: %#v", failure)
 	}
 	attempt, readErr := s.repo.LatestRouteAttempt(task.ID)
@@ -45,11 +45,11 @@ func TestImageGatewayPreparationFailureDoesNotBecomeUnknownOrResend(t *testing.T
 		t.Fatal(readErr)
 	}
 	output := taskForOutput(*stored)
-	if output.Error != failure.UserMessage() || output.ErrorCode != "provider_unavailable" || generation.ClassifyText(output.Error).BlocksManualRetry() || generation.ClassifyText(output.Error).ProviderCode != "image_reference_upload_failed" {
+	if output.Error != failure.UserMessage() || output.ErrorCode != "reference_upload_failed" || generation.PersistedFailure(output.Error, output.ErrorCode).BlocksManualRetry() || !generation.PersistedFailure(output.Error, output.ErrorCode).BlocksAutomaticRetry() {
 		t.Fatalf("detail lost preparation proof: %+v", output)
 	}
 	summary := taskSummaryForOutput(*stored)
-	if summary.Error != failure.UserMessage() || summary.ErrorCode != "provider_unavailable" {
+	if summary.Error != failure.UserMessage() || summary.ErrorCode != "reference_upload_failed" {
 		t.Fatalf("summary lost preparation proof: %+v", summary)
 	}
 	retried, retryErr := s.RetryTask(task.UserID, task.ID)
@@ -71,7 +71,7 @@ func TestStoredReferencePreparationRetryStillHonorsUnknownStageAndReceipt(t *tes
 	for _, state := range []string{"preparation", "unknown-stage", "unknown-receipt"} {
 		t.Run(state, func(t *testing.T) {
 			s, db, task, row, _ := imageSubmissionFixture(t, false)
-			task.Status, task.Error, task.Stage = model.TaskStatusFailed, message, "参考素材上传失败"
+			task.Status, task.Error, task.ErrorCode, task.Stage = model.TaskStatusFailed, message, string(generation.CategoryReferenceUploadFailed), "参考素材上传失败"
 			attempt, err := s.repo.LatestRouteAttempt(task.ID)
 			if err != nil {
 				t.Fatal(err)

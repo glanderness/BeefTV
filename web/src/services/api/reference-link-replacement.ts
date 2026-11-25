@@ -42,6 +42,12 @@ export async function uploadReferenceLinks(references: ReferenceLinkRequest[], s
     } catch (error) {
         if (target || signal?.aborted) progress.dismiss();
         else progress.fail("参考素材上传未完成，请查看错误后重试");
+        if (!signal?.aborted) {
+            const wrapped = error instanceof Error && Object.isExtensible(error)
+                ? error
+                : new Error(error instanceof Error ? error.message : String(error));
+            throw Object.assign(wrapped, { code: "reference_upload_failed" });
+        }
         throw error;
     }
     finally { stopped = true; if (timer) clearTimeout(timer); releaseUpload(); }

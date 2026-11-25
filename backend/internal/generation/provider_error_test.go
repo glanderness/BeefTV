@@ -350,8 +350,8 @@ func TestBeefTVErrorCodeInventory(t *testing.T) {
 	if err := json.Unmarshal(data, &inventory); err != nil {
 		t.Fatal(err)
 	}
-	if len(inventory) != 53 {
-		t.Fatalf("BeefTV error code inventory has %d entries, want 53", len(inventory))
+	if len(inventory) != 55 {
+		t.Fatalf("BeefTV error code inventory has %d entries, want 55", len(inventory))
 	}
 	for code, category := range inventory {
 		t.Run(code, func(t *testing.T) {
