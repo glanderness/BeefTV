@@ -75,7 +75,7 @@ func TestVideoCredentialRemovalPreservesSignedRawQuery(t *testing.T) {
 			} else if tc.sameOrigin {
 				rawURL = provider.URL + "/video?" + tc.query
 			}
-			data, _, err := DownloadVideoResult(ctx, Config{BaseURL: provider.URL, APIKey: "provider/key"}, rawURL, "original")
+			data, _, err := downloadVideoResultForTest(ctx, Config{BaseURL: provider.URL, APIKey: "provider/key"}, rawURL, "original")
 			if err != nil || !bytes.Equal(data, payload) || reads.Load() != 1 {
 				t.Fatalf("reads=%d bytes=%d err=%v", reads.Load(), len(data), err)
 			}
@@ -238,7 +238,7 @@ func TestBeefTVVideoPrimaryAuthenticationRejectionStops(t *testing.T) {
 			}))
 			defer provider.Close()
 			ctx := WithEndpoints(context.Background(), Endpoints{BeefTVVideoBaseURL: provider.URL})
-			_, _, err := DownloadVideoResult(ctx, Config{BaseURL: provider.URL, APIKey: "provider-key"}, provider.URL+"/v1/videos/original/content", "original")
+			_, _, err := downloadVideoResultForTest(ctx, Config{BaseURL: provider.URL, APIKey: "provider-key"}, provider.URL+"/v1/videos/original/content", "original")
 			if err == nil || requests.Load() != 1 {
 				t.Fatalf("requests=%d err=%v", requests.Load(), err)
 			}

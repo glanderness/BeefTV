@@ -143,7 +143,7 @@ func executeConfigured(ctx context.Context, input Input) (map[string]any, error)
 				return nil, err
 			}
 		}
-		if err := PrepareBeefTVVideoReferences(ctx, input.Config, &input, ownedSeedanceMediaReader(ctx, userID)); err != nil {
+		if err := PrepareBeefTVVideoReferences(ctx, input.Config, &input, nil); err != nil {
 			return nil, err
 		}
 		if err := prepareFullVideoReferences(ctx, &input, ownedFullVideoMediaReader(ctx, userID)); err != nil {

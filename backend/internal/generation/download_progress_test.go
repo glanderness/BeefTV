@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -37,11 +39,13 @@ func (f *fakeDeliveryPort) snapshot() []outbound.ResumableProgress {
 
 func downloadFrom(url string) func(context.Context) ([]byte, string, error) {
 	return func(ctx context.Context) ([]byte, string, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		filePath, mimeType, err := GetExternalVideoFile(ctx, url)
 		if err != nil {
 			return nil, "", err
 		}
-		return DoBinary(req)
+		defer os.Remove(filePath)
+		data, err := os.ReadFile(filePath)
+		return data, mimeType, err
 	}
 }
 
@@ -241,19 +245,27 @@ func TestVideoDeliveryPendingDoesNotExhaustTransferRetries(t *testing.T) {
 				renews := 0
 				primary := VideoResultSource{
 					URL: "https://gateway.example/v1/videos/original/content",
-					Read: func(context.Context) ([]byte, string, error) {
+					ReadFile: func(context.Context) (string, string, error) {
 						calls++
 						if calls <= 4 {
-							return nil, "", HTTPError{StatusCode: 503, Body: body, RetryAfter: retryAfter}
+							return "", "", HTTPError{StatusCode: 503, Body: body, RetryAfter: retryAfter}
 						}
-						return []byte("saved video"), "video/mp4", nil
+						path := filepath.Join(t.TempDir(), "saved.mp4")
+						if err := os.WriteFile(path, []byte("saved video"), 0o600); err != nil {
+							return "", "", err
+						}
+						return path, "video/mp4", nil
 					},
 				}
-				downloader := VideoResultDownloader(Config{BaseURL: "https://gateway.example"}, "original", primary, func(context.Context) (VideoResultSource, error) {
+				downloader := videoResultFileDownloader(Config{BaseURL: "https://gateway.example"}, "original", primary, func(context.Context) (VideoResultSource, error) {
 					renews++
 					return primary, nil
 				})
-				data, _, err := RunVideoDownload(context.Background(), "original", policy, downloader)
+				filePath, _, err := RunVideoDownloadFile(context.Background(), "original", policy, downloader)
+				var data []byte
+				if err == nil {
+					data, err = os.ReadFile(filePath)
+				}
 				if err != nil || calls != 5 || renews != 0 || string(data) != "saved video" {
 					t.Fatalf("calls=%d renews=%d data=%q error=%v", calls, renews, data, err)
 				}

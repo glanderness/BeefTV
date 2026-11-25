@@ -1,12 +1,10 @@
 package generation
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,6 +15,7 @@ import (
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/beeftv"
 	"infinite-canvas/backend/internal/mediatools"
+	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/playback"
 
 	_ "golang.org/x/image/webp"
@@ -82,8 +81,7 @@ func PrepareUpscale(ctx context.Context, input Input) (Input, error) {
 	if err != nil {
 		return input, err
 	}
-	runtime, _ := RuntimeFromContext(ctx)
-	if err := PrepareBeefTVVideoReferences(ctx, input.Config, &input, ownedMediaReaderWithVideoLimit(ctx, runtime.Call.UserID, mediaToolVideoMaxBytes(ctx, &input))); err != nil {
+	if err := PrepareBeefTVVideoReferences(ctx, input.Config, &input, nil); err != nil {
 		return input, err
 	}
 	return input, nil
@@ -118,165 +116,35 @@ func hydrateOwnedUpscaleInput(ctx context.Context, input Input) (Input, *Media, 
 	return input, media, deliveryLimit, nil
 }
 
-// prepareUpscaleMetadata resolves and validates upscale facts for EstimateUpscale
-// without uploading bytes to object storage. Whenever ResourcePort.Open yields an
-// ownedLocalFile (*os.File), it runs the exact same zero-copy file/ffprobe check as submit.
+// prepareUpscaleMetadata resolves and validates local upscale source facts
+// directly on disk via ownedLocalFile (*os.File), shared by EstimateUpscale
+// and submit preflight without buffering media into RAM or uploading to storage.
 func prepareUpscaleMetadata(ctx context.Context, input Input) (Input, UpscaleSourceFacts, error) {
 	input, media, deliveryLimit, err := hydrateOwnedUpscaleInput(ctx, input)
 	if err != nil {
 		return input, UpscaleSourceFacts{}, err
 	}
-	kind := input.Mode
-	factor := int64(input.Upscale.Factor)
-	videoLimit := mediaToolVideoMaxBytes(ctx, &input)
 	runtime, _ := RuntimeFromContext(ctx)
-	var nonFileReader io.ReadCloser
-	if runtime.Resources != nil {
-		resourceID := strings.TrimPrefix(media.StorageKey, "resource:")
-		_, rc, openErr := runtime.Resources.Open(runtime.Call.UserID, resourceID)
-		if openErr == nil {
-			if file, ok := rc.(ownedLocalFile); ok {
-				facts, localErr := validateLocalUpscaleFile(ctx, kind, media, rc, file, factor, videoLimit, deliveryLimit)
-				return input, facts, localErr
-			}
-			nonFileReader = rc
-			defer nonFileReader.Close()
-		} else if runtime.Resources.LocalMode() {
-			return input, UpscaleSourceFacts{}, localMediaOpenError(openErr)
-		}
-	}
-	if err := ValidateBeefTVMediaToolSize(kind, media.Bytes, videoLimit); err != nil {
-		return input, UpscaleSourceFacts{}, err
-	}
-	if kind == "image" {
-		mime := normalizedLowerMIME(media.MimeType)
-		unknownMIME := mime == "" || mime == "application/octet-stream"
-		missingDims := media.Width <= 0 || media.Height <= 0
-		if (missingDims || unknownMIME) && nonFileReader != nil {
-			w, h, probedMIME, cfgErr := probeImageHeader(nonFileReader)
-			if cfgErr == nil && w > 0 && h > 0 {
-				if missingDims {
-					media.Width, media.Height = w, h
-				}
-				if unknownMIME && probedMIME != "" {
-					mime = probedMIME
-					media.MimeType = mime
-					unknownMIME = false
-				}
-			}
-		}
-		if unknownMIME || media.Width <= 0 || media.Height <= 0 {
-			return input, UpscaleSourceFacts{}, PreparationUserError{Category: CategoryInvalidParams, Reason: "无法读取超分图片的尺寸或格式", Action: "请确认图片完整后重新导入重试"}
-		}
-		if err := validateUpscaleImagePreflight(mime, media.Width, media.Height, factor, deliveryLimit); err != nil {
-			return input, UpscaleSourceFacts{}, err
-		}
-		return input, UpscaleSourceFacts{Bytes: media.Bytes, MIME: mime, Width: media.Width, Height: media.Height}, nil
-	}
-	if media.Bytes > deliveryLimit {
-		return input, UpscaleSourceFacts{}, videoDeliveryLimitError(deliveryLimit)
-	}
-	if err := validateUpscaleVideoContainerMIME(media.MimeType); err != nil {
-		return input, UpscaleSourceFacts{}, err
-	}
-	if media.Width <= 0 || media.Height <= 0 || media.DurationMs <= 0 {
-		return input, UpscaleSourceFacts{}, PreparationUserError{Category: CategoryInvalidParams, Reason: "无法读取超分视频的尺寸或时长", Action: "请确认视频完整后重新导入重试"}
-	}
-	if media.DurationMs > 300_000 {
-		return input, UpscaleSourceFacts{}, PreparationUserError{Category: CategoryInvalidParams, Reason: "超分视频须为不超过 5 分钟的 MP4 或 MOV", Action: "请裁剪时长或转码为 MP4/MOV 后重试"}
-	}
-	return input, UpscaleSourceFacts{
-		Bytes:      media.Bytes,
-		MIME:       normalizedLowerMIME(media.MimeType),
-		Width:      media.Width,
-		Height:     media.Height,
-		DurationMs: media.DurationMs,
-	}, nil
-}
-
-// prepareOwnedUpscaleSource validates an owned upscale source before upload/submission.
-// Opens once and branches on ownedLocalFile regardless of workspace mode; non-file
-// streams use bounded header/streaming checks without buffering 200 MiB in RAM.
-func prepareOwnedUpscaleSource(ctx context.Context, input Input) (Input, error) {
-	input, media, deliveryLimit, err := hydrateOwnedUpscaleInput(ctx, input)
-	if err != nil {
-		return input, err
-	}
-	kind := input.Mode
-	factor := int64(input.Upscale.Factor)
-	videoLimit := mediaToolVideoMaxBytes(ctx, &input)
-	runtime, _ := RuntimeFromContext(ctx)
-	if runtime.Resources != nil && !runtime.Resources.LocalMode() && media.Bytes > 0 {
-		if err := ValidateBeefTVMediaToolSize(kind, media.Bytes, videoLimit); err != nil {
-			return input, err
-		}
-		if kind == "video" && media.Bytes > deliveryLimit {
-			return input, videoDeliveryLimitError(deliveryLimit)
-		}
+	if runtime.Resources == nil {
+		return input, UpscaleSourceFacts{}, PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地素材服务暂不可用", Action: "请稍后重试"}
 	}
 	resourceID := strings.TrimPrefix(media.StorageKey, "resource:")
-	info, rc, openErr := runtime.Resources.Open(runtime.Call.UserID, resourceID)
+	_, rc, openErr := runtime.Resources.Open(runtime.Call.UserID, resourceID)
 	if openErr != nil {
-		return input, localMediaOpenError(openErr)
+		return input, UpscaleSourceFacts{}, localMediaOpenError(openErr)
 	}
-	if file, ok := rc.(ownedLocalFile); ok {
-		_, localErr := validateLocalUpscaleFile(ctx, kind, media, rc, file, factor, videoLimit, deliveryLimit)
-		return input, localErr
-	}
-	limit := BeefTVSeedanceKindMaxBytes(kind)
-	if kind == "video" {
-		limit = videoLimit
-	}
-	if kind == "image" {
-		defer rc.Close()
-		var header bytes.Buffer
-		headLen, err := io.CopyN(&header, rc, videoReferenceHeaderDecodeLimit)
-		if err != nil && !errors.Is(err, io.EOF) {
-			return input, localMediaOpenError(err)
-		}
-		restLen, err := io.Copy(io.Discard, io.LimitReader(rc, limit+1-headLen))
-		if err != nil {
-			return input, localMediaOpenError(err)
-		}
-		size := headLen + restLen
-		if err := ValidateBeefTVSeedanceMediaSize("image", size); err != nil {
-			return input, err
-		}
-		meta, cfgErr := upscaleImageConfig(header.Bytes())
-		if cfgErr != nil {
-			return input, cfgErr
-		}
-		mime := NormalizedMediaMIMEType(firstNonEmpty(media.MimeType, info.MimeType), header.Bytes())
-		if err := validateUpscaleImagePreflight(mime, meta.Width, meta.Height, factor, deliveryLimit); err != nil {
-			return input, err
-		}
-		media.Bytes, media.Width, media.Height, media.MimeType = size, meta.Width, meta.Height, mime
-		return input, nil
-	}
-	if err := validateUpscaleVideoContainerMIME(firstNonEmpty(media.MimeType, info.MimeType)); err != nil {
+	file, ok := rc.(ownedLocalFile)
+	if !ok {
 		_ = rc.Close()
-		return input, err
+		return input, UpscaleSourceFacts{}, PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地素材文件无法读取", Action: "请重新导入素材后重试"}
 	}
-	size, facts, err := streamProbeOwnedVideo(ctx, rc, limit)
-	if err != nil {
-		return input, err
-	}
-	if size > deliveryLimit {
-		return input, videoDeliveryLimitError(deliveryLimit)
-	}
-	if err := validateUpscaleVideoFacts(facts); err != nil {
-		return input, err
-	}
-	media.Bytes = size
-	if media.Width <= 0 || media.Height <= 0 {
-		if w, h := facts.DisplayDimensions(); w > 0 && h > 0 {
-			media.Width, media.Height = w, h
-		}
-	}
-	if media.DurationMs <= 0 && facts.DurationMs > 0 {
-		media.DurationMs = facts.DurationMs
-	}
-	return input, nil
+	facts, localErr := validateLocalUpscaleFile(ctx, input.Mode, media, rc, file, int64(input.Upscale.Factor), mediaToolVideoMaxBytes(ctx, &input), deliveryLimit)
+	return input, facts, localErr
+}
+
+func prepareOwnedUpscaleSource(ctx context.Context, input Input) (Input, error) {
+	prepared, _, err := prepareUpscaleMetadata(ctx, input)
+	return prepared, err
 }
 
 func validateLocalUpscaleFile(ctx context.Context, kind string, media *Media, rc io.ReadCloser, file ownedLocalFile, factor, videoLimit, deliveryLimit int64) (UpscaleSourceFacts, error) {
@@ -340,14 +208,6 @@ func normalizedLowerMIME(raw string) string {
 	return strings.ToLower(strings.TrimSpace(strings.Split(raw, ";")[0]))
 }
 
-func validateUpscaleVideoContainerMIME(raw string) error {
-	mime := normalizedLowerMIME(raw)
-	if mime == "" || mime == "application/octet-stream" || mime == "video/mp4" || mime == "video/quicktime" {
-		return nil
-	}
-	return PreparationUserError{Category: CategoryInvalidParams, Reason: "超分视频须为不超过 5 分钟的 MP4 或 MOV", Action: "请裁剪时长或转码为 MP4/MOV 后重试"}
-}
-
 func validateUpscaleImagePreflight(mime string, width, height int, factor, deliveryLimit int64) error {
 	mime = normalizedLowerMIME(mime)
 	if mime != "image/png" && mime != "image/jpeg" && mime != "image/webp" {
@@ -365,15 +225,6 @@ func validateUpscaleImagePreflight(mime string, width, height int, factor, deliv
 		return PreparationUserError{Category: CategoryInputTooLarge, Reason: fmt.Sprintf("预计超分结果可能超过本机单个生成资源上限 %s", formatStorageLimit(deliveryLimit)), Action: "请降低放大倍数或调高资源上限后重试"}
 	}
 	return nil
-}
-
-func upscaleImageConfig(data []byte) (image.Config, error) {
-	w, h, _, err := probeImageHeader(bytes.NewReader(data))
-	meta := image.Config{Width: w, Height: h}
-	if err != nil || w <= 0 || h <= 0 || int64(w)*int64(h) > 32<<20 {
-		return meta, PreparationUserError{Category: CategoryInvalidParams, Reason: "图片无法读取或超过 3200 万像素", Action: "请压缩或重新导出图片后重试"}
-	}
-	return meta, nil
 }
 
 func legacyUpscaleInput(input Input) beeftv.LegacyUpscaleInput {
@@ -410,8 +261,6 @@ func EstimateUpscale(ctx context.Context, input Input) (UpscaleEstimate, Upscale
 	estimate, err = managedMediaClient(queryCtx, prepared.Config).EstimateLegacyUpscale(queryCtx, req)
 	return estimate, facts, err
 }
-
-func upscaleTaskPath(id string) (string, error) { return beeftv.LegacyUpscaleTaskPath(id) }
 
 func RunUpscaleTask(ctx context.Context, input Input) (map[string]any, error) {
 	if err := ValidateUpscaleInput(input); err != nil {
@@ -582,8 +431,6 @@ func QueryUpscaleResult(ctx context.Context, input Input, id string) (map[string
 	return out, status, nil
 }
 
-const legacyInlineVideoDataURLMaxBytes = int64(64 << 20)
-
 // downloadAndFinalizeLegacyToolVideo streams a legacy/recovery tool video
 // directly to disk, validates its header, remuxes original source audio on
 // disk, probes dimensions/duration with bounded Range reads, and persists the
@@ -615,7 +462,7 @@ func downloadAndFinalizeLegacyToolVideo(
 	}
 	defer os.Remove(downloadedPath)
 
-	head, err := ReadFileHeaderBytes(downloadedPath, 4<<10)
+	head, err := outbound.ReadFilePrefix(downloadedPath, 4<<10)
 	if err != nil {
 		return nil, err
 	}
@@ -632,7 +479,7 @@ func downloadAndFinalizeLegacyToolVideo(
 	}
 	outHead := head
 	if finalPath != downloadedPath {
-		if sniff, sniffErr := ReadFileHeaderBytes(finalPath, 4<<10); sniffErr == nil {
+		if sniff, sniffErr := outbound.ReadFilePrefix(finalPath, 4<<10); sniffErr == nil {
 			outHead = sniff
 		}
 	}
@@ -647,18 +494,12 @@ func downloadAndFinalizeLegacyToolVideo(
 	return map[string]any{"mode": "video", "video": videoMap}, nil
 }
 
-func hasGeneratedVideoFileStore(ctx context.Context) bool {
-	runtime, _ := RuntimeFromContext(ctx)
-	_, ok := runtime.Resources.(GeneratedVideoFileStore)
-	return ok && strings.TrimSpace(runtime.Call.UserID) != "" && strings.TrimSpace(runtime.Call.TaskID) != ""
-}
-
 // persistDownloadedVideoFile probes dimensions/duration with bounded Range reads
 // and streams finalPath directly into workspace resources via GeneratedVideoFileStore
 // (zero RAM buffering, zero base64 DataURL in ResultJSON). Falls back to bounded
-// <=64 MiB DataURL only for standalone unit tests without GeneratedVideoFileStore.
+// DataURL only for standalone unit tests without GeneratedVideoFileStore.
 func persistDownloadedVideoFile(ctx context.Context, finalPath, outMime, identitySuffix string) (map[string]any, error) {
-	head, err := ReadFileHeaderBytes(finalPath, 4<<10)
+	head, err := outbound.ReadFilePrefix(finalPath, 4<<10)
 	if err != nil {
 		return nil, err
 	}
@@ -700,7 +541,7 @@ func persistDownloadedVideoFile(ctx context.Context, finalPath, outMime, identit
 		}
 		return videoMap, nil
 	}
-	if info.Size() > legacyInlineVideoDataURLMaxBytes {
+	if info.Size() > assets.MaxInlineMediaBytes {
 		return nil, errors.New("视频结果过大，缺少本地资源写入端口")
 	}
 	data, err := os.ReadFile(finalPath)
@@ -735,35 +576,14 @@ func restoreMediaSourceAudioFile(ctx context.Context, input Input, outputPath st
 	if err != nil {
 		return "", noop, errors.New("原视频无法读取，暂时不能保留音轨")
 	}
-	if file, isLocal := rc.(ownedLocalFile); isLocal {
-		localPath := file.Name()
+	file, isLocal := rc.(ownedLocalFile)
+	if !isLocal {
 		_ = rc.Close()
-		return PreserveUpscaleAudioFile(ctx, localPath, outputPath)
-	}
-	defer rc.Close()
-	limit := mediaToolVideoMaxBytes(ctx, &input)
-	if limit <= 0 {
-		limit = BeefTVSeedanceVideoMaxBytes
-	}
-	dir, err := os.MkdirTemp(filepath.Dir(outputPath), ".beeftv-remux-")
-	if err != nil {
-		dir, err = os.MkdirTemp("", "beeftv-source-audio-")
-	}
-	if err != nil {
 		return "", noop, errors.New("原视频无法读取，暂时不能保留音轨")
 	}
-	defer os.RemoveAll(dir)
-	tmp, err := os.CreateTemp(dir, "source-*.mp4")
-	if err != nil {
-		return "", noop, errors.New("原视频无法读取，暂时不能保留音轨")
-	}
-	tmpPath := tmp.Name()
-	written, copyErr := io.Copy(tmp, io.LimitReader(rc, limit+1))
-	closeErr := tmp.Close()
-	if copyErr != nil || closeErr != nil || written <= 0 || written > limit {
-		return "", noop, errors.New("原视频无法读取，暂时不能保留音轨")
-	}
-	return PreserveUpscaleAudioFile(ctx, tmpPath, outputPath)
+	localPath := file.Name()
+	_ = rc.Close()
+	return PreserveUpscaleAudioFile(ctx, localPath, outputPath)
 }
 
 func CancelUpscale(ctx context.Context, config Config, id string) error {

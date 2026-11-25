@@ -6,10 +6,7 @@ import (
 	"image"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
-
-	"infinite-canvas/backend/internal/mediatools"
 )
 
 // ownedLocalFile matches the *os.File returned by local ResourcePort.Open
@@ -86,66 +83,20 @@ func preflightOwnedVideoDelivery(ctx context.Context, userID string, media *Medi
 	}
 	defer rc.Close()
 
-	if file, ok := rc.(ownedLocalFile); ok {
-		info, statErr := file.Stat()
-		if statErr != nil {
-			return localMediaOpenError(statErr)
-		}
-		if !info.Mode().IsRegular() {
-			return PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地素材文件无法读取", Action: "请重新导入素材后重试"}
-		}
-		if err := validateOwnedVideoSize(info.Size(), uploadLimit, deliveryLimit); err != nil {
-			return err
-		}
-		media.Bytes = info.Size()
-		return nil
+	file, ok := rc.(ownedLocalFile)
+	if !ok {
+		return PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地素材文件无法读取", Action: "请重新导入素材后重试"}
 	}
-
-	size, copyErr := io.Copy(io.Discard, io.LimitReader(rc, uploadLimit+1))
-	if copyErr != nil {
-		return localMediaOpenError(copyErr)
+	info, statErr := file.Stat()
+	if statErr != nil {
+		return localMediaOpenError(statErr)
 	}
-	if err := validateOwnedVideoSize(size, uploadLimit, deliveryLimit); err != nil {
+	if !info.Mode().IsRegular() {
+		return PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地素材文件无法读取", Action: "请重新导入素材后重试"}
+	}
+	if err := validateOwnedVideoSize(info.Size(), uploadLimit, deliveryLimit); err != nil {
 		return err
 	}
-	media.Bytes = size
+	media.Bytes = info.Size()
 	return nil
-}
-
-// streamProbeOwnedVideo spools a non-local video stream to a scratch file under
-// dataDir (via DownloadCache when wired, falling back to OS temp) using a
-// bounded streaming copy (no full-file RAM buffer) and probes it with ffprobe.
-func streamProbeOwnedVideo(ctx context.Context, rc io.ReadCloser, limit int64) (int64, mediatools.MediaMetadata, error) {
-	defer rc.Close()
-	limit = NormalizeToolVideoLimit(limit)
-	scratchParent := ""
-	if runtime, ok := RuntimeFromContext(ctx); ok && runtime.DownloadCache != nil {
-		if partial := strings.TrimSpace(runtime.DownloadCache.PartialPath()); partial != "" {
-			scratchParent = filepath.Dir(partial)
-			_ = os.MkdirAll(scratchParent, 0o700)
-		}
-	}
-	dir, err := os.MkdirTemp(scratchParent, ".beeftv-probe-")
-	if err != nil {
-		return 0, mediatools.MediaMetadata{}, err
-	}
-	defer os.RemoveAll(dir)
-	tmp, err := os.CreateTemp(dir, "source-*.mp4")
-	if err != nil {
-		return 0, mediatools.MediaMetadata{}, err
-	}
-	path := tmp.Name()
-	size, copyErr := io.Copy(tmp, io.LimitReader(rc, limit+1))
-	closeErr := tmp.Close()
-	if copyErr != nil {
-		return 0, mediatools.MediaMetadata{}, localMediaOpenError(copyErr)
-	}
-	if closeErr != nil {
-		return 0, mediatools.MediaMetadata{}, closeErr
-	}
-	if err := ValidateBeefTVMediaToolSize("video", size, limit); err != nil {
-		return size, mediatools.MediaMetadata{}, err
-	}
-	facts, err := mediatools.ProbeLocal(ctx, path)
-	return size, facts, err
 }

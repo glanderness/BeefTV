@@ -133,15 +133,15 @@ func QueryHandwrittenVideoTask(ctx context.Context, input Input, taskID string) 
 			rawURL = APIURL(input.Config.BaseURL, path+"/content")
 		}
 		rawURL, err = videoResultURL(status, rawURL)
-		return videoURLSource(input.Config, rawURL), status, err
+		return VideoResultSource{URL: rawURL}, status, err
 	}
 	source, status, err := query(ctx)
-	if err != nil || source.Read == nil {
+	if err != nil || !source.ready() {
 		return nil, status, err
 	}
 	renew := func(ctx context.Context) (VideoResultSource, error) {
 		fresh, stage, err := query(ctx)
-		if err == nil && fresh.Read == nil {
+		if err == nil && !fresh.ready() {
 			_, err = videoResultURL(stage, "")
 		}
 		return fresh, err

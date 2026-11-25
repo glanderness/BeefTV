@@ -31,30 +31,18 @@ import (
 	"infinite-canvas/backend/internal/protocol"
 )
 
-type upscaleResources struct {
-	ResourcePort
-	data []byte
-	kind string
-}
-
-func (p upscaleResources) Lookup(user, id string) (ResourceInfo, error) {
-	if user != "user-1" || id != "source" {
-		return ResourceInfo{}, errors.New("resource not owned")
+func newLocalUpscaleResources(t *testing.T, kind string, data []byte) fileUpscaleResources {
+	t.Helper()
+	ext := ".png"
+	if kind == "video" {
+		ext = ".mp4"
 	}
-	mime := "image/png"
-	if p.kind == "video" {
-		mime = "video/mp4"
+	path := filepath.Join(t.TempDir(), "source"+ext)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	return ResourceInfo{ID: id, UserID: user, Status: "ready", Kind: p.kind, MimeType: mime, Size: int64(len(p.data)), Width: 64, Height: 48, DurationMs: 1000}, nil
+	return fileUpscaleResources{path: path, kind: kind, size: int64(len(data)), width: 64, height: 48, durationMs: 1000}
 }
-func (p upscaleResources) Open(user, id string) (ResourceInfo, io.ReadCloser, error) {
-	info, err := p.Lookup(user, id)
-	if err != nil {
-		return info, nil, err
-	}
-	return info, io.NopCloser(bytes.NewReader(p.data)), nil
-}
-func (p upscaleResources) LocalMode() bool { return true }
 
 func upscalePNG(t *testing.T, w, h int) []byte {
 	t.Helper()
@@ -186,7 +174,7 @@ func TestUpscaleExecuteFourModelsUsesOwnedUploadAndOriginalResult(t *testing.T) 
 			defer server.Close()
 			runtime := taskRuntime(func(r *Runtime) {
 				r.Endpoints.BeefTVVideoBaseURL = server.URL
-				r.Resources = upscaleResources{data: source, kind: kind}
+				r.Resources = newLocalUpscaleResources(t, kind, source)
 				r.ReferenceProgress = progress
 				r.Stages = progress
 			})
@@ -259,7 +247,7 @@ func TestUpscaleRejectsOwnerAndInvalidInputBeforePaidSubmit(t *testing.T) {
 	}
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Call.UserID = "foreign"
-		r.Resources = upscaleResources{kind: "image", data: upscalePNG(t, 64, 48)}
+		r.Resources = newLocalUpscaleResources(t, "image", upscalePNG(t, 64, 48))
 	})
 	_, err := PrepareUpscale(WithRuntime(context.Background(), runtime), input)
 	if err == nil {
@@ -311,7 +299,7 @@ func TestUpscaleOriginalStatusIdentityAndCancellation(t *testing.T) {
 	if creates.Load() != 0 || cancels.Load() != 1 {
 		t.Fatal("status/recovery submitted another generation")
 	}
-	if _, err := upscaleTaskPath("../escape"); err == nil {
+	if _, err := beeftv.LegacyUpscaleTaskPath("../escape"); err == nil {
 		t.Fatal("unsafe id accepted")
 	}
 }
@@ -420,7 +408,7 @@ func TestUpscalePreflightRejectsExternalReferencesAndOversizedDelivery(t *testin
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Call.UserID = "user-1"
 		r.Endpoints.BeefTVVideoBaseURL = server.URL
-		r.Resources = upscaleResources{kind: "image", data: upscalePNG(t, 64, 48)}
+		r.Resources = newLocalUpscaleResources(t, "image", upscalePNG(t, 64, 48))
 		r.Limits = upscaleBudget{}
 	})
 	input := Input{Mode: "image", Prompt: "AI 超分", Config: Config{BaseURL: server.URL, Model: "topaz-standard-v2"}, Upscale: &UpscaleOptions{Factor: 2}}
@@ -440,8 +428,8 @@ func TestUpscaleWebPConfigAndPixelLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta, err := upscaleImageConfig(data); err != nil || meta.Width != 1 || meta.Height != 1 {
-		t.Fatalf("valid WebP rejected: %+v %v", meta, err)
+	if w, h, mime, err := probeImageHeader(bytes.NewReader(data)); err != nil || w != 1 || h != 1 || mime != "image/webp" {
+		t.Fatalf("valid WebP rejected: %dx%d %q %v", w, h, mime, err)
 	}
 	// VP8X stores canvas dimensions in 24-bit little-endian fields.
 	header := make([]byte, 30)
@@ -453,7 +441,8 @@ func TestUpscaleWebPConfigAndPixelLimit(t *testing.T) {
 		header[offset] = 0xff
 		header[offset+1] = 0x1f
 	}
-	if _, err := upscaleImageConfig(header); err == nil {
+	w, h, mime, err := probeImageHeader(bytes.NewReader(header))
+	if err == nil && validateUpscaleImagePreflight(mime, w, h, 2, 1<<40) == nil {
 		t.Fatal("oversized WebP header accepted")
 	}
 }
@@ -467,13 +456,9 @@ func TestUpscaleRejectsWebMContainer(t *testing.T) {
 	if out, err := exec.Command(bin, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=64x48:duration=0.2", "-c:v", "libvpx-vp9", path).CombinedOutput(); err != nil {
 		t.Fatalf("WebM fixture %s %v", out, err)
 	}
-	data, err := os.ReadFile(path)
+	facts, err := mediatools.ProbeLocal(context.Background(), path)
 	if err != nil {
-		t.Fatal(err)
-	}
-	_, facts, err := streamProbeOwnedVideo(context.Background(), io.NopCloser(bytes.NewReader(data)), BeefTVSeedanceKindMaxBytes("video"))
-	if err != nil {
-		t.Fatalf("streamProbeOwnedVideo failed: %v", err)
+		t.Fatalf("ProbeLocal failed: %v", err)
 	}
 	if err := validateUpscaleVideoFacts(facts); err == nil {
 		t.Fatal("WebM accepted as MP4/MOV")
@@ -667,7 +652,7 @@ func TestUpscaleVideoPreflightDoesNotApplyFakeFactorMultiplier(t *testing.T) {
 	// Previously len(clip)*4*4*2 + 1MiB would exceed len(clip)*2 and falsely reject.
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Call.UserID = "user-1"
-		r.Resources = upscaleResources{kind: "video", data: clip}
+		r.Resources = newLocalUpscaleResources(t, "video", clip)
 		r.Limits = configurableBudget{limit: int64(len(clip)) * 2}
 	})
 	input := Input{
@@ -723,20 +708,12 @@ func TestEstimateUpscaleNeverUploadsOnMissingFFprobeOrUnreadableMetadata(t *test
 		t.Fatalf("missing ffprobe should fail fast with clear tool copy: err=%v classified=%#v", err, classified)
 	}
 
-	// 2. Missing video metadata (width/height/duration = 0) fails cleanly without silently uploading to COS.
-	runtime.Resources = &failingFirstOpenImageResources{
-		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4", Size: 10 << 20},
+	// 2. Unreadable local image fails cleanly without silently uploading to COS.
+	corruptImage := filepath.Join(missingDir, "corrupt.png")
+	if err := os.WriteFile(corruptImage, []byte("not-a-valid-image"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	_, _, err = EstimateUpscale(WithRuntime(context.Background(), runtime), input)
-	classified = ClassifyError(err)
-	if err == nil || classified.Category != CategoryInvalidParams || !bytes.Contains([]byte(classified.UserMessage()), []byte("无法读取超分视频的尺寸或时长")) {
-		t.Fatalf("missing video metadata must fail cleanly without COS upload: err=%v classified=%#v", err, classified)
-	}
-
-	// 3. Unreadable/unknown-MIME image fails cleanly without silently uploading to COS.
-	runtime.Resources = &failingFirstOpenImageResources{
-		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "image", MimeType: "application/octet-stream", Size: 1024, Width: 64, Height: 48},
-	}
+	runtime.Resources = fileUpscaleResources{path: corruptImage, kind: "image", size: 17, width: 64, height: 48}
 	imgInput := Input{
 		Mode:            "image",
 		Config:          Config{BaseURL: server.URL, APIKey: "synthetic-key", Model: "topaz-standard-v2", InterfaceType: "newapi"},
@@ -745,8 +722,8 @@ func TestEstimateUpscaleNeverUploadsOnMissingFFprobeOrUnreadableMetadata(t *test
 	}
 	_, _, err = EstimateUpscale(WithRuntime(context.Background(), runtime), imgInput)
 	classified = ClassifyError(err)
-	if err == nil || classified.Category != CategoryInvalidParams || !bytes.Contains([]byte(classified.UserMessage()), []byte("无法读取超分图片的尺寸或格式")) {
-		t.Fatalf("unreadable image metadata must fail cleanly without COS upload: err=%v classified=%#v", err, classified)
+	if err == nil || classified.Category != CategoryInvalidParams || !bytes.Contains([]byte(classified.UserMessage()), []byte("图片无法读取或格式不受支持")) {
+		t.Fatalf("unreadable image must fail cleanly without COS upload: err=%v classified=%#v", err, classified)
 	}
 	if hits.Load() != 0 {
 		t.Fatalf("failed local estimates made %d upstream requests", hits.Load())
@@ -852,26 +829,31 @@ func TestUpscaleSubmitUsesZeroCopyLocalFilePreflight(t *testing.T) {
 	}
 }
 
-func TestEstimateAndSubmitParityOnNonLocalSourcesAndHydrateVideoRefErrors(t *testing.T) {
+type lookupOnlyResources struct {
+	ResourcePort
+	info ResourceInfo
+}
+
+func (p lookupOnlyResources) Lookup(user, id string) (ResourceInfo, error) {
+	if user != p.info.UserID || id != p.info.ID {
+		return ResourceInfo{}, errors.New("resource not owned")
+	}
+	return p.info, nil
+}
+func (p lookupOnlyResources) LocalMode() bool { return true }
+
+func TestEstimateAndSubmitParityAndHydrateVideoRefErrors(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	var estimateCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		estimateCalls.Add(1)
-		var reqBody map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&reqBody)
-		modelName, _ := reqBody["model"].(string)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(UpscaleEstimate{Model: modelName, Currency: "CNY", Reservation: 1.5})
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
-	// 1. Non-local metadata-only estimate succeeds for ready video & ready image.
-	nonLocalVid := &failingFirstOpenImageResources{
-		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4", Size: 10 << 20, Width: 1280, Height: 720, DurationMs: 5000},
-	}
+	dir := t.TempDir()
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Endpoints.BeefTVVideoBaseURL = server.URL
-		r.Resources = nonLocalVid
 		r.Limits = configurableBudget{limit: 999 << 20}
 	})
 	vidInput := Input{
@@ -880,94 +862,35 @@ func TestEstimateAndSubmitParityOnNonLocalSourcesAndHydrateVideoRefErrors(t *tes
 		Upscale:         &UpscaleOptions{Factor: 2},
 		ReferenceVideos: []Media{{StorageKey: "resource:source"}},
 	}
-	if quote, _, err := EstimateUpscale(WithRuntime(context.Background(), runtime), vidInput); err != nil || quote.Reservation != 1.5 {
-		t.Fatalf("non-local video metadata estimate failed: quote=%#v err=%v", quote, err)
-	}
-	nonLocalImg := &failingFirstOpenImageResources{
-		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "image", MimeType: "image/png", Size: 2048, Width: 1024, Height: 768},
-	}
-	runtime.Resources = nonLocalImg
-	imgInput := Input{
-		Mode:            "image",
-		Config:          Config{BaseURL: server.URL, APIKey: "synthetic-key", Model: "topaz-standard-v2", InterfaceType: "newapi"},
-		Upscale:         &UpscaleOptions{Factor: 2},
-		ReferenceImages: []Media{{StorageKey: "resource:source"}},
-	}
-	if quote, _, err := EstimateUpscale(WithRuntime(context.Background(), runtime), imgInput); err != nil || quote.Reservation != 1.5 {
-		t.Fatalf("non-local image metadata estimate failed: quote=%#v err=%v", quote, err)
-	}
 
-	// 2. Estimate and submit both reject unsupported MKV container and 0-byte records.
-	callsBefore := estimateCalls.Load()
-	mkvRes := &failingFirstOpenImageResources{
-		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/x-matroska", Size: 10 << 20, Width: 1280, Height: 720, DurationMs: 5000},
-		data: []byte("mkv-bytes"),
-	}
-	mkvRes.opens.Store(1)
-	runtime.Resources = mkvRes
-	if _, _, err := EstimateUpscale(WithRuntime(context.Background(), runtime), vidInput); err == nil || !bytes.Contains([]byte(ClassifyError(err).UserMessage()), []byte("MP4 或 MOV")) {
-		t.Fatalf("estimate must reject unsupported MKV container: %v", err)
-	}
-	if _, err := prepareOwnedUpscaleSource(WithRuntime(context.Background(), runtime), vidInput); err == nil || !bytes.Contains([]byte(ClassifyError(RequestPreparationError{Cause: err}).UserMessage()), []byte("MP4 或 MOV")) {
-		t.Fatalf("submit must reject unsupported MKV container: %v", err)
-	}
-	zeroRes := &failingFirstOpenImageResources{
-		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4", Size: 0, Width: 1280, Height: 720, DurationMs: 5000},
-	}
-	zeroRes.opens.Store(1)
-	runtime.Resources = zeroRes
+	// 1. Estimate and submit both reject 0-byte local files with 0 upstream requests.
+	zeroPath := writeSparseTestFile(t, dir, "empty.mp4", 0)
+	runtime.Resources = fileUpscaleResources{path: zeroPath, kind: "video", width: 1280, height: 720, durationMs: 5000}
 	if _, _, err := EstimateUpscale(WithRuntime(context.Background(), runtime), vidInput); err == nil || !bytes.Contains([]byte(ClassifyError(err).UserMessage()), []byte("参考素材为空")) {
 		t.Fatalf("estimate must reject 0-byte record: %v", err)
 	}
 	if _, err := prepareOwnedUpscaleSource(WithRuntime(context.Background(), runtime), vidInput); err == nil || !bytes.Contains([]byte(ClassifyError(RequestPreparationError{Cause: err}).UserMessage()), []byte("参考素材为空")) {
 		t.Fatalf("submit must reject 0-byte record: %v", err)
 	}
-	if estimateCalls.Load() != callsBefore {
-		t.Fatalf("rejected estimates made %d upstream requests", estimateCalls.Load()-callsBefore)
+	if estimateCalls.Load() != 0 {
+		t.Fatalf("rejected estimates made %d upstream requests", estimateCalls.Load())
 	}
 
-	// 3. HydrateVideoReferenceMetadata emits typed errors that survive ClassifyError.
-	notReadyRes := &failingFirstOpenImageResources{
+	// 2. HydrateVideoReferenceMetadata emits typed errors that survive ClassifyError.
+	runtime.Resources = lookupOnlyResources{
 		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "uploading", Kind: "video", MimeType: "video/mp4"},
 	}
-	runtime.Resources = notReadyRes
 	refInput := Input{ReferenceVideos: []Media{{StorageKey: "resource:source"}}}
 	if err := HydrateVideoReferenceMetadata(WithRuntime(context.Background(), runtime), "user-1", &refInput); err == nil || !bytes.Contains([]byte(ClassifyError(RequestPreparationError{Cause: err}).UserMessage()), []byte("尚未上传完成")) {
 		t.Fatalf("HydrateVideoReferenceMetadata not-ready error became generic: %v", err)
 	}
-	missingMetaRes := &failingFirstOpenImageResources{
+	runtime.Resources = lookupOnlyResources{
 		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4"},
 	}
-	runtime.Resources = missingMetaRes
 	if err := HydrateVideoReferenceMetadata(WithRuntime(context.Background(), runtime), "user-1", &refInput); err == nil || !bytes.Contains([]byte(ClassifyError(RequestPreparationError{Cause: err}).UserMessage()), []byte("缺少时长或尺寸")) {
 		t.Fatalf("HydrateVideoReferenceMetadata missing-metadata error became generic: %v", err)
 	}
 }
-
-type failingFirstOpenImageResources struct {
-	ResourcePort
-	info  ResourceInfo
-	data  []byte
-	opens atomic.Int32
-}
-
-func (p *failingFirstOpenImageResources) Lookup(user, id string) (ResourceInfo, error) {
-	if user != p.info.UserID || id != p.info.ID {
-		return ResourceInfo{}, errors.New("resource not owned")
-	}
-	return p.info, nil
-}
-func (p *failingFirstOpenImageResources) Open(user, id string) (ResourceInfo, io.ReadCloser, error) {
-	info, err := p.Lookup(user, id)
-	if err != nil {
-		return info, nil, err
-	}
-	if p.opens.Add(1) == 1 {
-		return info, nil, errors.New("temporary open failure")
-	}
-	return info, io.NopCloser(bytes.NewReader(p.data)), nil
-}
-func (p *failingFirstOpenImageResources) LocalMode() bool { return false }
 
 func TestEstimateUpscaleClassifiesUpstreamMediaHTTPErrorAndPreservesRequestID(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
@@ -978,9 +901,10 @@ func TestEstimateUpscaleClassifiesUpstreamMediaHTTPErrorAndPreservesRequestID(t 
 		_, _ = io.WriteString(w, `{"error":{"code":"invalid_upscale_source","message":"video input must be a readable public MP4/MOV of at most five minutes and 200 MiB"}}`)
 	}))
 	defer server.Close()
+	clip := upscaleClip(t, 64, 48, false)
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Endpoints.BeefTVVideoBaseURL = server.URL
-		r.Resources = upscaleResources{kind: "video", data: []byte("meta-only")}
+		r.Resources = newLocalUpscaleResources(t, "video", clip)
 	})
 	input := Input{
 		Mode:            "video",
@@ -1041,10 +965,10 @@ func TestLiveUpscaleCapabilitiesPropagatesUserIDToRuntime(t *testing.T) {
 }
 
 func TestUpscaleCreateAndHydrateTypedErrorsAndCaseInsensitiveMIME(t *testing.T) {
-	// 1. Known oversized video (>1 GiB) on create path yields typed CategoryInputTooLarge instead of generic copy.
-	oversizeRes := &failingFirstOpenImageResources{
-		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4", Size: BeefTVMediaToolVideoMaxBytes + 1, Width: 1920, Height: 1080, DurationMs: 10000},
-	}
+	dir := t.TempDir()
+	// 1. Oversized video (>1 GiB) on create path yields typed CategoryInputTooLarge instead of generic copy.
+	over1GiBPath := writeSparseTestFile(t, dir, "over1g.mp4", BeefTVMediaToolVideoMaxBytes+1)
+	oversizeRes := fileUpscaleResources{path: over1GiBPath, kind: "video", size: BeefTVMediaToolVideoMaxBytes + 1, width: 1920, height: 1080, durationMs: 10000}
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Call.UserID = "user-1"
 		r.Resources = oversizeRes
@@ -1062,10 +986,8 @@ func TestUpscaleCreateAndHydrateTypedErrorsAndCaseInsensitiveMIME(t *testing.T) 
 		t.Fatalf("oversized create video lost typed size error: %#v", classified)
 	}
 	// Legacy/unverified server cap (MaxVideoBytes == 0 -> safe 200 MiB fallback) rejects >200 MiB with typed 200MB error.
-	legacyRes := &failingFirstOpenImageResources{
-		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4", Size: BeefTVSeedanceVideoMaxBytes + 1, Width: 1920, Height: 1080, DurationMs: 10000},
-	}
-	runtime.Resources = legacyRes
+	over200MiBPath := writeSparseTestFile(t, dir, "over200m.mp4", BeefTVSeedanceVideoMaxBytes+1)
+	runtime.Resources = fileUpscaleResources{path: over200MiBPath, kind: "video", size: BeefTVSeedanceVideoMaxBytes + 1, width: 1920, height: 1080, durationMs: 10000}
 	legacyInput := input
 	legacyInput.Upscale = &UpscaleOptions{Factor: 2}
 	_, err = prepareOwnedUpscaleSource(WithRuntime(context.Background(), runtime), legacyInput)
@@ -1088,32 +1010,25 @@ func TestUpscaleCreateAndHydrateTypedErrorsAndCaseInsensitiveMIME(t *testing.T) 
 	}
 
 	// 2. HydrateMedia authored not-ready error survives through ClassifyError.
-	notReadyRes := &failingFirstOpenImageResources{
+	runtime.Resources = lookupOnlyResources{
 		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "uploading", Kind: "video", MimeType: "video/mp4"},
 	}
-	runtime.Resources = notReadyRes
 	_, err = prepareOwnedUpscaleSource(WithRuntime(context.Background(), runtime), input)
 	classified = ClassifyError(RequestPreparationError{Cause: err})
 	if classified.Category != CategoryInputInaccessible || !bytes.Contains([]byte(classified.UserMessage()), []byte("尚未上传完成")) {
 		t.Fatalf("HydrateMedia not-ready error became generic: %#v", classified)
 	}
 
-	// 3. Uppercase declared MIME ("IMAGE/PNG") passes full-byte image preflight cleanly.
-	pngBytes := upscalePNG(t, 64, 48)
-	upperRes := &failingFirstOpenImageResources{
-		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "image", MimeType: "IMAGE/PNG", Size: int64(len(pngBytes)), Width: 64, Height: 48},
-		data: pngBytes,
-	}
-	upperRes.opens.Store(1) // skip the synthetic first-open failure
-	runtime.Resources = upperRes
+	// 3. Uppercase declared MIME ("IMAGE/PNG") passes local image preflight cleanly.
+	runtime.Resources = newLocalUpscaleResources(t, "image", upscalePNG(t, 64, 48))
 	imgInput := Input{
 		Mode:            "image",
 		Config:          Config{BaseURL: "https://beeftv.app/v1", Model: "topaz-standard-v2"},
 		Upscale:         &UpscaleOptions{Factor: 2},
-		ReferenceImages: []Media{{StorageKey: "resource:source"}},
+		ReferenceImages: []Media{{StorageKey: "resource:source", MimeType: "IMAGE/PNG"}},
 	}
 	if _, err := prepareOwnedUpscaleSource(WithRuntime(context.Background(), runtime), imgInput); err != nil {
-		t.Fatalf("uppercase IMAGE/PNG rejected on full-byte preflight: %v", err)
+		t.Fatalf("uppercase IMAGE/PNG rejected on local preflight: %v", err)
 	}
 }
 
@@ -1123,7 +1038,7 @@ func (noopManagedMediaState) Sent(context.Context) (bool, error) { return false,
 func (noopManagedMediaState) Begin(*http.Request) (bool, error)  { return false, nil }
 
 type recordingVideoFileStore struct {
-	upscaleResources
+	fileUpscaleResources
 	savedDir  string
 	savedID   string
 	savedPath string
@@ -1314,9 +1229,9 @@ func TestLegacyToolVideoResultPersistsToFileStoreWithoutBase64(t *testing.T) {
 	defer srv.Close()
 
 	store := &recordingVideoFileStore{
-		upscaleResources: upscaleResources{data: sourceWithAudio, kind: "video"},
-		savedDir:         t.TempDir(),
-		savedID:          "res-up-1",
+		fileUpscaleResources: newLocalUpscaleResources(t, "video", sourceWithAudio),
+		savedDir:             t.TempDir(),
+		savedID:              "res-up-1",
 	}
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Endpoints.BeefTVVideoBaseURL = srv.URL

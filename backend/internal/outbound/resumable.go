@@ -201,13 +201,9 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 	// (e.g. transient AV lock on rename), finalize directly without issuing a
 	// Range request at EOF that would 416 and re-download a 1-2 GiB file.
 	if sidecar != nil && sidecar.Total > 0 && offset == sidecar.Total && offset < opts.MaxBytes {
-		mimeType := normalizeResumableMimeType(sidecar.MimeType)
-		if mimeType == "" || mimeType == "application/octet-stream" {
-			sniff, sniffErr := readFilePrefix(opts.PartialPath, 512)
-			if sniffErr != nil {
-				return ResumableFileResult{}, false, sniffErr
-			}
-			mimeType = http.DetectContentType(sniff)
+		mimeType, sniffErr := resolveStreamedMimeType(opts.PartialPath, sidecar.MimeType)
+		if sniffErr != nil {
+			return ResumableFileResult{}, false, sniffErr
 		}
 		finalPath, renameErr := finalizeResumablePartial(opts.PartialPath)
 		if renameErr != nil {
@@ -228,18 +224,15 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 	emitter.observe(offset)
 	emitter.emit(offset, sidecarTotal, "downloading", true)
 
-	attemptCtx, cancel := context.WithCancelCause(ctx)
+	attemptCtx, stopHeader, cancel := WithHeaderTimeout(ctx, headerTimeout)
 	defer cancel(nil)
+	defer stopHeader()
 	if freshConn {
 		attemptCtx = WithFreshConnection(attemptCtx)
 	}
-	headerTimer := time.AfterFunc(headerTimeout, func() {
-		cancel(fmt.Errorf("等待下载响应超时：%w", context.DeadlineExceeded))
-	})
 
 	request, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
-		headerTimer.Stop()
 		return ResumableFileResult{}, false, err
 	}
 	ApplyDefaultOutboundHeaders(request)
@@ -278,7 +271,7 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		open = opts.OpenResponse
 	}
 	response, err := open(request)
-	headerTimer.Stop()
+	stopHeader()
 	if err != nil {
 		return ResumableFileResult{}, true, resumableTransferError(attemptCtx, err)
 	}
@@ -362,35 +355,18 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		cancel(fmt.Errorf("下载长时间没有收到数据：%w", context.DeadlineExceeded))
 	})
 	defer idleTimer.Stop()
-	reader := &idleResetReader{body: response.Body, timer: idleTimer, idle: idleTimeout}
 
-	written := offset
-	buffer := make([]byte, resumableReadBuffer)
-	var readErr error
-	for {
-		n, err := reader.Read(buffer)
-		if n > 0 {
-			if written+int64(n) >= opts.MaxBytes {
-				_ = file.Close()
-				removeResumablePartial(opts.PartialPath)
-				return ResumableFileResult{}, false, ErrResourceTooLarge
-			}
-			if _, writeErr := file.Write(buffer[:n]); writeErr != nil {
-				_ = file.Close()
-				return ResumableFileResult{}, true, writeErr
-			}
-			written += int64(n)
-			emitter.observe(written)
-			emitter.emit(written, total, "downloading", false)
-		}
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				readErr = err
-			}
-			break
-		}
+	written, writeErr, readErr := copyStreamWithIdle(file, response.Body, offset, total, opts.MaxBytes, idleTimer, idleTimeout, emitter)
+	idleTimer.Stop()
+	closeErr := file.Close()
+	if errors.Is(readErr, ErrResourceTooLarge) {
+		removeResumablePartial(opts.PartialPath)
+		return ResumableFileResult{}, false, ErrResourceTooLarge
 	}
-	if closeErr := file.Close(); closeErr != nil && readErr == nil {
+	if writeErr != nil {
+		return ResumableFileResult{}, true, writeErr
+	}
+	if readErr == nil && closeErr != nil {
 		readErr = closeErr
 	}
 	if readErr != nil {
@@ -400,13 +376,9 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		return ResumableFileResult{}, true, resumableConnectionDropError(io.ErrUnexpectedEOF)
 	}
 
-	mimeType := normalizeResumableMimeType(response.Header.Get("Content-Type"))
-	if mimeType == "" || mimeType == "application/octet-stream" {
-		sniff, sniffErr := readFilePrefix(opts.PartialPath, 512)
-		if sniffErr != nil {
-			return ResumableFileResult{}, false, sniffErr
-		}
-		mimeType = http.DetectContentType(sniff)
+	mimeType, sniffErr := resolveStreamedMimeType(opts.PartialPath, response.Header.Get("Content-Type"))
+	if sniffErr != nil {
+		return ResumableFileResult{}, false, sniffErr
 	}
 	finalPath, renameErr := finalizeResumablePartial(opts.PartialPath)
 	if renameErr != nil {
@@ -418,20 +390,6 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		MimeType: mimeType,
 		FileName: resumableFileName(parsed.Path),
 	}, false, nil
-}
-
-func readFilePrefix(path string, maxBytes int) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	buf := make([]byte, maxBytes)
-	n, err := io.ReadFull(f, buf)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, err
-	}
-	return buf[:n], nil
 }
 
 var resumableRenameFile = os.Rename
@@ -464,10 +422,10 @@ func finalizeResumablePartial(partialPath string) (string, error) {
 	return "", lastErr
 }
 
-// SweepResumableArtifacts reclaims orphaned .part, .part.json, .complete,
-// .complete-*, legacy .done-*, beeftv-content-*.bin, .beeftv-remux-*, and
-// .beeftv-probe-* artifacts older than maxAge inside dir.
-// Active downloads protected by lockResumableDownload are never removed.
+// SweepResumableArtifacts reclaims orphaned download/scratch artifacts older
+// than maxAge inside dir (.part, .part.json, .part.complete-*, .beeftv-remux-*,
+// plus legacy suffixes from older versions). Active downloads protected by
+// lockResumableDownload are never removed.
 func SweepResumableArtifacts(dir string, maxAge time.Duration) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" || maxAge <= 0 {
@@ -481,12 +439,11 @@ func SweepResumableArtifacts(dir string, maxAge time.Duration) {
 	for _, entry := range entries {
 		name := entry.Name()
 		isScratchDir := entry.IsDir() && (strings.HasPrefix(name, ".beeftv-remux-") || strings.HasPrefix(name, ".beeftv-probe-"))
-		isArtifactFile := !entry.IsDir() && (strings.HasSuffix(name, ".part") ||
-			strings.HasSuffix(name, ".part.json") ||
-			strings.HasSuffix(name, ".complete") ||
-			strings.Contains(name, ".part.complete-") ||
-			strings.Contains(name, ".part.done-") ||
-			(strings.HasPrefix(name, "beeftv-content-") && strings.HasSuffix(name, ".bin")))
+		fullPath := filepath.Join(dir, name)
+		partialKey, isArtifactFile := "", false
+		if !entry.IsDir() {
+			partialKey, isArtifactFile = resumableArtifactLockKey(fullPath, name)
+		}
 		if !isScratchDir && !isArtifactFile {
 			continue
 		}
@@ -494,25 +451,9 @@ func SweepResumableArtifacts(dir string, maxAge time.Duration) {
 		if infoErr != nil || info.ModTime().After(cutoff) {
 			continue
 		}
-		fullPath := filepath.Join(dir, name)
 		if isScratchDir {
 			_ = os.RemoveAll(fullPath)
 			continue
-		}
-		partialKey := fullPath
-		switch {
-		case strings.HasSuffix(name, ".part.json"):
-			partialKey = strings.TrimSuffix(fullPath, ".json")
-		case strings.HasSuffix(name, ".complete"):
-			partialKey = strings.TrimSuffix(fullPath, ".complete")
-		case strings.Contains(name, ".part.complete-"):
-			if idx := strings.Index(fullPath, ".part.complete-"); idx > 0 {
-				partialKey = fullPath[:idx+len(".part")]
-			}
-		case strings.Contains(name, ".part.done-"):
-			if idx := strings.Index(fullPath, ".part.done-"); idx > 0 {
-				partialKey = fullPath[:idx+len(".part")]
-			}
 		}
 		unlock := lockResumableDownload(partialKey)
 		if fresh, statErr := os.Stat(fullPath); statErr == nil && !fresh.ModTime().After(cutoff) {
@@ -520,6 +461,25 @@ func SweepResumableArtifacts(dir string, maxAge time.Duration) {
 		}
 		unlock()
 	}
+}
+
+func resumableArtifactLockKey(fullPath, name string) (string, bool) {
+	switch {
+	case strings.HasSuffix(name, ".part"):
+		return fullPath, true
+	case strings.HasSuffix(name, ".part.json"):
+		return strings.TrimSuffix(fullPath, ".json"), true
+	case strings.HasSuffix(name, ".complete"):
+		return strings.TrimSuffix(fullPath, ".complete"), true
+	case strings.HasPrefix(name, "beeftv-content-") && strings.HasSuffix(name, ".bin"):
+		return fullPath, true
+	}
+	for _, marker := range []string{".part.complete-", ".part.done-"} {
+		if idx := strings.Index(fullPath, marker); idx > 0 {
+			return fullPath[:idx+len(".part")], true
+		}
+	}
+	return "", false
 }
 
 const ResumableConnectionDropMessage = "生成结果下载失败：连接意外中断，请检查网络或代理设置后重试取回"
@@ -656,7 +616,7 @@ func waitResumableBackoff(ctx context.Context, attempt int) error {
 }
 
 type idleResetReader struct {
-	body  io.ReadCloser
+	body  io.Reader
 	timer *time.Timer
 	idle  time.Duration
 }

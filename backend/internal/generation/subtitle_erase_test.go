@@ -244,9 +244,14 @@ func TestDynamicUpscaleModesAndSubtitleEraseClient(t *testing.T) {
 	if err != nil || queried.Status != "completed" || pollHits.Load() != 1 {
 		t.Fatalf("queried=%+v err=%v", queried, err)
 	}
-	bodyBytes, mime, err := client.SubtitleEraseContent(context.Background(), taskID, 10<<20)
-	if err != nil || mime != "video/mp4" || len(bodyBytes) != len(fakeMP4) || contentHits.Load() != 1 {
-		t.Fatalf("content len=%d mime=%q err=%v", len(bodyBytes), mime, err)
+	contentPath, mime, contentSize, err := client.SubtitleEraseContentToFile(context.Background(), taskID, t.TempDir(), 10<<20)
+	if err != nil {
+		t.Fatalf("SubtitleEraseContentToFile err=%v", err)
+	}
+	bodyBytes, readErr := os.ReadFile(contentPath)
+	_ = os.Remove(contentPath)
+	if readErr != nil || mime != "video/mp4" || contentSize != int64(len(fakeMP4)) || len(bodyBytes) != len(fakeMP4) || contentHits.Load() != 1 {
+		t.Fatalf("content len=%d size=%d mime=%q err=%v", len(bodyBytes), contentSize, mime, readErr)
 	}
 	_, payload, err := BuildVideoSubtitleEraseTaskPayload(context.Background(), "u1", SubtitleEraseRequest{
 		ResourceID:        "r1",
@@ -340,9 +345,10 @@ func TestRunRecoverCancelSubtitleEraseAndAudioPreservation(t *testing.T) {
 	defer server.Close()
 
 	progress := &upscaleProgressPort{}
+	localSource := newLocalUpscaleResources(t, "video", sourceWithAudio)
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Endpoints.BeefTVVideoBaseURL = server.URL
-		r.Resources = upscaleResources{data: sourceWithAudio, kind: "video"}
+		r.Resources = localSource
 		r.ReferenceProgress = progress
 		r.Stages = progress
 	})
@@ -403,7 +409,7 @@ func TestRunRecoverCancelSubtitleEraseAndAudioPreservation(t *testing.T) {
 	missingRuntime := taskRuntime(func(r *Runtime) {
 		r.Endpoints.BeefTVVideoBaseURL = server.URL
 		r.Call.UserID = "other-user"
-		r.Resources = upscaleResources{data: sourceWithAudio, kind: "video"}
+		r.Resources = localSource
 	})
 	_, _, err = RecoverSubtitleEraseResult(WithRuntime(context.Background(), missingRuntime), input, "erase_task_full")
 	if err == nil || !errors.As(err, &dlErr) {
@@ -697,7 +703,7 @@ func TestSmartEraseModesMovAndSubtitlesMetadata(t *testing.T) {
 
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Endpoints.BeefTVVideoBaseURL = srv.URL
-		r.Resources = upscaleResources{data: validMOV, kind: "video"}
+		r.Resources = newLocalUpscaleResources(t, "video", validMOV)
 	})
 	ctx := WithRuntime(context.Background(), runtime)
 	queryInput := translateEmbed

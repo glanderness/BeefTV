@@ -57,7 +57,7 @@ func finishProtocolResult(ctx context.Context, config Config, mode string, taskI
 			items = append(items, map[string]interface{}{"url": value, "mimeType": reference.MIMEType})
 			continue
 		}
-		if mode == "video" && strings.TrimSpace(reference.DataURL) == "" && strings.TrimSpace(reference.URL) != "" && hasGeneratedVideoFileStore(ctx) {
+		if mode == "video" {
 			var resolve videoResultResolver
 			if renew != nil {
 				resolve = func(ctx context.Context) (VideoResultSource, error) { return renew(ctx, index) }
@@ -66,7 +66,7 @@ func finishProtocolResult(ctx context.Context, config Config, mode string, taskI
 			if index > 0 {
 				identitySuffix = fmt.Sprintf("video:%d", index)
 			}
-			item, dlErr := downloadVideoArtifactMap(ctx, config, taskID, pollPolicy, videoURLSource(config, reference.URL), resolve, identitySuffix)
+			item, dlErr := downloadVideoArtifactMap(ctx, config, taskID, pollPolicy, VideoResultSource{URL: defaultString(reference.DataURL, reference.URL)}, resolve, identitySuffix)
 			if dlErr != nil {
 				return nil, dlErr
 			}
@@ -76,20 +76,7 @@ func finishProtocolResult(ctx context.Context, config Config, mode string, taskI
 			items = append(items, item)
 			continue
 		}
-		var data []byte
-		var mimeType string
-		var err error
-		if mode == "video" {
-			var resolve videoResultResolver
-			if renew != nil {
-				resolve = func(ctx context.Context) (VideoResultSource, error) { return renew(ctx, index) }
-			}
-			source := videoURLSource(config, defaultString(reference.DataURL, reference.URL))
-			download := VideoResultDownloader(config, taskID, source, resolve)
-			data, mimeType, err = RunVideoDownload(ctx, taskID, pollPolicy, download)
-		} else {
-			data, mimeType, err = ProtocolMediaBytes(ctx, config, reference)
-		}
+		data, mimeType, err := ProtocolMediaBytes(ctx, config, reference)
 		if err != nil {
 			return nil, err
 		}
@@ -105,13 +92,7 @@ func finishProtocolResult(ctx context.Context, config Config, mode string, taskI
 				return nil, err
 			}
 		}
-		item := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
-		if mode == "video" {
-			if lastFrameURL, ok := reference.Metadata["last_frame_url"].(string); ok && strings.TrimSpace(lastFrameURL) != "" {
-				attachOptionalProviderLastFrame(ctx, config, item, lastFrameURL, true)
-			}
-		}
-		items = append(items, item)
+		items = append(items, map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType})
 	}
 	switch mode {
 	case "image":
@@ -170,7 +151,7 @@ func FinishProtocolAdapterResult(ctx context.Context, input Input, adapter proto
 	if err != nil {
 		return nil, err
 	}
-	if input.Mode == "video" && hasGeneratedVideoFileStore(ctx) {
+	if input.Mode == "video" {
 		source, sourceErr := protocolVideoRequestSource(input.Config, spec)
 		if sourceErr != nil {
 			return nil, sourceErr
@@ -185,23 +166,7 @@ func FinishProtocolAdapterResult(ctx context.Context, input Input, adapter proto
 		}
 		return map[string]interface{}{"mode": "video", "video": item}, nil
 	}
-	download := func(ctx context.Context) ([]byte, string, error) {
-		return ExecuteProtocolBinaryRequest(WithRequestKind(ctx, "download"), input.Config, spec)
-	}
-	if input.Mode == "video" {
-		source, sourceErr := protocolVideoRequestSource(input.Config, spec)
-		if sourceErr != nil {
-			return nil, sourceErr
-		}
-		download = VideoResultDownloader(input.Config, taskID, source, func(ctx context.Context) (VideoResultSource, error) { return renew(ctx, 0) })
-	}
-	var data []byte
-	var mimeType string
-	if input.Mode == "video" {
-		data, mimeType, err = RunVideoDownload(ctx, taskID, pollPolicy, download)
-	} else {
-		data, mimeType, err = download(ctx)
-	}
+	data, mimeType, err := ExecuteProtocolBinaryRequest(WithRequestKind(ctx, "download"), input.Config, spec)
 	if err != nil {
 		return nil, fmt.Errorf("声明式协议结果下载失败：%w", err)
 	}
@@ -217,8 +182,6 @@ func FinishProtocolAdapterResult(ctx context.Context, input Input, adapter proto
 	switch input.Mode {
 	case "image":
 		downloaded.Images = []protocol.MediaReference{reference}
-	case "video":
-		downloaded.Videos = []protocol.MediaReference{reference}
 	case "audio":
 		downloaded.Audios = []protocol.MediaReference{reference}
 	default:
@@ -234,9 +197,6 @@ func protocolVideoRequestSource(config Config, spec protocol.RequestSpec) (Video
 	}
 	return VideoResultSource{
 		URL: rawURL,
-		Read: func(ctx context.Context) ([]byte, string, error) {
-			return ExecuteProtocolBinaryRequest(withVideoProtocolAuth(WithRequestKind(ctx, "download"), spec.Auth), config, spec)
-		},
 		ReadFile: func(ctx context.Context) (string, string, error) {
 			return ExecuteProtocolVideoFileRequest(withVideoProtocolAuth(WithRequestKind(ctx, "download"), spec.Auth), config, spec)
 		},
@@ -285,7 +245,7 @@ func queryProtocolVideoSource(ctx context.Context, input Input, adapter protocol
 	}
 	if found {
 		rawURL, err := videoResultURL("succeeded", defaultString(reference.DataURL, reference.URL))
-		return videoURLSource(input.Config, rawURL), err
+		return VideoResultSource{URL: rawURL}, err
 	}
 	if referenceID != "" || index != 0 {
 		return VideoResultSource{}, errors.New("原视频任务没有返回对应视频产物，已停止取回")

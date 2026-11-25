@@ -2,6 +2,7 @@ package beeftv
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -172,5 +173,78 @@ func TestUpscaleContentToFileExactAtLimitAndOverLimitAfterRedirect(t *testing.T)
 	if overPath, _, _, err := client.LegacyUpscaleContentToFile(context.Background(), "task-over", destDir, 1024); err == nil {
 		_ = os.Remove(overPath)
 		t.Fatal("accepted 1025-byte redirected file under 1024-byte limit")
+	}
+}
+
+type closeTrackingReadCloser struct {
+	io.ReadCloser
+	closed *atomic.Bool
+}
+
+func (c *closeTrackingReadCloser) Close() error {
+	c.closed.Store(true)
+	return c.ReadCloser.Close()
+}
+
+type redirectProbeSpyTransport struct {
+	base        http.RoundTripper
+	probeClosed *atomic.Bool
+	probeSeen   *atomic.Bool
+}
+
+func (rt *redirectProbeSpyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := rt.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if isRedirectStatus(resp.StatusCode) {
+		rt.probeSeen.Store(true)
+		resp.Body = &closeTrackingReadCloser{ReadCloser: resp.Body, closed: rt.probeClosed}
+	}
+	return resp, nil
+}
+
+func TestDownloadStorageToFileClosesRedirectProbeBeforeStorageHop(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var probeSeen, probeClosed, closedBeforeStorage atomic.Bool
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		closedBeforeStorage.Store(probeClosed.Load())
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("ETag", `"probe-close-etag"`)
+		_, _ = w.Write([]byte("0123456789abcdef"))
+	}))
+	defer storage.Close()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", storage.URL+"/saved.mp4")
+		w.WriteHeader(http.StatusFound)
+		_, _ = w.Write([]byte("redirect body"))
+	}))
+	defer api.Close()
+
+	client := &MediaClient{
+		BaseURL:       api.URL + "/v1",
+		APIKey:        "secret",
+		AllowHTTPTest: true,
+		Client: &http.Client{
+			Transport: &redirectProbeSpyTransport{
+				base:        http.DefaultTransport,
+				probeClosed: &probeClosed,
+				probeSeen:   &probeSeen,
+			},
+		},
+	}
+	path, mime, size, err := client.LegacyUpscaleContentToFile(context.Background(), "task-close-probe", t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatalf("LegacyUpscaleContentToFile() error = %v", err)
+	}
+	defer os.Remove(path)
+	if size != 16 || mime != "video/mp4" {
+		t.Fatalf("got size=%d mime=%q, want 16 video/mp4", size, mime)
+	}
+	if !probeSeen.Load() {
+		t.Fatal("expected 3xx redirect probe response to be observed")
+	}
+	if !closedBeforeStorage.Load() {
+		t.Fatal("3xx redirect probe response body was still open when storage hop started")
 	}
 }

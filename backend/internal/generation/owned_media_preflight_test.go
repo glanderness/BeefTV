@@ -17,51 +17,49 @@ import (
 	"infinite-canvas/backend/internal/topaz"
 )
 
-type zeroReader struct {
-	remaining int64
-}
-
-func (z *zeroReader) Read(p []byte) (int, error) {
-	if z.remaining <= 0 {
-		return 0, io.EOF
-	}
-	n := int(min(int64(len(p)), z.remaining))
-	clear(p[:n])
-	z.remaining -= int64(n)
-	return n, nil
-}
-
-type streamVideoResources struct {
+type nonFileVideoResources struct {
 	ResourcePort
-	info        ResourceInfo
-	streamBytes int64
-	localMode   bool
+	info ResourceInfo
 }
 
-func (p streamVideoResources) Lookup(user, id string) (ResourceInfo, error) {
+func (p nonFileVideoResources) Lookup(user, id string) (ResourceInfo, error) {
 	if user != p.info.UserID || id != p.info.ID {
 		return ResourceInfo{}, errors.New("resource not owned")
 	}
 	return p.info, nil
 }
 
-func (p streamVideoResources) Open(user, id string) (ResourceInfo, io.ReadCloser, error) {
+func (p nonFileVideoResources) Open(user, id string) (ResourceInfo, io.ReadCloser, error) {
 	info, err := p.Lookup(user, id)
 	if err != nil {
 		return info, nil, err
 	}
-	return info, io.NopCloser(&zeroReader{remaining: p.streamBytes}), nil
+	return info, io.NopCloser(bytes.NewReader([]byte("non-file"))), nil
 }
 
-func (p streamVideoResources) LocalMode() bool { return p.localMode }
+func (p nonFileVideoResources) LocalMode() bool { return true }
 
-type serverModeLocalFileResources struct {
-	fileUpscaleResources
+func writeSparseTestFile(t *testing.T, dir, name string, size int64) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size > 0 {
+		if err := f.Truncate(size); err != nil {
+			_ = f.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
-func (p serverModeLocalFileResources) LocalMode() bool { return false }
-
-func TestPreflightOwnedVideoDeliveryStreamingFallbackAndLimits(t *testing.T) {
+func TestPreflightOwnedVideoDeliveryLocalFileLimitsAndNonFileRejection(t *testing.T) {
+	dir := t.TempDir()
 	eraseInput := Input{
 		Mode:            "video",
 		Config:          Config{BaseURL: "https://beeftv.app/v1", Model: SubtitleEraseModelName},
@@ -69,53 +67,54 @@ func TestPreflightOwnedVideoDeliveryStreamingFallbackAndLimits(t *testing.T) {
 		ReferenceVideos: []Media{{StorageKey: "resource:source"}},
 	}
 
-	// 1. Valid non-file stream passes bounded streaming preflight and records measured size.
+	// 1. Valid local file passes zero-copy stat preflight and records file size.
+	validPath := writeSparseTestFile(t, dir, "valid.mp4", 128<<10)
 	runtime := taskRuntime(func(r *Runtime) {
 		r.Call.UserID = "user-1"
-		r.Resources = streamVideoResources{
-			info:        ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4"},
-			streamBytes: 128 << 10,
-		}
+		r.Resources = fileUpscaleResources{path: validPath, kind: "video", size: 128 << 10}
 		r.Limits = configurableBudget{limit: 999 << 20}
 	})
 	prepared, err := prepareOwnedSubtitleEraseSource(WithRuntime(context.Background(), runtime), eraseInput)
 	if err != nil || prepared.ReferenceVideos[0].Bytes != 128<<10 {
-		t.Fatalf("valid non-file stream failed: prepared=%#v err=%v", prepared, err)
+		t.Fatalf("valid local file failed: prepared=%#v err=%v", prepared, err)
 	}
 
-	// 2. Empty non-file stream rejected with typed empty error.
-	runtime.Resources = streamVideoResources{
-		info:        ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4"},
-		streamBytes: 0,
-	}
+	// 2. Empty local file rejected with typed empty error.
+	emptyPath := writeSparseTestFile(t, dir, "empty.mp4", 0)
+	runtime.Resources = fileUpscaleResources{path: emptyPath, kind: "video"}
 	_, err = prepareOwnedSubtitleEraseSource(WithRuntime(context.Background(), runtime), eraseInput)
 	if classified := ClassifyError(RequestPreparationError{Cause: err}); classified.Category != CategoryInvalidParams || !strings.Contains(classified.UserMessage(), "参考素材为空") {
-		t.Fatalf("empty non-file stream misclassified: err=%v classified=%#v", err, classified)
+		t.Fatalf("empty local file misclassified: err=%v classified=%#v", err, classified)
 	}
 
-	// 3. >1 GiB non-file stream rejected via bounded io.Copy(io.Discard, ...) when server advertised 1 GiB.
+	// 3. >1 GiB local file rejected via stat when server advertised 1 GiB.
 	runtime.Limits = configurableBudget{limit: 2048 << 20}
-	runtime.Resources = streamVideoResources{
-		info:        ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4"},
-		streamBytes: BeefTVMediaToolVideoMaxBytes + 1024,
-	}
+	over1GiBPath := writeSparseTestFile(t, dir, "over1g.mp4", BeefTVMediaToolVideoMaxBytes+1024)
+	runtime.Resources = fileUpscaleResources{path: over1GiBPath, kind: "video", size: BeefTVMediaToolVideoMaxBytes + 1024}
 	largeEraseInput := eraseInput
 	largeOpts := *eraseInput.SubtitleErase
 	largeOpts.MaxVideoBytes = BeefTVMediaToolVideoMaxBytes
 	largeEraseInput.SubtitleErase = &largeOpts
 	_, err = prepareOwnedSubtitleEraseSource(WithRuntime(context.Background(), runtime), largeEraseInput)
 	if classified := ClassifyError(RequestPreparationError{Cause: err}); classified.Category != CategoryInputTooLarge || !strings.Contains(classified.UserMessage(), "1GB") {
-		t.Fatalf("oversized non-file stream misclassified: err=%v classified=%#v", err, classified)
+		t.Fatalf("oversized local file misclassified: err=%v classified=%#v", err, classified)
 	}
 
-	// 4. Default/legacy server cap (200 MiB when MaxVideoBytes is 0 or 200 MiB) fails fast on >200 MiB.
-	runtime.Resources = streamVideoResources{
-		info:        ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4"},
-		streamBytes: BeefTVSeedanceVideoMaxBytes + 1024,
-	}
+	// 4. Default/legacy server cap (200 MiB when MaxVideoBytes is 0) fails fast on >200 MiB.
+	over200MiBPath := writeSparseTestFile(t, dir, "over200m.mp4", BeefTVSeedanceVideoMaxBytes+1024)
+	runtime.Resources = fileUpscaleResources{path: over200MiBPath, kind: "video", size: BeefTVSeedanceVideoMaxBytes + 1024}
 	_, err = prepareOwnedSubtitleEraseSource(WithRuntime(context.Background(), runtime), eraseInput)
 	if classified := ClassifyError(RequestPreparationError{Cause: err}); classified.Category != CategoryInputTooLarge || !strings.Contains(classified.UserMessage(), "200MB") {
 		t.Fatalf("default 200 MiB safe fallback misclassified: err=%v classified=%#v", err, classified)
+	}
+
+	// 5. Non-local stream reader fails closed without spooling.
+	runtime.Resources = nonFileVideoResources{
+		info: ResourceInfo{ID: "source", UserID: "user-1", Status: "ready", Kind: "video", MimeType: "video/mp4"},
+	}
+	_, err = prepareOwnedSubtitleEraseSource(WithRuntime(context.Background(), runtime), eraseInput)
+	if classified := ClassifyError(RequestPreparationError{Cause: err}); classified.Category != CategoryInputInaccessible {
+		t.Fatalf("non-local stream should fail closed as inaccessible: err=%v classified=%#v", err, classified)
 	}
 }
 
@@ -178,24 +177,5 @@ func TestEstimateMediaUpscalePlumbsProbedDimensionsAndUsesStatOverStaleSize(t *t
 	output := resp["output"].(map[string]any)
 	if source["width"] != 80 || source["height"] != 60 || output["width"] != 160 || output["height"] != 120 {
 		t.Fatalf("estimate response lost probed image dimensions: source=%#v output=%#v", source, output)
-	}
-
-	// Server mode (LocalMode=false) still takes the zero-copy ownedLocalFile fast path on *os.File.
-	serverRuntime := taskRuntime(func(r *Runtime) {
-		r.Call.UserID = "user-1"
-		r.Resources = serverModeLocalFileResources{
-			fileUpscaleResources: fileUpscaleResources{path: pngPath, kind: "image", size: int64(len(pngBytes))},
-		}
-		r.Limits = configurableBudget{limit: 999 << 20}
-	})
-	imgInput := Input{
-		Mode:            "image",
-		Config:          Config{BaseURL: "https://beeftv.app/v1", Model: "topaz-standard-v2"},
-		Upscale:         &UpscaleOptions{Factor: 2},
-		ReferenceImages: []Media{{StorageKey: "resource:source"}},
-	}
-	prepared, err := prepareOwnedUpscaleSource(WithRuntime(context.Background(), serverRuntime), imgInput)
-	if err != nil || prepared.ReferenceImages[0].Width != 80 || prepared.ReferenceImages[0].Height != 60 || bytes.Equal(nil, pngBytes) {
-		t.Fatalf("server-mode local *os.File fast path failed: prepared=%#v err=%v", prepared, err)
 	}
 }

@@ -82,8 +82,7 @@ func PrepareSubtitleErase(ctx context.Context, input Input) (Input, error) {
 	if err != nil {
 		return input, err
 	}
-	runtime, _ := RuntimeFromContext(ctx)
-	if err := PrepareBeefTVVideoReferences(ctx, input.Config, &input, ownedMediaReaderWithVideoLimit(ctx, runtime.Call.UserID, mediaToolVideoMaxBytes(ctx, &input))); err != nil {
+	if err := PrepareBeefTVVideoReferences(ctx, input.Config, &input, nil); err != nil {
 		return input, err
 	}
 	return input, nil

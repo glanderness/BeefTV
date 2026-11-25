@@ -190,51 +190,6 @@ func ReadBeefTVSeedanceInlineMedia(_ string, media Media) ([]byte, string, bool,
 	return nil, "", true, nil
 }
 
-func ownedSeedanceMediaReader(ctx context.Context, userID string) BeefTVSeedanceMediaReader {
-	return ownedMediaReaderWithVideoLimit(ctx, userID, beefTVSeedanceVideoMaxBytes)
-}
-
-func ownedMediaReaderWithVideoLimit(ctx context.Context, userID string, videoMaxBytes int64) BeefTVSeedanceMediaReader {
-	if videoMaxBytes <= 0 {
-		videoMaxBytes = beefTVSeedanceVideoMaxBytes
-	}
-	return func(kind string, media Media) ([]byte, string, bool, error) {
-		if SkipBeefTVSeedanceMedia(media) {
-			return nil, "", true, nil
-		}
-		if raw := firstNonEmpty(media.DataURL, media.URL); strings.HasPrefix(strings.TrimSpace(raw), "data:") {
-			return ReadBeefTVSeedanceInlineMedia(kind, media)
-		}
-		if !strings.HasPrefix(media.StorageKey, "resource:") {
-			return nil, "", true, nil
-		}
-		if media.Bytes > 0 {
-			if err := ValidateBeefTVMediaToolSize(kind, media.Bytes, videoMaxBytes); err != nil {
-				return nil, "", false, err
-			}
-		}
-		runtime, ok := RuntimeFromContext(ctx)
-		if !ok || runtime.Resources == nil {
-			return nil, "", false, errors.New("读取任务参考资源失败：资源端口未接入")
-		}
-		resourceID := strings.TrimPrefix(media.StorageKey, "resource:")
-		resource, body, err := runtime.Resources.Open(userID, resourceID)
-		if err != nil {
-			return nil, "", false, fmt.Errorf("读取任务参考资源失败：%w", err)
-		}
-		defer body.Close()
-		max := BeefTVSeedanceKindMaxBytes(kind)
-		if strings.EqualFold(strings.TrimSpace(kind), "video") {
-			max = videoMaxBytes
-		}
-		data, err := io.ReadAll(io.LimitReader(body, max+1))
-		if err != nil {
-			return nil, "", false, fmt.Errorf("读取任务参考资源失败：%w", err)
-		}
-		return data, firstNonEmpty(media.MimeType, resource.MimeType), false, nil
-	}
-}
-
 func validateSeedanceReferenceCapability(input *Input, kind string, index int, media Media, size int64) error {
 	if input.VideoCapability == nil {
 		return nil
