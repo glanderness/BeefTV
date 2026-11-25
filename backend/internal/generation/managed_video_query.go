@@ -48,7 +48,7 @@ func queryManagedLegacyVideoWithPolicy(ctx context.Context, input Input, id stri
 			if !client.AllowHTTPTest {
 				ctx = outbound.WithPublicHTTPS(ctx)
 			}
-			filePath, mime, err := getExternalVideoFile(context.WithValue(WithRequestKind(ctx, "download"), videoDeliveryRequestContext{}, videoDeliveryIdleTimeout), current)
+			filePath, mime, err := GetExternalVideoFile(context.WithValue(WithRequestKind(ctx, "download"), videoDeliveryRequestContext{}, videoDeliveryIdleTimeout), current)
 			var rejected HTTPError
 			if errors.As(err, &rejected) && (rejected.StatusCode == http.StatusUnauthorized || rejected.StatusCode == http.StatusForbidden) {
 				err = videoBackupLinkExpiredError{cause: err}

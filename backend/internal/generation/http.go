@@ -130,7 +130,9 @@ func GetProviderExternalBinary(ctx context.Context, config Config, rawURL string
 	return DoBinary(req)
 }
 
-func getExternalVideoFile(ctx context.Context, rawURL string) (string, string, error) {
+// GetExternalVideoFile streams a remote video URL directly to a local file via
+// outbound's resumable download cache when bound to ctx.
+func GetExternalVideoFile(ctx context.Context, rawURL string) (string, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", "", err

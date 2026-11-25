@@ -39,7 +39,7 @@ func (f *fakeDeliveryPort) snapshot() []outbound.ResumableProgress {
 
 func downloadFrom(url string) func(context.Context) ([]byte, string, error) {
 	return func(ctx context.Context) ([]byte, string, error) {
-		filePath, mimeType, err := getExternalVideoFile(ctx, url)
+		filePath, mimeType, err := GetExternalVideoFile(ctx, url)
 		if err != nil {
 			return nil, "", err
 		}

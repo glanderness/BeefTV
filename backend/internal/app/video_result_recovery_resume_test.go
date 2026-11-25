@@ -81,11 +81,14 @@ func TestFailedVideoManualRecoveryResumesProviderDownloadCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefTVVideoBaseURL: gateway.URL})
-	_, _, err = generation.RunVideoDownload(withProviderAnalytics(ctx, svc, task), "original", generation.VideoPollPolicy{
+	filePath, _, err := generation.RunVideoDownloadFile(withProviderAnalytics(ctx, svc, task), "original", generation.VideoPollPolicy{
 		Interval: time.Millisecond, MaxDownloadTries: 1, Sleep: generation.SleepContext,
-	}, func(ctx context.Context) ([]byte, string, error) {
-		return generation.GetExternalBinary(ctx, media.URL+"/video.mp4?signature=old")
+	}, func(ctx context.Context) (string, string, error) {
+		return generation.GetExternalVideoFile(ctx, media.URL+"/video.mp4?signature=old")
 	})
+	if filePath != "" {
+		_ = os.Remove(filePath)
+	}
 	if !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("initial download did not retain partial: %v", err)
 	}
