@@ -42,6 +42,9 @@ type Task struct {
 	TextDraft                 string                  `json:"textDraft,omitempty" gorm:"type:text"`
 	Error                     string                  `json:"error"`
 	ErrorCode                 string                  `json:"errorCode,omitempty" gorm:"size:80"`
+	RecoveryPaused            bool                    `json:"recoveryPaused,omitempty" gorm:"not null;default:false"`
+	RecoveryLastAttemptAt     *time.Time              `json:"recoveryLastAttemptAt,omitempty"`
+	RecoveryLastError         string                  `json:"recoveryLastError,omitempty"`
 	RecoveryOutcome           *string                 `json:"-" gorm:"type:text"`
 	Outcome                   *TaskOutcome            `json:"outcome,omitempty" gorm:"-"`
 	ResultState               string                  `json:"resultState,omitempty" gorm:"-"`

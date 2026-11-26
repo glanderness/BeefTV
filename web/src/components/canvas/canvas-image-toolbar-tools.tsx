@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
-import { Brush, Camera, Copy, FileText, Globe2, Grid2x2, Lock, LockOpen, Maximize2, PencilLine, Crop, SlidersHorizontal, Smile, Sun, Upload, Scaling } from "lucide-react";
+import { Brush, Camera, Copy, FileText, Globe2, Grid2x2, Layers, Lock, LockOpen, Maximize2, PencilLine, Crop, SlidersHorizontal, Smile, Sun, Upload, Scaling } from "lucide-react";
 
 import type { CanvasNodeData } from "@/types/canvas";
 import type { NodeToolbarGroup } from "@/lib/canvas/tool-registry";
 import type { CanvasWorkflowContribution } from "@/lib/canvas/workflow-capability";
 
-type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "annotation" | "maskEdit" | "emotion" | "portraitTexture" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "lighting" | "panorama" | "view";
+type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "annotation" | "maskEdit" | "emotion" | "portraitTexture" | "crop" | "split" | "layerSplit" | "upscale" | "superResolve" | "angle" | "lighting" | "panorama" | "view";
 
 type ImageToolHandlers = {
     onUpload: (node: CanvasNodeData) => void;
@@ -15,6 +15,7 @@ type ImageToolHandlers = {
     onEmotion: (node: CanvasNodeData) => void;
     onPortraitTexture: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
+    onLayerSplit?: (node: CanvasNodeData) => void;
     onUpscale: (node: CanvasNodeData) => void;
     onSuperResolve: (node: CanvasNodeData) => void;
     onAngle: (node: CanvasNodeData) => void;
@@ -134,6 +135,14 @@ const imageToolDefinitions: ImageToolDefinition[] = [
         run: (node, handlers) => handlers.onCrop(node),
     },
     {
+        id: "layerSplit",
+        label: "图层拆分",
+        icon: () => <Layers className="size-3.5" />,
+        group: "process",
+        order: 42,
+        run: (node, handlers) => handlers.onLayerSplit?.(node),
+    },
+    {
         id: "split",
         workflow: { operationId: "image.split", outputType: "image" },
         label: "宫格切分",
@@ -199,7 +208,7 @@ const imageToolDefinitions: ImageToolDefinition[] = [
 ];
 
 export function buildImageToolbarTools(node: CanvasNodeData, handlers: ImageToolHandlers) {
-    return imageToolDefinitions.map((tool) => ({
+    return imageToolDefinitions.filter((tool) => tool.id !== "layerSplit" || handlers.onLayerSplit).map((tool) => ({
         id: tool.id,
         label: resolveToolText(tool.label, node),
         icon: tool.icon(node),

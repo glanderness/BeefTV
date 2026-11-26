@@ -11,7 +11,7 @@ import (
 
 type LegacyUpscaleInput struct {
 	Model, MediaType, SourceURL, OutputFormat string
-	Factor                                    int
+	Factor                                    float64
 	Width, Height                             int
 	DurationSeconds, FrameRate                float64
 	EstimateOnly                              bool

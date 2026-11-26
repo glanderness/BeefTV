@@ -75,6 +75,61 @@ func TestLocalSchemaRecordsVersionAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestTaskRecoveryControlsMigrationFromPreviewV32(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:preview-v32-task-recovery-controls?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"DELETE FROM local_schema_migrations WHERE version = 33",
+		"UPDATE local_schema_migrations SET name = 'task-recovery-controls' WHERE version = 32",
+		"ALTER TABLE assistant_turns DROP COLUMN referenced_resource_ids",
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var preview localSchemaMigration
+	if err := db.First(&preview, 32).Error; err != nil {
+		t.Fatal(err)
+	}
+	attemptedAt := time.Now().UTC().Truncate(time.Second)
+	task := model.Task{
+		ID:                    "preview-recovery",
+		RecoveryPaused:        true,
+		RecoveryLastAttemptAt: &attemptedAt,
+		RecoveryLastError:     "previous attempt timed out",
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var after localSchemaMigration
+	if err := db.First(&after, 32).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.Name != preview.Name || !after.AppliedAt.Equal(preview.AppliedAt) {
+		t.Fatalf("preview migration was rewritten: before=%+v after=%+v", preview, after)
+	}
+	var migrated model.Task
+	if err := db.First(&migrated, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !migrated.RecoveryPaused || migrated.RecoveryLastAttemptAt == nil ||
+		!migrated.RecoveryLastAttemptAt.Equal(attemptedAt) || migrated.RecoveryLastError != task.RecoveryLastError {
+		t.Fatalf("preview task lost recovery state: %+v", migrated)
+	}
+}
+
 func TestTaskFailureCategoryMigrationPreservesLegacyTasks(t *testing.T) {
 	db := openHistorical(t, "preview-v9")
 	if err := MigrateLocalSchema(db); err != nil {
@@ -441,7 +496,7 @@ func TestAssistantTurnsMigrationFromPreviewV9(t *testing.T) {
 	if err := db.Order("version").Find(&ledger).Error; err != nil {
 		t.Fatal(err)
 	}
-	if ledger[len(ledger)-1].Version != CurrentSchemaVersion || ledger[len(ledger)-1].Name != "assistant-referenced-resources" {
+	if ledger[len(ledger)-1].Version != CurrentSchemaVersion || ledger[len(ledger)-1].Name != "task-recovery-controls" {
 		t.Fatalf("current identity: %+v", ledger[len(ledger)-1])
 	}
 	if !db.Migrator().HasTable(&model.TaskEffect{}) {

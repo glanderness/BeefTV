@@ -70,6 +70,7 @@ export function createCanvasStageOverlayProps(overrides: OverlayStageFixtureOver
             setZoomScale: noop,
             focusCanvasImageNode: noop,
         } as unknown as CanvasProjectStageOverlaysProps["viewportController"],
+        nodeGraphContext: {},
         document: {
             nodes: overrides.nodes ?? [],
         } as unknown as CanvasProjectStageOverlaysProps["document"],

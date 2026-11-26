@@ -156,7 +156,6 @@ export function useCanvasProjectActions({
         linkedProjectQuery,
         timelineAssetInsert,
         mediaTools,
-        startUpscaleBatch,
         setAngleNodeId,
         setLightingNodeId,
         setEmotionNodeId,
@@ -386,7 +385,7 @@ export function useCanvasProjectActions({
             if (node.metadata?.workflowOperation?.id.endsWith(".ai-upscale")) {
                 const processor = nodesRef.current.find((item) => item.id === node.metadata?.generatedFromProcessingNodeId);
                 if (canRecoverManagedToolNode(node) || (!processor && node.metadata.taskClientOperationId)) void recoverAIUpscale(node).catch((error) => message.error(generationErrorMessage(error)));
-                else if (processor && !canvasNodeFailureView(node).regenerateBlocked) void startUpscaleBatch(processor).catch((error) => message.error(generationErrorMessage(error)));
+                else if (processor && !canvasNodeFailureView(node).regenerateBlocked) focusCanvasNode(processor.id);
                 else message.info("请在超分处理节点中查询原批次，暂勿重复提交");
                 return;
             }
@@ -430,7 +429,7 @@ export function useCanvasProjectActions({
             }
             void handleRetryNode(node);
         },
-        [generateScriptRows, handleRetryNode, mediaTools, message, nodesRef, reconcileImageBatchRootNode, retryDepthCaptureNode, retryImageBatchChildren, setGenerationHistoryOpen, recoverAIUpscale, startUpscaleBatch],
+        [generateScriptRows, handleRetryNode, mediaTools, message, nodesRef, reconcileImageBatchRootNode, retryDepthCaptureNode, retryImageBatchChildren, setGenerationHistoryOpen, recoverAIUpscale, focusCanvasNode],
     );
 
     // 改动卡片的「在画布上查看」：选中这些节点并把视野带过去，再点亮一下。

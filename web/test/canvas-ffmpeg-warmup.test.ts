@@ -11,6 +11,6 @@ test("video trim and crop warm the shared FFmpeg worker before confirmation", as
     expect(segment).toContain("withFFmpegLease");
     expect(segment).not.toContain("loadFFmpeg");
     expect(tools.match(/void warmFFmpeg\(\)\.catch\(\(\) => undefined\)/g)?.length).toBe(2);
-    expect(tools.indexOf("void warmFFmpeg().catch(() => undefined)", tools.indexOf("const openInlineVideoTrim"))).toBeLessThan(tools.indexOf("setInlineTrimNodeId(node.id)"));
+    expect(tools.indexOf("void warmFFmpeg().catch(() => undefined)", tools.indexOf("const openInlineVideoTrim"))).toBeLessThan(tools.indexOf('setInlineVideoEditor({ nodeId: node.id, mode: "trim" })'));
     expect(tools.indexOf("void warmFFmpeg().catch(() => undefined)", tools.indexOf("const openVideoCrop"))).toBeLessThan(tools.indexOf("setVideoCropNodeId(node.id)", tools.indexOf("const openVideoCrop")));
 });

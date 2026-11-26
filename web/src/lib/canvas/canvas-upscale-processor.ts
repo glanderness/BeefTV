@@ -1,11 +1,10 @@
 import { nanoid } from "nanoid";
+import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 
 import { findAvailableGenerationGroupPosition } from "@/lib/canvas/canvas-generation-layout";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { createDefaultUpscaleSettings } from "@/lib/canvas/canvas-upscale";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
-
-const UPSCALE_GROUP_SIZE = { width: 420, height: 1000 };
 
 function canUpscale(node: CanvasNodeData) {
     return (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) && Boolean(node.metadata?.content || node.metadata?.storageKey);
@@ -28,8 +27,11 @@ export function planUpscaleProcessingNode(
     createId: () => string = () => nanoid(),
 ): CanvasUpscaleProcessorPlan {
     const selectedSources = selectedNodeIds.has(source.id) ? nodes.filter((node) => selectedNodeIds.has(node.id) && canUpscale(node)) : [source];
-    const position = findAvailableGenerationGroupPosition(nodes, { x: source.position.x + source.width + 120, y: source.position.y }, UPSCALE_GROUP_SIZE);
-    const processor = createCanvasNode(CanvasNodeType.Upscale, { x: position.x + 210, y: position.y + 120 }, { upscale: createDefaultUpscaleSettings(), status: "idle" });
+    const position = findAvailableGenerationGroupPosition(nodes, { x: source.position.x + source.width + 120, y: source.position.y }, NODE_DEFAULT_SIZE[CanvasNodeType.Upscale]);
+    const processor = createCanvasNode(CanvasNodeType.Upscale, {
+        x: position.x + NODE_DEFAULT_SIZE[CanvasNodeType.Upscale].width / 2,
+        y: position.y + NODE_DEFAULT_SIZE[CanvasNodeType.Upscale].height / 2,
+    }, { upscale: createDefaultUpscaleSettings(), status: "idle" });
     return {
         processor,
         connections: [...connections, ...selectedSources.map((node) => ({ id: createId(), fromNodeId: node.id, toNodeId: processor.id }))],

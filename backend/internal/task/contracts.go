@@ -103,6 +103,7 @@ type ListOptions struct {
 	Limit      int
 	ProjectID  string
 	ActiveOnly bool
+	AllActive  bool
 }
 
 // Summary is the stable local read model. It deliberately excludes protected
@@ -126,6 +127,10 @@ type Summary struct {
 	ProviderCancelledAt       *time.Time                    `json:"providerCancelledAt,omitempty"`
 	Error                     string                        `json:"error,omitempty"`
 	ErrorCode                 string                        `json:"errorCode,omitempty"`
+	RecoveryPaused            bool                          `json:"recoveryPaused,omitempty"`
+	RecoveryLastAttemptAt     *time.Time                    `json:"recoveryLastAttemptAt,omitempty"`
+	RecoveryLastError         string                        `json:"recoveryLastError,omitempty"`
+	NextPollAt                *time.Time                    `json:"nextPollAt,omitempty"`
 	FailureDiagnostics        *model.TaskFailureDiagnostics `json:"failureDiagnostics,omitempty"`
 	PreviewURL                string                        `json:"previewUrl,omitempty"`
 	PreviewKind               string                        `json:"previewKind,omitempty"`

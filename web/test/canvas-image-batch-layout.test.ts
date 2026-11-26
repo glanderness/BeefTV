@@ -140,6 +140,42 @@ test("image decode still corrects a result saved with the wrong ratio", () => {
     expect(Math.abs(decoded.width / decoded.height - 1080 / 1920)).toBeLessThan(0.01);
 });
 
+function seedreamLayer(index: number, x: number, y: number): CanvasNodeData {
+    const id = `layer-${index}`;
+    return {
+        id, title: id, type: CanvasNodeType.Image, position: { x, y }, width: 300, height: 180,
+        metadata: { status: "success", seedreamMode: "layers", taskId: "split", taskOutputIndex: index, storageKey: `resource:${id}` },
+    };
+}
+
+test("late layer image dimensions cannot expand a card into a neighbouring layer", () => {
+    const frames = [seedreamLayer(0, 0, 0), seedreamLayer(1, 344, 0), seedreamLayer(2, 0, 236)];
+    frames[1]!.metadata = { ...frames[1]!.metadata, generationType: "edit", size: "16:9" };
+    const decoded = frames.map((node, i) => fitImageNodeToDecodedSize(node, i === 1 ? 80 : 1920, i === 1 ? 1800 : 120));
+    assertSeparated(decoded);
+    for (const [index, layer] of decoded.entries()) {
+        expect(layer.position).toEqual(frames[index]!.position);
+        expect([layer.width, layer.height]).toEqual([300, 180]);
+    }
+    expect(decoded[1]!.metadata?.naturalHeight).toBe(1800);
+    expect(resetInterruptedGeneration(decoded)).toBe(decoded);
+});
+
+test("reopening separates overlapping saved layers and keeps already clear or locked nodes in place", () => {
+    const locked = seedreamLayer(0, 0, 0);
+    locked.metadata = { ...locked.metadata, locked: true };
+    const covered = seedreamLayer(1, 120, 90);
+    const separated = seedreamLayer(2, 0, 400);
+    const neighbour = { ...seedreamLayer(3, 440, 90), metadata: { content: "other.png", status: "success" as const } };
+    const repaired = resetInterruptedGeneration([locked, covered, separated, neighbour]);
+    assertSeparated(repaired);
+    expect(repaired[0]).toBe(locked);
+    expect(repaired[2]).toBe(separated);
+    expect(repaired[3]).toBe(neighbour);
+    expect(repaired[1]?.metadata?.storageKey).toBe(covered.metadata?.storageKey);
+    expect(resetInterruptedGeneration(repaired)).toBe(repaired);
+});
+
 for (const [width, height] of [[300, 1], [1, 480], [300, 23]]) {
     test(`reopening repairs a ${width}x${height} result from its natural size without moving it far away`, () => {
         const thin: CanvasNodeData = { id: "video-thin", type: CanvasNodeType.Video, title: "镜", position: { x: 100, y: 100 }, width, height, metadata: { content: "v.mp4", status: "success", naturalWidth: 1920, naturalHeight: 1080 } };

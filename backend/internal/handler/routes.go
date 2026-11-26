@@ -28,6 +28,7 @@ type taskRouteService interface {
 	RetryTask(userID string, id string) (*model.Task, error)
 	QueryFailedVideoTask(ctx context.Context, userID string, taskID string) (*app.ProviderTaskQueryResult, error)
 	CancelTask(ctx context.Context, userID string, id string) (*model.Task, error)
+	SetTaskRecoveryPaused(userID, id string, paused bool) (*model.Task, error)
 	TaskLogs(userID string, id string) ([]model.TaskLog, error)
 }
 
@@ -180,9 +181,11 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc taskRouteService, hostedProfile 
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
+		projectID := c.Query("projectId")
 		tasks, err := requestTaskPort(c, svc).TasksWithOptions(user.ID, localtask.ListOptions{
 			Limit:      pageSize,
-			ProjectID:  c.Query("projectId"),
+			ProjectID:  projectID,
+			AllActive:  projectID != "" && c.Query("allActive") == "true",
 			ActiveOnly: c.Query("activeOnly") == "true",
 		})
 		if err != nil {
@@ -250,7 +253,31 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc taskRouteService, hostedProfile 
 			return
 		}
 		// 用户点「继续取回」：只有这个入口允许把 BeefTV 没收到的托管原请求按原编号补交一次。
-		task, err := requestTaskPort(c, svc).RecoverTask(localtask.WithManualRecovery(c.Request.Context()), user.ID, c.Param("id"))
+		ctx := c.Request.Context()
+		if c.Query("queryOnly") != "true" {
+			ctx = localtask.WithManualRecovery(ctx)
+		}
+		task, err := requestTaskPort(c, svc).RecoverTask(ctx, user.ID, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, task)
+	})
+	r.POST("/tasks/:id/recovery-pause", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var request struct {
+			Paused *bool `json:"paused" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&request); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		task, err := svc.SetTaskRecoveryPaused(user.ID, c.Param("id"), *request.Paused)
 		if err != nil {
 			failService(c, err)
 			return

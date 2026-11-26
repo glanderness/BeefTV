@@ -1,5 +1,6 @@
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ImageCapabilityConfig } from "@/lib/model-capabilities";
+import { seedreamSupportsLayerSplit } from "@/lib/seedream-image";
 import { Switch } from "@/components/ui/base/switch";
 
 type Key = "size" | "transparentBackground" | "seedreamMode" | "seedreamMaxImages" | "seedreamOutputFormat" | "seedreamOptimize" | "seedreamWatermark";
@@ -7,7 +8,7 @@ type Key = "size" | "transparentBackground" | "seedreamMode" | "seedreamMaxImage
 export function SeedreamSettings({ config, family, profile, onChange }: {
     config: AiConfig; family: string; profile: ImageCapabilityConfig; onChange: (key: Key, value: string) => void;
 }) {
-    const modern = family === "5.5" || family === "pro" || family === "flash";
+    const modern = seedreamSupportsLayerSplit(family);
     const supportsFast = family === "pro" || family === "4.0";
     const layers = config.seedreamMode === "layers";
     const transparent = config.transparentBackground === "true";

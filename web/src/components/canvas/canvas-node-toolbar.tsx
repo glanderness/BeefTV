@@ -13,6 +13,7 @@ import { useCopyText } from "@/hooks/use-copy-text";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasWorkspaceMode, type ViewportTransform } from "@/types/canvas";
 import { buildImageToolbarTools } from "./canvas-image-toolbar-tools";
+import { canConvertCanvasVideoDraft } from "@/lib/canvas/canvas-video-draft";
 import { resolveMediaNodeSettingsTools, resolveVideoToolbarSections, type ToolbarTool } from "./canvas-video-toolbar-tools";
 import { CanvasGridSplitPicker } from "./canvas-grid-split-picker";
 
@@ -37,10 +38,12 @@ type CanvasNodeToolbarProps = {
     onPortraitTexture: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData, params: ImageSplitParams) => void;
+    onLayerSplit?: (node: CanvasNodeData) => void;
     onUpscale: (node: CanvasNodeData) => void;
     onSuperResolve: (node: CanvasNodeData) => void;
-    onDraftToFinal?: (node: CanvasNodeData, resolution: "720p" | "1080p") => void;
+    onDraftToFinal?: (node: CanvasNodeData) => void;
     onVideoEditOperation?: (node: CanvasNodeData, operation: "extend" | "inpaint") => void;
+    onVideoRetake?: (node: CanvasNodeData) => void;
     onAngle: (node: CanvasNodeData) => void;
     onLighting: (node: CanvasNodeData) => void;
     onPanorama: (node: CanvasNodeData) => void;
@@ -85,10 +88,12 @@ export function CanvasNodeToolbar({
     onPortraitTexture,
     onCrop,
     onSplit,
+    onLayerSplit,
     onUpscale,
     onSuperResolve,
     onDraftToFinal,
     onVideoEditOperation,
+    onVideoRetake,
     onAngle,
     onLighting,
     onPanorama,
@@ -201,14 +206,14 @@ export function CanvasNodeToolbar({
         };
     }, [anchor === null, containerRef, node, viewport.k, viewport.x, viewport.y]);
 
-    if (!node || !anchor || node.type === CanvasNodeType.Director || node.metadata?.directorSceneId) return null;
+    if (!node || !anchor || node.type === CanvasNodeType.Director || node.type === CanvasNodeType.Upscale || node.metadata?.directorSceneId) return null;
 
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;
     const isAudio = node.type === CanvasNodeType.Audio;
     const hasImage = isImage && Boolean(node.metadata?.content);
     const hasStorageOnlyImage = isImage && !hasImage && Boolean(node.metadata?.storageKey);
-    const canDraftToFinal = isVideo && Boolean(node.metadata?.content) && node.metadata?.draft === "true" && Boolean(node.metadata?.taskProviderRequestId?.trim());
+    const canDraftToFinal = canConvertCanvasVideoDraft(node);
     const copyImagePrompt = (target: CanvasNodeData) => {
         const prompt = target.metadata?.prompt?.trim();
         if (!prompt) {
@@ -225,6 +230,7 @@ export function CanvasNodeToolbar({
         onEmotion,
         onPortraitTexture,
         onCrop,
+        onLayerSplit,
         onUpscale,
         onSuperResolve,
         onAngle,
@@ -311,7 +317,7 @@ export function CanvasNodeToolbar({
             onClick: () => tool.run(nodeHoverCtx),
         };
     });
-    const storageOnlyImageTools = hasStorageOnlyImage ? imageTools.filter((tool) => tool.id === "angle") : [];
+    const storageOnlyImageTools = hasStorageOnlyImage ? imageTools.filter((tool) => tool.id === "angle" || tool.id === "layerSplit") : [];
     const activeImageTools = hasImage ? imageTools : storageOnlyImageTools;
     const allTools: ToolbarTool[] = activeImageTools.length && !simpleMode ? [...registryToolbarTools, ...activeImageTools] : registryToolbarTools;
     const compact = containerWidth < 640;
@@ -343,7 +349,7 @@ export function CanvasNodeToolbar({
             ...(isImage ? allTools.filter((tool) => tool.id === "reversePrompt") : []),
         ]
         : isImage
-          ? [...inGroup("process").filter((tool) => tool.id === "crop" || tool.id === "split" || tool.id === "annotation"), ...allTools.filter((tool) => tool.id === "reversePrompt")]
+          ? [...inGroup("process").filter((tool) => ["crop", "annotation", "layerSplit", "split"].includes(tool.id)), ...allTools.filter((tool) => tool.id === "reversePrompt")]
           : inGroup("process");
     const allWorkspaceTools = inGroup("workspace");
     const workspaceTools = narrow ? [] : allWorkspaceTools;
@@ -376,6 +382,14 @@ export function CanvasNodeToolbar({
         if (open) onKeep(node.id);
         else if (!toolbarRef.current?.contains(document.activeElement)) onLeave();
     };
+    const qualityEnhancementTool: ToolbarTool = {
+        id: "ai-upscale",
+        label: "画质提升",
+        icon: <UpscaleToolbarIcon />,
+        group: "process",
+        order: 1,
+        onClick: () => onSuperResolve(node),
+    };
     const dockStyle = canvasDockStyle(theme, theme.node.text);
 
     return (
@@ -403,20 +417,16 @@ export function CanvasNodeToolbar({
                 {isVideo ? (
                     <>
                         {canDraftToFinal && onDraftToFinal ? (
-                            <NodeDockMenuButton
-                                menuId="video-draft-to-final"
-                                label="转高清成片"
-                                icon={<UpscaleToolbarIcon />}
-                                tools={[
-                                    { id: "draft-to-final-720p", label: "转 720P 成片", icon: null, group: "process", order: 1, onClick: () => onDraftToFinal(node, "720p") },
-                                    { id: "draft-to-final-1080p", label: "转 1080P 成片", icon: null, group: "process", order: 2, onClick: () => onDraftToFinal(node, "1080p") },
-                                ]}
-                                openMenuId={openMenuId}
-                                onOpenChange={handleMenuOpenChange}
-                                placement="bottomLeft"
-                            />
+                            <NodeDockToolButton tool={{
+                                id: "draft-to-final",
+                                label: "转 1080P 成片",
+                                icon: <UpscaleToolbarIcon />,
+                                group: "process",
+                                order: 0,
+                                onClick: () => onDraftToFinal(node),
+                            }} showTooltip={false} />
                         ) : null}
-                        <NodeDockToolButton tool={{ id: "ai-upscale", label: "AI超分", icon: <UpscaleToolbarIcon />, group: "process", order: 1, onClick: () => onSuperResolve(node) }} showTooltip={false} />
+                        <NodeDockToolButton tool={qualityEnhancementTool} showTooltip={false} />
                         {videoSections.inlineKeyframeTools.length ? (
                             <NodeDockMenuButton menuId="video-keyframes" label="关键帧截取" icon={<Images className="size-3.5" />} tools={videoSections.inlineKeyframeTools} openMenuId={openMenuId} onOpenChange={handleMenuOpenChange} placement="bottomLeft" />
                         ) : null}
@@ -431,7 +441,10 @@ export function CanvasNodeToolbar({
                                         { id: "video-extend", label: "视频续写", icon: null, group: "process" as const, order: 1, onClick: () => onVideoEditOperation(node, "extend") },
                                         { id: "video-inpaint", label: "视频局部修改", icon: null, group: "process" as const, order: 2, onClick: () => onVideoEditOperation(node, "inpaint") },
                                     ] : []),
-                                    { id: "video-reverse-prompt", label: "反推提示词", icon: null, group: "process" as const, order: 3, onClick: () => onReversePrompt(node) },
+                                    ...(onVideoRetake ? [
+                                        { id: "video-retake", label: "片段重拍", icon: null, group: "process" as const, order: 3, onClick: () => onVideoRetake(node) },
+                                    ] : []),
+                                    { id: "video-reverse-prompt", label: "反推提示词", icon: null, group: "process" as const, order: 4, onClick: () => onReversePrompt(node) },
                                 ]}
                                 openMenuId={openMenuId}
                                 onOpenChange={handleMenuOpenChange}
@@ -472,7 +485,7 @@ export function CanvasNodeToolbar({
                     </>
                 ) : (
                     <>
-                        {isImage ? <NodeDockToolButton tool={{ id: "ai-upscale", label: "AI超分", icon: <UpscaleToolbarIcon />, group: "process", order: 1, onClick: () => onSuperResolve(node) }} showTooltip={false} /> : null}
+                        {isImage ? <NodeDockToolButton tool={qualityEnhancementTool} showTooltip={false} /> : null}
                         {(isImage ? imagePrimaryTools : primaryTools).map((tool) => (
                             <NodeDockToolButton key={tool.id} tool={tool} showTooltip={tool.id !== "maskEdit"} />
                         ))}

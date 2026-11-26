@@ -4,6 +4,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
 import { nanoid } from "nanoid";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
+import { findAvailableGenerationGroupPosition } from "@/lib/canvas/canvas-generation-layout";
+import { runCanvasGenerationSubmissionOnce } from "@/lib/canvas/canvas-generation-submission";
+import { canConvertCanvasVideoDraft, resolveCanvasVideoDraftSource } from "@/lib/canvas/canvas-video-draft";
+import type { InlineVideoTrimRange } from "@/lib/canvas/canvas-video-inline-trim";
+import { buildCanvasVideoRetake, canvasVideoRetakeModel } from "@/lib/canvas/canvas-video-retake";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 
 import { promoteLegacyBatchTableSize } from "@/lib/canvas/canvas-batch-table";
@@ -14,11 +19,12 @@ import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import type { Skill } from "@/services/api/skills";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { useEffectiveConfig } from "@/stores/use-config-store";
+import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 
 import {
     createImageNodeFromTextSource,
+    createImageLayerSplit,
     createInsertingHistoryGate,
     rebaseInsertedCanvasNode,
     reconcileImageBatchRootNodes,
@@ -83,6 +89,9 @@ export function useCanvasGenerationOrchestration({
     const queryClient = useQueryClient();
     const effectiveConfig = useEffectiveConfig();
     const insertingHistory = useRef(createInsertingHistoryGate());
+    const layerSplitSubmissions = useRef(new Map<string, Promise<unknown>>());
+    const draftConversionSubmissions = useRef(new Map<string, Promise<unknown>>());
+    const retakeSubmissions = useRef(new Map<string, Promise<unknown>>());
     const projectIdRef = useRef(projectId);
     projectIdRef.current = projectId;
     const { lifetime } = useCanvasOwnerLifetime(projectId);
@@ -366,59 +375,168 @@ export function useCanvasGenerationOrchestration({
         [pageUi, connectionsRef, effectiveConfig, message, nodesRef, projectId, setConnections, setNodes],
     );
 
-    const generateFinalVideoFromDraftNode = useCallback(
-        (node: CanvasNodeData, resolution: "720p" | "1080p") => {
-            const draftTaskId = node.metadata?.taskProviderRequestId?.trim();
-            if (!draftTaskId) {
-                message.warning("该样片缺少上游任务 ID，无法直接转高清成片");
+    const generateImageLayers = useCallback((node: CanvasNodeData) => {
+        if (readOnly) return;
+        return runCanvasGenerationSubmissionOnce(layerSplitSubmissions.current, JSON.stringify([projectId, node.id]), async () => {
+            if (projectIdRef.current !== projectId) return;
+            const source = nodesRef.current.find((item) => item.id === node.id && item.type === CanvasNodeType.Image);
+            if (!source || !(source.metadata?.content || source.metadata?.storageKey)) {
+                message.warning("图片节点为空，无法拆分图层");
                 return;
             }
-            const promptText = node.metadata?.prompt || "";
-            const childNode: CanvasNodeData = {
-                id: nanoid(),
-                type: CanvasNodeType.Video,
-                title: `${node.title || "样片"} (${resolution.toUpperCase()} 成片)`.slice(0, 36),
-                position: { x: node.position.x + node.width + 96, y: node.position.y },
-                width: node.width,
-                height: node.height,
-                metadata: {
-                    status: "idle",
-                    prompt: promptText,
-                    composerContent: promptText,
-                    model: node.metadata?.model,
-                    size: node.metadata?.size,
-                    seconds: node.metadata?.seconds,
-                    vquality: resolution,
-                    generateAudio: node.metadata?.generateAudio ?? "true",
-                    watermark: node.metadata?.watermark ?? "false",
-                    draft: "false",
-                    videoEditOperation: "draft_to_final",
-                    videoDraftTaskId: draftTaskId,
-                    generatedFromNodeId: node.id,
-                    generationResultPlacement: "replace-node",
-                },
-            };
-            const nextNodes = [...nodesRef.current, childNode];
-            const nextConnections = [...connectionsRef.current, { id: nanoid(), fromNodeId: node.id, toNodeId: childNode.id }];
+            const split = createImageLayerSplit(source, effectiveConfig, nodesRef.current, (model) => useConfigStore.getState().isAiConfigReady(effectiveConfig, model));
+            if (!split) {
+                message.warning("请先在模型配置中连接支持图层拆分的 Seedream 模型");
+                return;
+            }
+            const nextNodes = [...nodesRef.current, split.node];
+            const nextConnections = [...connectionsRef.current, split.connection];
             nodesRef.current = nextNodes;
             connectionsRef.current = nextConnections;
             setNodes(nextNodes);
             setConnections(nextConnections);
-            pageUi.getState().setSelectedNodeIds(new Set([childNode.id]));
+            pageUi.getState().setSelectedNodeIds(new Set([split.node.id]));
             pageUi.getState().setSelectedConnectionId(null);
             pageUi.getState().setDialogNodeId(null);
-            void handleGenerateNode(childNode.id, "video", promptText, {
-                confirmedInputs: {
-                    nodes: nextNodes,
-                    connections: nextConnections,
-                    config: effectiveConfig,
-                    assets,
-                    skills: addedSkills,
-                },
-                skipDuplicateConfirmation: true,
+            await handleGenerateNode(split.node.id, "image", split.prompt, {
+                confirmedModelKey: split.model,
+                confirmedInputs: { nodes: nextNodes, connections: nextConnections, config: effectiveConfig, assets, skills: [] },
+            });
+        });
+    }, [assets, connectionsRef, effectiveConfig, handleGenerateNode, message, nodesRef, pageUi, projectId, readOnly, setConnections, setNodes]);
+
+    const generateFinalVideoFromDraftNode = useCallback(
+        (requestedNode: CanvasNodeData) => {
+            if (readOnly) return;
+            const owner = lifetime.capture(projectId);
+            const isCurrent = () => lifetime.matches(owner, projectIdRef.current);
+            return runCanvasGenerationSubmissionOnce(draftConversionSubmissions.current, `${projectId}:${requestedNode.id}`, async () => {
+                if (!isCurrent()) return;
+                const initialNode = nodesRef.current.find((item) => item.id === requestedNode.id);
+                if (!initialNode || !canConvertCanvasVideoDraft(initialNode)) return;
+                let source: Awaited<ReturnType<typeof resolveCanvasVideoDraftSource>>;
+                try {
+                    source = await resolveCanvasVideoDraftSource(initialNode, projectId);
+                } catch (error) {
+                    if (isCurrent()) message.error(error instanceof Error ? error.message : "读取原样片任务失败，请稍后再试");
+                    return;
+                }
+                if (!isCurrent()) return;
+                const node = nodesRef.current.find((item) => item.id === requestedNode.id);
+                if (!node || !canConvertCanvasVideoDraft(node) || node.metadata?.taskId !== initialNode.metadata?.taskId) return;
+                if (!source) {
+                    message.warning("该样片缺少上游任务 ID，无法直接转高清成片");
+                    return;
+                }
+                const currentProviderId = node.metadata?.taskProviderRequestId?.trim();
+                if (currentProviderId && currentProviderId !== source.providerRequestId) return;
+                if (!source.model) {
+                    message.warning("原样片的模型信息缺失，无法直接转高清成片");
+                    return;
+                }
+                const promptText = node.metadata?.prompt || "";
+                const childNode: CanvasNodeData = {
+                    id: nanoid(),
+                    type: CanvasNodeType.Video,
+                    title: `${node.title || "样片"} (1080P 成片)`.slice(0, 36),
+                    position: { x: node.position.x + node.width + 96, y: node.position.y },
+                    width: node.width,
+                    height: node.height,
+                    metadata: {
+                        status: "idle",
+                        prompt: promptText,
+                        composerContent: promptText,
+                        model: source.model,
+                        size: node.metadata?.size,
+                        seconds: node.metadata?.seconds,
+                        vquality: "1080p",
+                        generateAudio: node.metadata?.generateAudio ?? "true",
+                        watermark: node.metadata?.watermark ?? "false",
+                        draft: "false",
+                        videoEditOperation: "draft_to_final",
+                        videoDraftTaskId: source.providerRequestId,
+                        generatedFromNodeId: node.id,
+                        generationResultPlacement: "replace-node",
+                    },
+                };
+                const nextNodes = [...nodesRef.current, childNode];
+                const nextConnections = [...connectionsRef.current, { id: nanoid(), fromNodeId: node.id, toNodeId: childNode.id }];
+                nodesRef.current = nextNodes;
+                connectionsRef.current = nextConnections;
+                setNodes(nextNodes);
+                setConnections(nextConnections);
+                pageUi.getState().setSelectedNodeIds(new Set([childNode.id]));
+                pageUi.getState().setSelectedConnectionId(null);
+                pageUi.getState().setDialogNodeId(null);
+                await handleGenerateNode(childNode.id, "video", promptText, {
+                    confirmedModelKey: source.model,
+                    confirmedInputs: {
+                        nodes: nextNodes,
+                        connections: nextConnections,
+                        config: effectiveConfig,
+                        assets,
+                        skills: [],
+                    },
+                    skipDuplicateConfirmation: true,
+                });
             });
         },
-        [addedSkills, assets, connectionsRef, effectiveConfig, handleGenerateNode, message, nodesRef, pageUi, setConnections, setNodes],
+        [assets, connectionsRef, effectiveConfig, handleGenerateNode, lifetime, message, nodesRef, pageUi, projectId, readOnly, setConnections, setNodes],
+    );
+
+    const canRetakeVideo = useCallback((node: CanvasNodeData) => Boolean(canvasVideoRetakeModel(node, effectiveConfig)), [effectiveConfig]);
+
+    const generateVideoRetake = useCallback(
+        (requestedNode: CanvasNodeData, range: InlineVideoTrimRange, durationMs: number, instruction: string) => {
+            if (readOnly) return false;
+            const node = nodesRef.current.find((item) => item.id === requestedNode.id);
+            if (!node || node.metadata?.storageKey !== requestedNode.metadata?.storageKey ||
+                node.metadata?.content !== requestedNode.metadata?.content) {
+                message.warning("原视频已变化，请重新选择片段");
+                return false;
+            }
+            const retake = buildCanvasVideoRetake(node, effectiveConfig, range, durationMs, instruction);
+            if (!retake) {
+                message.warning("请确认原视频支持重拍，并填写有效片段和修改要求");
+                return false;
+            }
+            const key = `${projectId}:${node.id}`;
+            if (retakeSubmissions.current.has(key)) {
+                message.info("正在提交这段视频的重拍任务");
+                return false;
+            }
+            const owner = lifetime.capture(projectId);
+            void runCanvasGenerationSubmissionOnce(retakeSubmissions.current, key, async () => {
+                if (!lifetime.matches(owner, projectIdRef.current) || !nodesRef.current.includes(node)) return;
+                const childNode: CanvasNodeData = {
+                    id: nanoid(),
+                    type: CanvasNodeType.Video,
+                    title: retake.title,
+                    position: findAvailableGenerationGroupPosition(nodesRef.current, {
+                        x: node.position.x + node.width + 96,
+                        y: node.position.y,
+                    }, node),
+                    width: node.width,
+                    height: node.height,
+                    metadata: retake.metadata,
+                };
+                const nextNodes = [...nodesRef.current, childNode];
+                const nextConnections = [...connectionsRef.current, { id: nanoid(), fromNodeId: node.id, toNodeId: childNode.id }];
+                nodesRef.current = nextNodes;
+                connectionsRef.current = nextConnections;
+                setNodes(nextNodes);
+                setConnections(nextConnections);
+                pageUi.getState().setSelectedNodeIds(new Set([childNode.id]));
+                pageUi.getState().setSelectedConnectionId(null);
+                pageUi.getState().setDialogNodeId(null);
+                await handleGenerateNode(childNode.id, "video", retake.prompt, {
+                    confirmedModelKey: retake.model,
+                    confirmedInputs: { nodes: nextNodes, connections: nextConnections, config: effectiveConfig, assets, skills: [] },
+                });
+            });
+            return true;
+        },
+        [assets, connectionsRef, effectiveConfig, handleGenerateNode, lifetime, message, nodesRef, pageUi, projectId, readOnly, setConnections, setNodes],
     );
 
     const createVideoEditNodeFromVideo = useCallback(
@@ -518,7 +636,10 @@ export function useCanvasGenerationOrchestration({
         reconcileImageBatchRootNode,
         retryImageBatchChildren,
         generateImageFromTextNode,
+        generateImageLayers,
         generateFinalVideoFromDraftNode,
         createVideoEditNodeFromVideo,
+        canRetakeVideo,
+        generateVideoRetake,
     };
 }

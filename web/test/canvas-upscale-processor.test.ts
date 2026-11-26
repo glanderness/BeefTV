@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { NODE_DEFAULT_SIZE } from "../src/constant/canvas";
 import { planUpscaleProcessingNode } from "../src/lib/canvas/canvas-upscale-processor";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
@@ -14,6 +15,8 @@ test("connects every selected readable image or video and places the processor t
     let nextId = 0;
     const plan = planUpscaleProcessingNode(nodes, [], source, new Set(["a", "b", "c", "d"]), () => `edge-${nextId++}`);
     expect(plan.processor.type).toBe(CanvasNodeType.Upscale);
+    expect(plan.processor.width).toBe(NODE_DEFAULT_SIZE[CanvasNodeType.Image].width);
+    expect(plan.processor.height).toBe(NODE_DEFAULT_SIZE[CanvasNodeType.Image].height);
     expect(plan.processor.position.x).toBeGreaterThan(source.position.x);
     expect(plan.connections.map((edge) => edge.fromNodeId)).toEqual(["a", "b"]);
     expect(plan.connections.every((edge) => edge.toNodeId === plan.processor.id)).toBe(true);

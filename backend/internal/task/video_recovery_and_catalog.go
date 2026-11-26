@@ -78,7 +78,7 @@ func RecoverFailedVideos(
 			return ctx.Err()
 		}
 		*afterID = candidate.ID
-		if err := recoverOne(ctx, candidate); err != nil && !errors.Is(err, repository.ErrTaskProviderRecoveryConflict) {
+		if err := recoverOne(WithAutomaticRecovery(ctx), candidate); err != nil && !errors.Is(err, repository.ErrTaskProviderRecoveryConflict) {
 			last = err
 		}
 	}
@@ -202,7 +202,7 @@ func RecoverFailedVideo(
 	if err != nil {
 		return err
 	}
-	if task.Status != model.TaskStatusFailed || !VideoRecoveryNeedsPolling(*task) {
+	if task.Status != model.TaskStatusFailed || (AutomaticRecovery(ctx) && task.RecoveryPaused) || !VideoRecoveryNeedsPolling(*task) {
 		return nil
 	}
 	hydrateReqID(task)
@@ -466,6 +466,12 @@ func QueryFailedVideoTaskWithDeps(ctx context.Context, deps VideoTaskRecoveryDep
 		}
 	}()
 
+	if AutomaticRecovery(ctx) {
+		current, err := deps.Repo.TaskForUser(claimUserID, task.ID)
+		if err != nil || current.RecoveryPaused {
+			return nil, err
+		}
+	}
 	recoveryCtx, cancelRecovery := ProviderTaskRecoveryContext(ctx)
 	defer cancelRecovery()
 	queryCtx := deps.BindAnalytics(recoveryCtx, *task)
@@ -505,6 +511,7 @@ func QueryFailedVideoTaskWithDeps(ctx context.Context, deps VideoTaskRecoveryDep
 		result, providerStatus, err = generation.QueryProtocolAdapterVideoTask(queryCtx, input, adapter, providerRequestID)
 	}
 	if err != nil {
+		_ = deps.Repo.RecordTaskRecoveryAttempt(*task, RecoveryAttemptError(err))
 		if outcome := deps.ClassifyOutcome(*task, providerStatus, err); outcome != "" {
 			var next *time.Time
 			if VideoSettlementNeedsPolling(*task) {
@@ -519,6 +526,7 @@ func QueryFailedVideoTaskWithDeps(ctx context.Context, deps VideoTaskRecoveryDep
 		return nil, err
 	}
 	if result == nil {
+		_ = deps.Repo.RecordTaskRecoveryAttempt(*task, "")
 		var next *time.Time
 		if VideoSettlementNeedsPolling(*task) {
 			at := time.Now().Add(deps.Backoff(*task))
@@ -541,6 +549,7 @@ func QueryFailedVideoTaskWithDeps(ctx context.Context, deps VideoTaskRecoveryDep
 
 	result, err = deps.PersistGeneratedMedia(*task, result)
 	if err != nil {
+		_ = deps.Repo.RecordTaskRecoveryAttempt(*task, RecoveryAttemptError(err))
 		_ = deps.Log(task.UserID, task.ID, "error", "人工查询已取得视频，但结果保存失败", err.Error())
 		return nil, err
 	}

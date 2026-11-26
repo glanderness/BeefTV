@@ -24,6 +24,7 @@ type TaskOutputBind struct {
 	TaskType                 string `json:"-"`
 	TaskPrompt               string `json:"-"`
 	TaskModel                string `json:"-"`
+	TaskProviderRequestID    string `json:"-"`
 	TaskSize                 string `json:"-"`
 	TaskQuality              string `json:"-"`
 	TaskCompletedAt          string `json:"-"`
@@ -517,6 +518,9 @@ func canBindEmptyRenderNode(node map[string]any, patch TaskOutputBind) bool {
 }
 
 func alreadyBound(metadata map[string]any, patch TaskOutputBind) bool {
+	if id := draftProviderRequestID(metadata, patch); id != "" && nodeString(metadata, "taskProviderRequestId") != id {
+		return false
+	}
 	if strings.TrimSpace(patch.EffectKey) != "" && !effectKeyPresent(metadata, patch.EffectKey) {
 		return false
 	}
@@ -539,6 +543,13 @@ func alreadyBound(metadata map[string]any, patch TaskOutputBind) bool {
 		return false
 	}
 	return nodeString(metadata, "status") == "success" && nodeString(metadata, "taskId") == strings.TrimSpace(patch.TaskID)
+}
+
+func draftProviderRequestID(metadata map[string]any, patch TaskOutputBind) string {
+	if patch.MediaType == "video" && nodeString(metadata, "draft") == "true" {
+		return patch.TaskProviderRequestID
+	}
+	return ""
 }
 
 // hasStaleGenerationOutcome reports whether an already-bound node still carries
@@ -622,6 +633,9 @@ func applyGenerationBindMetadata(metadata map[string]any, patch TaskOutputBind) 
 	}
 	metadata["status"] = "success"
 	metadata["taskId"] = patch.TaskID
+	if id := draftProviderRequestID(metadata, patch); id != "" {
+		metadata["taskProviderRequestId"] = id
+	}
 	if patch.TaskType != "" {
 		metadata["taskType"] = patch.TaskType
 	}

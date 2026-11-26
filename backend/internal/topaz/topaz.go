@@ -13,6 +13,7 @@ type Request struct {
 	Mode                string  `json:"mode"`
 	Model               string  `json:"model"`
 	Scale               float64 `json:"scale"`
+	TargetShortEdge     int     `json:"targetShortEdge,omitempty"`
 	OutputFormat        string  `json:"outputFormat,omitempty"`
 	EnhancementStrength string  `json:"enhancementStrength,omitempty"`
 	ClientOperationID   string  `json:"clientOperationId,omitempty"`
@@ -149,10 +150,10 @@ func ResolveModelID(r Request, kind string, modes []Mode) (string, error) {
 		if mode.MediaType != kind || mode.Mode != r.Mode {
 			continue
 		}
-		resolved := ""
+		resolved, billingMode := "", ""
 		for _, opt := range mode.ModelOptions {
 			if requested == opt.ID || requested == opt.Label || (ModelID(requested) != "" && ModelID(requested) == opt.ID) {
-				resolved = opt.ID
+				resolved, billingMode = opt.ID, opt.BillingMode
 				break
 			}
 		}
@@ -170,6 +171,9 @@ func ResolveModelID(r Request, kind string, modes []Mode) (string, error) {
 		}
 		if resolved == "" {
 			continue
+		}
+		if r.TargetShortEdge != 0 && (kind != "video" || billingMode != "mps_video_seconds") {
+			return "", errors.New("当前模型不支持按视频清晰度档位输出")
 		}
 		if r.OutputFormat != "" {
 			found := false

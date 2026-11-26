@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
@@ -17,6 +18,15 @@ const (
 )
 
 type manualRecoveryKey struct{}
+type automaticRecoveryKey struct{}
+
+func WithAutomaticRecovery(ctx context.Context) context.Context {
+	return context.WithValue(ctx, automaticRecoveryKey{}, true)
+}
+func AutomaticRecovery(ctx context.Context) bool {
+	enabled, _ := ctx.Value(automaticRecoveryKey{}).(bool)
+	return enabled
+}
 
 // WithManualRecovery 标记这次恢复由用户手动发起（继续取回）。只有手动恢复才允许
 // 把冻结的原请求按原编号补交；后台恢复只查询，避免几小时后突然开始生成、扣费。
@@ -98,6 +108,16 @@ func (s *Service) RecoverTask(ctx context.Context, userID, id string) (*model.Ta
 	default:
 		return nil, kernel.BadAuthRequest(RecoverUnsupportedStatusText)
 	}
+}
+
+func RecoveryAttemptError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "tls: handshake failure") {
+		return "下载连接失败，TLS 握手未完成"
+	}
+	return generation.ClassifyError(err).UserMessage()
 }
 
 func mapRecoveryError(err error) error {

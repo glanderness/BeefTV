@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/mediaattempt"
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
@@ -73,4 +74,22 @@ func beefTVOwnsVideoConclusion(task model.Task, now time.Time) bool {
 }
 func videoRecoveryPollBackoff(task model.Task) time.Duration {
 	return localtask.VideoRecoveryPollBackoff(task, mediaattempt.VideoTaskAnchor(task))
+}
+
+func (s *Service) SetTaskRecoveryPaused(userID, taskID string, paused bool) (*model.Task, error) {
+	task, err := s.repo.TaskForUser(userID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	shown, err := s.Task(userID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if task.Status != model.TaskStatusFailed || shown.Outcome == nil || shown.Outcome.Phase != "retrievable" {
+		return nil, kernel.BadAuthRequest("此任务没有可暂停或恢复的自动取回")
+	}
+	if err := s.repo.SetFailedTaskRecoveryPaused(*task, paused); err != nil {
+		return nil, err
+	}
+	return s.Task(userID, taskID)
 }

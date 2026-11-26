@@ -474,11 +474,12 @@ func TestSeedance25DraftAndDraftToFinalCapabilityAndValidation(t *testing.T) {
 		t.Fatalf("expected valid draft_to_final reference media, got %v", err)
 	}
 
-	// Reject 480p for draft_to_final
-	invalid480 := validInput
-	invalid480.Config.VQuality = "480p"
-	if err := ValidateVideoTaskParameters(video, invalid480); err == nil {
-		t.Fatal("expected 480p draft_to_final to be rejected")
+	for _, resolution := range []string{"480p", "720p"} {
+		invalid := validInput
+		invalid.Config.VQuality = resolution
+		if err := ValidateVideoTaskParameters(video, invalid); err == nil {
+			t.Errorf("expected %s draft_to_final to be rejected", resolution)
+		}
 	}
 
 	// Reject missing videoDraftTaskId

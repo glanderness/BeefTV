@@ -8,8 +8,10 @@ type CanvasNodeSpec = {
     metadata?: CanvasNodeMetadata;
 };
 
+const DEFAULT_IMAGE_NODE_SIZE = { width: 720, height: 405 };
+
 export const NODE_DEFAULT_SIZE = {
-    [CanvasNodeType.Image]: { width: 720, height: 405, title: "图片" },
+    [CanvasNodeType.Image]: { ...DEFAULT_IMAGE_NODE_SIZE, title: "图片" },
     // LibTV 的文本节点以近似正方形卡片承载提示词与生成入口，作为首屏复刻基准固定为 350×350。
     [CanvasNodeType.Text]: { width: 350, height: 350, title: "文本节点" },
     [CanvasNodeType.Drawing]: { width: 440, height: 300, title: "绘图" },
@@ -32,7 +34,7 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Chart]: { width: 480, height: 320, title: "图表" },
     [CanvasNodeType.ColorGrade]: { width: 420, height: 360, title: "调色" },
     [CanvasNodeType.MediaConversion]: { width: 480, height: 460, title: "转换" },
-    [CanvasNodeType.Upscale]: { width: 420, height: 240, title: "AI超分" },
+    [CanvasNodeType.Upscale]: { ...DEFAULT_IMAGE_NODE_SIZE, title: "画质提升" },
     [CanvasNodeType.BatchTable]: { width: 1280, height: 560, title: "批量创作表" },
     [CanvasNodeType.Director]: { width: 640, height: 640, title: "导演台" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;

@@ -84,6 +84,7 @@ func PrepareCanvasNodeBind(repo *repository.Repository, userID string, patch can
 	patch.TaskType = ""
 	patch.TaskPrompt = ""
 	patch.TaskModel = ""
+	patch.TaskProviderRequestID = ""
 	patch.TaskSize = ""
 	patch.TaskQuality = ""
 	patch.TaskCompletedAt = ""
@@ -95,6 +96,9 @@ func PrepareCanvasNodeBind(repo *repository.Repository, userID string, patch can
 		patch.TaskType = task.Type
 		patch.TaskPrompt = strings.TrimSpace(task.Prompt)
 		patch.TaskModel = strings.TrimSpace(task.Model)
+		if task.ProjectID == patch.CanvasID && task.Type == "canvas_video" && task.Status == model.TaskStatusSucceeded {
+			patch.TaskProviderRequestID = strings.TrimSpace(task.ProviderRequestID)
+		}
 		if task.CompletedAt != nil && !task.CompletedAt.IsZero() {
 			patch.TaskCompletedAt = task.CompletedAt.UTC().Format(time.RFC3339)
 		} else if !task.CreatedAt.IsZero() {

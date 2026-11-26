@@ -604,7 +604,7 @@ func TestActiveOnlyEvidenceUnreadablePrioritizesOlderActiveTasksAndDetectsMissin
 
 func TestActiveOnlyEvidenceProbeDetectsMissingAttemptNumberAndCallLogUserIDAndSurfacesOlderCancelledBeyondSucceeded(t *testing.T) {
 	cases := []struct {
-		name  string
+		name     string
 		breakSQL []string
 	}{
 		{
@@ -769,5 +769,60 @@ func TestActiveOnlyImageSubmissionsUnreadableSurfacesAttemptedImageWithinBounded
 	}
 	if !found {
 		t.Fatalf("expected attempted-cancelled-image in activeOnly response, got %d items", len(env.Data))
+	}
+}
+
+func TestCanvasAllActiveTasksCountsPastPageLimit(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	rows := make([]model.Task, 110)
+	for i := range rows {
+		rows[i] = model.Task{ID: fmt.Sprintf("active-count-%03d", i), UserID: owner.ID, ProjectID: "busy-canvas", Type: "canvas_video", Status: model.TaskStatusQueued, CreatedAt: now.Add(time.Duration(i) * time.Second)}
+	}
+	if err := h.db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	response := h.do(t, http.MethodGet, "/api/tasks?projectId=busy-canvas&pageSize=30&activeOnly=true&allActive=true", nil)
+	var body struct {
+		Data []model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); response.Code != 200 || err != nil || len(body.Data) != len(rows) {
+		t.Fatalf("status=%d total=%d err=%v", response.Code, len(body.Data), err)
+	}
+}
+
+func TestPauseRecoveryKeepsReceiptAndExcludesBackgroundScan(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastAttempt := time.Now().UTC().Truncate(time.Second)
+	row := model.Task{ID: "pause-original", UserID: owner.ID, ProjectID: "recovery-canvas", Type: "canvas_video", Status: model.TaskStatusFailed, ErrorCode: "download_failed", Stage: "任务失败", ProviderRequestID: "receipt-original", RecoveryLastAttemptAt: &lastAttempt, RecoveryLastError: "下载连接失败，TLS 握手未完成"}
+	if err := h.db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(h.db)
+	for _, paused := range []bool{true, false} {
+		response := h.do(t, http.MethodPost, "/api/tasks/"+row.ID+"/recovery-pause", map[string]bool{"paused": paused})
+		var body struct {
+			Data model.Task `json:"data"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); response.Code != 200 || err != nil {
+			t.Fatalf("status=%d err=%v body=%s", response.Code, err, response.Body.String())
+		}
+		got := body.Data
+		if got.RecoveryPaused != paused || got.ProviderRequestID != row.ProviderRequestID || got.Status != row.Status ||
+			got.Outcome == nil || got.Outcome.Phase != "retrievable" || got.RecoveryLastAttemptAt == nil || !got.RecoveryLastAttemptAt.Equal(lastAttempt) {
+			t.Fatalf("unexpected recovery state: %+v", got)
+		}
+		candidates, err := repo.FailedVideosForRecovery("", 10)
+		if err != nil || (len(candidates) == 0) != paused {
+			t.Fatalf("paused=%v candidate count=%d err=%v", paused, len(candidates), err)
+		}
 	}
 }

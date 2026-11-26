@@ -5,14 +5,17 @@ import { localAssetToInsertPayload } from "@/lib/canvas/asset-insert-payload";
 import { CanvasAssetTray } from "@/components/canvas/canvas-asset-tray";
 import { CanvasEmotionWorkspace } from "@/components/canvas/canvas-emotion-workspace";
 import { CanvasNodeAnglePanel } from "@/components/canvas/canvas-node-angle-dialog";
+import { CanvasNodeActionContext } from "@/components/canvas/canvas-node-action-context";
+import { CanvasNodeGraphContext } from "@/components/canvas/canvas-node-graph-context";
+import { UpscaleNodePanel } from "@/components/canvas/nodes/upscale-node";
 import { CanvasNodeToolbar } from "@/components/canvas/canvas-node-toolbar";
 
 const CanvasNodeLightingPanel = lazy(() =>
     import("@/components/canvas/canvas-node-lighting-dialog").then((module) => ({ default: module.CanvasNodeLightingPanel })),
 );
 import { CanvasOverlayLayerContainer } from "@/components/canvas/canvas-overlay-layer";
-import { CanvasVideoInlineTrimOverlay } from "@/components/canvas/canvas-video-inline-trim";
-import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay } from "@/components/canvas/canvas-workspace-overlays";
+import { CANVAS_VIDEO_RETAKE_PANEL_HEIGHT, CanvasVideoInlineTrimOverlay } from "@/components/canvas/canvas-video-inline-trim";
+import { CANVAS_MAIN_DOCK_CLEARANCE, CanvasConnectionCreateMenu, CanvasNodePanelOverlay, getNodePanelPosition } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { Minimap } from "@/components/canvas/canvas-mini-map";
 import type { CanvasImageEmotionPayload } from "@/components/canvas/canvas-node-emotion-panel";
@@ -22,7 +25,7 @@ import { isFileUploadOverlayActive } from "@/lib/canvas/canvas-file-upload";
 import { isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { useCanvasPickConnectStore } from "@/lib/canvas/canvas-text-mention";
-import { CanvasNodeType } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { shouldMountCanvasPromptPanel } from "./canvas-pointer-chrome";
 import { CanvasProjectSelectionToolbar } from "./canvas-project-selection-toolbar";
 import type { CanvasProjectStageProps } from "./canvas-project-stage";
@@ -40,6 +43,7 @@ export type CanvasProjectStageOverlaysProps = Pick<
     | "viewportState"
     | "viewportController"
     | "document"
+    | "nodeGraphContext"
     | "dialogs"
     | "generation"
     | "uploads"
@@ -61,6 +65,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
         viewportState,
         viewportController,
         document,
+        nodeGraphContext,
         dialogs,
         generation,
         uploads,
@@ -68,7 +73,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
         actions,
         askSelectedNodes,
     } = props;
-    const { containerRef, viewport, size } = viewportState;
+    const { containerRef, viewport, viewportRef, size } = viewportState;
     const { fitCanvasContent, handleViewportChange, previewViewport, setZoomScale } = viewportController;
     const { nodes } = document;
     const selectedNodeIds = pageUi((state) => state.selectedNodeIds);
@@ -81,6 +86,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
         isMiniMapOpen,
         showConnections,
         snapToGrid,
+        theme,
         toggleConnections,
         toggleMiniMap,
     } = preferences;
@@ -106,7 +112,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
         renderModel,
         dialogNode,
         isCanvasNodeMoving,
-        inlineTrimNode,
+        inlineVideoEditorNode,
         canCreateDrawingFromConnection,
     } = mediaSelection;
     const { dragPreview, isNodeDragging, selectionBoundsElementRef, selectionBox } = selectionController;
@@ -159,10 +165,12 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
         generateEmotionNode,
         generateLightingNode,
         inlineTrimRunning,
+        inlineVideoEditor,
         maskEditNodeId,
         mergeSelectedVideos,
         mergeVideoProgress,
         openInlineVideoTrim,
+        openInlineVideoRetake,
         openPanoramaConfig,
         openPortraitTextureEditor,
         openVideoCrop,
@@ -173,7 +181,16 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
         setUpscaleNodeId,
         splitImageNode,
     } = mediaTools;
+
+    const openVideoRetakePanel = (node: CanvasNodeData) => {
+        const liveViewport = viewportRef.current;
+        const { top } = getNodePanelPosition(node, liveViewport, size, 0, CANVAS_VIDEO_RETAKE_PANEL_HEIGHT, null, true);
+        const overflow = top + CANVAS_VIDEO_RETAKE_PANEL_HEIGHT + CANVAS_MAIN_DOCK_CLEARANCE - size.height;
+        if (overflow > 0) handleViewportChange({ ...liveViewport, y: liveViewport.y - overflow });
+        openInlineVideoRetake(node);
+    };
     const { renderCanvasNodePanel, retryCanvasNode } = actions;
+    const isUpscalePanel = dialogNode?.type === CanvasNodeType.Upscale;
 
     return (
         <>
@@ -240,16 +257,24 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
                     viewport={viewport}
                     containerRef={containerRef}
                     className={isCanvasNodeMoving ? "invisible" : undefined}
-                    panelHeight={dialogNode.type === CanvasNodeType.Text ? 148 : undefined}
+                    panelHeight={isUpscalePanel ? 164 : dialogNode.type === CanvasNodeType.Text ? 148 : undefined}
+                    panelMinWidth={isUpscalePanel ? 300 : undefined}
+                    panelMaxWidth={isUpscalePanel ? 420 : undefined}
                     allowOverflow={dialogNode.type !== CanvasNodeType.Config}
                     // Media composers follow the LibTV layout: keep the prompt
                     // panel attached below the node instead of flipping above it
                     // when the node is near the bottom of the canvas.
-                    keepBelowNode={dialogNode.type === CanvasNodeType.Image || dialogNode.type === CanvasNodeType.Video || dialogNode.type === CanvasNodeType.Audio}
+                    keepBelowNode={isUpscalePanel || dialogNode.type === CanvasNodeType.Image || dialogNode.type === CanvasNodeType.Video || dialogNode.type === CanvasNodeType.Audio}
                     dragOffset={dragPreview?.nodeIds.has(dialogNode.id) ? { x: dragPreview.x, y: dragPreview.y } : null}
                     isDragging={isNodeDragging && Boolean(dragPreview?.nodeIds.has(dialogNode.id))}
                 >
-                    {renderCanvasNodePanel(dialogNode)}
+                    {isUpscalePanel ? (
+                        <CanvasNodeActionContext.Provider value={mediaSelection.canvasNodeActions}>
+                            <CanvasNodeGraphContext.Provider value={nodeGraphContext}>
+                                <UpscaleNodePanel key={dialogNode.id} node={dialogNode} theme={theme} readOnly={readOnly} />
+                            </CanvasNodeGraphContext.Provider>
+                        </CanvasNodeActionContext.Provider>
+                    ) : renderCanvasNodePanel(dialogNode)}
                 </CanvasNodePanelOverlay>
             ) : null}
 
@@ -301,7 +326,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
             ) : null}
 
             <CanvasNodeToolbar
-                node={isMediaGenerating || isCanvasNodeMoving || nodeImageSettingsOpen || annotationNodeId || maskEditNodeId || emotionNodeId || angleNodeId || (dialogNode && !isCanvasMediaResultNode(dialogNode)) || textEditorNodeId ? null : toolbarNode}
+                node={isMediaGenerating || isCanvasNodeMoving || nodeImageSettingsOpen || annotationNodeId || maskEditNodeId || emotionNodeId || angleNodeId || (dialogNode && !isCanvasMediaResultNode(dialogNode)) || textEditorNodeId || inlineVideoEditor?.mode === "retake" ? null : toolbarNode}
                 workspaceMode={workspaceMode}
                 viewport={viewport}
                 containerRef={containerRef}
@@ -322,10 +347,12 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
                 onPortraitTexture={openPortraitTextureEditor}
                 onCrop={(node) => node.type === CanvasNodeType.Video ? openVideoCrop(node) : setCropNodeId(node.id)}
                 onSplit={(node, params) => void splitImageNode(node, params)}
+                onLayerSplit={readOnly ? undefined : (node) => void generation.generateImageLayers(node)}
                 onUpscale={(node) => setUpscaleNodeId(node.id)}
                 onSuperResolve={createUpscaleProcessingNode}
                 onDraftToFinal={generation.generateFinalVideoFromDraftNode}
                 onVideoEditOperation={generation.createVideoEditNodeFromVideo}
+                onVideoRetake={!readOnly && toolbarNode && generation.canRetakeVideo(toolbarNode) ? openVideoRetakePanel : undefined}
                 onAngle={(node) => { setDialogNodeId(null); setAngleNodeId((current) => (current === node.id ? null : node.id)); }}
                 onLighting={(node) => { setDialogNodeId(null); setLightingNodeId((current) => (current === node.id ? null : node.id)); }}
                 onPanorama={openPanoramaConfig}
@@ -385,16 +412,21 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
                 </CanvasOverlayLayerContainer>
             ) : null}
 
-            {inlineTrimNode ? (
+            {inlineVideoEditorNode && inlineVideoEditor ? (
                 <CanvasVideoInlineTrimOverlay
-                    node={inlineTrimNode}
+                    key={`${currentProject?.id}:${inlineVideoEditor.nodeId}:${inlineVideoEditor.mode}`}
+                    node={inlineVideoEditorNode}
                     viewport={viewport}
                     containerRef={containerRef}
-                    dragOffset={dragPreview?.nodeIds.has(inlineTrimNode.id) ? { x: dragPreview.x, y: dragPreview.y } : null}
-                    isDragging={isNodeDragging && Boolean(dragPreview?.nodeIds.has(inlineTrimNode.id))}
+                    dragOffset={dragPreview?.nodeIds.has(inlineVideoEditorNode.id) ? { x: dragPreview.x, y: dragPreview.y } : null}
+                    isDragging={isNodeDragging && Boolean(dragPreview?.nodeIds.has(inlineVideoEditorNode.id))}
                     busy={inlineTrimRunning}
                     onCancel={closeInlineVideoTrim}
-                    onConfirm={(range) => void confirmInlineVideoTrim(inlineTrimNode, range)}
+                    {...(inlineVideoEditor.mode === "retake" ? {
+                        onRetake: (range, durationMs, prompt) => {
+                            if (generation.generateVideoRetake(inlineVideoEditorNode, range, durationMs, prompt)) closeInlineVideoTrim();
+                        },
+                    } : { onConfirm: (range) => void confirmInlineVideoTrim(inlineVideoEditorNode, range) })}
                 />
             ) : null}
         </>

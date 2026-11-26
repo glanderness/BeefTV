@@ -64,7 +64,7 @@ func (s *Service) RecoverFailedImages(ctx context.Context, limit int) error {
 			return ctx.Err()
 		}
 		s.imageRecoveryAfterID = candidate.ID
-		if err := s.RecoverFailedImage(ctx, candidate); err != nil && !errors.Is(err, repository.ErrTaskProviderRecoveryConflict) {
+		if err := s.RecoverFailedImage(localtask.WithAutomaticRecovery(ctx), candidate); err != nil && !errors.Is(err, repository.ErrTaskProviderRecoveryConflict) {
 			last = err
 		}
 	}
@@ -113,6 +113,9 @@ func (s *Service) RecoverFailedImage(ctx context.Context, candidate model.Task) 
 	task, err := s.repo.TaskForUser(candidate.UserID, candidate.ID)
 	if err != nil {
 		return err
+	}
+	if localtask.AutomaticRecovery(ctx) && task.RecoveryPaused {
+		return nil
 	}
 	recheck := s.ManagedImageNeedsRecheck(*task)
 	if task.LeaseOwner != owner || task.Status != model.TaskStatusFailed || (!ImageRecoveryNeedsPolling(*task) && !recheck) {
@@ -169,6 +172,7 @@ func (s *Service) RecoverFailedImage(ctx context.Context, candidate model.Task) 
 			next = &at
 		}
 	}
+	_ = s.repo.RecordTaskRecoveryAttempt(*task, localtask.RecoveryAttemptError(recoveryErr))
 	if err := s.repo.FinishFailedImageRecovery(*task, conclusion, next); err != nil {
 		return err
 	}

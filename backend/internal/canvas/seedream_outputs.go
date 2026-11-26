@@ -49,6 +49,12 @@ func prepareSeedreamOutputs(doc map[string]any, rootID, taskID string, outputs [
 	}
 	nodes := canvasDocNodes(doc)
 	changed := false
+	var layerNodes []map[string]any
+	var layerSource map[string]any
+	layerMode := nodeString(meta, "seedreamMode") == "layers"
+	if layerMode {
+		layerSource = seedreamLayerSource(doc, rootID)
+	}
 	// Preserve an immutable source for sibling settings while restoring output 0.
 	template := cloneNode(root)
 	x, y := seedreamNodePosition(root)
@@ -66,16 +72,22 @@ func prepareSeedreamOutputs(doc map[string]any, rootID, taskID string, outputs [
 		} else {
 			node = cloneNode(template)
 			node["id"] = output.NodeID
-			px, py := x+width+80, y+float64(output.OutputIndex-1)*(height+80)
-			// A separate column keeps earlier user nodes and their positions intact.
-			for tries := 0; tries < 1000 && seedreamPositionOccupied(nodes, px, py, width, height); tries++ {
-				py += height + 80
+			if layerSource == nil {
+				px, py := x+width+80, y+float64(output.OutputIndex-1)*(height+80)
+				for tries := 0; tries < 1000 && seedreamPositionOccupied(nodes, px, py, width, height); tries++ {
+					py += height + 80
+				}
+				node["position"] = map[string]any{"x": px, "y": py}
 			}
-			node["position"] = map[string]any{"x": px, "y": py}
 			node["title"] = fmt.Sprintf("%s · %d", nodeString(template, "title"), output.OutputIndex+1)
 			childMeta := nodeMetadata(node)
 			for _, key := range []string{"generationEffectKeys", "generationOutputNodeIds", "batchRootId", "batchChildIds", "primaryImageId", "assetId", "content", "storageKey"} {
 				delete(childMeta, key)
+			}
+			if layerMode {
+				for _, key := range []string{"locked", "manualSize", "freeResize", "naturalWidth", "naturalHeight", "previewContent", "imageLayer"} {
+					delete(childMeta, key)
+				}
 			}
 			childMeta["isBatchRoot"] = false
 			node["metadata"] = childMeta
@@ -92,11 +104,17 @@ func prepareSeedreamOutputs(doc map[string]any, rootID, taskID string, outputs [
 			}
 		}
 		node["metadata"] = nm
+		if layerSource != nil {
+			layerNodes = append(layerNodes, node)
+		}
 		declared[output.NodeID] = true
 		changed = true
 	}
 	if !changed {
 		return false
+	}
+	if len(layerNodes) > 0 {
+		arrangeSeedreamLayerBatch(doc, layerSource, layerNodes)
 	}
 	ids := make([]any, 0, len(declared))
 	// Output indices, not map iteration, define stable document order.
@@ -134,10 +152,14 @@ func metaIDs(value any) []string {
 	return out
 }
 func seedreamNumber(n map[string]any, key string, fallback float64) float64 {
-	if v, ok := n[key].(float64); ok {
+	switch v := n[key].(type) {
+	case float64:
 		return v
+	case int:
+		return float64(v)
+	default:
+		return fallback
 	}
-	return fallback
 }
 func seedreamNodePosition(n map[string]any) (float64, float64) {
 	p, _ := n["position"].(map[string]any)

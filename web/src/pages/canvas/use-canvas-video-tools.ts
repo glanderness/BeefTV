@@ -72,7 +72,7 @@ export function useCanvasVideoTools({
     const [mergeVideoProgress, setMergeVideoProgress] = useState<MergeVideoProgress | null>(null);
     const [segmentRunningMode, setSegmentRunningMode] = useState<"audio" | null>(null);
     const segmentRunningRef = useRef(false);
-    const [inlineTrimNodeId, setInlineTrimNodeId] = useState<string | null>(null);
+    const [inlineVideoEditor, setInlineVideoEditor] = useState<{ nodeId: string; mode: "trim" | "retake" } | null>(null);
     const [inlineTrimRunning, setInlineTrimRunning] = useState(false);
     const inlineTrimRunningRef = useRef(false);
 
@@ -80,7 +80,7 @@ export function useCanvasVideoTools({
         const clear = (current: string | null) => (current && removedIds.has(current) ? null : current);
         setVideoCropNodeId(clear);
         setFrameDialogNodeId(clear);
-        setInlineTrimNodeId(clear);
+        setInlineVideoEditor((current) => current && removedIds.has(current.nodeId) ? null : current);
     }, []);
 
     useEffect(() => {
@@ -94,7 +94,7 @@ export function useCanvasVideoTools({
         setInlineTrimRunning(false);
         setVideoCropNodeId(null);
         setFrameDialogNodeId(null);
-        setInlineTrimNodeId(null);
+        setInlineVideoEditor(null);
     }, [projectId]);
 
     const cropVideoNode = useCallback(async (node: CanvasNodeData, crop: CanvasVideoCropRect, sourceDimensions: { width: number; height: number }) => {
@@ -495,8 +495,17 @@ export function useCanvasVideoTools({
         // Preload the same shared worker while the user sets the trim range.
         // A failure remains non-blocking here and is reported by submission.
         void warmFFmpeg().catch(() => undefined);
-        setInlineTrimNodeId(node.id);
+        setInlineVideoEditor({ nodeId: node.id, mode: "trim" });
     }, [pageUi, projectId, message]);
+
+    const openInlineVideoRetake = useCallback((node: CanvasNodeData) => {
+        if (inlineTrimRunningRef.current) return;
+        pageUi.getState().setHoveredNodeId(null);
+        pageUi.getState().setToolbarNodeId(null);
+        pageUi.getState().setDialogNodeId(null);
+        pageUi.getState().setActiveMediaNodeId(null);
+        setInlineVideoEditor({ nodeId: node.id, mode: "retake" });
+    }, [pageUi]);
 
     const openVideoCrop = useCallback((node: CanvasNodeData) => {
         if (!node.metadata?.content) {
@@ -512,7 +521,7 @@ export function useCanvasVideoTools({
     }, [pageUi, projectId, message]);
 
     const closeInlineVideoTrim = useCallback(() => {
-        if (!inlineTrimRunningRef.current) setInlineTrimNodeId(null);
+        if (!inlineTrimRunningRef.current) setInlineVideoEditor(null);
     }, []);
 
     const confirmInlineVideoTrim = useCallback(async (node: CanvasNodeData, requestedRange: InlineVideoTrimRange) => {
@@ -557,7 +566,7 @@ export function useCanvasVideoTools({
             pageUi.getState().setSelectedConnectionId(null);
             pageUi.getState().setDialogNodeId(null);
             await operation.wait(persistMediaNodes([child], [], {}));
-            setInlineTrimNodeId(null);
+            setInlineVideoEditor(null);
             operation.run(() => progress.done(`已生成 ${((range.endMs - range.startMs) / 1000).toFixed(2)} 秒剪辑视频`));
             message.success("已生成新的剪辑视频，原视频已保留");
         } catch (error) {
@@ -739,7 +748,7 @@ export function useCanvasVideoTools({
         clearDeletedVideoNodes, videoCropNodeId, setVideoCropNodeId, cropVideoNode, depthCaptureNode, retryDepthCaptureNode,
         recoverDepthCaptureNodes, closeFrameDialog, extractAudioFromVideo, extractVideoFrameAt, extractVideoFrames,
         extractingVideoFramesNodeId, frameDialogNodeId, setFrameDialogNodeId, mergeSelectedVideos, mergeVideosByIds,
-        mergeVideoProgress, segmentRunningMode, inlineTrimNodeId, inlineTrimRunning, setInlineTrimNodeId,
-        openInlineVideoTrim, openVideoCrop, closeInlineVideoTrim, confirmInlineVideoTrim,
+        mergeVideoProgress, segmentRunningMode, inlineVideoEditor, inlineTrimRunning,
+        openInlineVideoTrim, openInlineVideoRetake, openVideoCrop, closeInlineVideoTrim, confirmInlineVideoTrim,
     };
 }

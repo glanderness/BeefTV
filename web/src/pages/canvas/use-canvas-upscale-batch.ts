@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { nanoid } from "nanoid";
-import { App } from "antd";
 import { channelHasGenerationCredential, isBuiltinBeefTVChannel, useConfigStore } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasConnection } from "@/types/canvas";
-import { createDefaultUpscaleSettings, deriveUpscaleBatchState, getUpscaleInputNodes, getUpscaleOutputPosition, upscaleParamsForNode, type CanvasUpscaleBatchItem } from "@/lib/canvas/canvas-upscale";
+import { createDefaultUpscaleSettings, deriveUpscaleBatchState, getUpscaleInputNodes, getUpscaleOutputPosition, upscaleParamsForNode, upscaleSourceKey, isUpscaleItemSettled, type CanvasUpscaleBatchItem, type CanvasUpscaleQuote } from "@/lib/canvas/canvas-upscale";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { canCanvasNodeAcceptGenerationTask } from "@/lib/canvas/canvas-generation-task-identity";
-import { submissionUnknownTaskOutcome } from "@/lib/task-outcome";
+import { isRegenerateAllowed, submissionUnknownTaskOutcome } from "@/lib/task-outcome";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { createUpscaleTask, estimateUpscale } from "@/services/api/media-upscale";
 import { findGenerationTaskByOperation, queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
@@ -16,15 +15,14 @@ import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-s
 
 type Dependencies = {
     pageUi: CanvasPageUiStoreHook;
+    nodes?: CanvasNodeData[];
     projectId: string; nodesRef: { current: CanvasNodeData[] }; connectionsRef: { current: CanvasConnection[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>; setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    prepareResource: (node: CanvasNodeData) => Promise<string>;
     observeTask: (task: GenerationTask, nodeId: string) => void;
     bindTask?: (task: GenerationTask, nodeId: string) => void;
 };
 
-export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connectionsRef, setNodes, setConnections, prepareResource, observeTask, bindTask }: Dependencies) {
-    const { modal } = App.useApp();
+export function useCanvasUpscaleBatch({pageUi,  projectId, nodes, nodesRef, connectionsRef, setNodes, setConnections, observeTask, bindTask }: Dependencies) {
     const locks = useRef(new Set<string>());
     const mounted = useRef(true);
     const lifetime = useRef(0);
@@ -33,7 +31,7 @@ export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connections
         return () => { mounted.current = false; lifetime.current += 1; };
     }, []);
     const liveProject = useRef(projectId); liveProject.current = projectId;
-    const startUpscaleBatch = useCallback(async (processor: CanvasNodeData) => {
+    const startUpscaleBatch = useCallback(async (processor: CanvasNodeData, quotes?: CanvasUpscaleQuote[]) => {
         if (locks.current.has(processor.id)) return;
         locks.current.add(processor.id);
         const capturedLifetime = lifetime.current;
@@ -52,17 +50,20 @@ export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connections
         };
         // Store persistence emits ordinary canvas deltas; never race task.bind with a full snapshot sync.
         const save = async () => { assertCurrent(); await flushCanvasStorePersistence(); assertCurrent(); };
-        const confirm = async (items: CanvasUpscaleBatchItem[]) => {
+        const validateQuotedItems = (items: CanvasUpscaleBatchItem[]) => {
             const waiting = items.filter(item => item.status === "waiting");
             if (!waiting.length) throw new Error(items.find(item => item.error)?.error || "没有可提交的素材");
-            const reservation = waiting.reduce((sum, item) => sum + (item.reservation || 0), 0);
             if (!waiting.every(item => Number.isFinite(item.reservation) && item.reservation! > 0)) throw new Error("超分费用尚未确认，请重新获取");
-            const accepted = await new Promise<boolean>(resolve => modal.confirm({
-                title: "确认开始超分？", content: `共 ${waiting.length} 个素材，先扣 ¥${reservation.toFixed(2)}。账单核对完成后按实际费用结算，多扣的退回。`,
-                okText: "确认超分", cancelText: "取消", onOk: () => resolve(true), onCancel: () => resolve(false),
-            }));
+        };
+        const reviewQuote = async (source: CanvasNodeData, settings: ReturnType<typeof createDefaultUpscaleSettings>, savedParams?: CanvasUpscaleQuote["params"]) => {
+            const reviewed = quotes?.find(quote => quote.sourceId === source.id && quote.sourceKey === upscaleSourceKey(source));
+            if (!reviewed) throw new Error("请先获取完整的超分费用");
+            const params = savedParams ?? upscaleParamsForNode(settings, source, reviewed.params.resourceId);
+            if (JSON.stringify(params) !== JSON.stringify(reviewed.params)) throw new Error("超分参数已变更，请重新估价");
+            const quote = await estimateUpscale(params);
             assertCurrent();
-            return accepted;
+            if (quote.reservation !== reviewed.reservation) throw new Error("超分费用已变更，请重新估价后再提交");
+            return { params, reservation: quote.reservation };
         };
         try {
             const current = nodesRef.current.find(n => n.id === processor.id);
@@ -71,10 +72,9 @@ export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connections
             let rejectedRetryBlocked = false;
             // Only retry proven pre-admission failures once every paid sibling
             // is terminal and delivered. This checkpoint cannot race an active bind.
-            if (batch?.items.some(i => i.status === "rejected") && batch.items.every(i => {
+            if (batch?.items.some(i => i.status === "rejected" && !i.detachedResult) && batch.items.every(i => {
                 if (i.status === "rejected") return !i.taskId;
-                const output = nodesRef.current.find(n => n.id === i.outputNodeId)?.metadata;
-                return (output?.taskStatus === "succeeded" && Boolean(output.content || output.storageKey)) || output?.taskStatus === "failed" || output?.taskStatus === "cancelled";
+                return isUpscaleItemSettled(i, nodesRef.current.find(n => n.id === i.outputNodeId)?.metadata);
             })) {
                 const defaults = createDefaultUpscaleSettings();
                 const settings = structuredClone({ ...defaults, ...current.metadata?.upscale, ...processor.metadata?.upscale,
@@ -83,7 +83,7 @@ export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connections
                 });
                 const retried = structuredClone(batch);
                 let foundReceipt = false;
-                for (const item of retried.items.filter(i => i.status === "rejected")) {
+                for (const item of retried.items.filter(i => i.status === "rejected" && !i.detachedResult)) {
                     const task = await findGenerationTaskByOperation(item.clientOperationId, projectId);
                     assertCurrent();
                     if (task) {
@@ -92,17 +92,14 @@ export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connections
                         continue;
                     }
                     const source = nodesRef.current.find(n => n.id === item.sourceNodeId);
-                    if (!source || !settings.channelId) continue;
-                    try {
-                        const params = upscaleParamsForNode(settings, structuredClone(source), await prepareResource(source));
-                        assertCurrent(); const quote = await estimateUpscale(params); assertCurrent();
-                        item.params = params; item.status = "waiting"; item.error = undefined; item.reservation = quote.reservation; item.quotedAt = Date.now();
-                    } catch (cause) { assertCurrent(); item.error = cause instanceof Error ? cause.message : "素材预检失败"; }
+                    if (!source) throw new Error("找不到原素材，无法重试");
+                    const quote = await reviewQuote(source, settings, item.params);
+                    Object.assign(item, quote, { status: "waiting", error: undefined, quotedAt: Date.now() });
                 }
                 // An unexpected receipt restores observation first; defer retries
                 // until the next explicit click so no checkpoint races its bind.
                 if (!foundReceipt) {
-                    if (!await confirm(retried.items)) return;
+                    validateQuotedItems(retried.items);
                     batch = retried;
                     patch(nodes => nodes.map(n => {
                         if (n.id === current.id) return { ...n, metadata: { ...n.metadata, upscaleBatch: retried } };
@@ -121,10 +118,10 @@ export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connections
                     await save();
                     return;
                 }
-            } else if (batch?.items.some(i => i.status === "rejected")) {
+            } else if (batch?.items.some(i => i.status === "rejected" && !i.detachedResult)) {
                 rejectedRetryBlocked = true;
             }
-            if (!batch || (batch.items.length > 0 && deriveUpscaleBatchState(batch, nodesRef.current).succeeded === batch.items.length)) {
+            if (!batch || deriveUpscaleBatchState(batch, nodesRef.current).canStartNewBatch) {
                 if (!useConfigStore.getState().config.channels.some(channel => channel.enabled !== false && isBuiltinBeefTVChannel(channel) && channelHasGenerationCredential(channel))) throw new Error("暂无可用超分模型，请连接 BeefTV 内置的官方算力");
                 const inputs = structuredClone(getUpscaleInputNodes(processor.id, nodesRef.current, connectionsRef.current));
                 if (!inputs.length) throw new Error("请连接可读取的图片或视频");
@@ -136,20 +133,16 @@ export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connections
                     video: { ...defaults.video, ...stored?.video, ...passed?.video },
                 });
                 if (!settings.channelId) throw new Error("请选择超分渠道");
-                const items: CanvasUpscaleBatchItem[] = [];
-                // Complete all resource and estimate checks before any paid request.
-                for (const source of inputs) {
-                    const item: CanvasUpscaleBatchItem = { sourceNodeId: source.id, sourceTitle: source.title || "素材", mediaType: source.type === CanvasNodeType.Video ? "video" : "image", outputNodeId: nanoid(), clientOperationId: nanoid(), status: "waiting" };
-                    try {
-                        item.params = upscaleParamsForNode(settings, source, await prepareResource(source));
-                        assertCurrent(); const quote = await estimateUpscale(item.params); assertCurrent();
-                        item.reservation = quote.reservation; item.quotedAt = Date.now();
-                    } catch (cause) {
-                        assertCurrent(); item.status = "rejected"; item.error = cause instanceof Error ? cause.message : "素材预检失败";
-                    }
-                    items.push(item);
+                if (quotes?.length !== inputs.length) throw new Error("素材列表已变更，请重新估价");
+                const priced = await Promise.all(inputs.map(source => reviewQuote(source, settings)));
+                const liveInputs = getUpscaleInputNodes(processor.id, nodesRef.current, connectionsRef.current);
+                if (liveInputs.length !== inputs.length || liveInputs.some(live => !quotes.some(quote => quote.sourceKey === upscaleSourceKey(live)))) {
+                    throw new Error("素材列表已变更，请重新估价");
                 }
-                if (!await confirm(items)) return;
+                const items: CanvasUpscaleBatchItem[] = inputs.map((source, index) => ({
+                    sourceNodeId: source.id, sourceTitle: source.title || "素材", mediaType: source.type === CanvasNodeType.Video ? "video" : "image",
+                    outputNodeId: nanoid(), clientOperationId: nanoid(), status: "waiting", ...priced[index], quotedAt: Date.now(),
+                }));
                 batch = { id: nanoid(), createdAt: Date.now(), items };
                 const outputs: CanvasNodeData[] = [];
                 const downstreamIds = new Set(connectionsRef.current.filter(c => c.fromNodeId === current.id).map(c => c.toNodeId));
@@ -188,6 +181,7 @@ export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connections
                 patch(nodes => nodes.map(n => n.id === processor.id && n.metadata?.upscaleBatch?.id === batchId ? { ...n, metadata: { ...n.metadata, upscaleBatch: { ...n.metadata.upscaleBatch, items: n.metadata.upscaleBatch.items.map(i => i.outputNodeId === item.outputNodeId ? { ...i, ...values } : i) } } } : n));
             };
             for (const original of batch.items) {
+                if (original.detachedResult) continue;
                 const item = { ...original };
                 assertCurrent();
                 if (!nodesRef.current.some(n => n.id === item.outputNodeId)) continue;
@@ -232,7 +226,7 @@ export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connections
                 }
                 if (!item.params) { update(item, { status: "rejected", error: "缺少已冻结的提交参数，请重新配置新批次" }); continue; }
                 if (!item.quotedAt || Date.now() - item.quotedAt > 60_000) {
-                    update(item, { status: "rejected", error: "费用预估已过期，请重新确认费用" });
+                    update(item, { status: "rejected", error: "费用预估已过期，请重新获取报价" });
                     await save();
                     continue;
                 }
@@ -262,6 +256,55 @@ export function useCanvasUpscaleBatch({pageUi,  projectId, nodesRef, connections
             }
             if (rejectedRetryBlocked) throw new Error("等待其他项完成后重试未提交项");
         } finally { locks.current.delete(processor.id); }
-    }, [pageUi, projectId, nodesRef, connectionsRef, setNodes, setConnections, prepareResource, observeTask, bindTask, modal]);
+    }, [pageUi, projectId, nodesRef, connectionsRef, setNodes, setConnections, observeTask, bindTask]);
+    const needsDetachedPolling = Boolean(nodes?.some(node => node.metadata?.upscaleBatch?.items.some(item =>
+        !item.detachedResult && !nodes.some(output => output.id === item.outputNodeId),
+    )));
+    useEffect(() => {
+        if (!needsDetachedPolling) return;
+        const controller = new AbortController();
+        const { signal } = controller;
+        let polling = false;
+        const poll = async () => {
+            if (polling) return;
+            polling = true;
+            try {
+                const live = nodesRef.current;
+                const nodeIds = new Set(live.map(node => node.id));
+                await Promise.all(live.flatMap(processor => {
+                    const batch = processor.metadata?.upscaleBatch;
+                    if (!batch || locks.current.has(processor.id)) return [];
+                    return batch.items.filter(item => !item.detachedResult && !nodeIds.has(item.outputNodeId)).map(async item => {
+                        try {
+                            const task = item.taskId ? await queryGenerationTask(item.taskId, { signal })
+                                : await findGenerationTaskByOperation(item.clientOperationId, projectId, signal);
+                            if (signal.aborted || liveProject.current !== projectId || locks.current.has(processor.id)) return;
+                            const current = nodesRef.current;
+                            if (current.some(node => node.id === item.outputNodeId)) return;
+                            const activeBatch = current.find(node => node.id === processor.id)?.metadata?.upscaleBatch;
+                            const latest = activeBatch?.items.find(entry => entry.clientOperationId === item.clientOperationId);
+                            if (activeBatch?.id !== batch.id || !latest || latest.detachedResult || latest.status !== item.status || latest.taskId !== item.taskId) return;
+                            let detachedResult: CanvasUpscaleBatchItem["detachedResult"];
+                            if (task?.status === "succeeded") detachedResult = "succeeded";
+                            else if ((task?.status === "failed" || task?.status === "cancelled") && task.outcome?.phase !== "retrievable") {
+                                detachedResult = isRegenerateAllowed(task.outcome) ? "restartable" : "failed";
+                            } else if (!task && (item.status === "waiting" || item.status === "rejected")) detachedResult = "skipped";
+                            if (!detachedResult && (!task || task.id === item.taskId)) return;
+                            const nextBatch = { ...activeBatch, items: activeBatch.items.map(entry => entry === latest
+                                ? { ...entry, ...(task ? { taskId: task.id, status: "accepted" as const } : {}), detachedResult } : entry) };
+                            const updated = current.map(node => node.id === processor.id
+                                ? { ...node, metadata: { ...node.metadata, upscaleBatch: nextBatch } } : node);
+                            nodesRef.current = updated;
+                            setNodes(updated);
+                            useCanvasStore.getState().updateProject(projectId, { nodes: updated, connections: connectionsRef.current });
+                        } catch { /* Keep the original operation pending until it can be queried again. */ }
+                    });
+                }));
+            } finally { polling = false; }
+        };
+        void poll();
+        const timer = setInterval(() => void poll(), 3000);
+        return () => { clearInterval(timer); controller.abort(); };
+    }, [needsDetachedPolling, projectId, nodesRef, connectionsRef, setNodes]);
     return { startUpscaleBatch, resumeUpscaleBatch: startUpscaleBatch };
 }
