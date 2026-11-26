@@ -140,7 +140,24 @@ func ResolveAssistantChannelModel(snapshot AssistantConfigSnapshot, modelKey str
 		return assistant.Provider{}, AssistantReasonProtocolUnsupported
 	}
 	contextWindow, maxTokens := channelModelLimits(channel, modelID)
-	normalizedHeaders, _ := outbound.NormalizeOutboundHeaders(channel.Headers)
+	normalizedHeaders, err := outbound.NormalizeOutboundHeaders(channel.Headers)
+	if err != nil && len(channel.Headers) > 0 {
+		// 兼容升级前落盘的旧配置：单个异常头不连坐丢弃其余合法头（如 Referer / CF-AIG-Authorization）。
+		seen := make(map[string]struct{}, len(channel.Headers))
+		normalizedHeaders = make([]outbound.OutboundHeader, 0, len(channel.Headers))
+		for _, item := range channel.Headers {
+			single, itemErr := outbound.NormalizeOutboundHeaders([]outbound.OutboundHeader{item})
+			if itemErr != nil || len(single) == 0 {
+				continue
+			}
+			key := strings.ToLower(single[0].Name)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			normalizedHeaders = append(normalizedHeaders, single[0])
+		}
+	}
 	provider := assistant.Provider{
 		ChannelID: channel.ID, ChannelName: AssistantChannelName(channel),
 		Model: modelID, ModelKey: modelKey, Protocol: protocol,

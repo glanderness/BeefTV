@@ -181,19 +181,40 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
     }).models[0];
     expect(datedGpt41.reasoning).toBe(false);
     expect(datedGpt41.contextWindow).toBeGreaterThan(200000);
+
+    // 7. Future gpt-6* reasoning inference + non-Claude model behind LiteLLM anthropic-messages stays conservative
+    const gpt6 = providerRegistration({
+      api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1',
+      modelId: 'gpt-6-astra',
+      maxTokens: 0,
+      contextWindow: 0,
+    }).models[0];
+    expect(gpt6.reasoning).toBe(true);
+    expect(gpt6.compat?.supportsLongCacheRetention).not.toBe(false);
+
+    const nonClaudeOnAnthropic = providerRegistration({
+      api: 'anthropic-messages',
+      baseUrl: 'https://litellm.example.com',
+      modelId: 'custom-llama-70b',
+      maxTokens: 0,
+      contextWindow: 0,
+    }).models[0];
+    expect(nonClaudeOnAnthropic.reasoning).toBe(false);
   });
 
-  test('parseHostHeadersEnv filters blocked/unsafe/non-ASCII headers and keeps literal values without command/env expansion', () => {
+  test('parseHostHeadersEnv filters blocked/unsafe/non-ASCII headers, allows CF-AIG-Authorization, and keeps literal values', () => {
     const parsed = parseHostHeadersEnv(JSON.stringify([
       { name: 'X-Tenant-Id', value: 'studio-42' },
+      { name: 'CF-AIG-Authorization', value: 'Bearer cf-gw-token' },
       { name: 'X-Literal-Bang', value: '!echo pwned' },
       { name: 'X-Literal-Env', value: '$BEEFTV_AGENT_API_KEY' },
       { name: 'X-Title', value: '牛肉TV' },
       { name: 'X-Control', value: 'bad\x07bell' },
       { name: 'Authorization', value: 'Bearer evil' },
-      { name: 'cf-aig-authorization', value: 'Bearer evil' },
       { name: 'x-api-key', value: 'evil' },
       { name: 'x-goog-api-key', value: 'evil' },
+      { name: 'X-Beeftv-Agent-Token', value: 'evil' },
       { name: 'X-Forwarded-For', value: '1.2.3.4' },
       { name: 'X-Canvas-Internal', value: '1' },
       { name: 'Host', value: 'evil.com' },
@@ -202,6 +223,7 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
     ]));
     expect(parsed).toEqual([
       ['X-Tenant-Id', 'studio-42'],
+      ['CF-AIG-Authorization', 'Bearer cf-gw-token'],
       ['X-Literal-Bang', '!echo pwned'],
       ['X-Literal-Env', '$BEEFTV_AGENT_API_KEY'],
     ]);
@@ -411,15 +433,19 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
       }
 
       expect(seenRequests).toHaveLength(4);
-      // 1. gemini-2.5-pro @ off -> thinkingBudget=128 (NOT 0!) + custom header
+      // 1. gemini-2.5-pro @ off -> exact /v1beta/models/...:streamGenerateContent?alt=sse URL + thinkingBudget=128 (NOT 0!) + custom header
+      expect(seenRequests[0].url).toBe('/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse');
       expect(seenRequests[0].headers['x-goog-api-key']).toBe('AIza-test-byok');
       expect(seenRequests[0].headers['x-gemini-gateway']).toBe('gw-byok');
       expect(seenRequests[0].body.generationConfig?.thinkingConfig?.thinkingBudget).toBe(128);
       // 2. gemini-2.5-flash @ off -> thinkingBudget=0
+      expect(seenRequests[1].url).toBe('/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse');
       expect(seenRequests[1].body.generationConfig?.thinkingConfig?.thinkingBudget).toBe(0);
       // 3. unlisted gemini-3-pro-preview @ low -> thinkingLevel=LOW
+      expect(seenRequests[2].url).toBe('/v1beta/models/gemini-3-pro-preview:streamGenerateContent?alt=sse');
       expect(seenRequests[2].body.generationConfig?.thinkingConfig?.thinkingLevel).toBe('LOW');
       // 4. legacy gemini-2.0-flash -> no thinkingConfig sent
+      expect(seenRequests[3].url).toBe('/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse');
       expect(seenRequests[3].body.generationConfig?.thinkingConfig).toBeUndefined();
     } finally {
       globalThis.fetch = prevFetch;
@@ -511,6 +537,79 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
       else process.env.BEEFTV_AGENT_API_KEY = prevKey;
       server.closeAllConnections();
       await new Promise((r) => server.close(r));
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  test('OpenAI Completions BYOK E2E & custom-header origin isolation (including Request input)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-byok-completions-'));
+    const seenModel = [];
+    const seenOther = [];
+    const modelServer = createServer(async (req, res) => {
+      let raw = '';
+      for await (const chunk of req) raw += chunk;
+      seenModel.push({ url: req.url, headers: req.headers, body: raw ? JSON.parse(raw) : null });
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { role: 'assistant', content: 'completions ok' }, finish_reason: null }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      res.end('data: [DONE]\n\n');
+    });
+    const otherServer = createServer((req, res) => {
+      seenOther.push({ url: req.url, headers: req.headers });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    await Promise.all([
+      new Promise((r) => modelServer.listen(0, '127.0.0.1', r)),
+      new Promise((r) => otherServer.listen(0, '127.0.0.1', r)),
+    ]);
+    const modelPort = modelServer.address().port;
+    const otherPort = otherServer.address().port;
+    const prevFetch = globalThis.fetch;
+    const prevKey = process.env.BEEFTV_AGENT_API_KEY;
+    process.env.BEEFTV_AGENT_API_KEY = 'sk-oai-compat';
+    try {
+      const baseUrl = `http://127.0.0.1:${modelPort}/v1`;
+      installModelFetchProxy({
+        baseUrl,
+        isRawBaseUrl: false,
+        modelApi: 'openai-completions',
+        modelId: 'my-custom-chat',
+        customHeaders: [['CF-AIG-Authorization', 'Bearer cf-secret'], ['X-Tenant', 'beeftv']],
+        turnBudgetContext: new AsyncLocalStorage(),
+        nativePartStore: null,
+        lifetimeBudget: makeBudget(dir),
+        dispatchDiagnostics: { record: () => {} },
+        getOps: () => ({ opsRequest: async () => ({}) }),
+      });
+
+      // Non-model origin (even via Request object) must NEVER receive channel custom headers.
+      await globalThis.fetch(new Request(`http://127.0.0.1:${otherPort}/ping`, { method: 'GET' }));
+      expect(seenOther).toHaveLength(1);
+      expect(seenOther[0].headers['cf-aig-authorization']).toBeUndefined();
+      expect(seenOther[0].headers['x-tenant']).toBeUndefined();
+
+      // Request object targeting model origin receives custom headers without clobbering Authorization.
+      await globalThis.fetch(new Request(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer sk-oai-compat', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'my-custom-chat', messages: [{ role: 'user', content: 'ping' }] }),
+      }));
+      expect(seenModel).toHaveLength(1);
+      expect(seenModel[0].url).toBe('/v1/chat/completions');
+      expect(seenModel[0].headers.authorization).toBe('Bearer sk-oai-compat');
+      expect(seenModel[0].headers['cf-aig-authorization']).toBe('Bearer cf-secret');
+      expect(seenModel[0].headers['x-tenant']).toBe('beeftv');
+    } finally {
+      globalThis.fetch = prevFetch;
+      if (prevKey === undefined) delete process.env.BEEFTV_AGENT_API_KEY;
+      else process.env.BEEFTV_AGENT_API_KEY = prevKey;
+      modelServer.closeAllConnections();
+      otherServer.closeAllConnections();
+      await Promise.all([
+        new Promise((r) => modelServer.close(r)),
+        new Promise((r) => otherServer.close(r)),
+      ]);
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }, 20000);

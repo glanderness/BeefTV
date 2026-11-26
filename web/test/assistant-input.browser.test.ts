@@ -754,9 +754,9 @@ test("thinking level switcher, context usage pill, manual compaction, and 16-ite
     expect(sessionConfigRequests.at(-1)).toEqual({ canvasId: "input-canvas", sessionId: durableId, thinkingLevel: "high" });
     expect(await thinkingText()).toBe("深度思考");
 
-    // 悬停上下文占用显示 token 与缓存命中详情
+    // 悬停上下文占用显示上下文估算与缓存复用量（使用用户语，不暴露英文 token 术语）
     await page.getByText("上下文 24%", { exact: true }).hover();
-    await page.getByRole("tooltip").getByText(/48k \/ 200k tokens.*缓存 36k tokens/).waitFor();
+    await page.getByRole("tooltip").getByText(/48k \/ 200k.*缓存 36k/).waitFor();
 
     // 等入场动画稳定后检查无横向溢出
     await page.waitForFunction(() => {

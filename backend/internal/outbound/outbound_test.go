@@ -48,7 +48,11 @@ func TestConfiguredProxyHostIsTrustedAsDeploymentEgress(t *testing.T) {
 }
 
 func TestNormalizeOutboundHeadersAllowsCustomUserAgent(t *testing.T) {
-	headers, err := NormalizeOutboundHeaders([]OutboundHeader{{Name: "user-agent", Value: "Custom Gateway/2.0"}, {Name: "X-Gateway-Tenant", Value: "tenant-a"}})
+	headers, err := NormalizeOutboundHeaders([]OutboundHeader{
+		{Name: "user-agent", Value: "Custom Gateway/2.0"},
+		{Name: "X-Gateway-Tenant", Value: "tenant-a"},
+		{Name: "cf-aig-authorization", Value: "Bearer gw-token"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +65,17 @@ func TestNormalizeOutboundHeadersAllowsCustomUserAgent(t *testing.T) {
 	if got := request.Header.Get("X-Gateway-Tenant"); got != "tenant-a" {
 		t.Fatalf("X-Gateway-Tenant = %q", got)
 	}
+	if got := request.Header.Get("Cf-Aig-Authorization"); got != "Bearer gw-token" {
+		t.Fatalf("Cf-Aig-Authorization = %q", got)
+	}
 }
 
 func TestNormalizeOutboundHeadersRejectsUnsafeAndDuplicateValues(t *testing.T) {
 	tests := [][]OutboundHeader{
 		{{Name: "Authorization", Value: "Bearer attacker"}},
+		{{Name: "x-api-key", Value: "sk-ant-override"}},
+		{{Name: "X-Beeftv-Agent-Token", Value: "internal-override"}},
+		{{Name: "X-Title", Value: "牛肉TV"}},
 		{{Name: "X-Test", Value: "safe\r\ninjected: true"}},
 		{{Name: "X-Test", Value: "one"}, {Name: "x-test", Value: "two"}},
 	}

@@ -67,8 +67,27 @@ func TestWorkspaceCanvasSearchKeepsLegacyProjectFilterAndOwnedScope(t *testing.T
 	if filtered.Total != 1 || filtered.Projects[0].ID != "in-project" {
 		t.Fatalf("project owner filter: %+v", filtered)
 	}
-	if _, err := run("canvas", "canvas.search", map[string]any{}); err == nil {
-		t.Fatal("canvas-only scope expanded to workspace")
+	// Canvas mode may list owned canvases for read-only discovery, while keeping
+	// node reads/writes on sibling canvases locked to the current canvas.
+	canvasModeRes, err := run("canvas", "canvas.search", map[string]any{})
+	if err != nil {
+		t.Fatalf("canvas mode read-only canvas.search failed: %v", err)
+	}
+	rawCanvasMode, _ := json.Marshal(canvasModeRes.Result)
+	var canvasModePage canvas.CanvasLibraryPage
+	if err := json.Unmarshal(rawCanvasMode, &canvasModePage); err != nil {
+		t.Fatal(err)
+	}
+	if canvasModePage.Total != 3 || len(canvasModePage.Projects) != 3 {
+		t.Fatalf("unexpected canvas-mode canvas.search page: %+v", canvasModePage)
+	}
+	for _, row := range canvasModePage.Projects {
+		if row.ID == "foreign" || row.ID == "foreign-project" {
+			t.Fatalf("canvas-mode canvas.search leaked foreign canvas: %+v", row)
+		}
+	}
+	if _, err := run("canvas", "canvas.get", map[string]any{"canvasId": "second"}); err == nil {
+		t.Fatal("canvas-only scope read sibling canvas contents")
 	}
 	if _, err := run("full-access", "canvas.get", map[string]any{"canvasId": "foreign"}); err == nil {
 		t.Fatal("foreign canvas became readable")

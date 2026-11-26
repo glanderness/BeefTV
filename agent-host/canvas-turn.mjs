@@ -80,7 +80,9 @@ function stripDateSuffix(slug) {
 
 function inferAnthropicReasoning(modelId) {
   const slug = normalizeModelSlug(modelId);
-  if (!slug) return true;
+  if (!slug) return false;
+  if (/-thinking(?:$|-)/.test(slug)) return true;
+  if (!/^claude-/.test(slug)) return false;
   // Claude 3 / 3.5 系列不支持 extended thinking（3.7 及 4/5 系列支持）。
   if (/^claude-3(?:(?:\.5|-5)(?:$|-)|-(?:opus|sonnet|haiku)(?:$|-))/.test(slug)) {
     return false;
@@ -133,7 +135,7 @@ function inferGoogleThinkingLevelMap(modelId, catalogModel) {
 function inferOpenAIResponsesReasoning(modelId) {
   const slug = normalizeModelSlug(modelId);
   if (!slug || /-chat(?:$|-)/.test(slug)) return false;
-  return /^(?:o[134](?:$|-)|gpt-5(?:$|[.-])|codex(?:$|-))/.test(slug);
+  return /^(?:o[134](?:$|-)|gpt-(?:[5-9]|[1-9]\d)(?:$|[.-])|codex(?:$|-))/.test(slug);
 }
 
 function inferOpenAIResponsesThinkingLevelMap(modelId, catalogModel) {
@@ -187,28 +189,33 @@ function findCatalogModel(modelId, api, baseUrl = '') {
   const providers = preferredCatalogProviders(api, modelId, baseUrl);
   const slug = normalizeModelSlug(modelId);
   const undatedSlug = stripDateSuffix(slug);
-  let fallback = null;
-  let slugMatch = null;
-  let undatedMatch = null;
+  let sameApiSlug = null;
+  let sameApiUndated = null;
+  let crossApiExact = null;
+  let crossApiSlug = null;
+  let crossApiUndated = null;
   for (const provider of providers) {
     for (const candidate of getBuiltinModels(provider)) {
       const candidateSlug = normalizeModelSlug(candidate.id);
+      const isSameApi = candidate.api === api;
       if (candidate.id === modelId) {
-        if (candidate.api === api) return { model: candidate, sameApi: true };
-        if (!fallback) fallback = candidate;
+        if (isSameApi) return { model: candidate, sameApi: true };
+        if (!crossApiExact) crossApiExact = candidate;
       } else if (slug && candidateSlug === slug) {
-        if (!slugMatch || (candidate.api === api && !slugMatch.sameApi)) {
-          slugMatch = { model: candidate, sameApi: candidate.api === api };
-        }
+        if (isSameApi && !sameApiSlug) sameApiSlug = candidate;
+        else if (!isSameApi && !crossApiSlug) crossApiSlug = candidate;
       } else if (undatedSlug && undatedSlug !== slug && candidateSlug === undatedSlug) {
-        if (!undatedMatch || (candidate.api === api && !undatedMatch.sameApi)) {
-          undatedMatch = { model: candidate, sameApi: candidate.api === api };
-        }
+        if (isSameApi && !sameApiUndated) sameApiUndated = candidate;
+        else if (!isSameApi && !crossApiUndated) crossApiUndated = candidate;
       }
     }
   }
-  if (fallback) return { model: fallback, sameApi: false };
-  return slugMatch || undatedMatch;
+  if (sameApiSlug) return { model: sameApiSlug, sameApi: true };
+  if (sameApiUndated) return { model: sameApiUndated, sameApi: true };
+  if (crossApiExact) return { model: crossApiExact, sameApi: false };
+  if (crossApiSlug) return { model: crossApiSlug, sameApi: false };
+  if (crossApiUndated) return { model: crossApiUndated, sameApi: false };
+  return null;
 }
 
 // This compatibility route has returned concatenated arguments for distinct
@@ -529,10 +536,10 @@ export function providerRegistration({ api, baseUrl, modelId, maxTokens, context
   };
 }
 
+// 与 Go 侧 outbound.blockedOutboundHeader 保持一致，保留 CF-AIG-Authorization 等合法网关头。
 const BLOCKED_CUSTOM_HEADERS = new Set([
   'accept',
   'authorization',
-  'cf-aig-authorization',
   'x-api-key',
   'x-goog-api-key',
   'x-beeftv-agent-token',
