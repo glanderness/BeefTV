@@ -193,6 +193,18 @@ export async function loadPluginExtensionsFromPackages({
 
     const packageTools = candidateDefs.map((def) => {
       registeredByPlugin.set(def.name, pluginId);
+      const validCallers = Array.isArray(def.callers)
+        ? [...new Set(def.callers.filter((c) => c === 'model' || c === 'tools'))]
+        : [];
+      const isDeferred = def.deferred === true || def.exposure === 'deferred';
+      const executionMode = def.executionMode === 'parallel' || (def.executionMode !== 'sequential' && def.readOnly === true)
+        ? 'parallel'
+        : 'sequential';
+      const structuredOutputSchema = (def.structuredOutputSchema && typeof def.structuredOutputSchema === 'object' && !Array.isArray(def.structuredOutputSchema))
+        ? def.structuredOutputSchema
+        : (def.outputSchema && typeof def.outputSchema === 'object' && !Array.isArray(def.outputSchema))
+          ? def.outputSchema
+          : undefined;
       const durableTool = defineTool({
         name: def.name,
         description: String(def.description || def.label || def.name),
@@ -200,7 +212,10 @@ export async function loadPluginExtensionsFromPackages({
           ? def.parameters
           : { type: 'object', properties: {} },
         replay: def.replay === 'safe' ? 'safe' : 'unsafe',
-        executionMode: 'sequential',
+        executionMode,
+        ...(isDeferred ? { deferred: true } : {}),
+        ...(validCallers.length > 0 ? { callers: validCallers } : {}),
+        ...(structuredOutputSchema ? { structuredOutputSchema } : {}),
         execute: async (args, api, context = {}) => {
           const executeTool = async (toolName, params = {}, options = {}) => {
             const target = String(toolName || '').trim();
@@ -295,8 +310,19 @@ export async function loadPluginExtensionsFromPackages({
 
     if (packageTools.length > 0) {
       const sanitizedId = pluginId.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const declaredNs = (loaded?.extensions || []).find((ext) => ext?.namespace && typeof ext.namespace?.name === 'string')?.namespace
+        || candidateDefs.find((def) => def?.namespace && typeof def.namespace?.name === 'string')?.namespace
+        || null;
+      const namespace = declaredNs && typeof declaredNs.name === 'string' && declaredNs.name.trim()
+        ? {
+            name: declaredNs.name.trim(),
+            description: String(declaredNs.description || packageJson?.description || `Plugin ${pluginId} tools`),
+            ...(typeof declaredNs.instructions === 'string' && declaredNs.instructions.trim() ? { instructions: declaredNs.instructions.trim() } : {}),
+          }
+        : undefined;
       const ext = defineExtension({
         name: `beeftv.plugin.${sanitizedId}`,
+        ...(namespace ? { namespace } : {}),
         tools: packageTools,
       });
       durableExtensions.push(ext);

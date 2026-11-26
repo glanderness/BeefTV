@@ -39,6 +39,7 @@ export function createDurableSessionRepository({
   maxPlanContinuations,
   runWithBudget,
   extensions,
+  codemodeSandbox = null,
   settings,
   telemetry = undefined,
   thinkingLevel,
@@ -145,6 +146,7 @@ export function createDurableSessionRepository({
       runWithBudget,
       getModels,
       extensions,
+      codemodeSandbox,
     });
     openCount += 1;
     try {

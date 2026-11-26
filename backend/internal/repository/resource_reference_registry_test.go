@@ -496,6 +496,16 @@ func TestReferenceRegistryParityAcrossSnapshotWatermarkAndGuards(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		{"agent_op_file_export", func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.AgentOpRecord{UserID: "u1", OpID: "op-file-1", Op: "file.export", Status: "succeeded", ResultJSON: `{"resourceId":"` + resID + `","storageKey":"resource:` + resID + `","fileName":"分镜表.csv"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"agent_op_skill_script_output", func(t *testing.T, db *gorm.DB, resID string) {
+			if err := db.Create(&model.AgentOpRecord{UserID: "u1", OpID: "script-proposal:sp-1", Op: "skill.script.proposal", Status: "script:succeeded", ResultJSON: `{"proposalId":"sp-1","result":{"outputFiles":[{"path":"subtitles.srt","resourceId":"` + resID + `"}]}}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{"project_cover", func(t *testing.T, db *gorm.DB, resID string) {
 			if err := db.Create(&model.Project{ID: "p-cov", UserID: "u1", Name: "cov", CoverResourceID: resID, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 				t.Fatal(err)

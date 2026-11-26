@@ -53,7 +53,7 @@ export function commonPrefixLength(a = '', b = '') {
 }
 
 const CANONICAL_HEADER_RE =
-  /^<instructions>\n[\s\S]*\n<\/instructions>(?:\n\n<beeftv_skill_catalog>\n[\s\S]*\n<\/beeftv_skill_catalog>)?$/;
+  /^<instructions>\n[\s\S]*\n<\/instructions>(?:\n\n<beeftv_skill_catalog>\n[\s\S]*\n<\/beeftv_skill_catalog>)?(?:\n\n<codemode>\n[\s\S]*\n<\/codemode>)?$/;
 
 export function analyzeCapturedRequests(
   capturedRequests = [],

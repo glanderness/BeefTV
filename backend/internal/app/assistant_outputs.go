@@ -5,18 +5,20 @@ import (
 	"errors"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/operations"
 
 	"gorm.io/gorm"
 )
 
-// AssistantOutput identifies an admitted local render. Ready/failed state and
-// playable resources still come from the existing owned task API.
+// AssistantOutput identifies an admitted local render or exported deliverable.
 type AssistantOutput struct {
 	TaskID         string `json:"taskId"`
 	Kind           string `json:"kind"`
 	SourceRevision *int64 `json:"sourceRevision,omitempty"`
 	ResourceID     string `json:"resourceId,omitempty"`
 	FileName       string `json:"fileName,omitempty"`
+	MimeType       string `json:"mimeType,omitempty"`
+	Bytes          int64  `json:"bytes,omitempty"`
 }
 
 func (s *Service) AssistantTurnOutputs(userID, canvasID, turnID string) ([]AssistantOutput, error) {
@@ -78,6 +80,13 @@ func (s *Service) AssistantTurnOutputs(userID, canvasID, turnID string) ([]Assis
 			continue
 		}
 		outputs = append(outputs, AssistantOutput{Kind: "project", ResourceID: resource.ID, FileName: result.FileName, SourceRevision: result.SourceRevision})
+	}
+	exportedFiles, err := operations.ListTurnExportedFiles(s.repo.DB(), userID, canvasID, turnID)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range exportedFiles {
+		outputs = append(outputs, AssistantOutput{Kind: "file", ResourceID: item.ResourceID, FileName: item.FileName, MimeType: item.MimeType, Bytes: item.Bytes})
 	}
 	return outputs, nil
 }

@@ -1,6 +1,7 @@
 // New conversations have one official Durable owner. Legacy JSONL sessions are
 // deliberately never imported or run here. Go remains the business authority.
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { CodemodeSandbox } from '@earendil-works/pi-codemode';
 import { defineDoc } from '@earendil-works/pi-durable';
 import { emptyPlan } from './plan.mjs';
 import { buildStudioDigest, describeChangesSince } from './studio-digest.mjs';
@@ -79,6 +80,7 @@ export function createDurableSessionStore({
   completeTurn = async () => {},
   runWithBudget = (_entry, fn) => fn(),
   extensions = () => [],
+  codemodeSandbox = undefined,
   settings = {},
   telemetry = undefined,
   skills = null,
@@ -234,6 +236,9 @@ export function createDurableSessionStore({
   });
   const { undoUnsubmittedSkills, flushPendingSkillRollback, skillContext, changeSkillContext } = skillController;
 
+  const ownedCodemodeSandbox = codemodeSandbox === undefined
+    ? new CodemodeSandbox({ timeoutMs: 60_000, memoryLimitBytes: 256 * 1024 * 1024 })
+    : codemodeSandbox;
   const repository = createDurableSessionRepository({
     durableVersion: DURABLE_VERSION,
     sessionRoot,
@@ -255,6 +260,7 @@ export function createDurableSessionStore({
     maxPlanContinuations,
     runWithBudget,
     extensions,
+    codemodeSandbox: ownedCodemodeSandbox,
     settings,
     telemetry,
     thinkingLevel,
@@ -535,6 +541,9 @@ export function createDurableSessionStore({
     for (const entry of entries) {
       entry.disposed = true;
       await entry.harness.close(CTX);
+    }
+    if (codemodeSandbox === undefined && typeof ownedCodemodeSandbox?.close === 'function') {
+      await ownedCodemodeSandbox.close().catch(() => {});
     }
     return entries.length;
   }

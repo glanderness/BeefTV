@@ -9,7 +9,7 @@ const TYPE_LABEL = {
 };
 const MEDIA = new Set(['image', 'video', 'audio']);
 
-const HEADER_SECTION_ORDER = ['instructions', 'beeftv_skill_catalog'];
+const HEADER_SECTION_ORDER = ['instructions', 'beeftv_skill_catalog', 'codemode'];
 
 function extractMessageText(message) {
   if (!message) return '';
@@ -41,12 +41,22 @@ export function isTransientStudioTailMessage(message) {
 }
 
 const HISTORICAL_TOOL_IMAGE_OMITTED_TEXT =
-  '[历史媒体预览图已省略，如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]';
+  '[此前已展示过的历史媒体预览图已在后续步骤折叠以节省上下文；如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]';
+const HISTORICAL_FILE_IMAGE_OMITTED_TEXT =
+  '[此前已展示过的文档扫描页画面已在后续步骤折叠以节省上下文；你此前据此读取并记录的内容仍然有效，如需再次查看请重新调用 file_read]';
 // 仅裁剪 >=16KB base64 的真实媒体预览图；几百字节的小占位图/图标直接保留以维持前缀缓存字节一致。
 const DEFAULT_MIN_PRUNE_IMAGE_CHARS = 16 * 1024;
 
 function isToolResultMessage(message) {
   return message?.role === 'toolResult' || message?.role === 'tool';
+}
+
+function isFileReadToolResult(message) {
+  const name = typeof message?.toolName === 'string' ? message.toolName : typeof message?.name === 'string' ? message.name : '';
+  if (name === 'file_read' || name === 'file.read') return true;
+  if (!Array.isArray(message?.content)) return false;
+  const firstText = message.content.find((part) => part?.type === 'text' && typeof part.text === 'string')?.text || '';
+  return firstText.includes('"op":"file.read"') || firstText.includes('"format":"pdf-images"');
 }
 
 function isPrunableImagePart(part, minChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS) {
@@ -86,6 +96,8 @@ const NON_MUTATING_CONTINUATION_TOOLS = new Set([
   'plan.update',
   'canvas_get',
   'canvas.get',
+  'file_read',
+  'file.read',
   'skill_load',
   'skill.load',
   'task_list',
@@ -105,6 +117,7 @@ function isKeepImageContinuationTool(name) {
 export function pruneHistoricalToolImages(messages = [], { minImageChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS } = {}) {
   return messages.map((message, idx) => {
     if (!isToolResultMessage(message) || !hasPrunableImagePart(message, minImageChars)) return message;
+    const isScannedFileRead = isFileReadToolResult(message);
     let firstAssistantAfter = -1;
     let shouldPrune = false;
     for (let j = idx + 1; j < messages.length; j++) {
@@ -131,7 +144,10 @@ export function pruneHistoricalToolImages(messages = [], { minImageChars = DEFAU
           shouldPrune = true;
           break;
         }
-        if (later.role === 'assistant') {
+        // file_read 扫描件的画面本身就是文档正文：同轮内写文件/改画布后不能立即折叠，
+        // 否则推理模型在生成最终回复时看不到文档内容，会误判自己此前调用的参数为幻觉并覆写成果；
+        // 跨轮（下一条用户消息）或读入新一批大图时照常折叠以省流量。
+        if (!isScannedFileRead && later.role === 'assistant') {
           const names = assistantToolNames(later);
           if (names.length === 0 || names.some((name) => !isKeepImageContinuationTool(name))) {
             shouldPrune = true;
@@ -141,10 +157,13 @@ export function pruneHistoricalToolImages(messages = [], { minImageChars = DEFAU
       }
     }
     if (!shouldPrune) return message;
+    const omittedText = isScannedFileRead
+      ? HISTORICAL_FILE_IMAGE_OMITTED_TEXT
+      : HISTORICAL_TOOL_IMAGE_OMITTED_TEXT;
     return {
       ...message,
       content: message.content.map((part) =>
-        isPrunableImagePart(part, minImageChars) ? { type: 'text', text: HISTORICAL_TOOL_IMAGE_OMITTED_TEXT } : part,
+        isPrunableImagePart(part, minImageChars) ? { type: 'text', text: omittedText } : part,
       ),
     };
   });
