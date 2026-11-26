@@ -43,11 +43,11 @@
 
 ## 最近更新
 
-- **[v2.4.5](https://github.com/glanderness/BeefTV/releases/tag/v2.4.5)** — 内置创作助手可靠性全面加固并升级底层 `@earendil-works/pi-*`（`1.5.0 → 1.6.0`）：修复续跑提案确认 409 与冷启动「助手暂时用不了」/首秒 503，提案与续跑授权收归 `GenerationOrder` 单一来源（外部客户端不能直接提交内置助手生成单，需由界面或 `beeftv approve` 确认），修复 `media.overview` 多余版本校验、独立画布同回合产物审片误拒 `scope_denied`、`/assets/batch` 并发请求风暴、`/events` 体积上限提至 `256 KiB` 与确认接口放宽至 `1 MiB`、多条失败提示粘连及诊断库采集盲区；BeefTV 官方算力模型目录与价格改为 `ETag/304` 与内联价格无感热更新；声音克隆与音频全能参考按服务端能力放行参考音轨并补齐连线与直传；视频播放新增有声无画不可解码视频轨检测并自动回退 H.264 兼容转码；修复插件 OOM 隔离、自定义渠道确认卡死、切画布丢节点、大画布读超时与托管视频约束。
-- **[v2.4.4](https://github.com/glanderness/BeefTV/releases/tag/v2.4.4)** — 修复大体积本地工作区冷启动阻塞与 `bootstrap_timeout`（启动期延后全库归档与孤儿清理并支持忙时自动退避重排、资源引用改走单源注册表主键分块扫描与不可伪造水印快路径、内置助手异步拉起并支持可取消关闭与超时强制回收、前端工作区引导与本地模型配置请求超时扩至 15 秒）；对象存储分片直传升级 4 并发上传，视频超分与智能擦除动态对齐最高 `1 GiB` 上传上限，桌面端上传与成片落盘上限提升至 `2 GiB` 并实现全链路磁盘流式下载与磁盘音轨补回；视频超分估价改纯元数据单路径并统一零拷贝预检、真实中文报错透传与 `ffprobe` 环境检测。
-- **[v2.4.3](https://github.com/glanderness/BeefTV/releases/tag/v2.4.3)** — 局部重绘、表情与角度调整统一保留用户所选图片模型，无原生蒙版但支持参考图的模型自动在本地按蒙版融合（保留未选区域原像素且恢复不重复计费）；生成与取回期间统一隐藏图片/视频节点上方处理栏，画布右键新增「复制图片」与「复制视频」直接写入系统剪贴板；DeepSeek Harness 插件（`dsh-beeftv@0.2.0`）支持直连本机与免安装独立运行双模式，桌面端新增 Windows 私有命名管道控制面与 `beeftv --version`；修复 macOS 12.3–13.2 旧版 WKWebView 启动语法报错并补齐产物语法门禁与系统版本诊断。
-- **[v2.4.2](https://github.com/glanderness/BeefTV/releases/tag/v2.4.2)** — 修复内置创作助手发起无参考图整片生成提案后打开画布报错异常的问题，并保证升级前保存的历史提案、授权与进行中任务正常打开、确认与续跑；修复 macOS 与 Windows 画布顶栏切换按钮长名称溢出叠字，并修正删除不存在素材时返回 404。
-- **[v2.4.1](https://github.com/glanderness/BeefTV/releases/tag/v2.4.1)** — 修复 macOS 本地视频首帧不显示、移除「页面暂时无响应」定时看门狗弹窗并修复休眠唤醒任务租约，修复 Windows 模型配置损坏写死锁并解除「取回结果」4 秒短超时与下载断连重试问题；项目列表升级按需摘要加载与冷启动防清空，文件夹、画板、创作对话与素材库收敛为本地 SQLite 单源存储，支持画布标题原位编辑；已声明视频能力与估价改由服务端实时驱动（移除 H3 与人像档硬编码），并移除内置助手官方模型白名单限制。
+- **[v2.4.5](https://github.com/glanderness/BeefTV/releases/tag/v2.4.5)** — 内置创作助手更稳定，支持官方模型与价格自动刷新、参考音频连线与本地直传，以及有声无画视频自动兼容播放。
+- **[v2.4.4](https://github.com/glanderness/BeefTV/releases/tag/v2.4.4)** — 解决素材较多时启动卡顿，大视频上传提速并支持最高 2GB 文件保存，视频超分估价更快。
+- **[v2.4.3](https://github.com/glanderness/BeefTV/releases/tag/v2.4.3)** — 局部重绘与表情/角度调整保留所选模型，画布右键新增直接复制图片和视频，修复旧版 macOS 启动问题。
+- **[v2.4.2](https://github.com/glanderness/BeefTV/releases/tag/v2.4.2)** — 修复创作助手发起纯文生图整片方案后画布报错，以及画布名过长导致顶栏文字重叠的问题。
+- **[v2.4.1](https://github.com/glanderness/BeefTV/releases/tag/v2.4.1)** — 修复 macOS 视频首帧不显示与误弹无响应提示，加快大项目启动速度，支持直接编辑画布标题并开放更多助手模型。
 
 [查看全部版本与详细说明](https://github.com/glanderness/BeefTV/releases)
 
