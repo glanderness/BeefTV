@@ -187,9 +187,21 @@ export function CreativeBibleDrawer({ open, onClose, projectId, canvasId, onSave
             }
         >
             <div className="grid gap-4">
-                <p className="m-0 text-xs leading-5 text-[var(--user-ink-muted)]">
-                    {scopeLabel} · 保存后内置画布助手每轮会自动读取这里的画风、角色、场景和禁忌；外部接入的 Claude Code / Codex 也可读写同一份设定集。
-                </p>
+                <div className="flex flex-col gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--background)] px-2 py-0.5 text-[var(--fs-label)] font-medium text-[var(--foreground)]">
+                            {scopeLabel}
+                        </span>
+                        {draft.revision > 0 ? (
+                            <span className="inline-flex items-center rounded-full bg-[var(--muted)] px-2 py-0.5 text-[var(--fs-label)] font-medium tabular-nums text-[var(--muted-foreground)]">
+                                v{draft.revision}
+                            </span>
+                        ) : null}
+                    </div>
+                    <p className="m-0 text-xs leading-5 text-[var(--user-ink-muted)]">
+                        内置助手与外部 MCP 读写同一份设定集，每轮对话自动同步。
+                    </p>
+                </div>
 
                 {loadError ? (
                     <div role="alert" className="agent-mcp-error-box">
@@ -273,9 +285,12 @@ export function CreativeBibleDrawer({ open, onClose, projectId, canvasId, onSave
                                         <p className="m-0 rounded-lg border border-dashed border-[var(--border)] p-4 text-xs text-[var(--user-ink-muted)]">
                                             还没有角色档案。点右上角「新增角色」，或直接让画布助手帮你整理并写入设定集。
                                         </p>
-                                    ) : draft.characters.map((char) => (
-                                        <div key={char.id} className="grid gap-2 rounded-lg border border-[var(--border)] p-3">
+                                    ) : draft.characters.map((char, idx) => (
+                                        <div key={char.id} className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-3.5">
                                             <div className="flex items-center gap-2">
+                                                <span aria-hidden="true" className="inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--background)] text-[var(--fs-label)] font-semibold text-[var(--foreground)]">
+                                                    {char.name.trim().slice(0, 1) || idx + 1}
+                                                </span>
                                                 <Input
                                                     placeholder="角色名（必填）"
                                                     value={char.name}
@@ -290,23 +305,32 @@ export function CreativeBibleDrawer({ open, onClose, projectId, canvasId, onSave
                                                     onClick={() => removeCharacter(char.id)}
                                                 />
                                             </div>
-                                            <Input.TextArea
-                                                rows={2}
-                                                placeholder="外貌特征（年龄、五官、发型、标志性细节）"
-                                                value={char.appearance || ""}
-                                                onChange={(e) => updateCharacter(char.id, { appearance: e.target.value })}
-                                            />
-                                            <div className="grid gap-2 sm:grid-cols-2">
-                                                <Input
-                                                    placeholder="固定服装"
-                                                    value={char.wardrobe || ""}
-                                                    onChange={(e) => updateCharacter(char.id, { wardrobe: e.target.value })}
+                                            <label className="grid gap-1">
+                                                <span className="text-xs font-medium text-[var(--user-ink-muted)]">外貌特征</span>
+                                                <Input.TextArea
+                                                    rows={2}
+                                                    placeholder="年龄、五官、发型、标志性细节"
+                                                    value={char.appearance || ""}
+                                                    onChange={(e) => updateCharacter(char.id, { appearance: e.target.value })}
                                                 />
-                                                <Input
-                                                    placeholder="配音音色 / 说话风格"
-                                                    value={char.voice || ""}
-                                                    onChange={(e) => updateCharacter(char.id, { voice: e.target.value })}
-                                                />
+                                            </label>
+                                            <div className="grid gap-2.5 sm:grid-cols-2">
+                                                <label className="grid gap-1">
+                                                    <span className="text-xs font-medium text-[var(--user-ink-muted)]">固定服装</span>
+                                                    <Input
+                                                        placeholder="服装与随身道具"
+                                                        value={char.wardrobe || ""}
+                                                        onChange={(e) => updateCharacter(char.id, { wardrobe: e.target.value })}
+                                                    />
+                                                </label>
+                                                <label className="grid gap-1">
+                                                    <span className="text-xs font-medium text-[var(--user-ink-muted)]">音色与语气</span>
+                                                    <Input
+                                                        placeholder="配音音色 / 说话风格"
+                                                        value={char.voice || ""}
+                                                        onChange={(e) => updateCharacter(char.id, { voice: e.target.value })}
+                                                    />
+                                                </label>
                                             </div>
                                         </div>
                                     ))}
@@ -326,9 +350,12 @@ export function CreativeBibleDrawer({ open, onClose, projectId, canvasId, onSave
                                         <p className="m-0 rounded-lg border border-dashed border-[var(--border)] p-4 text-xs text-[var(--user-ink-muted)]">
                                             还没有场景档案。点右上角「新增场景」，统一核心场景与光影。
                                         </p>
-                                    ) : draft.locations.map((loc) => (
-                                        <div key={loc.id} className="grid gap-2 rounded-lg border border-[var(--border)] p-3">
+                                    ) : draft.locations.map((loc, idx) => (
+                                        <div key={loc.id} className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-3.5">
                                             <div className="flex items-center gap-2">
+                                                <span aria-hidden="true" className="inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--background)] text-[var(--fs-label)] font-semibold tabular-nums text-[var(--foreground)]">
+                                                    {idx + 1}
+                                                </span>
                                                 <Input
                                                     placeholder="场景名称（必填）"
                                                     value={loc.name}
@@ -343,17 +370,23 @@ export function CreativeBibleDrawer({ open, onClose, projectId, canvasId, onSave
                                                     onClick={() => removeLocation(loc.id)}
                                                 />
                                             </div>
-                                            <Input.TextArea
-                                                rows={2}
-                                                placeholder="空间结构、关键陈设、材质与天气"
-                                                value={loc.description || ""}
-                                                onChange={(e) => updateLocation(loc.id, { description: e.target.value })}
-                                            />
-                                            <Input
-                                                placeholder="主光与氛围（例如：雨夜霓虹反射、冷色顶灯）"
-                                                value={loc.lighting || ""}
-                                                onChange={(e) => updateLocation(loc.id, { lighting: e.target.value })}
-                                            />
+                                            <label className="grid gap-1">
+                                                <span className="text-xs font-medium text-[var(--user-ink-muted)]">空间与陈设</span>
+                                                <Input.TextArea
+                                                    rows={2}
+                                                    placeholder="空间结构、关键陈设、材质与天气"
+                                                    value={loc.description || ""}
+                                                    onChange={(e) => updateLocation(loc.id, { description: e.target.value })}
+                                                />
+                                            </label>
+                                            <label className="grid gap-1">
+                                                <span className="text-xs font-medium text-[var(--user-ink-muted)]">主光与氛围</span>
+                                                <Input
+                                                    placeholder="例如：雨夜霓虹反射、冷色顶灯"
+                                                    value={loc.lighting || ""}
+                                                    onChange={(e) => updateLocation(loc.id, { lighting: e.target.value })}
+                                                />
+                                            </label>
                                         </div>
                                     ))}
                                 </div>
