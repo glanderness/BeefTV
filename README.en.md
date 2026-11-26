@@ -43,11 +43,11 @@
 
 ## Recent updates
 
+- **[v2.5.0](https://github.com/glanderness/BeefTV/releases/tag/v2.5.0)** — Redesigned built-in assistant with document/scanned PDF reading, file export, Creative Bible, session fork, multi-model confirm, and external MCP; added auto local project downloads, in-app proxy, and new model protocols.
 - **[v2.4.5](https://github.com/glanderness/BeefTV/releases/tag/v2.4.5)** — Improved built-in assistant reliability, and added automatic model and pricing sync for official compute, reference audio connections and direct upload, and automatic fallback playback for videos with sound but no picture.
 - **[v2.4.4](https://github.com/glanderness/BeefTV/releases/tag/v2.4.4)** — Fixed slow startup on large local workspaces, sped up large video uploads with support for saving files up to 2 GB, and made video upscale cost estimates faster.
 - **[v2.4.3](https://github.com/glanderness/BeefTV/releases/tag/v2.4.3)** — Kept your selected image model for inpainting, expression, and angle edits, added right-click Copy Image and Copy Video on the canvas, and fixed startup issues on older macOS versions.
 - **[v2.4.2](https://github.com/glanderness/BeefTV/releases/tag/v2.4.2)** — Fixed a canvas error after opening assistant production proposals without reference images, and prevented long canvas names from overlapping top-bar controls.
-- **[v2.4.1](https://github.com/glanderness/BeefTV/releases/tag/v2.4.1)** — Fixed missing macOS video thumbnails and false unresponsive alerts, sped up startup for large projects, added inline canvas title editing, and opened more official models to the assistant.
 
 [All releases and detailed notes](https://github.com/glanderness/BeefTV/releases)
 
