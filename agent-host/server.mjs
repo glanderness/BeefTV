@@ -11,7 +11,7 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isCorruptSessionArtifactError, isDurableSessionId, publicDurableTurn, TRANSIENT_UNRESUMABLE_REASONS } from './durable-session-owner.mjs';
 import { createDurableTurnProjection } from './durable-turn-projection.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
-import { parseHostBaseUrlEnv, providerRegistration, providerUnavailableReason,
+import { parseHostBaseUrlEnv, parseHostHeadersEnv, providerRegistration, providerUnavailableReason,
   turnContextPrefix, unflushedSessionHistory, toolCallCapabilityContext } from './canvas-turn.mjs';
 import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
@@ -57,9 +57,10 @@ const MODEL_ID = (process.env.BEEFTV_AGENT_MODEL || '').trim();
 const MODEL_API = (process.env.BEEFTV_AGENT_API || 'openai-completions').trim();
 const { baseUrl: BASE_URL, isRaw: IS_RAW_BASE_URL } = parseHostBaseUrlEnv(process.env.BEEFTV_AGENT_BASE_URL || '');
 const API_KEY = process.env.BEEFTV_AGENT_API_KEY || '';
-// Thinking shares this ceiling with the answer (pi-ai adds its budget within it).
-const MAX_OUTPUT_TOKENS = Number(process.env.BEEFTV_AGENT_MAX_TOKENS || 16384);
-const CONTEXT_WINDOW = Number(process.env.BEEFTV_AGENT_CONTEXT_WINDOW || 200000);
+const CUSTOM_HEADERS = parseHostHeadersEnv(process.env.BEEFTV_AGENT_HEADERS || '');
+// 仅在渠道显式声明上限或环境变量注入时覆盖，未配置时交给内置目录模型默认值。
+const MAX_OUTPUT_TOKENS = Number(process.env.BEEFTV_AGENT_MAX_TOKENS || 0);
+const CONTEXT_WINDOW = Number(process.env.BEEFTV_AGENT_CONTEXT_WINDOW || 0);
 const MAX_REQUESTS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_REQUESTS_PER_TURN || 0);
 const MAX_TOOL_STEPS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN || 0);
 const LIFETIME_REQUEST_BUDGET = Number(process.env.BEEFTV_AGENT_TOTAL_REQUEST_BUDGET || 0);
@@ -116,6 +117,7 @@ const { outbound, getDispatched } = installModelFetchProxy({
   isRawBaseUrl: IS_RAW_BASE_URL,
   modelApi: MODEL_API,
   modelId: MODEL_ID,
+  customHeaders: CUSTOM_HEADERS,
   turnBudgetContext,
   nativePartStore,
   lifetimeBudget,

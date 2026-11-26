@@ -8,7 +8,10 @@ import { decodeChannelModel, encodeChannelModel, normalizeModelOptionValue, type
 export const ASSISTANT_MODEL_PROTOCOLS: ModelProtocol[] = [
     "chat-completion",
     "claude-api",
+    "anthropic-messages",
+    "claude-messages",
     "openai-response",
+    "openai-responses",
     "responses",
     "gemini-generate-content",
     "google-gemini-generate-content",

@@ -11,21 +11,21 @@ const LINE_HEIGHT = 21;
 const MIN_LINES = 3;
 const MAX_LINES = 8;
 
-function formatTokenCount(tokens: number): string {
-    if (!Number.isFinite(tokens) || tokens <= 0) return "0";
-    if (tokens >= 1000) return `${(tokens / 1000).toFixed(tokens >= 10_000 ? 0 : 1)}k`;
-    return String(Math.round(tokens));
+function formatUsageCount(count: number): string {
+    if (!Number.isFinite(count) || count <= 0) return "0";
+    if (count >= 1000) return `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k`;
+    return String(Math.round(count));
 }
 
 function formatContextTooltip(usage: AssistantContextUsage): string {
     const parts: string[] = [];
     if (usage.contextWindow > 0) {
-        parts.push(`当前上下文约 ${formatTokenCount(usage.estimatedTokens)} / ${formatTokenCount(usage.contextWindow)} tokens`);
+        parts.push(`当前上下文约 ${formatUsageCount(usage.estimatedTokens)} / ${formatUsageCount(usage.contextWindow)}`);
     } else {
-        parts.push(`当前上下文约 ${formatTokenCount(usage.estimatedTokens)} tokens`);
+        parts.push(`当前上下文约 ${formatUsageCount(usage.estimatedTokens)}`);
     }
     if (usage.cacheRead > 0) {
-        parts.push(`本会话已命中缓存 ${formatTokenCount(usage.cacheRead)} tokens`);
+        parts.push(`本会话已复用缓存 ${formatUsageCount(usage.cacheRead)}`);
     }
     return parts.join(" · ");
 }
@@ -101,7 +101,7 @@ export function CanvasAssistantComposer({
     const canSend = !disabled && !compacting && (!streaming || canSupplement) && !supplementBusy && !inputBusy && (Boolean(value.trim()) || Boolean(hasAttachments));
     const showContext = Boolean(contextUsage && (contextUsage.estimatedTokens > 0 || canCompact));
     const contextLabel = contextUsage
-        ? (typeof contextUsage.percent === "number" ? `上下文 ${contextUsage.percent}%` : `上下文 ${formatTokenCount(contextUsage.estimatedTokens)}`)
+        ? (typeof contextUsage.percent === "number" ? `上下文 ${contextUsage.percent}%` : `上下文 ${formatUsageCount(contextUsage.estimatedTokens)}`)
         : "";
     const thinkingOptions = [
         { value: "off" as const, label: "关闭思考", title: "直接回答，不展开思考过程" },

@@ -7,7 +7,7 @@ const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const MIME = new Set(['image/jpeg', 'image/png', 'video/mp4', 'audio/wav']);
 
 function isGeminiModelId(modelId) {
-  return /^(?:models\/)?gemini-/i.test(String(modelId || ''));
+  return /^(?:(?:models|google)\/)?gemini-/i.test(String(modelId || ''));
 }
 
 function supportsNativeMedia({ api, modelId }) {
@@ -244,10 +244,29 @@ function adaptAnthropicRequest(payload, unpinnedSignatures) {
 }
 
 function adaptGoogleMediaRequest(payload, { modelId, nativePartStore }) {
-  if (!payload || !Array.isArray(payload.contents)) return payload;
+  if (!payload || typeof payload !== 'object') return payload;
+  let nextPayload = payload;
+  // Google Gemini 2.5 Pro（及 gemini-pro-latest）拒绝 thinkingBudget=0（最低有效预算为 128）；
+  // pi-ai 1.6.0 关闭思考时对非 Gemini 3 模型固定发 thinkingBudget=0，这里在出网前兜底修正。
+  if (
+    /^(?:(?:models|google)\/)?(?:gemini-2\.5-pro(?:$|-)|gemini-pro-latest$)/i.test(String(modelId || '')) &&
+    nextPayload.generationConfig?.thinkingConfig?.thinkingBudget === 0
+  ) {
+    nextPayload = {
+      ...nextPayload,
+      generationConfig: {
+        ...nextPayload.generationConfig,
+        thinkingConfig: {
+          ...nextPayload.generationConfig.thinkingConfig,
+          thinkingBudget: 128,
+        },
+      },
+    };
+  }
+  if (!Array.isArray(nextPayload.contents)) return nextPayload;
   let bytes = 0;
   let changed = false;
-  const contents = payload.contents.flatMap((content) => {
+  const contents = nextPayload.contents.flatMap((content) => {
     if (!content || !Array.isArray(content.parts)) return [content];
     const appended = [];
     let turnChanged = false;
@@ -300,7 +319,7 @@ function adaptGoogleMediaRequest(payload, { modelId, nativePartStore }) {
       },
     ];
   });
-  return changed ? { ...payload, contents } : payload;
+  return changed ? { ...nextPayload, contents } : nextPayload;
 }
 
 export function adaptMediaRequest(payload, { api, modelId, nativePartStore, unpinnedSignatures }, extra = {}) {
@@ -326,7 +345,7 @@ export function adaptMediaRequest(payload, { api, modelId, nativePartStore, unpi
       messages.push(message);
       continue;
     }
-    if (!/^media_(overview|inspect|check)$/.test(toolNames.get(message.tool_call_id) || '') || !/^gemini-/i.test(modelId)) {
+    if (!/^media_(overview|inspect|check)$/.test(toolNames.get(message.tool_call_id) || '') || !isGeminiModelId(modelId)) {
       throw new Error('media_source_not_trusted');
     }
     const lines = message.content.split('\n');

@@ -44,6 +44,8 @@ test("models-only fallback keeps channel and explicit profile restrictions", () 
         { interfaceType: "gemini-generate-content" },
         { modelProfiles: [{ model: "local-text", capability: "text" as const, protocol: "gemini-generate-content" as const }] },
         { modelProfiles: [{ model: "local-text", capability: "text" as const, protocol: "google-gemini-generate-content" as const }] },
+        { modelProfiles: [{ model: "local-text", capability: "text" as const, protocol: "anthropic-messages" as const }] },
+        { modelProfiles: [{ model: "local-text", capability: "text" as const, protocol: "claude-messages" as const }] },
         { apiFormat: "gemini" as const, modelProfiles: [{ model: "local-text", capability: "text" as const }] },
     ]) {
         expect(resolveAssistantModel({ ...c, channels: [{ ...custom, ...update }] })).toBe("custom::local-text");

@@ -10,6 +10,7 @@ export function installModelFetchProxy({
   isRawBaseUrl,
   modelApi,
   modelId,
+  customHeaders = [],
   turnBudgetContext,
   nativePartStore,
   lifetimeBudget,
@@ -105,6 +106,16 @@ export function installModelFetchProxy({
       outbound.push(entry);
       if (outbound.length > 200) outbound.shift();
       dispatchDiagnostics.record(entry);
+      if (Array.isArray(customHeaders) && customHeaders.length > 0) {
+        const merged = new Headers(typeof input !== 'string' ? input.headers : undefined);
+        if (options.headers) {
+          new Headers(options.headers).forEach((value, key) => merged.set(key, value));
+        }
+        for (const [name, value] of customHeaders) {
+          merged.set(name, value);
+        }
+        options = { ...options, headers: merged };
+      }
       const startedAt = Date.now();
       return await fetchModelWithProgressIdle(input, options, {
         fetch: realFetch,
