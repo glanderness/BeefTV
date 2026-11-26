@@ -8,7 +8,8 @@ import { modelOptionName, useEffectiveConfig, type AiConfig } from "@/stores/use
 import { buildGenerationConfig as buildNodeConfig, canvasVideoOperationPreference } from "@/lib/canvas/canvas-generation-config";
 import { PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, resolveVideoOperation } from "@/lib/model-selection";
+import { declaredOrOmniVideoCapability, hasDeclaredModelCapability, isBeefTVModelRoute, mergedImageCapabilityConfig, resolveVideoOperation } from "@/lib/model-selection";
+import { isMidjourneyImageModel, syncMidjourneySizeFromPromptChange } from "@/lib/midjourney-image";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasPromptFontControl } from "./canvas-prompt-font-control";
 import { DEFAULT_PROMPT_FONT_SIZE, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
@@ -278,9 +279,17 @@ export function CanvasNodePromptPanel({ config: configProp, projectId, node, isR
     const skillReferences = useMemo(() => resolvedMentionReferences.filter((item) => item.kind === "skill"), [resolvedMentionReferences]);
 
     const updatePrompt = (value: string) => {
+        const previousPrompt = prompt;
         setPrompt(value);
         onPromptChange(node.id, value);
-        if (node.metadata?.generationPreflightError) onConfigChange(node.id, { generationPreflightError: undefined });
+        const patch: Partial<CanvasNodeMetadata> = {};
+        if (node.metadata?.generationPreflightError) patch.generationPreflightError = undefined;
+        if (mode === "image" && isMidjourneyImageModel(config.model)) {
+            const presets = mergedImageCapabilityConfig(config, config.model).size.presets;
+            const syncedSize = syncMidjourneySizeFromPromptChange(previousPrompt, value, config.size, presets);
+            if (syncedSize) patch.size = syncedSize;
+        }
+        if (Object.keys(patch).length) onConfigChange(node.id, patch);
         if (/(^|\s)\/[\p{L}\p{N}_-]*$/u.test(value)) {
             if (expandedPromptOpen) setExpandedPresetOpen(true);
             else setPresetOpen(true);

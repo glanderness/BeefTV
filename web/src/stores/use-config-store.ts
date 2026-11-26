@@ -110,6 +110,12 @@ export type AiConfig = {
     seedreamOutputFormat?: string;
     seedreamOptimize?: string;
     seedreamWatermark?: string;
+    mjRaw?: string;
+    mjQuality?: string;
+    mjStylize?: string;
+    mjChaos?: string;
+    mjNo?: string;
+    mjStyleCode?: string;
     count: string;
     canvasImageCount: string;
 };

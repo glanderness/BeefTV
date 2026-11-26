@@ -78,6 +78,12 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         seedreamOutputFormat: node?.metadata?.seedreamOutputFormat ?? config.seedreamOutputFormat,
         seedreamOptimize: node?.metadata?.seedreamOptimize ?? config.seedreamOptimize,
         seedreamWatermark: node?.metadata?.seedreamWatermark ?? config.seedreamWatermark ?? defaultConfig.seedreamWatermark,
+        mjRaw: node?.metadata?.mjRaw ?? config.mjRaw,
+        mjQuality: node?.metadata?.mjQuality ?? config.mjQuality,
+        mjStylize: node?.metadata?.mjStylize ?? config.mjStylize,
+        mjChaos: node?.metadata?.mjChaos ?? config.mjChaos,
+        mjNo: node?.metadata?.mjNo ?? config.mjNo,
+        mjStyleCode: node?.metadata?.mjStyleCode ?? config.mjStyleCode,
         videoSeconds: !modelCapabilityConfigFor(config, preferredModel).video?.duration.continuous
             ? normalizeVideoDuration(node?.metadata?.seconds ?? config.videoSeconds ?? defaultConfig.videoSeconds)
             : String(node?.metadata?.seconds ?? config.videoSeconds ?? defaultConfig.videoSeconds),

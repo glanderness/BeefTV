@@ -242,8 +242,12 @@ describe("统一图片分辨率与宽高比", () => {
     });
 });
 
-test("Midjourney exposes only priced native tiers and preserves declared aspect ratio", () => {
- const profile = defaultImageCapabilityConfig("openai-image","midjourney-v8.2");
- expect(imageSizeLabel("1456x816",profile)).toBe("16:9 · 1K");
- expect(profile.size.presets?.some((preset) => preset.tier === "2k")).toBe(false);
+test("Midjourney exposes priced 1K and 2K native tiers (no 4K) and preserves declared aspect ratio", () => {
+    const profile = defaultImageCapabilityConfig("openai-image", "midjourney-v8.2");
+    expect(imageSizeLabel("1456x816", profile)).toBe("16:9 · 1K");
+    expect(imageSizeLabel("2944x1648", profile)).toBe("16:9 · 2K");
+    expect(imageSizeLabel("1680x720", profile)).toBe("21:9 · 1K");
+    expect(profile.size.presets?.some((preset) => preset.tier === "2k")).toBe(true);
+    expect(profile.size.presets?.some((preset) => preset.tier === "4k")).toBe(false);
+    expect(profile.size.allowCustom).toBe(false);
 });

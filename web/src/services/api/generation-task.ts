@@ -8,6 +8,7 @@ import { submitGenerationCommand } from "./generation-submission";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { isArkPlanBaseUrl } from "@/lib/seedance-video";
 import { seedreamFamily } from "@/lib/seedream-image";
+import { composeMidjourneyPrompt, isMidjourneyImageModel } from "@/lib/midjourney-image";
 import { declaredOrOmniVideoCapability, resolveVideoOperation } from "@/lib/model-selection";
 import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -343,6 +344,9 @@ export async function prepareBackendGenerationTask(options: BackendGenerationTas
 function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences): CreateTaskInput {
     const { projectId, mode, prompt, config, metadata } = options;
     const videoOperation = generationOperation(options);
+    const effectivePrompt = mode === "image" && isMidjourneyImageModel(config.model)
+        ? composeMidjourneyPrompt(prompt, config)
+        : prompt;
     return {
         ...(projectId ? { projectId } : {}),
         type: `canvas_${mode}`,
@@ -351,7 +355,7 @@ function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepa
         model: config.model,
         input: {
             mode,
-            prompt,
+            prompt: effectivePrompt,
             config: backendProviderConfig(config),
             textHistory: options.textHistory,
             ...(mode === "text" ? { textOptions: { stream: options.streamText !== false, thinking: options.enableThinking === true } } : {}),

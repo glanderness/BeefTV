@@ -328,6 +328,12 @@ export type CanvasNodeMetadata = {
     seedreamOutputFormat?: string;
     seedreamOptimize?: string;
     seedreamWatermark?: string;
+    mjRaw?: string;
+    mjQuality?: string;
+    mjStylize?: string;
+    mjChaos?: string;
+    mjNo?: string;
+    mjStyleCode?: string;
     count?: number;
     textCount?: number;
     seconds?: string;

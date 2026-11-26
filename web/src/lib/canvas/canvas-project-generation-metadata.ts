@@ -144,6 +144,12 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
         seedreamOutputFormat: config.seedreamOutputFormat,
         seedreamOptimize: config.seedreamOptimize,
         seedreamWatermark: config.seedreamWatermark,
+        mjRaw: config.mjRaw,
+        mjQuality: config.mjQuality,
+        mjStylize: config.mjStylize,
+        mjChaos: config.mjChaos,
+        mjNo: config.mjNo,
+        mjStyleCode: config.mjStyleCode,
         count,
         references: references.map(referenceUrl).filter((url): url is string => Boolean(url)),
     };

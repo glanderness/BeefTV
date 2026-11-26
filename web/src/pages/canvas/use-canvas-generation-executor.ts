@@ -12,6 +12,7 @@ import { canReleaseCanvasGenerationSource, canvasGenerationPromptMetadata, canva
 import { canvasVideoOperationPreference, resolvedCanvasGenerationRequirements, supportsCanvasVideoReferenceModes } from "@/lib/canvas/canvas-generation-config";
 import { isGenerationTaskCapacityError } from "@/lib/canvas/canvas-generation-batch";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
+import { composeMidjourneyPrompt, isMidjourneyImageModel } from "@/lib/midjourney-image";
 import { buildCameraPrompt } from "@/lib/canvas/camera-prompt-library";
 import { buildTextRewritePrompt } from "@/lib/prompts";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
@@ -438,10 +439,13 @@ export function useCanvasGenerationExecutor({
                             return;
                         }
 
+                        const fingerprintPrompt = mode === "image" && isMidjourneyImageModel(generationConfig.model)
+                            ? composeMidjourneyPrompt(effectivePrompt, generationConfig)
+                            : effectivePrompt;
                         const requestFingerprint = canvasGenerationRequestFingerprint({
                             nodeId,
                             mode,
-                            prompt: effectivePrompt,
+                            prompt: fingerprintPrompt,
                             model: generationConfig.model,
                             options: modelRequestOptions(generationConfig, mode),
                             operation: videoGenerationMetadata?.videoEditOperation ?? sourceNode?.metadata?.videoEditOperation,
