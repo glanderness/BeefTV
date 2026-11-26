@@ -1,4 +1,5 @@
 import { Button } from "antd";
+import { Download, Eye, EyeOff, FileText } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
@@ -120,15 +121,27 @@ export function AssistantFileDeliverableCard({
         }
     }
 
+    const dotIdx = fileName.lastIndexOf(".");
+    const rawExt = dotIdx > 0 && dotIdx < fileName.length - 1 ? fileName.slice(dotIdx + 1) : "";
+    const extLabel = /^[a-z0-9]{1,6}$/i.test(rawExt) ? rawExt.toUpperCase() : "";
+    const metaParts = [extLabel, title, sizeLabel].filter(Boolean).join(" · ");
+
     return (
         <div className="canvas-assistant-card">
-            <strong>{title}</strong>
-            <span style={{ overflowWrap: "anywhere" }}>{fileName}{sizeLabel ? ` · ${sizeLabel}` : ""}</span>
+            <div className="canvas-assistant-deliverable-head">
+                <span className="canvas-assistant-deliverable-badge" aria-hidden="true">
+                    <FileText size={16} />
+                </span>
+                <div className="canvas-assistant-deliverable-info">
+                    <span className="canvas-assistant-deliverable-name">{fileName}</span>
+                    <span className="canvas-assistant-meta">{metaParts}</span>
+                </div>
+            </div>
             {resourceId ? (
                 <div className="canvas-assistant-card-actions">
-                    <Button size="small" loading={loading} onClick={() => void download()}>下载文件</Button>
+                    <Button size="small" icon={<Download size={13} />} loading={loading} onClick={() => void download()}>下载文件</Button>
                     {canPreview ? (
-                        <Button size="small" loading={previewLoading} onClick={() => void togglePreview()}>
+                        <Button size="small" icon={previewOpen ? <EyeOff size={13} /> : <Eye size={13} />} loading={previewLoading} onClick={() => void togglePreview()}>
                             {previewOpen ? "收起预览" : "预览内容"}
                         </Button>
                     ) : null}
@@ -137,23 +150,7 @@ export function AssistantFileDeliverableCard({
                 <span className="canvas-assistant-meta">仅保留在本地脚本输出目录</span>
             )}
             {previewOpen && previewText !== null ? (
-                <pre
-                    style={{
-                        whiteSpace: "pre-wrap",
-                        overflowWrap: "anywhere",
-                        maxHeight: 240,
-                        overflowY: "auto",
-                        margin: "6px 0 0",
-                        padding: "8px",
-                        borderRadius: "var(--r-sm)",
-                        border: "1px solid var(--border)",
-                        fontSize: "12px",
-                        lineHeight: "18px",
-                        fontFamily: "var(--font-mono)",
-                    }}
-                >
-                    {previewText}
-                </pre>
+                <pre className="canvas-assistant-deliverable-preview">{previewText}</pre>
             ) : null}
             {feedback ? <span className="canvas-assistant-meta" role="status">{feedback}</span> : null}
         </div>

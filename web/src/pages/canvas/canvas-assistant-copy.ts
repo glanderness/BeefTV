@@ -74,6 +74,15 @@ export function assistantActionLabel(tool: string | undefined): string {
         case "file.read":
         case "file_read":
             return "读取文件";
+        case "file.export":
+        case "file_export":
+            return "导出交付文件";
+        case "project.bible.get":
+        case "project_bible_get":
+            return "读取创作设定集";
+        case "project.bible.update":
+        case "project_bible_update":
+            return "更新创作设定集";
         case "business.list":
         case "business_list":
         case "business.call":
@@ -232,12 +241,23 @@ export function assistantProductionScope(proposal: AssistantGenerationProposal):
     return "single-step";
 }
 
+export function isMergedMultiModelProposal(proposal: AssistantGenerationProposal): boolean {
+    if (proposal.kind === "mixed") return true;
+    const orderTargets = proposal.targets?.length ? proposal.targets : proposal.order?.targetViews || [];
+    if (orderTargets.length > 1) {
+        const distinctModels = new Set(orderTargets.map((item) => item.modelKey || item.model).filter(Boolean));
+        if (distinctModels.size > 1 || !proposal.modelKey) return true;
+    }
+    return false;
+}
+
 export function assistantProposalConfirmLabel(proposal: AssistantGenerationProposal): string {
     if (proposal.regenerate) return "确认并原地重做";
     const scope = assistantProductionScope(proposal);
     if (scope === "full-production") return "确认并制作整片";
     if (scope === "staged-plan") return "确认制作方案";
     if (scope === "single-step") return "确认并生成";
+    if (isMergedMultiModelProposal(proposal)) return "一键确认生成";
     return "生成";
 }
 
@@ -291,6 +311,23 @@ export function assistantProposalText(
     const productionParts = assistantProductionProposalParts(proposal, awaitingConfirmation);
     if (productionParts) {
         return [productionParts.header, ...productionParts.targetLines, ...(productionParts.footer ? [productionParts.footer] : [])].join("\n\n");
+    }
+    if (isMergedMultiModelProposal(proposal)) {
+        const orderTargets = proposal.targets?.length ? proposal.targets : proposal.order?.targetViews || [];
+        const images = orderTargets.filter((item) => item.kind === "image").length;
+        const videos = orderTargets.filter((item) => item.kind === "video").length;
+        const audio = orderTargets.filter((item) => item.kind === "audio").length;
+        const summaryLabel = orderTargets.length ? formatPresentKindCounts(images, videos, audio) : `${count} 项素材`;
+        const distinctModels = [...new Set(orderTargets.map((item) => item.model || item.modelKey?.split("::").pop()).filter(Boolean))];
+        const modelSuffix = distinctModels.length > 1 ? ` · ${distinctModels.length} 个模型合并确认` : distinctModels.length === 1 ? ` · ${distinctModels[0]}` : "";
+        const title = proposal.regenerate
+            ? `合并原地重做：${summaryLabel}${modelSuffix}`
+            : `合并生成方案：${summaryLabel}${modelSuffix}`;
+        const prices = proposal.estimate?.text ? [proposal.estimate.text] : priceLines;
+        const confirmNote = proposal.regenerate
+            ? "确认后一次提交全部重做任务，按所选渠道计费；原有结果保留在素材库。"
+            : "确认后一次提交全部就绪任务，按所选渠道计费。";
+        return awaitingConfirmation ? `${title}\n${prices.length ? prices.join("\n") + "\n" : ""}${confirmNote}` : title;
     }
     const target = proposal.kind === "video" ? "视频" : proposal.kind === "audio" ? "音频" : "图片";
     const modelLabel = modelDisplayLabel?.trim() || proposal.model;

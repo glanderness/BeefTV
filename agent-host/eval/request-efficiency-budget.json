@@ -1,16 +1,16 @@
 {
   "minAdjacentPrefixCoverageRatio": 0.95,
   "maxHeaderChars": 3139,
-  "maxToolsChars": 25135,
-  "maxHeaderPlusToolsChars": 28274,
+  "maxToolsChars": 25148,
+  "maxHeaderPlusToolsChars": 28287,
   "toolChars": {
     "asset_get": 176,
     "asset_list": 377,
     "canvas_edge_create": 283,
     "canvas_edge_delete": 235,
-    "canvas_generation_propose": 602,
-    "canvas_generation_regenerate": 466,
-    "canvas_generation_submit": 462,
+    "canvas_generation_propose": 599,
+    "canvas_generation_regenerate": 474,
+    "canvas_generation_submit": 470,
     "canvas_get": 653,
     "canvas_node_bind_asset": 357,
     "canvas_node_configure": 1700,
@@ -77,6 +77,11 @@
       "maxHeaderChars": 3139,
       "maxToolsChars": 25135,
       "maxHeaderPlusToolsChars": 28274
+    },
+    {
+      "reason": "Phase 2.3: allow mixed kind in canvas.generation.propose/submit/regenerate for unified multi-model confirmation cards",
+      "maxToolsChars": 25148,
+      "maxHeaderPlusToolsChars": 28287
     }
   ]
 }

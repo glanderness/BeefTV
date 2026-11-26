@@ -309,6 +309,12 @@ func (s *Store) runOutOfTx(db *gorm.DB, req RunRequest, fn func(tx *gorm.DB) ([]
 
 // RunDomain 把当前事务绑成 Domain 再执行：业务端口拿不到 *gorm.DB。
 func (s *Store) RunDomain(ctx context.Context, req RunRequest, binder DomainBinder, fn func(domain Domain) ([]byte, error)) (RunOutcome, error) {
+	return s.runDomainInTx(ctx, req, binder, func(_ *gorm.DB, domain Domain) ([]byte, error) {
+		return fn(domain)
+	})
+}
+
+func (s *Store) runDomainInTx(ctx context.Context, req RunRequest, binder DomainBinder, fn func(tx *gorm.DB, domain Domain) ([]byte, error)) (RunOutcome, error) {
 	if binder == nil {
 		return RunOutcome{}, newError(CodeInternal, "op_domain_unavailable", "操作域绑定不可用", nil)
 	}
@@ -320,7 +326,7 @@ func (s *Store) RunDomain(ctx context.Context, req RunRequest, binder DomainBind
 		if domain == nil {
 			return nil, newError(CodeInternal, "op_domain_unavailable", "操作域绑定不可用", nil)
 		}
-		return fn(domain)
+		return fn(tx, domain)
 	})
 }
 

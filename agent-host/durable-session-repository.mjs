@@ -9,7 +9,7 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { canvasKey } from './session-owner.mjs';
 import { newTurnAccumulator, sessionTitle } from './canvas-turn.mjs';
 import { SYSTEM_PROMPT } from './system-prompt.mjs';
-import { publicPlan } from './plan.mjs';
+import { emptyPlan, publicPlan } from './plan.mjs';
 import { publicDurableTurn } from './durable-turn-projection.mjs';
 import { isCorruptSessionArtifactError, isSkippableSessionError } from './durable-pointer-resolver.mjs';
 import { installDurableExtensions } from './durable-extensions.mjs';
@@ -174,8 +174,9 @@ export function createDurableSessionRepository({
       throw error;
     }
     try {
+      const targetConvId = Number.isInteger(manifest.conversationId) && manifest.conversationId > 1 ? manifest.conversationId : 0;
       if (readOnly) {
-        entry.root = await entry.harness.conversation(1, CTX);
+        entry.root = await entry.harness.conversation(targetConvId || 1, CTX);
         const hostState = await state(entry);
         if (hostState && hostState.canvasId && (hostState.canvasId !== canvasId || hostState.sessionId !== sessionId || hostState.version !== durableVersion)) {
           throw fail('durable_version_mismatch');
@@ -191,11 +192,16 @@ export function createDurableSessionRepository({
       const initialModel = configuredModel?.provider && configuredModel?.modelId
         ? configuredModel
         : { provider: configuredModel?.provider || 'beeftv', modelId: 'unconfigured' };
-      entry.root = await entry.harness.root(CTX, {
-        agent: { model: initialModel, tools, instructions: SYSTEM_PROMPT, thinkingLevel, cwd },
-        // 固定官方 provider 身份为 Durable 会话 ID，使缓存亲和性跨重启保持稳定。
-        init: async (tx, id) => { (await tx.doc(ProviderDoc, id)).sessionId = sessionId; },
-      });
+      if (targetConvId > 1) {
+        entry.root = await entry.harness.conversation(targetConvId, CTX);
+        if (!entry.root) throw fail('corrupt_session_manifest');
+      } else {
+        entry.root = await entry.harness.root(CTX, {
+          agent: { model: initialModel, tools, instructions: SYSTEM_PROMPT, thinkingLevel, cwd },
+          // 固定官方 provider 身份为 Durable 会话 ID，使缓存亲和性跨重启保持稳定。
+          init: async (tx, id) => { (await tx.doc(ProviderDoc, id)).sessionId = sessionId; },
+        });
+      }
       let hostState = await state(entry);
       if (!hostState) {
         await update(entry, (doc) => { doc.canvasId = canvasId; doc.sessionId = sessionId; doc.affinityMinEntryId = 1; });
@@ -346,6 +352,7 @@ export function createDurableSessionRepository({
       sessionId: entry.sessionId,
       turns: (value.turns || []).map((turn) => publicDurableTurn(turn)),
       active: publicDurableTurn(value.active, true),
+      ...(value.forkedFrom ? { forkedFrom: value.forkedFrom } : {}),
       ...(plan ? { plan } : {}),
       ...(meta ? {
         thinkingLevel: value.thinkingLevel || meta.thinkingLevel,
@@ -392,6 +399,7 @@ export function createDurableSessionRepository({
           title: sessionTitle(value.turns),
           updatedAt: value.turns.at(-1)?.createdAt || info.createdAt || '',
           turnCount: value.turns.length,
+          ...(info.forkedFrom ? { forkedFrom: info.forkedFrom } : {}),
         });
       } catch (error) {
         if (!isSkippableSessionError(error)) throw error;
@@ -399,6 +407,246 @@ export function createDurableSessionRepository({
       }
     }
     return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async function resolveForkEntryId(entry, turns, turnIndex) {
+    const target = turns[turnIndex];
+    const items = [];
+    let cursor;
+    do {
+      const page = await entry.root.entries({ order: 'ascending' }, 256, cursor, CTX);
+      items.push(...(page?.items || []));
+      cursor = page?.next;
+    } while (cursor !== undefined);
+    if (items.length === 0) return null;
+    const extendPastToolResults = (baseId) => {
+      const idx = items.findIndex((item) => item.id === baseId);
+      if (idx < 0) return baseId;
+      let endId = baseId;
+      for (let i = idx + 1; i < items.length; i += 1) {
+        const next = items[i];
+        const isToolResult = Array.isArray(next?.model) && next.model.length > 0 && next.model.every((m) => m?.role === 'toolResult');
+        if (!isToolResult) break;
+        endId = next.id;
+      }
+      return endId;
+    };
+    if (Number.isInteger(target?.lastEntryId) && target.lastEntryId > 0) {
+      return extendPastToolResults(target.lastEntryId);
+    }
+    if (turnIndex === turns.length - 1) return items.at(-1).id;
+    // Fallback for historical turns created before lastEntryId was recorded:
+    // locate the (turnIndex + 1)-th user message boundary and take the entry right before it.
+    let userStarts = 0;
+    for (let i = 0; i < items.length; i++) {
+      const isUser = items[i]?.kind === 'pi.user' || items[i]?.model?.some?.((m) => m.role === 'user');
+      if (isUser) {
+        userStarts += 1;
+        if (userStarts === turnIndex + 2) {
+          return extendPastToolResults(i > 0 ? items[i - 1].id : items[0].id);
+        }
+      }
+    }
+    return items.at(-1).id;
+  }
+
+  async function forkSession(canvasId, { sessionId, turnId }, { refreshCanvasBusy, isEntryBusy }) {
+    if (await refreshCanvasBusy(canvasId)) throw fail('session_busy');
+    return lock(canvasId, async () => {
+      if (!isDurableSessionId(sessionId) || !hasSession(canvasId, sessionId)) throw fail('session_not_found');
+      const current = sessions.get(canvasId);
+      if (isEntryBusy(current)) throw fail('session_busy');
+
+      const dir = durableDirectory(canvasId);
+      const srcUuid = idPattern.exec(sessionId)[1];
+      const srcManifestPath = path.join(dir, `${srcUuid}.json`);
+      const srcManifest = JSON.parse(fs.readFileSync(srcManifestPath, 'utf8'));
+      const srcConvId = Number.isInteger(srcManifest.conversationId) && srcManifest.conversationId > 1 ? srcManifest.conversationId : 1;
+
+      const srcEntry = current?.sessionId === sessionId ? current : await open(canvasId, sessionId, { readOnly: true });
+      let sourceDocCopy;
+      let sourceAgent;
+      let turnIndex = -1;
+      let atEntryId = null;
+      try {
+        const doc = await state(srcEntry);
+        if (!doc || !Array.isArray(doc.turns)) throw fail('turn_not_found');
+        turnIndex = doc.turns.findIndex((t) => t.turnId === turnId);
+        if (turnIndex < 0) throw fail('turn_not_found');
+        atEntryId = await resolveForkEntryId(srcEntry, doc.turns, turnIndex);
+        if (!Number.isInteger(atEntryId) || atEntryId <= 0) throw fail('fork_entry_not_found');
+        sourceAgent = await srcEntry.root.agent(CTX);
+        sourceDocCopy = JSON.parse(JSON.stringify(doc));
+      } finally {
+        if (srcEntry === current) {
+          sessions.delete(canvasId);
+          srcEntry.disposed = true;
+          await srcEntry.harness.close(CTX);
+        } else {
+          srcEntry.disposed = true;
+          await srcEntry.harness.close(CTX);
+        }
+      }
+
+      const newUuid = crypto.randomUUID();
+      const newSessionId = `durable:${newUuid}`;
+      const createdAt = new Date().toISOString();
+      const forkedFrom = {
+        sessionId,
+        turnId,
+        turnIndex,
+        sourceTitle: sessionTitle(sourceDocCopy.turns),
+        createdAt,
+      };
+      const newManifestPath = path.join(dir, `${newUuid}.json`);
+      const writeManifest = (payload) => {
+        const tmp = `${newManifestPath}.${crypto.randomUUID()}.tmp`;
+        try {
+          fs.writeFileSync(tmp, JSON.stringify(payload), { mode: 0o600 });
+          fs.renameSync(tmp, newManifestPath);
+        } finally {
+          fs.rmSync(tmp, { force: true });
+        }
+      };
+
+      let dstEntry = null;
+      try {
+        fs.copyFileSync(path.join(dir, `${srcUuid}.sqlite`), path.join(dir, `${newUuid}.sqlite`));
+        const srcWal = path.join(dir, `${srcUuid}.sqlite-wal`);
+        if (fs.existsSync(srcWal)) fs.copyFileSync(srcWal, path.join(dir, `${newUuid}.sqlite-wal`));
+
+        const cwd = path.join(workspaceRoot, canvasKey(canvasId));
+        fs.mkdirSync(cwd, { recursive: true });
+        const registry = createRegistry();
+        dstEntry = {
+          kind: 'durable',
+          canvasId,
+          sessionId: newSessionId,
+          readOnlyHandle: false,
+          identity: { prefix: newSessionId, source: 'durable-session-id' },
+          log: [],
+          generation: { durable: true, aborted: false, intentEpoch: 0, modelEpoch: 0, permissionMode: 'full-access' },
+          turn: newTurnAccumulator(),
+          busy: false,
+          compacting: false,
+          persistence: 'created',
+          budgetDirectory: path.join(dir, `${newUuid}.budget`),
+          skillCatalog: {},
+          waiters: 0,
+          recovering: null,
+          submittedRequest: null,
+          submittingRequest: null,
+        };
+        fs.mkdirSync(dstEntry.budgetDirectory, { recursive: true, mode: 0o700 });
+        dstEntry.generation.persistEffects = () => persistEffects(dstEntry);
+        const { tools, models } = await installDurableExtensions({
+          entry: dstEntry,
+          registry,
+          canvasId,
+          sessionId: newSessionId,
+          buildTools,
+          skills,
+          skillController,
+          readCanvas,
+          maxPlanContinuations,
+          authorization,
+          refreshStudioDigest,
+          persistEffects,
+          state,
+          update,
+          runWithBudget,
+          getModels,
+          extensions,
+          codemodeSandbox,
+        });
+        openCount += 1;
+        dstEntry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${newUuid}.sqlite`)), {
+          models,
+          registry,
+          readOnly: false,
+          ...(telemetry ? { telemetry } : {}),
+          settings: {
+            stream: { timeoutMs: 180000, maxRetries: 0, cacheRetention: resolveHostCacheRetention() },
+            retry: { maxRetries: 0 },
+            afterFailedRun: 'continue',
+            toolExecution: 'parallel',
+            steeringMode: 'all',
+            ...settings,
+          },
+        }, CTX);
+        const parentConv = await dstEntry.harness.conversation(srcConvId, CTX);
+        if (!parentConv) throw fail('corrupt_session_manifest');
+        const configuredModel = await getModelRef(dstEntry);
+        const modelRef = sourceAgent?.model?.provider && sourceAgent?.model?.modelId
+          ? sourceAgent.model
+          : configuredModel?.provider && configuredModel?.modelId
+            ? configuredModel
+            : { provider: configuredModel?.provider || 'beeftv', modelId: 'unconfigured' };
+        const forkedConv = await parentConv.fork(atEntryId, {
+          ownership: { kind: 'ownerless' },
+          agent: {
+            model: modelRef,
+            tools,
+            instructions: SYSTEM_PROMPT,
+            thinkingLevel: sourceDocCopy.thinkingLevel || sourceAgent?.thinkingLevel || thinkingLevel,
+            cwd,
+          },
+          init: async (tx, id) => { (await tx.doc(ProviderDoc, id)).sessionId = newSessionId; },
+        }, CTX);
+        dstEntry.root = forkedConv;
+        const keptTurns = (sourceDocCopy.turns || []).slice(0, turnIndex + 1).map((turn) => ({
+          ...turn,
+          sessionId: newSessionId,
+          // 继承自父会话的旧提议仍绑定父会话的后端 AssistantTurn，分叉后统一标记为失效，避免跨分支误记费用或延续任务。
+          ...(Array.isArray(turn.proposals) && turn.proposals.length ? { proposalsInvalidated: true } : {}),
+        }));
+        const keptTurnIds = new Set(keptTurns.map((turn) => turn.turnId));
+        const restoredPlan = keptTurns.at(-1)?.plan ? JSON.parse(JSON.stringify(keptTurns.at(-1).plan)) : emptyPlan();
+        const latestForked = await forkedConv.entries({ order: 'descending' }, 1, undefined, CTX);
+        const affinityMinEntryId = (latestForked.items[0]?.id ?? atEntryId) + 1;
+        await update(dstEntry, (doc) => {
+          doc.canvasId = canvasId;
+          doc.sessionId = newSessionId;
+          doc.conversationId = forkedConv.id;
+          doc.active = null;
+          doc.stopRequests = [];
+          doc.turns = keptTurns;
+          doc.plan = restoredPlan;
+          doc.loadedSkills = (doc.loadedSkills || []).filter((item) => keptTurnIds.has(item?.turnId));
+          doc.pendingSkillRollback = null;
+          doc.roundProposes = false;
+          doc.lastStudioSnapshot = null;
+          doc.lastStudioSnapshotRevision = null;
+          doc.studioDigestText = '';
+          doc.forkedFrom = forkedFrom;
+          doc.affinityMinEntryId = affinityMinEntryId;
+        });
+        writeManifest({
+          sessionId: newSessionId,
+          canvasId,
+          version: durableVersion,
+          createdAt,
+          conversationId: forkedConv.id,
+          forkedFrom,
+        });
+        await install(dstEntry);
+        return {
+          sessionId: newSessionId,
+          conversationId: forkedConv.id,
+          forkedFrom,
+          turnCount: keptTurns.length,
+        };
+      } catch (error) {
+        if (dstEntry?.harness) {
+          dstEntry.disposed = true;
+          await dstEntry.harness.close(CTX).catch(() => {});
+        }
+        for (const suffix of ['.json', '.sqlite', '.sqlite-wal', '.sqlite-shm', '.budget']) {
+          fs.rmSync(path.join(dir, `${newUuid}${suffix}`), { recursive: true, force: true });
+        }
+        throw error;
+      }
+    });
   }
 
   async function deleteSession(canvasId, sessionId, { refreshCanvasBusy, isEntryBusy, readSafeCurrentPointer }) {
@@ -479,6 +727,7 @@ export function createDurableSessionRepository({
     history,
     status,
     listCanvasSessions,
+    forkSession,
     deleteSession,
     recordEvent,
   };

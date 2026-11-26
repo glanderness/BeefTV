@@ -124,7 +124,7 @@ export type GenerationOrder = {
     status: "pending" | "approved" | "submitted" | "rejected";
     approvedBy?: string;
     approvedAt?: string;
-    kind: "image" | "video" | "audio";
+    kind: "image" | "video" | "audio" | "mixed";
     model: string;
     modelKey: string;
     pricing?: unknown;
@@ -133,6 +133,8 @@ export type GenerationOrder = {
     productionNodeIds?: string[];
     targetViews?: GenerationOrderTargetView[];
     sourceTurnId?: string;
+    sessionId?: string;
+    estimatedCny?: number;
     taskIds?: string[];
     regenerate?: boolean;
     continuationId?: string;
@@ -144,7 +146,7 @@ export type GenerationOrder = {
 export type AssistantGenerationProposal = {
     proposalId: string;
     orderId?: string;
-    kind: "image" | "video" | "audio";
+    kind: "image" | "video" | "audio" | "mixed";
     nodeIds: string[];
     model: string;
     modelKey: string;
@@ -362,11 +364,20 @@ export type AssistantTurnOutput = { taskId: string; kind: "video"; sourceRevisio
     | { kind: "project"; resourceId: string; fileName: string; sourceRevision?: number }
     | { kind: "file"; resourceId: string; fileName: string; mimeType?: string; bytes?: number };
 
+export type AssistantSessionForkSource = {
+    sessionId: string;
+    turnId: string;
+    turnIndex: number;
+    sourceTitle?: string;
+    createdAt?: string;
+};
+
 export type AssistantSessionSummary = {
     sessionId: string;
     title: string;
     updatedAt: string;
     turnCount: number;
+    forkedFrom?: AssistantSessionForkSource;
 };
 
 export type AssistantSessionList = {
@@ -380,6 +391,7 @@ export type AssistantHistory = {
     pausedTurnReason?: string | null;
     thinkingLevel?: AssistantThinkingLevel;
     contextUsage?: AssistantContextUsage | null;
+    forkedFrom?: AssistantSessionForkSource | null;
     turns: (AssistantTurn & { undone?: boolean })[];
     active?: { turnId: string; requestId?: string; continuationId?: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
         references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running";

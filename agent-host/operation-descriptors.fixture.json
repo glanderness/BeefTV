@@ -482,7 +482,7 @@
   },
   {
     "id": "canvas.generation.propose",
-    "summary": "按节点已保存参数冻结生成单与报价。核对返回的 targets.parameters 和 estimate 后再提交，参数或报价不一致时停止",
+    "summary": "按节点参数冻结生成单与报价（支持多模型/混合媒体合并）。核对 targets.parameters 与 estimate 后再提交",
     "readOnly": true,
     "scope": "canvas",
     "params": {
@@ -503,7 +503,8 @@
           "enum": [
             "image",
             "video",
-            "audio"
+            "audio",
+            "mixed"
           ]
         },
         "productionNodeIds": {
@@ -523,8 +524,7 @@
       },
       "required": [
         "canvasId",
-        "nodeIds",
-        "kind"
+        "nodeIds"
       ]
     },
     "assistantModes": [
@@ -555,7 +555,8 @@
           "enum": [
             "image",
             "video",
-            "audio"
+            "audio",
+            "mixed"
           ],
           "type": "string"
         },
@@ -613,7 +614,8 @@
           "enum": [
             "image",
             "video",
-            "audio"
+            "audio",
+            "mixed"
           ],
           "type": "string"
         },
@@ -2516,6 +2518,146 @@
     "assistantModes": [
       "full-access",
       "read-only",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
+    "id": "project.bible.get",
+    "summary": "读取当前项目或画布共享的创作设定集（角色外观、画风、色彩、场景、镜头规范与创作禁忌）",
+    "readOnly": true,
+    "scope": "canvas",
+    "params": {
+      "type": "object",
+      "properties": {
+        "canvasId": {
+          "type": "string",
+          "description": "当前画布 ID（自动解析所属项目的共享设定集）"
+        },
+        "projectId": {
+          "type": "string",
+          "description": "可选项目 ID（未传 canvasId 时使用）"
+        }
+      }
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
+    "id": "project.bible.update",
+    "summary": "创建或局部更新当前项目/画布的创作设定集（支持 expectedRevision 防覆盖；内置助手与外部 MCP 共享）",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "properties": {
+        "cameraRules": {
+          "type": "string"
+        },
+        "canvasId": {
+          "description": "当前画布 ID（自动写入所属项目的共享设定集）",
+          "type": "string"
+        },
+        "characters": {
+          "items": {
+            "properties": {
+              "appearance": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "referenceAssetId": {
+                "type": "string"
+              },
+              "voice": {
+                "type": "string"
+              },
+              "wardrobe": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "colorPalette": {
+          "type": "string"
+        },
+        "expectedRevision": {
+          "description": "期望版本号，首次写入可传 0",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "locations": {
+          "items": {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "lighting": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "referenceAssetId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "logline": {
+          "type": "string"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "projectId": {
+          "description": "可选项目 ID（未传 canvasId 时使用）",
+          "type": "string"
+        },
+        "taboos": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "visualStyle": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [
+      "full-access",
       "canvas"
     ],
     "replay": "safe"

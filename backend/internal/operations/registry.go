@@ -26,11 +26,27 @@ type Context struct {
 	UserID      string
 	Caller      Caller
 	Domain      Domain
-	// Store、Binder、TaskControl 和 BusinessGateway 供复用操作记录、任务域或底层工作区接口的操作使用；业务数据仍走 Domain。
+	// Store、Tx、Binder、TaskControl 和 BusinessGateway 供复用操作记录、任务域或底层工作区接口的操作使用；业务数据仍走 Domain。
 	Store           *Store
+	Tx              *gorm.DB
 	Binder          DomainBinder
 	TaskControl     TaskController
 	BusinessGateway BusinessGateway
+}
+
+// DB returns the active transaction DB when executing inside a write operation,
+// falling back to Store.db for read-only operations so SQLite never deadlocks.
+func (c *Context) DB() *gorm.DB {
+	if c == nil {
+		return nil
+	}
+	if c.Tx != nil {
+		return c.Tx
+	}
+	if c.Store != nil {
+		return c.Store.db
+	}
+	return nil
 }
 
 // Handler 实现一个操作；返回值必须是可 JSON 序列化的业务结果。
@@ -350,14 +366,14 @@ func (r *Registry) Execute(req Request) (Result, error) {
 			return opErr
 		},
 	}
-	outcome, err := r.store.RunDomain(runCtx, runReq, r.binder, func(domain Domain) ([]byte, error) {
+	outcome, err := r.store.runDomainInTx(runCtx, runReq, r.binder, func(tx *gorm.DB, domain Domain) ([]byte, error) {
 		activeDomain = domain
 		// 撤销外部写入本身是回退动作，不能再记成一次新的外部写入。
 		trackCanvasWrite := !op.ReadOnly && op.ID != "skill.script.run" && op.ID != "canvas.external.write.undo" && strings.TrimSpace(target.CanvasID) != ""
 		if trackCanvasWrite {
 			beforeCanvasRaw, _ = domain.UserCanvasProject(req.UserID, target.CanvasID)
 		}
-		execCtx := &Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain, OperationID: opID, TurnID: req.TurnID, Store: r.store, Binder: r.binder, BusinessGateway: r.businessGateway}
+		execCtx := &Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain, OperationID: opID, TurnID: req.TurnID, Store: r.store, Tx: tx, Binder: r.binder, BusinessGateway: r.businessGateway}
 		if controller, ok := r.binder.(TaskController); ok {
 			execCtx.TaskControl = controller
 		}

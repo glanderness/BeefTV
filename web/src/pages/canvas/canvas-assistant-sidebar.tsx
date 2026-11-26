@@ -1,8 +1,9 @@
 import { createClientId } from "@/lib/client-id";
 import { Button, Dropdown, Tooltip } from "antd";
-import { History, MessageSquarePlus, Trash2, X, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Blocks, BookOpen, GitBranch, History, Sparkles, SquarePen, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { CreativeBibleDrawer } from "@/components/project/creative-bible-drawer";
 import { AppDrawer } from "@/components/ui/product/app-drawer";
 import { assetLibraryQueryKey, assetPickerQueryKey } from "@/components/assets/asset-view-session";
 import { appQueryClient } from "@/lib/query-client";
@@ -68,6 +69,8 @@ export function CanvasAssistantSidebar(props: Props) {
     const [loadedDraftIdentity, setLoadedDraftIdentity] = useState<string | null>(null);
     const draftWriteVersion = useRef(0);
     const [skillsOpen, setSkillsOpen] = useState(false);
+    const [bibleOpen, setBibleOpen] = useState(false);
+    const [sessionsMenuOpen, setSessionsMenuOpen] = useState(false);
     const [skillInstallOpen, setSkillInstallOpen] = useState(false);
     const [skillInstallGeneration, setSkillInstallGeneration] = useState(0);
     const [referencePickerOpen, setReferencePickerOpen] = useState(false);
@@ -206,11 +209,19 @@ export function CanvasAssistantSidebar(props: Props) {
               return {
                   key: item.sessionId,
                   label: (
-                      <div className="flex items-center justify-between gap-2">
-                          <span className="min-w-0 flex-1 truncate">{displayTitle}</span>
+                      <div className="canvas-assistant-session-row">
+                          <span className="canvas-assistant-session-title">
+                              {item.forkedFrom ? (
+                                  <span className="canvas-assistant-branch-badge">
+                                      <GitBranch size={10} aria-hidden="true" />
+                                      分支
+                                  </span>
+                              ) : null}
+                              <span className="canvas-assistant-session-title-text">{displayTitle}</span>
+                          </span>
                           <button
                               type="button"
-                              className="inline-flex size-6 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                              className="canvas-assistant-session-delete"
                               aria-label={`删除会话 ${deleteTitle}`}
                               title="删除对话"
                               onClick={(event) => {
@@ -233,9 +244,11 @@ export function CanvasAssistantSidebar(props: Props) {
     const activePluginPanel = sidePanelEntries.find((entry) => entry.payload.id === activeSidePanelId);
     const ActivePluginPanelComp = activePluginPanel?.payload.component;
 
+    const sessionsDisabled = assistant.streaming || assistant.sessionBusy || assistant.compacting;
+
     const content = (
         <div className="canvas-assistant-panel" data-canvas-no-zoom>
-            <header className="canvas-assistant-header">
+            <header className="canvas-assistant-header" data-streaming={assistant.streaming ? "true" : undefined}>
                 <div className="canvas-assistant-heading">
                     <h2>BeefTV Agent</h2>
                     {assistant.streaming ? (
@@ -245,16 +258,69 @@ export function CanvasAssistantSidebar(props: Props) {
                         </span>
                     ) : null}
                 </div>
-                <Link to="/skills" className="canvas-assistant-meta" aria-label="打开技能市场和我的投稿">技能</Link>
-                <Tooltip title="新对话">
-                    <Button type="text" size="small" aria-label="新对话" disabled={assistant.streaming || assistant.sessionBusy || assistant.compacting} icon={<MessageSquarePlus className="size-4" />} onClick={() => void assistant.startNewSession()} />
-                </Tooltip>
-                <Dropdown trigger={["click"]} placement="bottomRight" menu={{ items: sessionItems, selectedKeys: assistant.sessionId ? [assistant.sessionId] : [] }}>
-                    <Button type="text" size="small" aria-label="历史对话" disabled={assistant.streaming || assistant.sessionBusy || assistant.compacting} icon={<History className="size-4" />} />
-                </Dropdown>
-                <Tooltip title="关闭 Agent">
-                    <Button type="text" size="small" aria-label="关闭 Agent" icon={<X className="size-4" />} onClick={() => assistant.setOpen(false)} />
-                </Tooltip>
+                <div className="canvas-assistant-header-group">
+                    <Tooltip title="项目创作设定集（角色、画风与禁忌，助手与外部工具共用）">
+                        <button
+                            type="button"
+                            className="canvas-assistant-header-pill"
+                            aria-label="创作设定集"
+                            onClick={() => setBibleOpen(true)}
+                        >
+                            <BookOpen size={13.5} aria-hidden="true" />
+                            <span className="canvas-assistant-header-pill-label">设定集</span>
+                        </button>
+                    </Tooltip>
+                    <Tooltip title="打开技能市场与已安装技能">
+                        <Link to="/skills" className="canvas-assistant-header-pill" aria-label="打开技能市场和我的投稿">
+                            <Blocks size={13.5} aria-hidden="true" />
+                            <span className="canvas-assistant-header-pill-label">技能</span>
+                        </Link>
+                    </Tooltip>
+                </div>
+                <span className="canvas-assistant-header-divider" aria-hidden="true" />
+                <div className="canvas-assistant-header-group">
+                    <Tooltip title="新对话">
+                        <button
+                            type="button"
+                            className="canvas-assistant-icon-btn"
+                            aria-label="新对话"
+                            disabled={sessionsDisabled}
+                            onClick={() => void assistant.startNewSession()}
+                        >
+                            <SquarePen size={15} aria-hidden="true" />
+                        </button>
+                    </Tooltip>
+                    <Dropdown
+                        disabled={sessionsDisabled}
+                        open={sessionsMenuOpen && !sessionsDisabled}
+                        onOpenChange={(next) => setSessionsMenuOpen(next && !sessionsDisabled)}
+                        trigger={["click"]}
+                        placement="bottomRight"
+                        menu={{ items: sessionItems, selectedKeys: assistant.sessionId ? [assistant.sessionId] : [] }}
+                    >
+                        <Tooltip title={sessionsMenuOpen && !sessionsDisabled ? "" : "历史对话"}>
+                            <button
+                                type="button"
+                                className="canvas-assistant-icon-btn"
+                                aria-label="历史对话"
+                                data-active={sessionsMenuOpen && !sessionsDisabled ? "true" : undefined}
+                                disabled={sessionsDisabled}
+                            >
+                                <History size={15} aria-hidden="true" />
+                            </button>
+                        </Tooltip>
+                    </Dropdown>
+                    <Tooltip title="关闭 Agent">
+                        <button
+                            type="button"
+                            className="canvas-assistant-icon-btn"
+                            aria-label="关闭 Agent"
+                            onClick={() => assistant.setOpen(false)}
+                        >
+                            <X size={15} aria-hidden="true" />
+                        </button>
+                    </Tooltip>
+                </div>
             </header>
 
             {sidePanelEntries.length > 0 ? (
@@ -301,12 +367,30 @@ export function CanvasAssistantSidebar(props: Props) {
                 {assistant.historyError ? <div className="canvas-assistant-notice" role="status"><span>{assistant.historyError}</span><Button size="small" onClick={() => void assistant.reloadHistory()}>重新读取</Button></div> : !assistant.historyLoaded && !isAssistantProviderUnreadyReason(assistant.status?.reason) ? <p className="canvas-assistant-meta" role="status">正在读取对话…</p> : null}
                 {assistant.historyLoaded && turnCount === 0 && !assistant.pendingUserText && !assistant.pendingAttachments.length ? (
                     <div className="canvas-assistant-empty">
-                        <h3>想在这张画布上做什么？</h3>
-                        {ASSISTANT_STARTER_PROMPTS.slice(0, 3).map((prompt, index) => (
-                            <button key={prompt} type="button" className="canvas-assistant-starter" onClick={() => setDraft(prompt)}>
-                                <span>{["拆分分镜", "完善选中镜头", "整理画布"][index]}</span><ArrowUpRight size={14} aria-hidden="true" />
-                            </button>
-                        ))}
+                        <div className="canvas-assistant-empty-head">
+                            <span className="canvas-assistant-empty-mark" aria-hidden="true">
+                                <Sparkles size={16} />
+                            </span>
+                            <h3>想在这张画布上做什么？</h3>
+                            <p className="canvas-assistant-empty-sub">拆解分镜、润色镜头提示词，或拖入参考图与文档。</p>
+                        </div>
+                        {ASSISTANT_STARTER_PROMPTS.slice(0, 3).map((prompt, index) => {
+                            const titles = ["拆分分镜", "完善选中镜头", "整理画布"];
+                            const descs = [
+                                "按剧本生成结构化分镜板与首帧规划",
+                                "补全选中节点的画面构图与运镜描述",
+                                "理清节点分组、连线与待生成任务",
+                            ];
+                            return (
+                                <button key={prompt} type="button" className="canvas-assistant-starter" onClick={() => setDraft(prompt)}>
+                                    <span className="canvas-assistant-starter-copy">
+                                        <span className="canvas-assistant-starter-title">{titles[index]}</span>
+                                        <span className="canvas-assistant-starter-desc">{descs[index]}</span>
+                                    </span>
+                                    <ArrowUpRight className="canvas-assistant-starter-arrow" size={15} aria-hidden="true" />
+                                </button>
+                            );
+                        })}
                     </div>
                 ) : null}
 
@@ -323,6 +407,7 @@ export function CanvasAssistantSidebar(props: Props) {
                         generationDisabled={assistant.streaming || assistant.sessionBusy || assistant.compacting || assistant.awaitingReceipt || !assistant.historyLoaded || Boolean(assistant.historyError)}
                         onLocate={onLocateNodes}
                         onUndo={(turnId) => void assistant.undoTurn(turnId)}
+                        onFork={!readOnly && Boolean(assistant.sessionId?.startsWith("durable:")) ? (turnId) => void assistant.forkSession(turnId) : undefined}
                         onRunProposal={onRunProposal}
                         onRunScriptProposal={(proposal, turnId, alwaysAllow) => void assistant.runScriptProposal(proposal, turnId, alwaysAllow)}
                         runningScriptProposalIds={assistant.runningScriptProposalIds}
@@ -404,6 +489,8 @@ export function CanvasAssistantSidebar(props: Props) {
                 onPermissionChange={assistant.setPermissionMode}
                 thinkingLevel={assistant.thinkingLevel}
                 onThinkingLevelChange={(level) => void assistant.setThinkingLevel(level)}
+                autoConfirmMaxCny={assistant.autoConfirmMaxCny}
+                onAutoConfirmMaxCnyChange={!readOnly ? (limit) => void assistant.setAutoConfirmMaxCny(limit) : undefined}
                 contextUsage={assistant.contextUsage}
                 canCompact={Boolean(assistant.sessionId?.startsWith("durable:")) && assistant.turns.length > 0}
                 compacting={assistant.compacting}
@@ -423,6 +510,8 @@ export function CanvasAssistantSidebar(props: Props) {
                 onFiles={addFiles}
                 onOpenReferences={() => { setReferencePickerOpen(value => !value); setSkillsOpen(false); }}
                 onOpenSkills={() => { setSkillsOpen(value => !value); setReferencePickerOpen(false); void loadSkills(); }}
+                referencesActive={referencePickerOpen}
+                skillsActive={skillsOpen}
                 inputContent={<>
                     <CanvasAssistantAttachments attachments={inputReady ? attachments : []} onChange={(index, value) => setAttachments(items => items.map((item, i) => i === index ? value : item))} onRemove={index => setAttachments(items => items.filter((_, i) => i !== index))} />
                     {(inputReady ? uploads : []).map(item => <div key={item.id} className="canvas-assistant-notice" role="status"><span>{item.file.name} · {item.busy ? "正在保存素材…" : item.error}</span>
@@ -446,6 +535,7 @@ export function CanvasAssistantSidebar(props: Props) {
                 setSkillsOpen(true);
                 void loadSkills();
             }} />
+            <CreativeBibleDrawer open={bibleOpen} onClose={() => setBibleOpen(false)} canvasId={assistant.canvasId} />
                 </>
             )}
         </div>

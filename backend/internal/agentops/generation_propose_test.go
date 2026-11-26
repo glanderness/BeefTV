@@ -325,19 +325,46 @@ func TestGenerationProposeFallsBackToDefaultWhenNodeHasNoModel(t *testing.T) {
 	}
 }
 
-func TestGenerationProposeRejectsMixedNodeModels(t *testing.T) {
+func TestGenerationProposeCombinesMixedNodeModels(t *testing.T) {
 	h := newHarness(t)
 	writeGenerationModels(t, h.dataDir)
 	h.setNodeModel(t, "n1", "beeftv::gpt-image-2.5-flare")
 	h.setNodeModel(t, "n2", "beeftv::gpt-image-2")
-
-	_, err := h.run(t, "canvas.generation.propose", "", map[string]any{
-		"canvasId": h.canvasID, "nodeIds": []any{"n1", "n2"}, "kind": "image"}, false)
-	if err == nil {
-		t.Fatal("不同节点模型必须拒绝，不能静默挑选其中一个")
+	// 清除 n1 -> n2 依赖边，使两个不同模型节点可同批就绪并合并为一张确认卡。
+	raw, err := h.service.UserCanvasProject(h.userID, h.canvasID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if reason := agentops.AsError(err).Reason; reason != "mixed_generation_models" {
-		t.Fatalf("reason 应为 mixed_generation_models，得到 %q", reason)
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["connections"] = []any{}
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.UpsertUserCanvasProject(h.userID, encoded); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := h.run(t, "canvas.generation.propose", "", map[string]any{
+		"canvasId": h.canvasID, "nodeIds": []any{"n1", "n2"}, "kind": "image"}, false)
+	if err != nil {
+		t.Fatalf("多模型同批提议应合并成功: %v", err)
+	}
+	payload := result.Result.(map[string]any)
+	if payload["model"] != "多个模型" || payload["modelKey"] != "" {
+		t.Fatalf("多模型提议应标记为多个模型: %#v", payload)
+	}
+	targets, ok := payload["targets"].([]any)
+	if !ok || len(targets) != 2 {
+		t.Fatalf("应返回 2 个目标明细: %#v", payload["targets"])
+	}
+	first, _ := targets[0].(map[string]any)
+	second, _ := targets[1].(map[string]any)
+	if first["modelKey"] != "beeftv::gpt-image-2.5-flare" || second["modelKey"] != "beeftv::gpt-image-2" {
+		t.Fatalf("每个节点应保留各自模型: %#v", payload["targets"])
 	}
 }
 

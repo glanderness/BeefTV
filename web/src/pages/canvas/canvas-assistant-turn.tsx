@@ -1,6 +1,7 @@
-import { App, Button } from "antd";
+import { App, Button, Tooltip } from "antd";
 import copy from "copy-to-clipboard";
-import { Crosshair, Undo2 } from "lucide-react";
+import { Check, Copy, Crosshair, GitBranch, Undo2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -29,6 +30,7 @@ type Props = {
     generationDisabled?: boolean;
     onLocate: (nodeIds: string[]) => void;
     onUndo: (turnId: string) => void;
+    onFork?: (turnId: string) => void;
     onRunProposal: (proposal: AssistantGenerationProposal, turnId: string) => void;
     onRunScriptProposal?: (proposal: AssistantScriptProposal, turnId: string, alwaysAllowSession: boolean) => void;
     runningScriptProposalIds?: ReadonlySet<string>;
@@ -71,8 +73,13 @@ export function CanvasAssistantUserMessage({ text, selectedCount, continuationId
     );
 }
 
-export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, onLocate, onUndo, onRunProposal, onRunScriptProposal, runningScriptProposalIds, scriptProposalFeedback, onDismissProposal, onContinue, nodes, onCheckResults, reasoningOpen, onReasoningOpenChange }: Props) {
+export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, onLocate, onUndo, onFork, onRunProposal, onRunScriptProposal, runningScriptProposalIds, scriptProposalFeedback, onDismissProposal, onContinue, nodes, onCheckResults, reasoningOpen, onReasoningOpenChange }: Props) {
     const { message } = App.useApp();
+    const [copiedReply, setCopiedReply] = useState(false);
+    const copyTimerRef = useRef<number | null>(null);
+    useEffect(() => () => {
+        if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    }, []);
     const config = useEffectiveConfig();
     const toolCardEntries = usePluginSlot("assistant.toolCard");
     const summary = assistantChangeSummary(turn.change);
@@ -83,6 +90,24 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
     const canContinue = Boolean(turn.error && assistantTurnCanContinue(turn.errorReason));
     // 停下前已经改了画布：保留改动，可在输入框确认后接着做；不自动重发。
     const stoppedWithChanges = Boolean(turn.cancelled && !turn.error && summary && !undone);
+    const visibleReplyText = assistantVisibleReply(turn.reply || "");
+    const copyReply = async () => {
+        if (!visibleReplyText) return;
+        try {
+            if (await copy(visibleReplyText)) {
+                setCopiedReply(true);
+                if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+                copyTimerRef.current = window.setTimeout(() => {
+                    copyTimerRef.current = null;
+                    setCopiedReply(false);
+                }, 1600);
+            } else {
+                message.error("复制失败");
+            }
+        } catch {
+            message.error("复制失败");
+        }
+    };
     const copyDiagnostics = async () => {
         try {
             const text = formatAssistantDiagnostics(turn, { canvasId, assistantSessionId: sessionId || undefined });
@@ -190,11 +215,35 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                 const running = Boolean(runningProposalIds?.has(proposal.proposalId));
                 const progress = started && nodes ? assistantProposalProgress(proposal, nodes) : null;
                 const awaitingConfirmation = !started && !skipped && !undone && !turn.proposalsInvalidated;
+                const inactiveProposal = !started && !awaitingConfirmation;
                 const productionParts = assistantProductionProposalParts(proposal, awaitingConfirmation);
                 const orderTargetLines = assistantOrderTargetLines(proposal, awaitingConfirmation);
-                const legacyProposalNote = !assistantVisibleReply(turn.reply || "") && proposal.note?.trim() ? proposal.note.trim() : "";
+                const legacyProposalNote = !visibleReplyText && proposal.note?.trim() ? proposal.note.trim() : "";
+                const statusTone = started ? "active" : awaitingConfirmation ? "pending" : "inactive";
+                const statusHeading = started
+                    ? (proposal.regenerate ? "原地重做中" : "生成进行中")
+                    : awaitingConfirmation
+                        ? (proposal.regenerate ? "待确认 · 原地重做" : proposal.kind === "mixed" ? "待确认 · 多模型方案" : "待确认 · 生成方案")
+                        : undone
+                            ? "已撤销"
+                            : skipped
+                                ? "已跳过"
+                                : "已失效";
+                const estimateSummary = proposal.production?.estimate ?? proposal.estimate;
+                const estimateAmount = estimateSummary?.amount;
+                const estimateUnknown = estimateSummary?.unknown ?? 0;
+                const estimateBadge = awaitingConfirmation && estimateUnknown === 0 && typeof estimateAmount === "number" && Number.isFinite(estimateAmount) && estimateAmount > 0
+                    ? `约 ¥${estimateAmount < 0.1 ? Number(estimateAmount.toFixed(4)).toString() : estimateAmount.toFixed(2)}`
+                    : null;
                 return (
-                    <div key={proposal.proposalId} className="canvas-assistant-card">
+                    <div key={proposal.proposalId} className={`canvas-assistant-card${inactiveProposal ? " canvas-assistant-card-inactive" : ""}`}>
+                        <div className="canvas-assistant-proposal-head">
+                            <span className="canvas-assistant-proposal-status-row">
+                                <span className="canvas-assistant-status-dot" data-tone={statusTone} aria-hidden="true" />
+                                <span>{statusHeading}</span>
+                            </span>
+                            {estimateBadge ? <span className="canvas-assistant-status-pill">{estimateBadge}</span> : null}
+                        </div>
                         {legacyProposalNote ? (
                             <div className="canvas-assistant-proposal-note">
                                 {legacyProposalNote.split("\n").map((part, partIndex) => <div key={partIndex} className={part.length > 80 ? "canvas-assistant-pretty-line" : undefined}>{part}</div>)}
@@ -348,6 +397,38 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                     </div>
                 );
             })}
+
+            {(visibleReplyText || onFork) ? (
+                <div className="canvas-assistant-turn-actions">
+                    {visibleReplyText ? (
+                        <Tooltip title={copiedReply ? "已复制回复" : "复制回复"}>
+                            <button
+                                type="button"
+                                className="canvas-assistant-micro-btn"
+                                aria-label="复制回复"
+                                onClick={() => void copyReply()}
+                            >
+                                {copiedReply ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+                                <span>{copiedReply ? "已复制" : "复制"}</span>
+                            </button>
+                        </Tooltip>
+                    ) : null}
+                    {onFork ? (
+                        <Tooltip title="从这一轮分出新分支试稿，保留当前对话不变">
+                            <button
+                                type="button"
+                                className="canvas-assistant-micro-btn"
+                                aria-label="从此处分叉试稿"
+                                disabled={generationDisabled}
+                                onClick={() => onFork(turn.turnId)}
+                            >
+                                <GitBranch size={13} aria-hidden="true" />
+                                <span>分叉试稿</span>
+                            </button>
+                        </Tooltip>
+                    ) : null}
+                </div>
+            ) : null}
         </div>
     );
 }

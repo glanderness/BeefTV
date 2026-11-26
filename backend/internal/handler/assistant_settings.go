@@ -22,7 +22,10 @@ func RegisterAssistantSettingsRoutes(r gin.IRouter, svc assistantSettingsService
 		if !guard(c, false) {
 			return
 		}
-		ok(c, gin.H{"skillScriptAutoRun": operations.SkillScriptAutoRunEnabled(svc.Database())})
+		ok(c, gin.H{
+			"skillScriptAutoRun": operations.SkillScriptAutoRunEnabled(svc.Database()),
+			"autoConfirmMaxCny":  operations.AssistantAutoConfirmMaxCNY(svc.Database()),
+		})
 	})
 	r.PATCH("/assistant/settings", func(c *gin.Context) {
 		if !guard(c, true) {
@@ -30,16 +33,28 @@ func RegisterAssistantSettingsRoutes(r gin.IRouter, svc assistantSettingsService
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10)
 		var req struct {
-			SkillScriptAutoRun *bool `json:"skillScriptAutoRun"`
+			SkillScriptAutoRun *bool    `json:"skillScriptAutoRun"`
+			AutoConfirmMaxCNY  *float64 `json:"autoConfirmMaxCny"`
 		}
-		if err := c.ShouldBindJSON(&req); err != nil || req.SkillScriptAutoRun == nil {
+		if err := c.ShouldBindJSON(&req); err != nil || (req.SkillScriptAutoRun == nil && req.AutoConfirmMaxCNY == nil) {
 			fail(c, http.StatusBadRequest, kernel.BadAuthRequest("请填写有效的助手设置"))
 			return
 		}
-		if err := operations.SetSkillScriptAutoRun(svc.Database(), *req.SkillScriptAutoRun); err != nil {
-			failService(c, err)
-			return
+		if req.SkillScriptAutoRun != nil {
+			if err := operations.SetSkillScriptAutoRun(svc.Database(), *req.SkillScriptAutoRun); err != nil {
+				failService(c, err)
+				return
+			}
 		}
-		ok(c, gin.H{"skillScriptAutoRun": *req.SkillScriptAutoRun})
+		if req.AutoConfirmMaxCNY != nil {
+			if _, err := operations.SetAssistantAutoConfirmMaxCNY(svc.Database(), *req.AutoConfirmMaxCNY); err != nil {
+				failAssistantProposal(c, err)
+				return
+			}
+		}
+		ok(c, gin.H{
+			"skillScriptAutoRun": operations.SkillScriptAutoRunEnabled(svc.Database()),
+			"autoConfirmMaxCny":  operations.AssistantAutoConfirmMaxCNY(svc.Database()),
+		})
 	})
 }

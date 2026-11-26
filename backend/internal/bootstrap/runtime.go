@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -29,6 +30,7 @@ import (
 	"infinite-canvas/backend/internal/localapp"
 	"infinite-canvas/backend/internal/localipc"
 	"infinite-canvas/backend/internal/modelcatalog"
+	"infinite-canvas/backend/internal/operations"
 	"infinite-canvas/backend/internal/pluginhost"
 	"infinite-canvas/backend/internal/plugins"
 	"infinite-canvas/backend/internal/repository"
@@ -282,6 +284,23 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 					w.WriteHeader(http.StatusForbidden)
 					_, _ = w.Write([]byte(`{"code":403,"reason":"invalid_external_identity","msg":"外部调用不能使用助手身份"}`))
 					return
+				}
+				if tool.IsPaidExternalSubmission() {
+					if guardErr := operations.CheckExternalBusinessPaidGuardrail(svc.Database()); guardErr != nil {
+						opErr := operations.AsError(guardErr)
+						status := http.StatusPreconditionFailed
+						if opErr.Code == operations.CodePermissionDenied {
+							status = http.StatusForbidden
+						}
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(status)
+						_ = json.NewEncoder(w).Encode(map[string]any{
+							"code":   status,
+							"reason": opErr.Reason,
+							"msg":    opErr.Message,
+						})
+						return
+					}
 				}
 				r = canvasHandler.WithMCPClient(r, string(agentops.NormalizeClientKind(string(reg.Kind))), tool)
 				router.ServeHTTP(w, canvasHandler.WithExternalBusinessPrincipal(r, reg.Mode == agentops.ClientReadOnly))

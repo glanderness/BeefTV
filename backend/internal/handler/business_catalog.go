@@ -101,6 +101,12 @@ func NewBusinessCatalog(routes gin.RoutesInfo) *BusinessCatalog {
 	return c
 }
 
+// IsPaidExternalSubmission reports whether a Business Catalog route triggers a paid
+// generation or cloud transcription outside canvas.generation.submit pricing.
+func (t BusinessTool) IsPaidExternalSubmission() bool {
+	return t.SubmitsGeneration || (t.Method == http.MethodPost && t.Path == "/timeline/transcriptions")
+}
+
 func (c *BusinessCatalog) Match(method, p string) (BusinessTool, bool) {
 	if method == http.MethodGet && p == "/api/business/tools" {
 		return BusinessTool{ReadOnly: true}, true
