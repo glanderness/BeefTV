@@ -7,7 +7,7 @@ import { DepthComponentsPanel } from "@/components/depth-components-panel";
 import { Box, FolderOpen, HardDrive } from "lucide-react";
 import { getAutoDownloadGeneratedMedia, setAutoDownloadGeneratedMedia } from "@/lib/auto-download-preference";
 import { onStorageNamespaceChange } from "@/lib/user-scope";
-import { getDesktopAppBinding, type DesktopStorageUsage } from "@/services/desktop-runtime";
+import { getDesktopAppBinding, type DesktopAutoDownloadSettings, type DesktopStorageUsage } from "@/services/desktop-runtime";
 import {
     DEFAULT_CANVAS_DOCUMENT_LIMIT_MB,
     getCanvasDocumentLimitMB,
@@ -26,6 +26,9 @@ export function StorageSettingsPane() {
     const { message, modal } = App.useApp();
     const binding = getDesktopAppBinding();
     const hasNativeStorage = Boolean(binding?.StorageSettings && binding.MigrateStorage);
+    const hasNativeAutoDownload = Boolean(
+        binding?.AutoDownloadSettings && binding.ChooseAutoDownloadDirectory && binding.SaveAutoDownloadedMedia,
+    );
     const [directoryOpen, setDirectoryOpen] = useState(false);
     const [depthOpen, setDepthOpen] = useState(false);
     const [editingLimit, setEditingLimit] = useState(false);
@@ -39,6 +42,9 @@ export function StorageSettingsPane() {
     const [savingCanvasLimit, setSavingCanvasLimit] = useState(false);
     const [canvasLimitError, setCanvasLimitError] = useState("");
     const [autoDownloadGeneratedMedia, setAutoDownloadGeneratedMediaState] = useState<boolean>(() => getAutoDownloadGeneratedMedia());
+    const [autoDownloadSettings, setAutoDownloadSettings] = useState<DesktopAutoDownloadSettings>();
+    const [autoDownloadBusy, setAutoDownloadBusy] = useState(false);
+    const [autoDownloadError, setAutoDownloadError] = useState("");
     const [errorSummary, ...errorDetails] = error.split("\n\n");
     useEffect(() => onStorageNamespaceChange(() => setAutoDownloadGeneratedMediaState(getAutoDownloadGeneratedMedia())), []);
     useEffect(() => {
@@ -57,10 +63,22 @@ export function StorageSettingsPane() {
                     if (active) setError("存储信息暂时无法读取，请重试");
                 });
         }
+        if (hasNativeAutoDownload) {
+            void binding
+                ?.AutoDownloadSettings?.()
+                .then((value) => {
+                    if (!active) return;
+                    setAutoDownloadSettings(value);
+                    setAutoDownloadError("");
+                })
+                .catch((err) => {
+                    if (active) setAutoDownloadError(err instanceof Error ? err.message : "自动下载目录暂时无法读取");
+                });
+        }
         return () => {
             active = false;
         };
-    }, [binding, hasNativeStorage]);
+    }, [binding, hasNativeAutoDownload, hasNativeStorage]);
 
     const applyCanvasLimit = async (rawValue: string) => {
         const trimmed = rawValue.trim();
@@ -166,6 +184,49 @@ export function StorageSettingsPane() {
                 }
             },
         });
+    const chooseAutoDownloadDir = async () => {
+        if (!binding?.ChooseAutoDownloadDirectory || autoDownloadBusy) return;
+        setAutoDownloadBusy(true);
+        setAutoDownloadError("");
+        try {
+            const next = await binding.ChooseAutoDownloadDirectory();
+            setAutoDownloadSettings(next);
+            if (!next.cancelled) message.success("已更新自动下载保存目录");
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setAutoDownloadError(msg);
+            message.error(msg);
+        } finally {
+            setAutoDownloadBusy(false);
+        }
+    };
+    const resetAutoDownloadDir = async () => {
+        if (!binding?.ResetAutoDownloadDirectory || autoDownloadBusy) return;
+        setAutoDownloadBusy(true);
+        setAutoDownloadError("");
+        try {
+            const next = await binding.ResetAutoDownloadDirectory();
+            setAutoDownloadSettings(next);
+            message.success("已恢复默认自动下载目录");
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setAutoDownloadError(msg);
+            message.error(msg);
+        } finally {
+            setAutoDownloadBusy(false);
+        }
+    };
+    const openAutoDownloadDir = async () => {
+        if (!binding?.OpenAutoDownloadDirectory || autoDownloadBusy) return;
+        setAutoDownloadBusy(true);
+        try {
+            await binding.OpenAutoDownloadDirectory();
+        } catch (err) {
+            message.error(err instanceof Error ? err.message : String(err));
+        } finally {
+            setAutoDownloadBusy(false);
+        }
+    };
     const currentLimit = savedCanvasLimit === 0 ? "不限制" : `${savedCanvasLimit} MB`;
     const errorNotice = error && <div role="alert" className="storage-error">
         <p>{errorSummary}</p>
@@ -179,6 +240,7 @@ export function StorageSettingsPane() {
                     {hasNativeStorage && <StorageRow name="工作区目录" value={<>
                         <span>{usage?.dataDir || (error ? "无法读取目录" : "正在读取…")}</span>
                         {usage && <small>数据占用 {size(usage.usedBytes)} · 磁盘可用 {size(usage.freeBytes)}</small>}
+                        <small>应用内部数据目录；需要取出图片、视频请使用画布批量下载或下方自动下载</small>
                     </>} action={<Button size="small" disabled={busy} onClick={() => setDirectoryOpen(true)}>更改目录</Button>} />}
                     {usage?.previousDir && binding?.CleanupPreviousStorage && <StorageRow name="待清理的原目录"
                         value={<>{usage.previousDir}<small>{cleanupInterrupted ? "原目录可能已部分清理，请保留当前存储目录。" : `可释放约 ${size(usage.previousBytes || 0)}`}</small></>}
@@ -204,13 +266,29 @@ export function StorageSettingsPane() {
             <section aria-labelledby="storage-files-title">
                 <h2 id="storage-files-title">文件与组件</h2>
                 <div className="storage-list">
-                    <StorageRow name="自动下载生成结果" value="图片、视频和音频保存到默认下载目录" action={
+                    <StorageRow name="自动下载生成结果" value={hasNativeAutoDownload ? "生成完成后自动按项目保存图片、视频和音频" : "图片、视频和音频保存到默认下载目录"} action={
                         <Switch checked={autoDownloadGeneratedMedia} aria-label="生成完成后自动下载到本地" onChange={(checked) => {
                             setAutoDownloadGeneratedMedia(checked);
                             setAutoDownloadGeneratedMediaState(checked);
                             message.success(checked ? "已开启生成完成后自动下载" : "已关闭生成完成后自动下载");
                         }} />
                     } />
+                    {hasNativeAutoDownload && <StorageRow name="自动下载目录" value={<>
+                        <span>{autoDownloadSettings?.directory || (autoDownloadError ? "无法读取目录" : "正在读取…")}</span>
+                        {autoDownloadError ? (
+                            <small role="alert" className="storage-error">{autoDownloadError}</small>
+                        ) : autoDownloadSettings && !autoDownloadSettings.available ? (
+                            <small role="alert" className="storage-error">当前目录不可用，请检查磁盘连接或重新选择</small>
+                        ) : (
+                            <small>{autoDownloadSettings?.customDirectory ? "自定义目录 · 按项目名自动建文件夹" : "默认下载目录 · 按项目名自动建文件夹"}</small>
+                        )}
+                    </>} action={<>
+                        {binding?.OpenAutoDownloadDirectory && <Button size="small" aria-label="打开自动下载目录" disabled={autoDownloadBusy || !autoDownloadSettings?.available} onClick={() => void openAutoDownloadDir()}>打开</Button>}
+                        <Button size="small" aria-label="更改自动下载目录" disabled={autoDownloadBusy} onClick={() => void chooseAutoDownloadDir()}>更改</Button>
+                        {(autoDownloadSettings?.customDirectory || (!autoDownloadSettings && autoDownloadError)) && binding?.ResetAutoDownloadDirectory && (
+                            <Button size="small" aria-label="恢复默认自动下载目录" disabled={autoDownloadBusy} onClick={() => void resetAutoDownloadDir()}>恢复默认</Button>
+                        )}
+                    </>} />}
                     <ReferenceStoragePane />
                     {binding?.DepthComponentStatus && <DepthComponentsPanel render={(details, status) => <>
                         <StorageRow name="深度捕捉组件" value={status} action={

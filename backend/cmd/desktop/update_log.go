@@ -23,6 +23,10 @@ func (a *DesktopApp) OpenUpdateLogDirectory() error {
 	if target == "" {
 		return errors.New("数据目录无法打开，请在存储设置中检查当前目录。")
 	}
+	return openDirectoryInSystemFileManager(target, openDir, "无法打开日志文件夹，请在存储设置中查看当前目录。")
+}
+
+func openDirectoryInSystemFileManager(target string, openDir func(string) error, errMsg string) error {
 	if openDir != nil {
 		return openDir(target)
 	}
@@ -36,7 +40,7 @@ func (a *DesktopApp) OpenUpdateLogDirectory() error {
 		command = exec.Command("xdg-open", target)
 	}
 	if err := command.Start(); err != nil {
-		return errors.New("无法打开日志文件夹，请在存储设置中查看当前目录。")
+		return errors.New(errMsg)
 	}
 	go func() { _ = command.Wait() }()
 	return nil

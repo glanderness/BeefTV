@@ -234,6 +234,72 @@ export async function runCanvasBatchDownloadWithFeedback(
     }
     activeBatchDownloadCount += 1;
     notifyBatchPendingListeners();
+    try {
+        return await executeBatchDownloadWithFeedback(nodes, message, options);
+    } finally {
+        activeBatchDownloadCount = Math.max(0, activeBatchDownloadCount - 1);
+        notifyBatchPendingListeners();
+    }
+}
+
+export async function downloadCanvasProjectsMediaByIds(
+    canvasIds: readonly string[],
+    loadProject: (id: string) => Promise<{ nodes?: CanvasNodeData[] } | undefined>,
+    message: BatchDownloadMessageApi,
+    options?: BatchDownloadOptions & { emptyMessage?: string },
+): Promise<BatchDownloadResult | null> {
+    const validIds = [...new Set(canvasIds.filter(Boolean))];
+    if (!validIds.length) {
+        message.info?.(options?.emptyMessage || "当前项目暂无可下载的图片、视频或音频素材");
+        return null;
+    }
+    if (activeBatchDownloadCount > 0) {
+        message.info?.("正在批量下载中，请稍候完成");
+        return null;
+    }
+    activeBatchDownloadCount += 1;
+    notifyBatchPendingListeners();
+    message.loading?.({
+        key: BATCH_DOWNLOAD_TOAST_KEY,
+        content: "正在读取画布素材...",
+        duration: 0,
+    });
+    try {
+        const collected: CanvasNodeData[] = [];
+        for (const id of validIds) {
+            const project = await loadProject(id);
+            const projectNodes = Array.isArray(project?.nodes) ? project.nodes : [];
+            if (!projectNodes.length) continue;
+            collected.push(
+                ...collectDownloadableMediaNodes(
+                    projectNodes,
+                    projectNodes.map((node) => node.id),
+                ),
+            );
+        }
+        if (!collected.length) {
+            message.destroy?.(BATCH_DOWNLOAD_TOAST_KEY);
+            message.info?.(options?.emptyMessage || "当前项目暂无可下载的图片、视频或音频素材");
+            return null;
+        }
+        return await executeBatchDownloadWithFeedback(collected, message, options);
+    } catch (error) {
+        message.error({
+            key: BATCH_DOWNLOAD_TOAST_KEY,
+            content: error instanceof Error && error.message.trim() ? error.message : "读取画布素材失败，请稍后重试",
+        });
+        return null;
+    } finally {
+        activeBatchDownloadCount = Math.max(0, activeBatchDownloadCount - 1);
+        notifyBatchPendingListeners();
+    }
+}
+
+async function executeBatchDownloadWithFeedback(
+    nodes: CanvasNodeData[],
+    message: BatchDownloadMessageApi,
+    options?: BatchDownloadOptions,
+): Promise<BatchDownloadResult | null> {
     message.loading?.({
         key: BATCH_DOWNLOAD_TOAST_KEY,
         content: `正在批量保存 ${nodes.length} 个素材...`,
@@ -249,9 +315,6 @@ export async function runCanvasBatchDownloadWithFeedback(
             content: error instanceof Error && error.message.trim() ? error.message : "素材下载失败，请稍后重试",
         });
         return null;
-    } finally {
-        activeBatchDownloadCount = Math.max(0, activeBatchDownloadCount - 1);
-        notifyBatchPendingListeners();
     }
 }
 

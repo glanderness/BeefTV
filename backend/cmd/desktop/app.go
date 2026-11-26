@@ -32,6 +32,7 @@ type DesktopApp struct {
 	migrationMu             sync.Mutex
 	workspaceLockMu         sync.Mutex
 	batchSaveMu             sync.Mutex
+	autoDownloadMu          sync.Mutex
 	mediaClipboardMu        sync.Mutex
 	mediaClipboardPath      string
 	writeMediaClipboard     func(context.Context, string) error
@@ -57,6 +58,7 @@ type DesktopApp struct {
 	openRuntime             func(ctx context.Context, dataDir string, onPhase func(phase, detail string)) (*bootstrap.Runtime, error)
 	chooseSavePath          func(ctx context.Context, fileName string) (string, error)
 	chooseSaveDir           func(ctx context.Context) (string, error)
+	chooseAutoDownloadDir   func(ctx context.Context) (string, error)
 	resolveDownloadsDir     func() string
 	revealFile              func(path string) error
 	openDirectory           func(path string) error

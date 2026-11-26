@@ -17,6 +17,7 @@ type CanvasFolderCardProps = {
     folders?: Array<{ id: string; name: string }>;
     onMoveToFolder?: (folderId?: string) => void;
     onDuplicate?: () => Promise<void>;
+    onDownloadMedia?: () => void | Promise<void>;
     onExport?: () => void | Promise<void>;
     onDelete?: () => void;
     onClick: () => void;
@@ -26,7 +27,7 @@ type CanvasFolderCardProps = {
 };
 
 /** 画布库中的文件夹封面：单一卡片表面承载预览和信息，避免相邻卡片互相侵入。 */
-export function CanvasFolderCard({ project, folders = [], onMoveToFolder, onDuplicate, onExport, onDelete, onClick, onCoverError, onPrefetch, opening = false }: CanvasFolderCardProps) {
+export function CanvasFolderCard({ project, folders = [], onMoveToFolder, onDuplicate, onDownloadMedia, onExport, onDelete, onClick, onCoverError, onPrefetch, opening = false }: CanvasFolderCardProps) {
     const { message } = App.useApp();
     const renameProject = useCanvasStore((state) => state.renameProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
@@ -167,6 +168,7 @@ export function CanvasFolderCard({ project, folders = [], onMoveToFolder, onDupl
                             { key: "rename", label: "重命名", onClick: () => startEditing(project.id, project.title) },
                             { key: "cover", label: "修改封面", onClick: () => coverInputRef.current?.click() },
                             { key: "duplicate", label: "创建副本", onClick: () => void onDuplicate?.() },
+                            ...(onDownloadMedia ? [{ key: "download-media", label: "下载全部素材", onClick: () => void onDownloadMedia() }] : []),
                             ...(onExport ? [{ key: "export", label: "导出项目", onClick: () => void onExport() }] : []),
                             { key: "move", label: "移动至文件夹", children: [{ key: "root", label: "未分类", onClick: () => onMoveToFolder?.(undefined) }, ...folders.map((folder) => ({ key: folder.id, label: folder.name, onClick: () => onMoveToFolder?.(folder.id) }))] },
                             { type: "divider" },

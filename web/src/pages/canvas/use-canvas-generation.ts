@@ -13,6 +13,7 @@ import { findGenerationTaskByOperation, listGenerationTasks, recoverTask, subscr
 import { useTaskDetails } from "@/hooks/use-task-details";
 import { readNodeLiveTaskTelemetry } from "@/stores/use-generation-task-telemetry";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { resolveCanvasWorkspaceProjectTitle } from "@/lib/canvas/canvas-workspace-project";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { CANVAS_LEAVE_ABORT_REASON } from "./canvas-generation-executor-types";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
@@ -351,8 +352,10 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                         url: boundNode.metadata.content,
                         storageKey: boundNode.metadata.storageKey,
                         title: boundNode.title,
+                        projectName: resolveCanvasWorkspaceProjectTitle(useCanvasStore.getState().projects, capturedCanvasId),
                         mediaType,
                         mimeType: boundNode.metadata.mimeType,
+                        onError: (err) => message.warning(err instanceof Error && err.message.trim() ? `自动下载未完成：${err.message}` : "自动下载未完成，请检查存储设置中的自动下载目录"),
                     });
                 }
             } catch (error) {
@@ -367,7 +370,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 }
             }
         },
-        [nodesRef, projectId, setNodes],
+        [message, nodesRef, projectId, setNodes],
     );
 
     const retrieveTaskResult = useCallback(async (task: GenerationTask) => {
