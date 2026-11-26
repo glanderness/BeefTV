@@ -44,7 +44,14 @@ export function installModelFetchProxy({
             if (!budget?.turnId || !budget.canvasId) throw new Error('media_authorization_missing');
             let actual;
             if (budget.sessionId) {
-              const pinned = budget.nativeHistory?.origins.get(`${source.toolCallId}:${nativeSourceKey(source)}`);
+              const sourceKey = nativeSourceKey(source);
+              const pinned = budget.nativeHistory?.origins.get(`${source.toolCallId}:${sourceKey}`)
+                || (!source.toolCallId && source.originTurnId
+                  ? budget.nativeHistory?.byOriginSource?.get(`${source.originTurnId}:${sourceKey}`)
+                  : undefined)
+                || (!source.toolCallId && !source.originTurnId
+                  ? budget.nativeHistory?.bySource?.get(sourceKey)
+                  : undefined);
               if (!pinned || (source.originTurnId && source.originTurnId !== pinned.originTurnId)) throw new Error('native_history_requires_reference');
               const { toolCallId, originTurnId, ...nativeSource } = source;
               await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(pinned.originTurnId)}/bind-session`, { sessionId: budget.sessionId, historical: pinned.historical, currentTurnId: budget.turnId, source: nativeSource });

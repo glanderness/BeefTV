@@ -52,10 +52,10 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{AssistantCanvas: true, ID: "canvas.get", Summary: "读取画布内容（节点与连线）", ReadOnly: true, Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"}},"required":["canvasId"]}`),
 		Handler: opCanvasGet})
-	r.Register(Op{ID: "canvas.search", Summary: "搜索工作区内的画布", ReadOnly: true, Scope: ScopeWorkspaceRead,
+	r.Register(Op{AssistantCanvas: true, ID: "canvas.search", Summary: "搜索工作区内的画布", ReadOnly: true, Scope: ScopeWorkspaceRead,
 		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"canvasId":{"type":"string"},"sort":{"type":"string"}}}`),
 		Handler: opCanvasSearch})
-	r.Register(Op{ID: "asset.list", Summary: "列出素材库中的素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
+	r.Register(Op{AssistantCanvas: true, ID: "asset.list", Summary: "列出素材库中的素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
 		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"kind":{"type":"string"},"category":{"type":"string"},"favorite":{"type":"boolean"},"recent":{"type":"boolean"},"project":{"type":"string"},"generated":{"type":"boolean"}}}`),
 		Handler: opAssetList})
 	r.Register(assetGetOperation())

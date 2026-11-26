@@ -6,7 +6,7 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import * as mcpClient from '@deepseek-ai/dsh-mcp-client'
 import {
-  attachLocalRuntime, awayGenerationNotice, bundledRuntimeDir, callOperation, defaultPluginSettings, generationToolSet, hasOperation, inspectWorkspace, localAppStatus,
+  attachLocalRuntime, awayGenerationNotice, bundledRuntimeDir, callOperation, currentSettingsVersion, defaultPluginSettings, generationToolSet, hasOperation, inspectWorkspace, localAppStatus,
   normalizeSettings, startLocalRuntime, startRuntime, validatedSettingsPatch, workspaceJSON,
 } from './runtime.js'
 import { createRuntimeStore } from './runtime-store.js'
@@ -72,7 +72,7 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
   let settingsUpdate = Promise.resolve()
 
   async function writePluginSettings() {
-    const value = { ...pluginSettings }
+    const value = { ...pluginSettings, settingsVersion: currentSettingsVersion }
     pluginSettingsWrite = pluginSettingsWrite.catch(() => {}).then(async () => {
       await mkdir(pluginHome, { recursive: true, mode: 0o700 })
       await writeFile(pluginSettingsPath, JSON.stringify(value), { mode: 0o600 })
@@ -81,9 +81,13 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
   }
 
   // 状态机不能只靠默认值启动：上次关掉「生成完自动继续」后，重启也必须保持关闭。
+  // 老版本落盘的 settings.json 若触发了默认步数上限迁移，启动时顺手写回新版版本号。
   const pluginSettingsReady = readFile(pluginSettingsPath, 'utf8').then(JSON.parse).then(value => {
     pluginSettings = normalizeSettings(value)
     runner.dispatch({ type: 'autoContinueRestored', autoContinue: pluginSettings.autoContinue })
+    if (value?.settingsVersion !== currentSettingsVersion || value?.stepLimit !== pluginSettings.stepLimit) {
+      void writePluginSettings().catch(() => {})
+    }
     return pluginSettings
   }).catch(() => {
     runner.dispatch({ type: 'autoContinueRestored', autoContinue: pluginSettings.autoContinue })

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { estimateContextTokens } from '@earendil-works/pi-ai/utils/estimate';
 import { Harness, ProviderDoc, createRegistry } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { canvasKey } from './session-owner.mjs';
@@ -12,6 +13,7 @@ import { publicPlan } from './plan.mjs';
 import { publicDurableTurn } from './durable-turn-projection.mjs';
 import { isCorruptSessionArtifactError, isSkippableSessionError } from './durable-pointer-resolver.mjs';
 import { installDurableExtensions } from './durable-extensions.mjs';
+import { resolveHostCacheRetention } from './prompt-cache.mjs';
 
 const CTX = BACKGROUND_CONTEXT;
 const idPattern = /^durable:([a-f0-9-]{36})$/;
@@ -38,6 +40,7 @@ export function createDurableSessionRepository({
   runWithBudget,
   extensions,
   settings,
+  telemetry = undefined,
   thinkingLevel,
   isDurableSessionId,
   fail,
@@ -111,6 +114,7 @@ export function createDurableSessionRepository({
       generation: { durable: true, aborted: false, intentEpoch: 0, modelEpoch: 0 },
       turn: newTurnAccumulator(),
       busy: false,
+      compacting: false,
       persistence: 'restored',
       budgetDirectory: path.join(dir, `${uuid}.budget`),
       skillCatalog: {},
@@ -148,14 +152,15 @@ export function createDurableSessionRepository({
         models,
         registry,
         readOnly,
+        ...(telemetry ? { telemetry } : {}),
         // Do not repeat a failed model request: the upstream may already have billed it.
         // pi 1.5 counts a request cut off by a host restart as a failed attempt too, so that
         // turn ends interrupted instead of resending; landed changes stay.
         settings: {
-          stream: { timeoutMs: 180000, maxRetries: 0 },
+          stream: { timeoutMs: 180000, maxRetries: 0, cacheRetention: resolveHostCacheRetention() },
           retry: { maxRetries: 0 },
           afterFailedRun: 'continue',
-          toolExecution: 'sequential',
+          toolExecution: 'parallel',
           steeringMode: 'all',
           ...settings,
         },
@@ -286,20 +291,69 @@ export function createDurableSessionRepository({
     return entry;
   }
 
-  async function historyOf(entry) {
+  async function sessionContextSnapshot(entry) {
+    if (!entry?.root || !entry?.harness) return null;
+    try {
+      const [agent, view, usageState] = await Promise.all([
+        entry.root.agent(CTX),
+        entry.root.context(CTX),
+        entry.harness.usage(CTX),
+      ]);
+      const estimated = estimateContextTokens(view?.messages || []);
+      let contextWindow = 0;
+      if (agent?.model && typeof getModels === 'function') {
+        const models = await getModels(entry);
+        const resolved = models?.getModel?.(agent.model.provider, agent.model.modelId);
+        contextWindow = Number(resolved?.contextWindow) || 0;
+      }
+      let totalInput = 0;
+      let totalOutput = 0;
+      let cacheRead = 0;
+      let cacheWrite = 0;
+      for (const usage of Object.values(usageState?.models || {})) {
+        totalInput += Number(usage?.input) || 0;
+        totalOutput += Number(usage?.output) || 0;
+        cacheRead += Number(usage?.cacheRead) || 0;
+        cacheWrite += Number(usage?.cacheWrite) || 0;
+      }
+      const estimatedTokens = Math.max(0, Math.round(Number(estimated?.tokens) || 0));
+      const percent = contextWindow > 0 ? Math.min(100, Math.round((estimatedTokens / contextWindow) * 100)) : null;
+      return {
+        thinkingLevel: agent?.thinkingLevel || thinkingLevel,
+        contextUsage: {
+          estimatedTokens,
+          contextWindow,
+          percent,
+          totalInput,
+          totalOutput,
+          cacheRead,
+          cacheWrite,
+        },
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async function historyOf(entry, { includeContext = true } = {}) {
     const value = await state(entry);
     if (!value) return { sessionId: entry.sessionId, turns: [], active: null };
     const plan = publicPlan(value.plan);
+    const meta = includeContext ? await sessionContextSnapshot(entry) : null;
     return {
       sessionId: entry.sessionId,
       turns: (value.turns || []).map((turn) => publicDurableTurn(turn)),
       active: publicDurableTurn(value.active, true),
       ...(plan ? { plan } : {}),
+      ...(meta ? {
+        thinkingLevel: value.thinkingLevel || meta.thinkingLevel,
+        contextUsage: meta.contextUsage,
+      } : value.thinkingLevel ? { thinkingLevel: value.thinkingLevel } : {}),
     };
   }
 
-  async function history(canvasId, sessionId) {
-    return withSession(canvasId, sessionId, (entry) => historyOf(entry), { readOnly: true });
+  async function history(canvasId, sessionId, options) {
+    return withSession(canvasId, sessionId, (entry) => historyOf(entry, options), { readOnly: true });
   }
 
   async function status(entry) {
@@ -329,7 +383,7 @@ export function createDurableSessionRepository({
         if (!info || typeof info !== 'object' || info.sessionId !== expectedSessionId || info.canvasId !== canvasId || info.version !== durableVersion) {
           throw fail('corrupt_session_manifest');
         }
-        const value = await history(canvasId, expectedSessionId);
+        const value = await history(canvasId, expectedSessionId, { includeContext: false });
         out.push({
           sessionId: info.sessionId,
           kind: 'durable',
@@ -418,6 +472,7 @@ export function createDurableSessionRepository({
     handoffSessionId,
     hasSession,
     prepareSession,
+    sessionContextSnapshot,
     historyOf,
     history,
     status,

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/text/encoding/simplifiedchinese"
+
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -272,5 +274,58 @@ func TestFileReadXLSXSharedStringAmplificationAndPDFBudgetCaps(t *testing.T) {
 	cancel()
 	if got, _ := extractPDFTextPureGo(canceledCtx, multiPDF.Bytes(), 4096, 5000); got != "" {
 		t.Fatalf("expected cancelled ctx to stop PDF extraction immediately, got %d bytes", len(got))
+	}
+}
+
+func TestOpFileReadGB18030AndBinaryRejection(t *testing.T) {
+	original := "镜号,画面描述,台词\r\n1,雨夜霓虹街口，主角撑伞走过,\"今晚风很大\"\r\n"
+	gbkBytes, err := simplifiedchinese.GB18030.NewEncoder().Bytes([]byte(original))
+	if err != nil {
+		t.Fatalf("encode GB18030: %v", err)
+	}
+	binaryBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0xfe, 0xff}
+	cp1252Bytes := []byte("Caf\xe9 na\xefve \xa9 2026\n")
+	dom := &fileReadFakeDomain{
+		resources: map[string]*model.Resource{
+			"res-gbk":    {ID: "res-gbk", UserID: "u1", Kind: "file", Status: model.ResourceStatusReady, MimeType: "text/csv", ObjectKey: "u1/file/shots.csv", Size: int64(len(gbkBytes))},
+			"res-bin":    {ID: "res-bin", UserID: "u1", Kind: "file", Status: model.ResourceStatusReady, MimeType: "application/octet-stream", ObjectKey: "u1/file/raw.bin", Size: int64(len(binaryBytes))},
+			"res-cp1252": {ID: "res-cp1252", UserID: "u1", Kind: "file", Status: model.ResourceStatusReady, MimeType: "text/plain", ObjectKey: "u1/file/latin.txt", Size: int64(len(cp1252Bytes))},
+		},
+		payloads: map[string][]byte{
+			"res-gbk":    gbkBytes,
+			"res-bin":    binaryBytes,
+			"res-cp1252": cp1252Bytes,
+		},
+	}
+	ctx := &Context{Context: context.Background(), UserID: "u1", Domain: dom}
+	raw, _ := json.Marshal(map[string]any{"resourceId": "res-gbk"})
+	out, err := opFileRead(ctx, raw)
+	if err != nil {
+		t.Fatalf("opFileRead GB18030: %v", err)
+	}
+	res := out.(fileReadResult)
+	want := "镜号,画面描述,台词\n1,雨夜霓虹街口，主角撑伞走过,\"今晚风很大\""
+	if !res.Readable || res.Format != "text" || res.Content != want {
+		t.Fatalf("unexpected GB18030 read result: %+v", res)
+	}
+
+	rawBin, _ := json.Marshal(map[string]any{"resourceId": "res-bin"})
+	outBin, err := opFileRead(ctx, rawBin)
+	if err != nil {
+		t.Fatalf("opFileRead binary: %v", err)
+	}
+	binRes := outBin.(fileReadResult)
+	if binRes.Readable || binRes.Format != "binary" {
+		t.Fatalf("expected binary file to be rejected as unreadable, got %+v", binRes)
+	}
+
+	rawCP, _ := json.Marshal(map[string]any{"resourceId": "res-cp1252"})
+	outCP, err := opFileRead(ctx, rawCP)
+	if err != nil {
+		t.Fatalf("opFileRead cp1252: %v", err)
+	}
+	cpRes := outCP.(fileReadResult)
+	if cpRes.Readable || cpRes.Format != "binary" {
+		t.Fatalf("expected non-GB18030 legacy bytes to stay binary, got %+v", cpRes)
 	}
 }

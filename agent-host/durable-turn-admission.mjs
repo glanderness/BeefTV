@@ -52,7 +52,7 @@ export function createDurableTurnAdmission({
     flushPendingSkillRollback,
   } = skillController;
 
-  const isEntryBusy = (entry) => Boolean(entry?.busy || isEntryActiveOrDetached(entry));
+  const isEntryBusy = (entry) => Boolean(entry?.busy || entry?.compacting || isEntryActiveOrDetached(entry));
 
   async function refreshCanvasBusy(canvasId) {
     const entry = sessions.get(canvasId);
@@ -74,12 +74,13 @@ export function createDurableTurnAdmission({
     }
     const runningForSteer = Boolean(
       busy &&
+      !entry.compacting &&
       !entry.completing &&
       !entry.pendingCompleteRetry &&
       !entry.generation.aborted &&
       !entry.recovering,
     );
-    const stoppable = Boolean(busy && !entry.pendingCompleteRetry);
+    const stoppable = Boolean(busy && !entry.compacting && !entry.pendingCompleteRetry);
     return { entry, busy, runningForSteer, stoppable };
   }
 
@@ -115,6 +116,7 @@ export function createDurableTurnAdmission({
 
   async function submit(entry, input, { fromRecovery = false, onSubmitted = null } = {}) {
     if (input.continuationId && sessions.get(entry.canvasId) !== entry) throw fail('session_not_current');
+    if (!fromRecovery && entry.compacting) throw fail('session_busy');
     if (!fromRecovery && !input.continuationId && entry.recovering) {
       await entry.recovering.catch(() => null);
     }
@@ -124,6 +126,7 @@ export function createDurableTurnAdmission({
     }
     return lock(entry.canvasId, async () => {
       if (input.continuationId && sessions.get(entry.canvasId) !== entry) throw fail('session_not_current');
+      if (entry.compacting) throw fail('session_busy');
       const existing = await state(entry);
       if (!requestId || !input.turnId || !input.content) throw fail('invalid_request');
       if (fromRecovery && (!existing.active || existing.active.requestId !== requestId)) {

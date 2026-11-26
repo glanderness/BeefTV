@@ -286,6 +286,7 @@ describe("供应商定义", () => {
         for (const api of ["openai-completions", "openai-responses"]) {
             const unknown = providerRegistration({ api, baseUrl: "https://relay.example.com/v1", modelId: "m", maxTokens: 16384, contextWindow: 200000 }).models[0];
             expect(unknown.reasoning).toBe(false);
+            expect(unknown.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
             if (api === "openai-completions") {
                 expect(unknown.compat).toEqual({ promptCacheKeyMode: "enabled" });
             }

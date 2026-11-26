@@ -856,6 +856,8 @@ test('plugin settings keep defaults for bad files and reject invalid edits', () 
   assert.deepEqual(normalizeSettings(null), defaultPluginSettings)
   assert.deepEqual(normalizeSettings({ autoContinue: false, stepLimit: 12 }), { autoContinue: false, stepLimit: 12 })
   assert.deepEqual(normalizeSettings({ autoContinue: true, stepLimit: 0 }), { autoContinue: true, stepLimit: 0 })
+  assert.deepEqual(normalizeSettings({ autoContinue: false, stepLimit: 40 }), { autoContinue: false, stepLimit: 0 })
+  assert.deepEqual(normalizeSettings({ autoContinue: true, stepLimit: 40, settingsVersion: 2 }), { autoContinue: true, stepLimit: 40 })
   assert.deepEqual(normalizeSettings({ autoContinue: 'no', stepLimit: -1 }), defaultPluginSettings)
   assert.deepEqual(validatedSettingsPatch({ autoContinue: false }), { autoContinue: false })
   assert.deepEqual(validatedSettingsPatch({ stepLimit: 0 }), { stepLimit: 0 })
@@ -1257,7 +1259,7 @@ test('turning auto-continue off stops starting waits and saves the setting', asy
   const settings = (await call('POST', '/beeftv/settings', { autoContinue: false })).body
   assert.equal(settings.autoContinue, false)
   assert.equal(settings.stepLimit, 0)
-  assert.deepEqual(JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'settings.json'), 'utf8')), { autoContinue: false, stepLimit: 0 })
+  assert.deepEqual(JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'settings.json'), 'utf8')), { autoContinue: false, stepLimit: 0, settingsVersion: 2 })
   const { agent, wakes } = fakeAgent()
   listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['quiet-1']))
   await sleep(100)
@@ -1311,12 +1313,16 @@ test('a BeefTV tool call activates the step limit even without a reported view',
   assert.deepEqual(await listeners.get('agent/pre-step')({ agent, turn: 1 }, async () => ({ kind: 'enter', messages: [] })), { kind: 'reject' })
 })
 
-test('a saved auto-continue off is honored after restart', async context => {
-  const { call, listeners, workspace } = await startHost(context, {
+test('a saved auto-continue off is honored after restart and migrates legacy stepLimit 40 to unlimited', async context => {
+  const { call, listeners, workspace, home } = await startHost(context, {
     extraOps: [{ id: 'task.wait', readOnly: true }],
     pluginSettings: { autoContinue: false, stepLimit: 40 },
   })
-  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const connected = (await call('POST', '/beeftv/connect', { mode: 'standalone' })).body
+  assert.equal(connected.autoContinue, false)
+  assert.equal(connected.stepLimit, 0)
+  await sleep(50)
+  assert.deepEqual(JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'settings.json'), 'utf8')), { autoContinue: false, stepLimit: 0, settingsVersion: 2 })
   const { agent, wakes } = fakeAgent()
   listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['quiet-restart']))
   await sleep(150)
@@ -1528,7 +1534,7 @@ test('concurrent settings saves do not roll back a successful update', async con
   assert.equal(saved.status, 200)
   assert.equal(saved.body.stepLimit, 12)
   const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'settings.json'), 'utf8'))
-  assert.deepEqual(stored, { autoContinue: true, stepLimit: 12 })
+  assert.deepEqual(stored, { autoContinue: true, stepLimit: 12, settingsVersion: 2 })
 })
 
 test('a backend agent.guide replaces the fixed section; without it the fixed text stays', async context => {

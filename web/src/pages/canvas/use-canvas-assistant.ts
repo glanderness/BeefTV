@@ -12,10 +12,13 @@ import { saveCanvasForAssistant } from "@/services/assistant-canvas-save";
 import {
     agentAssistantFailureText,
     assistantPermissionMode,
+    assistantThinkingLevel,
     AgentTurnFailedError,
     AgentChatNotAdmittedError,
     AgentStreamDetachedError,
     cancelAgentChat,
+    compactAssistantSession,
+    configureAssistantSession,
     createAssistantSession,
     getAssistantHistory,
     listAssistantSessions,
@@ -25,6 +28,7 @@ import {
     type AssistantAttachment,
     type AssistantSkillSelection,
     type AssistantPermissionMode,
+    type AssistantThinkingLevel,
     type AssistantTurn,
 } from "@/services/api/agent-assistant";
 import { assistantChangedNodeIds, assistantLifecycleText } from "./canvas-assistant-copy";
@@ -63,7 +67,13 @@ export const ASSISTANT_DOCK_MIN_SHELL_WIDTH = 1050;
 const OPEN_STORAGE_KEY = "canvas:assistant-open";
 const WIDTH_STORAGE_KEY = "canvas:assistant-width";
 const PERMISSION_STORAGE_KEY = "canvas:assistant-permission";
+const THINKING_STORAGE_KEY = "canvas:assistant-thinking";
 const PROPOSAL_MEMORY = 200;
+
+function readStoredThinkingLevel(): AssistantThinkingLevel | null {
+    const raw = scopedLocalStorage.getItem(THINKING_STORAGE_KEY);
+    return raw ? assistantThinkingLevel(raw) : null;
+}
 
 /** 已决定过的提议只记一个键：同意用 proposalId，谢绝加后缀，两种结果不会互相冒充。 */
 export function dismissedProposalKey(proposalId: string) {
@@ -113,6 +123,10 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const namespaceRef = useRef(namespace);
     namespaceRef.current = namespace;
     const [preferredPermissionMode, setPreferredPermissionMode] = useState(() => assistantPermissionMode(scopedLocalStorage.getItem(PERMISSION_STORAGE_KEY)));
+    const [preferredThinkingLevel, setPreferredThinkingLevel] = useState<AssistantThinkingLevel | null>(readStoredThinkingLevel);
+    const preferredThinkingLevelRef = useRef<AssistantThinkingLevel | null>(preferredThinkingLevel);
+    preferredThinkingLevelRef.current = preferredThinkingLevel;
+    const thinkingRequestRef = useRef(0);
     const runsRef = useRef<Map<string, CanvasRun>>(new Map());
     const observedInterruptions = useRef(new Set<string>());
     const openRef = useRef(open);
@@ -135,6 +149,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         setWidthState(readStoredWidth());
         setHandledProposals(readStoredProposals());
         setPreferredPermissionMode(assistantPermissionMode(scopedLocalStorage.getItem(PERMISSION_STORAGE_KEY)));
+        setPreferredThinkingLevel(readStoredThinkingLevel());
     }, [embedded, namespace]);
 
     const runFor = useCallback((id: string): CanvasRun => {
@@ -155,11 +170,47 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
 
     const setPermissionMode = useCallback((mode: AssistantPermissionMode) => {
         const run = runFor(activeCanvasRef.current);
-        if (run.streaming || run.recovery || run.sessionBusy) return;
+        if (run.streaming || run.recovery || run.sessionBusy || run.compacting) return;
         const selected = assistantPermissionMode(mode);
         scopedLocalStorage.setItem(PERMISSION_STORAGE_KEY, selected);
         setPreferredPermissionMode(selected);
     }, [runFor]);
+
+    const setThinkingLevel = useCallback(async (level: AssistantThinkingLevel) => {
+        const originNamespace = namespaceRef.current;
+        const targetCanvas = activeCanvasRef.current;
+        const run = runFor(targetCanvas);
+        if (run.streaming || run.recovery || run.sessionBusy || run.compacting) return;
+        const selected = assistantThinkingLevel(level);
+        const previous = run.thinkingLevel;
+        const requestSeq = ++thinkingRequestRef.current;
+        if (!run.sessionId || !run.sessionId.startsWith("durable:")) {
+            scopedLocalStorage.setItem(THINKING_STORAGE_KEY, selected);
+            setPreferredThinkingLevel(selected);
+            run.thinkingLevel = selected;
+            rerenderIfActive(targetCanvas);
+            return;
+        }
+        run.thinkingLevel = selected;
+        rerenderIfActive(targetCanvas);
+        const targetSessionId = run.sessionId;
+        try {
+            const configured = await configureAssistantSession(targetCanvas, selected, targetSessionId);
+            if (!isLiveRun(originNamespace, targetCanvas, run) || run.sessionId !== targetSessionId || requestSeq !== thinkingRequestRef.current) return;
+            const confirmed = configured.thinkingLevel ? assistantThinkingLevel(configured.thinkingLevel) : selected;
+            scopedLocalStorage.setItem(THINKING_STORAGE_KEY, confirmed);
+            setPreferredThinkingLevel(confirmed);
+            run.thinkingLevel = confirmed;
+            if (configured.contextUsage !== undefined) run.contextUsage = configured.contextUsage ?? null;
+            rerenderIfActive(targetCanvas);
+        } catch (error) {
+            if (!isLiveRun(originNamespace, targetCanvas, run) || run.sessionId !== targetSessionId || requestSeq !== thinkingRequestRef.current) return;
+            run.thinkingLevel = previous;
+            const reason = error instanceof ApiError ? error.reason : undefined;
+            run.error = agentAssistantFailureText(reason, "暂时没能更新思考深度，请稍后再试。");
+            rerenderIfActive(targetCanvas);
+        }
+    }, [isLiveRun, rerenderIfActive, runFor]);
 
     useEffect(() => {
         return () => {
@@ -218,6 +269,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.sessionId = nextSession;
             run.pausedTurnReason = history.pausedTurnReason ?? null;
             run.pausedStatusKey = run.pausedTurnReason ? statusKeyAtRequest : null;
+            run.thinkingLevel = history.thinkingLevel ?? null;
+            run.contextUsage = history.contextUsage ?? null;
             run.turns = [...history.turns, ...recent];
             // A history read started before turn_end may omit that newer turn and its plan.
             if (run.plan === planAtRequest) run.plan = recent.length ? recent.at(-1)!.plan ?? null : history.plan ?? null;
@@ -323,7 +376,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             return;
         }
         if (run.recovery) return;
-        if (run.sessionBusy || run.supplementBusy) return;
+        if (run.sessionBusy || run.supplementBusy || run.compacting) return;
+        run.compactNotice = null;
         const permissionMode = assistantPermissionMode(input.permissionMode ?? preferredPermissionMode);
         const controller = new AbortController();
         run.pendingUserText = message;
@@ -364,7 +418,20 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             setStatus(ready);
             if (!run.historyLoaded && !await loadHistory(targetCanvas)) throw new Error("对话还没读回来，请重新读取后再发送");
             if (!isLiveRun(originNamespace, targetCanvas, run)) return;
-            if (!run.sessionId) run.sessionId = await createAssistantSession(targetCanvas);
+            if (!run.sessionId) {
+                run.sessionId = await createAssistantSession(targetCanvas);
+                const preferredThinking = preferredThinkingLevelRef.current;
+                if (run.sessionId && preferredThinking) {
+                    try {
+                        const configured = await configureAssistantSession(targetCanvas, preferredThinking, run.sessionId);
+                        if (isLiveRun(originNamespace, targetCanvas, run)) {
+                            run.thinkingLevel = configured.thinkingLevel ? assistantThinkingLevel(configured.thinkingLevel) : preferredThinking;
+                        }
+                    } catch {
+                        // 首轮对话继续发送，思考深度使用宿主默认值。
+                    }
+                }
+            }
             if (!isLiveRun(originNamespace, targetCanvas, run)) return;
             controller.signal.throwIfAborted();
             run.recovery = { sessionId: run.sessionId, knownTurnIds: run.turns.map((turn) => turn.turnId), text: message, selectedNodeIds: selectedSnapshot };
@@ -575,6 +642,32 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const markProposalHandled = useCallback((proposalId: string) => rememberProposal(proposalId), [rememberProposal]);
     const markProposalDismissed = useCallback((proposalId: string) => rememberProposal(dismissedProposalKey(proposalId)), [rememberProposal]);
 
+    const compactContext = useCallback(async () => {
+        const originNamespace = namespaceRef.current;
+        const targetCanvas = activeCanvasRef.current;
+        const run = runFor(targetCanvas);
+        if (run.streaming || run.recovery || run.sessionBusy || run.compacting || !run.sessionId || run.turns.length === 0) return;
+        const targetSessionId = run.sessionId;
+        run.compacting = true;
+        run.compactNotice = null;
+        run.error = null;
+        rerenderIfActive(targetCanvas);
+        try {
+            const result = await compactAssistantSession(targetCanvas, targetSessionId);
+            if (!isLiveRun(originNamespace, targetCanvas, run) || run.sessionId !== targetSessionId) return;
+            if (result.contextUsage !== undefined) run.contextUsage = result.contextUsage ?? null;
+            run.compactNotice = result.compacted ? "已压缩较早对话上下文，后续对话会保留关键信息。" : "当前对话较短，暂无需压缩。";
+            await loadHistory(targetCanvas, targetSessionId);
+        } catch (error) {
+            if (!isLiveRun(originNamespace, targetCanvas, run) || run.sessionId !== targetSessionId) return;
+            const reason = error instanceof ApiError ? error.reason : undefined;
+            run.error = agentAssistantFailureText(reason, "压缩上下文失败，当前对话内容已保留，请稍后再试。");
+        } finally {
+            run.compacting = false;
+            if (isLiveRun(originNamespace, targetCanvas, run)) rerenderIfActive(targetCanvas);
+        }
+    }, [isLiveRun, loadHistory, rerenderIfActive, runFor]);
+
     const {
         startNewSession,
         activateSession,
@@ -588,6 +681,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         namespaceRef,
         activeCanvasRef,
         onCanvasChangedRef,
+        preferredThinkingLevelRef,
         runFor,
         isLiveRun,
         rerenderIfActive,
@@ -606,7 +700,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         setWidth,
         status,
         statusBusy,
-        modelBusy: statusBusy || [...runsRef.current.entries()].some(([key, item]) => key.startsWith(nsPrefix) && (item.streaming || item.sessionBusy)),
+        modelBusy: statusBusy || [...runsRef.current.entries()].some(([key, item]) => key.startsWith(nsPrefix) && (item.streaming || item.sessionBusy || item.compacting)),
         sessions: run.sessions,
         sessionId: run.sessionId,
         turns: run.turns,
@@ -621,8 +715,14 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         pendingAttachments: run.pendingAttachments,
         pendingSkills: run.pendingSkills,
         permissionMode: run.streaming || run.recovery ? run.pendingPermissionMode ?? "canvas" : preferredPermissionMode,
-        permissionLocked: run.streaming || Boolean(run.recovery) || run.sessionBusy,
+        permissionLocked: run.streaming || Boolean(run.recovery) || run.sessionBusy || run.compacting,
         setPermissionMode,
+        thinkingLevel: run.thinkingLevel ?? preferredThinkingLevel ?? "low",
+        setThinkingLevel,
+        contextUsage: run.contextUsage,
+        compacting: run.compacting,
+        compactNotice: run.compactNotice,
+        compactContext,
         streamed: run.streamed,
         reasoning: run.reasoning,
         reasoningOpen: run.reasoningOpen,

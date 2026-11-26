@@ -1,10 +1,11 @@
 {
   "minAdjacentPrefixCoverageRatio": 0.95,
   "maxHeaderChars": 2972,
-  "maxToolsChars": 22938,
-  "maxHeaderPlusToolsChars": 25910,
+  "maxToolsChars": 24317,
+  "maxHeaderPlusToolsChars": 27289,
   "toolChars": {
     "asset_get": 176,
+    "asset_list": 377,
     "canvas_edge_create": 283,
     "canvas_edge_delete": 235,
     "canvas_generation_propose": 602,
@@ -24,10 +25,12 @@
     "canvas_script_row_remove": 312,
     "canvas_script_row_update": 699,
     "canvas_script_rows_append": 528,
+    "canvas_search": 309,
     "canvas_task_bind": 252,
     "canvas_timeline_render": 412,
     "canvas_timeline_update": 477,
     "file_read": 555,
+    "generation_estimate": 690,
     "media_check": 486,
     "media_inspect": 706,
     "media_overview": 714,
@@ -66,6 +69,11 @@
       "maxHeaderChars": 2972,
       "maxToolsChars": 22938,
       "maxHeaderPlusToolsChars": 25910
+    },
+    {
+      "reason": "Phase 2.1 在当前画布模式开放 asset.list、canvas.search、generation.estimate 只读查询工具，对齐外部 MCP 能力",
+      "maxToolsChars": 24317,
+      "maxHeaderPlusToolsChars": 27289
     }
   ]
 }

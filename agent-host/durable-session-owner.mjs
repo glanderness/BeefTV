@@ -80,6 +80,7 @@ export function createDurableSessionStore({
   runWithBudget = (_entry, fn) => fn(),
   extensions = () => [],
   settings = {},
+  telemetry = undefined,
   skills = null,
   readCanvas = null,
   legacy = null,
@@ -188,7 +189,10 @@ export function createDurableSessionStore({
         entry.pendingPluginExtensions = null;
         await entry.reloadPluginExtensions(pending);
       }
-      await entry.root.configure({ model: modelRef, thinkingLevel }, CTX);
+      const savedThinking = (await state(entry))?.thinkingLevel;
+      const requestedThinking = THINKING_LEVELS.includes(entry.input?.thinkingLevel) ? entry.input.thinkingLevel : '';
+      const effectiveThinking = requestedThinking || (THINKING_LEVELS.includes(savedThinking) ? savedThinking : '') || thinkingLevel;
+      await entry.root.configure({ model: modelRef, thinkingLevel: effectiveThinking }, CTX);
     }
     return modelRef;
   }
@@ -252,6 +256,7 @@ export function createDurableSessionStore({
     runWithBudget,
     extensions,
     settings,
+    telemetry,
     thinkingLevel,
     isDurableSessionId,
     fail,
@@ -266,6 +271,7 @@ export function createDurableSessionStore({
     handoffSessionId,
     hasSession,
     prepareSession,
+    sessionContextSnapshot,
     historyOf,
     history,
     status,
@@ -457,6 +463,65 @@ export function createDurableSessionStore({
   }
   const deleteSession = (canvasId, sessionId) => repository.deleteSession(canvasId, sessionId, { refreshCanvasBusy, isEntryBusy, readSafeCurrentPointer });
   const recordEvent = (canvasId, payload) => repository.recordEvent(canvasId, payload, { ensureSession, readSafeCurrentPointer });
+  async function configureSession(canvasId, { sessionId = '', thinkingLevel: nextThinking } = {}) {
+    const cleanLevel = String(nextThinking || '').trim().toLowerCase();
+    if (!THINKING_LEVELS.includes(cleanLevel)) throw fail('invalid_thinking_level');
+    if (await refreshCanvasBusy(canvasId)) throw fail('session_busy');
+    const entry = await ensureSession(canvasId, sessionId, { handoffLegacy: false });
+    return lock(canvasId, async () => {
+      if (isEntryBusy(entry)) throw fail('session_busy');
+      await entry.root.configure({ thinkingLevel: cleanLevel }, CTX);
+      await update(entry, (doc) => { doc.thinkingLevel = cleanLevel; });
+      const meta = await sessionContextSnapshot(entry);
+      return {
+        sessionId: entry.sessionId,
+        thinkingLevel: cleanLevel,
+        ...(meta?.contextUsage ? { contextUsage: meta.contextUsage } : {}),
+      };
+    });
+  }
+  async function compactSession(canvasId, { sessionId = '', instructions = '' } = {}) {
+    if (await refreshCanvasBusy(canvasId)) throw fail('session_busy');
+    const entry = await ensureSession(canvasId, sessionId, { handoffLegacy: false });
+    const preservation = [
+      '压缩较早的对话记录时，请保留：当前创作目标、画布关键节点与分镜结构、用户约束与风格偏好、已上传文件的 resourceId、待确认或进行中的任务/计划状态，以及精确的错误信息。',
+      String(instructions || '').trim(),
+    ].filter(Boolean).join('\n');
+    // 仅在持锁窗口内检查空闲、标记 compacting 并提交压缩任务；
+    // 随后立即释放画布锁再等待摘要完成，避免并发请求阻塞至代理超时，同时通过 isEntryBusy 立刻拒绝并发写与误重启。
+    const taskId = await lock(canvasId, async () => {
+      if (isEntryBusy(entry)) throw fail('session_busy');
+      const modelRef = await turnModel(entry, null);
+      if (!modelRef?.provider || !modelRef?.modelId) throw fail('model_not_configured');
+      entry.compacting = true;
+      try {
+        return await entry.root.compact(preservation, CTX);
+      } catch (error) {
+        entry.compacting = false;
+        throw error;
+      }
+    });
+    try {
+      const settled = await entry.harness.waitForTask(taskId, CTX);
+      const outcome = settled?.state?.outcome;
+      if (!outcome || outcome.status !== 'completed') {
+        throw Object.assign(new Error(outcome?.error?.message || '压缩上下文失败'), {
+          reason: 'compaction_failed',
+          detailReason: outcome?.error?.detail?.reason || '',
+        });
+      }
+      const compacted = Boolean(outcome.result?.entryId || outcome.result?.submissionId);
+      const meta = await sessionContextSnapshot(entry);
+      return {
+        sessionId: entry.sessionId,
+        compacted,
+        entryId: outcome.result?.entryId ?? null,
+        ...(meta ? { thinkingLevel: meta.thinkingLevel, contextUsage: meta.contextUsage } : {}),
+      };
+    } finally {
+      entry.compacting = false;
+    }
+  }
   async function reloadPluginExtensions(newExtensions) {
     for (const entry of sessions.values()) {
       if (typeof entry.reloadPluginExtensions === 'function') await entry.reloadPluginExtensions(newExtensions);
@@ -507,6 +572,8 @@ export function createDurableSessionStore({
     status,
     recordEvent,
     listCanvasSessions,
+    configureSession,
+    compactSession,
     reloadPluginExtensions,
     disposeAll,
     skillContext,

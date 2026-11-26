@@ -9,8 +9,11 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 const (
@@ -192,7 +195,48 @@ func decodePlainText(data []byte) (string, bool) {
 	if utf8.Valid(data) {
 		return string(data), true
 	}
-	return "", false
+	return decodeGB18030Text(data)
+}
+
+func decodeGB18030Text(data []byte) (string, bool) {
+	if len(data) == 0 {
+		return "", true
+	}
+	for _, b := range data {
+		if (b < 0x20 && b != '\t' && b != '\n' && b != '\r' && b != '\f' && b != '\v') || b == 0x7f {
+			return "", false
+		}
+	}
+	decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(data)
+	if err != nil || !utf8.Valid(decoded) {
+		return "", false
+	}
+	reencoded, err := simplifiedchinese.GB18030.NewEncoder().Bytes(decoded)
+	if err != nil || !bytes.Equal(reencoded, data) {
+		return "", false
+	}
+	text := string(decoded)
+	totalRunes := 0
+	hanRunes := 0
+	suspectRunes := 0
+	for _, r := range text {
+		totalRunes++
+		if r == unicode.ReplacementChar {
+			return "", false
+		}
+		if r < 0x20 && r != '\t' && r != '\n' && r != '\r' && r != '\f' && r != '\v' {
+			return "", false
+		}
+		if unicode.In(r, unicode.Co) || (unicode.IsControl(r) && !unicode.IsSpace(r)) {
+			suspectRunes++
+		} else if unicode.Is(unicode.Han, r) {
+			hanRunes++
+		}
+	}
+	if totalRunes == 0 || hanRunes == 0 || suspectRunes*20 > totalRunes {
+		return "", false
+	}
+	return text, true
 }
 
 func decodeUTF16(data []byte, order binary.ByteOrder) string {

@@ -51,7 +51,7 @@ func TestCanvasRoundHTTPDiscoveryExposesTaskWaitAndHidesFullAccessOps(t *testing
 	const turn = "abcdef0099aabbcc"
 	env.beginTurn(t, turn, app.AssistantTurnInput{PermissionMode: "canvas"})
 	listed := getOps(t, env, map[string]string{"X-Beeftv-Agent-Token": assistantTestHostToken, "X-Beeftv-Agent-Turn": turn})
-	for _, id := range []string{"task.wait", "task.get", "task.cancel", "file.read", "canvas.generation.regenerate"} {
+	for _, id := range []string{"task.wait", "task.get", "task.cancel", "file.read", "canvas.generation.regenerate", "asset.list", "canvas.search", "generation.estimate"} {
 		if !listingHas(listed, id) {
 			t.Fatalf("当前画布模式应允许宿主调用 %s: %v", id, listed)
 		}

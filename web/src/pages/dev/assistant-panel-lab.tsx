@@ -78,6 +78,14 @@ function stubController(open: boolean, setOpen: (next: boolean) => void, width: 
         permissionMode: "canvas",
         permissionLocked: false,
         setPermissionMode: noop,
+        thinkingLevel: "low",
+        setThinkingLevel: asyncNoop,
+        contextUsage: status?.available
+            ? { estimatedTokens: 24600, contextWindow: 200000, percent: 12, totalInput: 28000, totalOutput: 2100, cacheRead: 18400, cacheWrite: 900 }
+            : null,
+        compacting: false,
+        compactNotice: null,
+        compactContext: asyncNoop,
         streamed: "",
         reasoning: [],
         reasoningOpen: {},

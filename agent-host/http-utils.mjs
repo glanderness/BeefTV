@@ -82,8 +82,12 @@ export function respondStoreError(res, error, isCorruptSessionArtifactError) {
     respond(res, 409, { code: 409, reason: error.reason });
     return true;
   }
-  if (['invalid_skill_context_action', 'invalid_skill_context_request', 'invalid_skill_selection'].includes(error?.reason)) {
+  if (['invalid_skill_context_action', 'invalid_skill_context_request', 'invalid_skill_selection', 'invalid_thinking_level'].includes(error?.reason)) {
     respond(res, 400, { code: 400, reason: error.reason });
+    return true;
+  }
+  if (error?.reason === 'model_not_configured' || error?.reason === 'compaction_failed') {
+    respond(res, 503, { code: 503, reason: error.reason });
     return true;
   }
   if (error?.reason === 'session_busy') { respond(res, 409, { code: 409, reason: 'session_busy' }); return true; }

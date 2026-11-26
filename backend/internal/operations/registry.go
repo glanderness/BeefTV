@@ -69,6 +69,7 @@ type Descriptor struct {
 	AssistantModes    []string        `json:"assistantModes"`
 	Replay            string          `json:"replay"`
 	SubmitsGeneration bool            `json:"submitsGeneration,omitempty"`
+	NoTurnCanvas      bool            `json:"noTurnCanvas,omitempty"`
 }
 
 // Registry 持有全部操作定义；写操作必须在事务里执行，保证与操作记录同提交。
@@ -140,7 +141,7 @@ func (op *Op) Descriptor() Descriptor {
 	if (op.ReadOnly || op.ReplaySafe) && !op.ReplayUnsafe {
 		replay = "safe"
 	}
-	return Descriptor{ID: op.ID, Summary: op.Summary, ReadOnly: op.ReadOnly, Scope: op.Scope, Params: op.writeAwareParams(), AssistantModes: op.assistantModes(), Replay: replay, SubmitsGeneration: op.SubmitsGeneration}
+	return Descriptor{ID: op.ID, Summary: op.Summary, ReadOnly: op.ReadOnly, Scope: op.Scope, Params: op.writeAwareParams(), AssistantModes: op.assistantModes(), Replay: replay, SubmitsGeneration: op.SubmitsGeneration, NoTurnCanvas: op.NoTurnCanvas}
 }
 
 func (op *Op) assistantModes() []string {

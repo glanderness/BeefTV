@@ -443,10 +443,23 @@
     align-items: center;
     gap: 8px;
 }
-.canvas-assistant-composer-tools { display: flex; align-items: center; gap: 4px; }
+.canvas-assistant-composer-tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.canvas-assistant-context { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.canvas-assistant-context-usage {
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--muted-foreground);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.canvas-assistant-context-usage-high {
+    color: var(--foreground);
+    font-weight: 500;
+}
 .canvas-assistant-composer-settings { display: flex; flex: 1; min-width: 0; align-items: center; gap: 2px; flex-wrap: wrap; }
 .canvas-assistant-composer-actions { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
-.canvas-assistant-permission { width: 106px; font-size: 12px; }
+.canvas-assistant-thinking { width: 92px; font-size: 12px; }
+.canvas-assistant-permission { width: 96px; font-size: 12px; }
 .canvas-assistant-attachments { display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto; min-width: 0; }
 .canvas-assistant-attachments:empty { display: none; }
 .canvas-assistant-attachment { display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--muted); border-radius: var(--radius-md); min-width: 0; }

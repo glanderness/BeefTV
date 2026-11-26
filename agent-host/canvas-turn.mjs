@@ -49,21 +49,38 @@ function isQwenHybridThinkingModel(modelId) {
   return QWEN_HYBRID_MODEL_RE.test(slug) && !NON_HYBRID_QWEN_VARIANT_RE.test(slug);
 }
 
+function isOpenRouterBaseUrl(baseUrl) {
+  try {
+    const host = new URL(String(baseUrl || '').trim()).hostname.toLowerCase();
+    return host === 'openrouter.ai' || host.endsWith('.openrouter.ai');
+  } catch {
+    return false;
+  }
+}
+
 function findCatalogModel(modelId, api, baseUrl = '') {
   if (!modelId) return null;
   const preferQwen = api === 'openai-completions' && (isDashScopeBaseUrl(baseUrl) || isQwenHybridThinkingModel(modelId));
   const providers = preferQwen
     ? [...QWEN_CATALOG_PROVIDERS, ...CATALOG_PROVIDERS.filter((p) => !QWEN_CATALOG_PROVIDERS.includes(p))]
     : CATALOG_PROVIDERS;
+  const slug = normalizeModelSlug(modelId);
   let fallback = null;
+  let slugMatch = null;
   for (const provider of providers) {
     for (const candidate of getBuiltinModels(provider)) {
-      if (candidate.id !== modelId) continue;
-      if (candidate.api === api) return { model: candidate, sameApi: true };
-      if (!fallback) fallback = candidate;
+      if (candidate.id === modelId) {
+        if (candidate.api === api) return { model: candidate, sameApi: true };
+        if (!fallback) fallback = candidate;
+      } else if (slug && normalizeModelSlug(candidate.id) === slug) {
+        if (!slugMatch || (candidate.api === api && !slugMatch.sameApi)) {
+          slugMatch = { model: candidate, sameApi: candidate.api === api };
+        }
+      }
     }
   }
-  return fallback ? { model: fallback, sameApi: false } : null;
+  if (fallback) return { model: fallback, sameApi: false };
+  return slugMatch;
 }
 
 // This compatibility route has returned concatenated arguments for distinct
@@ -152,9 +169,9 @@ function pushUpdatedNodeIds(turn, ids) {
   }
 }
 
-export function collectTurnEffects(turn, opID, result, operationId) {
+export function collectTurnEffects(turn, opID, result, operationId, { noTurnCanvas = false } = {}) {
   if (!turn || !result || typeof result !== 'object') return turn;
-  if (opID === 'canvas.timeline.render' || opID === 'canvas.create' || opID === 'task.cancel' || opID === 'business.call') return turn;
+  if (noTurnCanvas || opID === 'canvas.timeline.render') return turn;
   if (turn.canvasId && result.canvasId && typeof result.revision==='number') {
     turn.canvasChanges ||= {};
     const target=turn.canvasChanges[result.canvasId] ||= {...newTurnAccumulator(),revisionBefore:result.canvasId===turn.canvasId ? turn.revisionBefore : result.revision-1};
@@ -299,13 +316,20 @@ export function providerRegistration({ api, baseUrl, modelId, maxTokens, context
   const needsQwenThinkingFallback = api === 'openai-completions' &&
     !catalogCompat?.thinkingFormat &&
     (isQwenHybridThinkingModel(modelId) || (isDashScopeBaseUrl(baseUrl) && !isNonHybridDashScopeModel(modelId)));
+  const needsOpenRouterClaudeCache = api === 'openai-completions' &&
+    !catalogCompat?.cacheControlFormat &&
+    isOpenRouterBaseUrl(baseUrl) &&
+    /claude/i.test(modelId);
   const compat = api === 'openai-completions'
     ? {
         ...catalogCompat,
         ...(needsQwenThinkingFallback ? { thinkingFormat: 'qwen', supportsReasoningEffort: false } : {}),
+        ...(needsOpenRouterClaudeCache ? { cacheControlFormat: 'anthropic' } : {}),
         promptCacheKeyMode: 'enabled',
       }
     : catalogCompat ? { ...catalogCompat } : undefined;
+  // 费用核算以服务端定价接口为唯一来源，不在宿主登记表继承第三方内置目录价。
+  const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   return {
     name: 'BeefTV', baseUrl, apiKey: '$BEEFTV_AGENT_API_KEY', api,
     models: [{
@@ -315,7 +339,7 @@ export function providerRegistration({ api, baseUrl, modelId, maxTokens, context
       ...(catalogModel?.thinkingLevelMap ? { thinkingLevelMap: structuredClone(catalogModel.thinkingLevelMap) } : {}),
       ...(compat ? { compat } : {}),
       input: Array.isArray(catalogModel?.input) ? [...catalogModel.input] : ['text', 'image'],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost,
       contextWindow,
       maxTokens,
     }],

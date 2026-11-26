@@ -16,6 +16,8 @@ export async function officialNativeHistory(entry, doc, context) {
   }
   rounds.sort((a,b)=>a.entryId-b.entryId);
   const origins=new Map();
+  const bySource=new Map();
+  const byOriginSource=new Map();
   for(let i=0;i<rounds.length;i++){
     const round=rounds[i],upper=rounds[i+1]?.entryId ?? Infinity;
     for(const item of view.entries){
@@ -26,12 +28,17 @@ export async function officialNativeHistory(entry, doc, context) {
           const prefix=['BEEFTV_MEDIA_REF_V1:','BEEFTV_MEDIA_PART_V1:'].find(prefix=>line.startsWith(prefix));if(!prefix)continue;
           const part=JSON.parse(line.slice(prefix.length));
           if(!part.source || (part.source.originTurnId && part.source.originTurnId!==round.turnId))throw Error('native_history_origin_conflict');
-          const key=`${message.toolCallId}:${nativeSourceKey(part.source)}`;
+          const sourceKey=nativeSourceKey(part.source);
+          const key=`${message.toolCallId}:${sourceKey}`;
           const prior=origins.get(key);if(prior && prior.originTurnId!==round.turnId)throw Error('native_history_origin_ambiguous');
-          origins.set(key,{originTurnId:round.turnId,historical:round.historical});
+          const grant={originTurnId:round.turnId,historical:round.historical};
+          origins.set(key,grant);
+          byOriginSource.set(`${round.turnId}:${sourceKey}`,grant);
+          if(!bySource.has(sourceKey)) bySource.set(sourceKey,grant);
+          else if(bySource.get(sourceKey)?.originTurnId!==round.turnId) bySource.set(sourceKey,null);
         }
       }
     }
   }
-  return {origins,rounds};
+  return {origins,bySource,byOriginSource,rounds};
 }

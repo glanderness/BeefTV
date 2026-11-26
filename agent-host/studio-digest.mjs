@@ -23,10 +23,8 @@ function extractMessageText(message) {
 const SERIALIZED_STUDIO_TAIL_RE =
   /^(?:\[系统恢复：以下技能之前已加载，因对话被压缩，原文补回。[\s\S]*<\/skill>(?:\n\n|$))?(?:<beeftv_plan>\n[\s\S]*\n<\/beeftv_plan>(?:\n\n|$))?(?:<beeftv_studio>\n[\s\S]*\n<\/beeftv_studio>)?$/;
 
-export function isTransientStudioTailMessage(message) {
-  if (!message || message.role !== 'user') return false;
-  if (message.transientStudioTail === true) return true;
-  const text = extractMessageText(message).trim();
+export function isTransientStudioTailText(raw) {
+  const text = typeof raw === 'string' ? raw.trim() : '';
   if (!text) return false;
   return (
     (text.startsWith('<beeftv_studio>\n') ||
@@ -34,6 +32,12 @@ export function isTransientStudioTailMessage(message) {
       text.startsWith('[系统恢复：以下技能之前已加载，因对话被压缩，原文补回。')) &&
     SERIALIZED_STUDIO_TAIL_RE.test(text)
   );
+}
+
+export function isTransientStudioTailMessage(message) {
+  if (!message || message.role !== 'user') return false;
+  if (message.transientStudioTail === true) return true;
+  return isTransientStudioTailText(extractMessageText(message));
 }
 
 const HISTORICAL_TOOL_IMAGE_OMITTED_TEXT =
