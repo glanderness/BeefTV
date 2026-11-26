@@ -11,7 +11,7 @@ import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-ass
 import { modelOptionName, resolveModelChannel, useEffectiveConfig } from "@/stores/use-config-store";
 import { videoPricingDisplayLines } from "@/lib/video-pricing";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
-import { CanvasAssistantOutputs } from "./canvas-assistant-outputs";
+import { AssistantFileDeliverableCard, CanvasAssistantOutputs } from "./canvas-assistant-outputs";
 import { CanvasAssistantMediaFacts } from "./canvas-assistant-media-facts";
 import { AssistantReasoning } from "@/components/ai/message-reasoning";
 import { usePluginSlot } from "@/lib/plugins/slot-registry";
@@ -290,6 +290,20 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                         {finished ? (
                             <>
                                 <span className="canvas-assistant-meta" role="status">{assistantScriptResultStatusText(proposal)}</span>
+                                {proposal.result?.outputFiles?.length ? (
+                                    <div className="space-y-1.5">
+                                        {proposal.result.outputFiles.map((file, idx) => (
+                                            <AssistantFileDeliverableCard
+                                                key={file.resourceId || `${file.path}:${idx}`}
+                                                title="脚本产出文件"
+                                                resourceId={file.resourceId}
+                                                fileName={file.path.split("/").pop() || file.path}
+                                                mimeType={file.mimeType}
+                                                bytes={file.size}
+                                            />
+                                        ))}
+                                    </div>
+                                ) : null}
                                 {hasOutput ? (
                                     <details className="canvas-assistant-proposal-details">
                                         <summary>查看脚本输出</summary>

@@ -102,7 +102,9 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 
 操作 `canvas.project.export` 接收 `canvasId`、`expectedRevision` 和稳定 `operationId`，将已保存的画布与当前工作区已就绪资源导出为 `infinite-canvas` v4 工程 ZIP。返回 `resourceId`、`storageKey`、`fileName`、`mimeType`、`bytes` 和 `sourceRevision`，可通过既有资源下载接口读取；同一操作重试返回原资源。导出不调用付费模型，不创建渲染任务，仍计入本地文件保存额度。单画布导出不携带源文件夹。仅保存在浏览器中的画板和未保存素材须通过画布现有完整备份入口导出；服务端遇到这些引用会明确失败，不生成残缺工程包。
 
-同一工作区成功的 `canvas.project.export` 回执保留其工程包资源引用，后台不会将它当作无主资源清理。引用校验同时发生在清理快照与最终删除事务中；失败回执、其他工作区和不匹配的资源编号不保留文件。
+同一工作区成功的 `canvas.project.export`、`file.export` 与已持久化的技能脚本产物回执保留其资源引用，后台不会将其当作无主资源清理。引用校验同时发生在清理快照与最终删除事务中；失败回执、其他工作区和不匹配的资源编号不保留文件。
+
+操作 `file.export` 接收 `canvasId`、`fileName`、`content`（UTF-8 文本，不超过 4 MiB）与可选 `mimeType`，将助手产出的剧本、字幕、表格或结构化文本保存为当前工作区自有本地资源并返回 `resourceId`、`storageKey`、`fileName`、`mimeType` 与 `bytes`；本轮聊天记录通过 `outputs` 投影为 `kind: "file"` 交付文件卡片，支持一键下载和正文预览。`file.read` 读取纯扫描/图片型 PDF 时提取页面 JPEG（最多 6 页、长边不超过 1280px、总计不超过 3 MiB），由内置宿主转为多模态图片块交给视觉模型查看。
 
 `POST /timeline/transcriptions` 接收待转写素材编号和可选语言，创建字幕转写任务。只接受当前用户已上传完成的音视频。省略 `model` 使用本地 whisper.cpp；指定 `model` 使用已连接 BeefTV 账号的云端转写模型，必须由当前目录声明 `audio.transcriptions`。云端请求在服务端提取单声道 16 kHz WAV 后提交，最多 25 MiB；凭据不写入任务，排队期间连接改变会拒绝执行。云端识别按模型计费，结果以带时间的字幕返回。
 
@@ -263,6 +265,7 @@ BeefTV 官方算力视频模型的控件与校验使用 `/v1/models` 下发的 `
 | `POST /assistant/session-config` | 按会话设置思考深度（`thinkingLevel: "off" \| "minimal" \| "low" \| "medium" \| "high"`）；需写权限且仅在当前会话空闲时生效 |
 | `POST /assistant/compact` | 手动压缩指定会话较早的对话上下文（可选 `instructions`，最长 4000 字符），返回最新上下文占用统计；需写权限且仅在当前会话空闲时生效 |
 | `GET/PUT /assistant/host/config`、`POST /assistant/host/start|stop` | 宿主生命周期：需 owner 凭据 + 本机同源；启动命令只取本机配置，绝不接受请求体传入的可执行命令 |
+| `GET/POST /assistant/mcp-servers`、`PUT/PATCH/DELETE /assistant/mcp-servers/:name`、`POST /assistant/mcp-servers/reload`、`POST /assistant/mcp-servers/:name/test` | 内置助手直连的外部 MCP 服务配置（支持 `stdio` 与 `Streamable HTTP`）：`env`/`headers` 密文加密保存且不回显浏览器，仅本机宿主凭 `X-Beeftv-Agent-Token` 通过 `GET /assistant/runtime/mcp-servers` 读取解密配置；外部 MCP 工具默认按需发现（`deferred`）并在只读模式下禁用 |
 
 按轮撤销不依赖浏览器流或宿主的最后一条消息：轮前文档由后端在转发前落盘，变更摘要由该轮自己的写入回执重建，
 因此浏览器断流（没有 `turn_end`）、用户取消或后端在回合中途重启之后，已经落地的助手写入仍然可以撤销。

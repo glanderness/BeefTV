@@ -1,8 +1,8 @@
 {
   "minAdjacentPrefixCoverageRatio": 0.95,
-  "maxHeaderChars": 2972,
-  "maxToolsChars": 24317,
-  "maxHeaderPlusToolsChars": 27289,
+  "maxHeaderChars": 3139,
+  "maxToolsChars": 25135,
+  "maxHeaderPlusToolsChars": 28274,
   "toolChars": {
     "asset_get": 176,
     "asset_list": 377,
@@ -29,6 +29,7 @@
     "canvas_task_bind": 252,
     "canvas_timeline_render": 412,
     "canvas_timeline_update": 477,
+    "file_export": 433,
     "file_read": 555,
     "generation_estimate": 690,
     "media_check": 486,
@@ -39,19 +40,15 @@
     "project_canvas_search": 292,
     "project_media_search": 291,
     "skill_catalog": 340,
-    "skill_draft": 295,
     "skill_file": 378,
-    "skill_market_file": 315,
-    "skill_market_get": 226,
-    "skill_market_search": 210,
-    "skill_publish_prepare": 668,
-    "skill_publish_status": 211,
     "skill_script_run": 677,
     "task_cancel": 258,
     "task_get": 171,
     "canvas_timeline_deliver": 1848,
     "plan_update": 487,
-    "skill_load": 229
+    "skill_load": 229,
+    "tool_search": 646,
+    "codemode": 1667
   },
   "raises": [
     {
@@ -74,6 +71,12 @@
       "reason": "Phase 2.1 在当前画布模式开放 asset.list、canvas.search、generation.estimate 只读查询工具，对齐外部 MCP 能力",
       "maxToolsChars": 24317,
       "maxHeaderPlusToolsChars": 27289
+    },
+    {
+      "reason": "Phase 2.2: enable pi-durable tool_search + codemode and add file.export",
+      "maxHeaderChars": 3139,
+      "maxToolsChars": 25135,
+      "maxHeaderPlusToolsChars": 28274
     }
   ]
 }

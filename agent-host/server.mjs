@@ -20,6 +20,7 @@ import { attachmentContent, mediaCapabilityContext } from './media-content.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
 import { createDispatchDiagnostics } from './dispatch-diagnostics.mjs';
 import { createPluginPackageController } from './plugin-packages.mjs';
+import { createMcpServerController } from './mcp-servers.mjs';
 import { installModelFetchProxy } from './model-fetch-proxy.mjs';
 import { handleEventsRoute } from './events-route.mjs';
 import { openHostTelemetry } from './durable-telemetry.mjs';
@@ -138,8 +139,18 @@ const ops = createOperationBridge({
 
 const legacy = createLegacyHistory({ sessionRoot: SESSION_ROOT, workspaceRoot: WORKSPACE_ROOT });
 
+const getReservedToolNames = () => new Set([
+  ...ops.descriptors.keys(),
+  'plan_update',
+  'skill_load',
+  'canvas_timeline_deliver',
+  'tool_search',
+  'codemode',
+  'read_mcp_resource',
+]);
+
 const pluginController = createPluginPackageController({
-  getReservedToolNames: () => new Set([...ops.descriptors.keys(), 'plan_update', 'skill_load', 'canvas_timeline_deliver']),
+  getReservedToolNames,
   fetchEnabledPackages: async () => {
     const data = await ops.opsRequest('GET', '/plugins/packages/enabled');
     return Array.isArray(data?.packages) ? data.packages : Array.isArray(data) ? data : [];
@@ -151,13 +162,25 @@ const pluginController = createPluginPackageController({
   },
 });
 
+const mcpController = createMcpServerController({
+  getReservedToolNames,
+  dataDir: DATA_DIR,
+  cwd: WORKSPACE_ROOT,
+  fetchEnabledServers: async () => {
+    const data = await ops.opsRequest('GET', '/assistant/runtime/mcp-servers');
+    return data && typeof data === 'object' ? data : { fingerprint: '', servers: [] };
+  },
+});
+
+const combinedExtensions = () => [...pluginController.getExtensions(), ...mcpController.getExtensions()];
+
 const hostTelemetry = await openHostTelemetry(DATA_DIR);
 
 const durable = createDurableSessionStore({
   sessionRoot: SESSION_ROOT, workspaceRoot: WORKSPACE_ROOT, buildTools: ops.buildTools,
   legacy,
   telemetry: hostTelemetry.telemetry,
-  extensions: () => pluginController.getExtensions(),
+  extensions: () => combinedExtensions(),
   getModels: entry => {
     const models = createModels();
     const provider = modelRuntime?.getProvider(PROVIDER_ID);
@@ -318,17 +341,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/tools') {
-    const synced = await pluginController.syncIfChanged().catch(() => ({ changed: false }));
-    if (synced.changed) {
-      await durable.reloadPluginExtensions(pluginController.getExtensions()).catch(() => {});
+    const [syncedPlugins, syncedMcp] = await Promise.all([
+      pluginController.syncIfChanged().catch(() => ({ changed: false })),
+      mcpController.syncIfChanged().catch(() => ({ changed: false })),
+    ]);
+    if (syncedPlugins.changed || syncedMcp.changed) {
+      await durable.reloadPluginExtensions(combinedExtensions()).catch(() => {});
     }
     const canvasId = url.searchParams.get('canvasId') || '';
     const entry = canvasId ? durable.sessions.get(canvasId) : null;
-    const pluginToolNames = pluginController.getToolNames();
+    const extensionToolNames = [...pluginController.getToolNames(), ...mcpController.getToolNames()];
     respond(res, 200, {
       canvasId,
-      activeTools: entry ? entry.toolNames : pluginToolNames,
-      known: [...new Set([...ops.descriptors.keys(), ...pluginToolNames])],
+      activeTools: entry ? entry.toolNames : extensionToolNames,
+      known: [...new Set([...ops.descriptors.keys(), ...extensionToolNames])],
     });
     return;
   }
@@ -343,7 +369,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/plugins/reload') {
       const body = await readJsonBody(req);
       const reloaded = await pluginController.reload(Array.isArray(body.packages) ? body.packages : undefined);
-      await durable.reloadPluginExtensions(pluginController.getExtensions());
+      await durable.reloadPluginExtensions(combinedExtensions());
       respond(res, 200, { ok: true, packages: reloaded.packages, errors: reloaded.errors });
       return;
     }
@@ -622,6 +648,22 @@ const server = http.createServer(async (req, res) => {
         throw error;
       }
     }
+    if (req.method === 'GET' && url.pathname === '/mcp-servers') {
+      respond(res, 200, { servers: mcpController.getStatus() });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/mcp-servers/reload') {
+      const reloaded = await mcpController.reload();
+      await durable.reloadPluginExtensions(combinedExtensions()).catch(() => {});
+      respond(res, 200, { ok: true, servers: reloaded.servers });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname.startsWith('/mcp-servers/') && url.pathname.endsWith('/test')) {
+      const body = await readJsonBody(req);
+      const result = await mcpController.testServer(body?.server);
+      respond(res, 200, result);
+      return;
+    }
     if (req.method === 'POST' && url.pathname === '/session-config') {
       const body = await readJsonBody(req);
       const canvasId = String(body.canvasId || '').trim();
@@ -674,9 +716,12 @@ const server = http.createServer(async (req, res) => {
       if(authority.canvasId!==canvasId || authority.open===false) throw Object.assign(new Error('turn_not_open'),{reason:'turn_not_open'});
       body.permissionMode=authority.permissionMode || 'canvas';
       if (!body.continuationId) {
-        const synced = await pluginController.syncIfChanged().catch(() => ({ changed: false }));
-        if (synced.changed) {
-          await durable.reloadPluginExtensions(pluginController.getExtensions()).catch(() => {});
+        const [syncedPlugins, syncedMcp] = await Promise.all([
+          pluginController.syncIfChanged().catch(() => ({ changed: false })),
+          mcpController.syncIfChanged().catch(() => ({ changed: false })),
+        ]);
+        if (syncedPlugins.changed || syncedMcp.changed) {
+          await durable.reloadPluginExtensions(combinedExtensions()).catch(() => {});
         }
       }
       // 只有 Durable 一套执行运行时：选中的是 Durable 会话就直接接上；否则（旧 JSONL 会话或尚无会话）
@@ -740,6 +785,7 @@ async function shutdown() {
   } catch (error) {
     console.error(`agent-host: 关闭时释放会话失败 ${error?.message || error}`);
   }
+  await mcpController.closeAll().catch(() => {});
   await hostTelemetry.close();
   await new Promise((resolve) => server.close(() => resolve()));
   process.exit(0);
@@ -756,8 +802,11 @@ await initializeModel();
 try {
   const count = await ops.loadDescriptors();
   console.error(`agent-host: 载入 ${count} 个操作（readOnly=${READ_ONLY_MODE}）`);
-  // Same sync every turn uses: a Go without plugin packages just leaves the list empty.
+  // Same sync every turn uses: a Go without plugin packages or MCP config just leaves them empty.
   await pluginController.syncIfChanged();
+  await mcpController.syncIfChanged().catch((error) => {
+    console.error(`agent-host: MCP 初始化同步失败（稍后可重试）：${error?.message || error}`);
+  });
 }
 catch (error) { console.error(`agent-host: 能力发现失败（稍后可重试）：${error?.message || error}`); }
 function onListen() {

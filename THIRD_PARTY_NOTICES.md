@@ -76,7 +76,7 @@ Versions are locked by `backend/go.sum`.
 | --- | --- |
 | Apache-2.0 | `github.com/aws/aws-sdk-go-v2`, `github.com/volcengine/volc-sdk-golang`, `go.opentelemetry.io/otel`, `go.opentelemetry.io/otel/sdk`, `go.opentelemetry.io/otel/trace` |
 | MIT / Apache-2.0 | `github.com/modelcontextprotocol/go-sdk` |
-| BSD-3-Clause | `github.com/google/uuid`, `golang.org/x/image`, `golang.org/x/net`, `golang.org/x/sync`, `golang.org/x/sys` |
+| BSD-3-Clause | `github.com/google/uuid`, `golang.org/x/image`, `golang.org/x/net`, `golang.org/x/sync`, `golang.org/x/sys`, `golang.org/x/text` |
 | BSD-2-Clause | `github.com/pkg/browser` |
 | MIT | `github.com/gin-gonic/gin`, `github.com/goccy/go-yaml`, `github.com/google/jsonschema-go`, `github.com/mattn/go-sqlite3`, `github.com/wailsapp/wails/v2`, `gorm.io/driver/sqlite`, `gorm.io/gorm` |
 

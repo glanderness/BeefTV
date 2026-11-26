@@ -164,6 +164,8 @@ export type AssistantGenerationProposal = {
 export type AssistantScriptOutputFile = {
     path: string;
     size: number;
+    resourceId?: string;
+    mimeType?: string;
 };
 
 export type AssistantScriptRunResult = {
@@ -355,9 +357,10 @@ export type AssistantTurn = {
     createdAt: string;
 };
 
-/** Trusted render receipts in creation order; task/resource access still uses owned APIs. */
+/** Trusted render & deliverable receipts in creation order; task/resource access still uses owned APIs. */
 export type AssistantTurnOutput = { taskId: string; kind: "video"; sourceRevision?: number }
-    | { kind: "project"; resourceId: string; fileName: string; sourceRevision?: number };
+    | { kind: "project"; resourceId: string; fileName: string; sourceRevision?: number }
+    | { kind: "file"; resourceId: string; fileName: string; mimeType?: string; bytes?: number };
 
 export type AssistantSessionSummary = {
     sessionId: string;

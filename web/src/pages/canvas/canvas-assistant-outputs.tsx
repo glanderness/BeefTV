@@ -16,10 +16,148 @@ export function assistantOutputResource(task: GenerationTask | undefined): strin
     } catch { return null; }
 }
 
+const TEXT_PREVIEW_EXT_RE = /\.(md|markdown|txt|srt|vtt|ass|csv|tsv|json|yaml|yml|xml|html|svg|js|ts|py|sh|css)$/i;
+const MAX_INLINE_PREVIEW_CHARS = 24_000;
+
+function formatDeliverableBytes(bytes?: number): string {
+    if (!bytes || bytes <= 0) return "";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isPreviewableDeliverable(fileName: string, mimeType?: string): boolean {
+    const mime = (mimeType || "").toLowerCase();
+    if (mime.startsWith("text/") || mime.includes("json") || mime.includes("xml") || mime.includes("yaml") || mime.includes("subrip") || mime.includes("javascript")) {
+        return true;
+    }
+    return TEXT_PREVIEW_EXT_RE.test(fileName);
+}
+
 export function CanvasAssistantOutputs({ outputs }: { outputs: AssistantTurnOutput[] }) {
     const videos = outputs.filter((output): output is Extract<AssistantTurnOutput, {kind:"video"}> => output.kind === "video");
     const projects = outputs.filter((output): output is Extract<AssistantTurnOutput, {kind:"project"}> => output.kind === "project");
-    return <><CanvasAssistantVideoOutputs outputs={videos} />{projects.map(output => <AssistantProjectDownload key={output.resourceId} output={output} />)}</>;
+    const files = outputs.filter((output): output is Extract<AssistantTurnOutput, {kind:"file"}> => output.kind === "file");
+    return (
+        <>
+            <CanvasAssistantVideoOutputs outputs={videos} />
+            {projects.map(output => <AssistantProjectDownload key={output.resourceId} output={output} />)}
+            {files.map(output => (
+                <AssistantFileDeliverableCard
+                    key={output.resourceId}
+                    resourceId={output.resourceId}
+                    fileName={output.fileName}
+                    mimeType={output.mimeType}
+                    bytes={output.bytes}
+                />
+            ))}
+        </>
+    );
+}
+
+export function AssistantFileDeliverableCard({
+    resourceId,
+    fileName,
+    mimeType,
+    bytes,
+    title = "交付文件",
+}: {
+    resourceId?: string;
+    fileName: string;
+    mimeType?: string;
+    bytes?: number;
+    title?: string;
+}) {
+    const [feedback, setFeedback] = useState("");
+    const [loading, setLoading] = useState(false);
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [previewLoading, setPreviewLoading] = useState(false);
+    const [previewText, setPreviewText] = useState<string | null>(null);
+    const canPreview = Boolean(resourceId && isPreviewableDeliverable(fileName, mimeType));
+    const sizeLabel = formatDeliverableBytes(bytes);
+
+    async function download() {
+        if (!resourceId) return;
+        let url = "";
+        setLoading(true);
+        setFeedback("");
+        try {
+            if (!isWailsNativeShell()) {
+                const blob = await getResourceBlob(resourceStorageKey(resourceId));
+                if (!blob) throw Error("missing deliverable");
+                url = URL.createObjectURL(blob);
+            }
+            const result = await downloadOwnedOrBrowserMedia({ fileName, resourceId, browserUrl: url || undefined });
+            if (result === "saved") setFeedback("文件已保存");
+        } catch {
+            setFeedback("文件下载未完成，请重试");
+        } finally {
+            setLoading(false);
+            if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+    }
+
+    async function togglePreview() {
+        if (!resourceId) return;
+        if (previewOpen) {
+            setPreviewOpen(false);
+            return;
+        }
+        setPreviewOpen(true);
+        if (previewText !== null) return;
+        setPreviewLoading(true);
+        setFeedback("");
+        try {
+            const blob = await getResourceBlob(resourceStorageKey(resourceId));
+            if (!blob) throw Error("missing deliverable");
+            const raw = await blob.text();
+            setPreviewText(raw.length > MAX_INLINE_PREVIEW_CHARS ? `${raw.slice(0, MAX_INLINE_PREVIEW_CHARS)}\n\n…（预览已截断，请下载查看完整内容）` : raw);
+        } catch {
+            setPreviewOpen(false);
+            setFeedback("预览读取失败，请直接下载查看");
+        } finally {
+            setPreviewLoading(false);
+        }
+    }
+
+    return (
+        <div className="canvas-assistant-card">
+            <strong>{title}</strong>
+            <span style={{ overflowWrap: "anywhere" }}>{fileName}{sizeLabel ? ` · ${sizeLabel}` : ""}</span>
+            {resourceId ? (
+                <div className="canvas-assistant-card-actions">
+                    <Button size="small" loading={loading} onClick={() => void download()}>下载文件</Button>
+                    {canPreview ? (
+                        <Button size="small" loading={previewLoading} onClick={() => void togglePreview()}>
+                            {previewOpen ? "收起预览" : "预览内容"}
+                        </Button>
+                    ) : null}
+                </div>
+            ) : (
+                <span className="canvas-assistant-meta">仅保留在本地脚本输出目录</span>
+            )}
+            {previewOpen && previewText !== null ? (
+                <pre
+                    style={{
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                        maxHeight: 240,
+                        overflowY: "auto",
+                        margin: "6px 0 0",
+                        padding: "8px",
+                        borderRadius: "var(--r-sm)",
+                        border: "1px solid var(--border)",
+                        fontSize: "12px",
+                        lineHeight: "18px",
+                        fontFamily: "var(--font-mono)",
+                    }}
+                >
+                    {previewText}
+                </pre>
+            ) : null}
+            {feedback ? <span className="canvas-assistant-meta" role="status">{feedback}</span> : null}
+        </div>
+    );
 }
 
 function AssistantProjectDownload({output}: {output: Extract<AssistantTurnOutput,{kind:"project"}>}) {

@@ -146,6 +146,8 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 
 	// 助手行为设置改变脚本确认方式，写入必须与助手入口共用同一套身份与只读校验。
 	RegisterAssistantSettingsRoutes(r, svc, guard)
+	// 内置助手直连的外部 MCP 服务配置（经 @earendil-works/pi-mcp 接入）。
+	RegisterAssistantMCPRoutes(r, svc, host, guard)
 
 	hostOpsURL := assistantHostOpsURL
 	launchToken := assistantLaunchToken

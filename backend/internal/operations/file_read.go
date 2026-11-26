@@ -43,6 +43,14 @@ type fileReadPagination struct {
 	NextByteOffset        int  `json:"nextByteOffset,omitempty"`
 }
 
+type fileReadImage struct {
+	Page     int    `json:"page"`
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"`
+	Width    int    `json:"width,omitempty"`
+	Height   int    `json:"height,omitempty"`
+}
+
 type fileReadResult struct {
 	ResourceID string              `json:"resourceId"`
 	Format     string              `json:"format"`
@@ -51,6 +59,7 @@ type fileReadResult struct {
 	Readable   bool                `json:"readable"`
 	Content    string              `json:"content"`
 	Pagination *fileReadPagination `json:"pagination,omitempty"`
+	Images     []fileReadImage     `json:"images,omitempty"`
 	Note       string              `json:"note,omitempty"`
 }
 
@@ -125,6 +134,23 @@ func opFileRead(ctx *Context, raw json.RawMessage) (any, error) {
 	}
 	extracted, format, readable, note := extractDocumentText(ctx.Context, data, ext, mimeType)
 	if !readable {
+		if format == "pdf" {
+			if imgs, morePages := extractScannedPDFImages(ctx.Context, data, pdfScannedMaxPages, pdfScannedMaxTotalBytes); len(imgs) > 0 {
+				imgNote := fmt.Sprintf("该 PDF 为扫描件或纯图片，已提取前 %d 页画面供直接审看。", len(imgs))
+				if morePages {
+					imgNote += " 后续页面已省略。"
+				}
+				return fileReadResult{
+					ResourceID: resource.ID,
+					Format:     "pdf-images",
+					MimeType:   resource.MimeType,
+					Bytes:      resource.Size,
+					Readable:   true,
+					Images:     imgs,
+					Note:       imgNote,
+				}, nil
+			}
+		}
 		return fileReadResult{
 			ResourceID: resource.ID,
 			Format:     format,

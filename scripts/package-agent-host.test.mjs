@@ -146,6 +146,10 @@ test('packaged server starts with local imports and makes zero model requests', 
       response.end(JSON.stringify({ code: 0, data: { packages: [] } }));
       return;
     }
+    if (request.method === 'GET' && request.url === '/api/assistant/runtime/mcp-servers' && request.headers['x-beeftv-agent-token'] === 'test-host') {
+      response.end(JSON.stringify({ code: 0, data: { fingerprint: 'empty', servers: [] } }));
+      return;
+    }
     if (request.method !== 'GET' || request.url !== '/api/ops' || request.headers['x-beeftv-agent-token'] !== 'test-host') {
       response.writeHead(403).end(JSON.stringify({ code: 403 }));
       return;
@@ -208,6 +212,7 @@ test('packaged server starts with local imports and makes zero model requests', 
     expect(requests).toEqual([
       { method: 'GET', path: '/api/ops', host: 'test-host' },
       { method: 'GET', path: '/api/plugins/packages/enabled', host: 'test-host' },
+      { method: 'GET', path: '/api/assistant/runtime/mcp-servers', host: 'test-host' },
     ]);
   } finally {
     if (child) {

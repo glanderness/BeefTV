@@ -9,7 +9,7 @@ const TYPE_LABEL = {
 };
 const MEDIA = new Set(['image', 'video', 'audio']);
 
-const HEADER_SECTION_ORDER = ['instructions', 'beeftv_skill_catalog'];
+const HEADER_SECTION_ORDER = ['instructions', 'beeftv_skill_catalog', 'codemode'];
 
 function extractMessageText(message) {
   if (!message) return '';

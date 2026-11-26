@@ -106,4 +106,16 @@ func (o projectArchiveSources) OpenArchiveMedia(ctx context.Context, resourceID 
 	return canvas.ArchiveMedia{Body: body, MimeType: resource.MimeType, Bytes: resource.Size}, nil
 }
 
+func (s *operationSession) SaveAssistantDeliverableFile(ctx context.Context, userID, uploadKey, fileName, mimeType string, content []byte) (*model.Resource, error) {
+	if s.tx == nil {
+		return nil, operations.PreconditionFailed("export_transaction_required", "导出交付文件需要业务事务", nil)
+	}
+	policy, err := s.service.runtimePolicyWithRepo(s.repo)
+	if err != nil {
+		return nil, err
+	}
+	return localasset.StoreDeliverable(s.repo, s.service.dataDir, userID, uploadKey, fileName, mimeType, content, int64(policy.Resource.GeneratedFileMB), int64(policy.Resource.StoredFileGB), int64(policy.Resource.DailyUploadMB))
+}
+
 var _ operations.CanvasProjectExporter = (*operationSession)(nil)
+var _ operations.DeliverableFileSaver = (*operationSession)(nil)

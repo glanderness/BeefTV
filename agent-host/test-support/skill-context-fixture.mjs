@@ -38,7 +38,14 @@ export function serveEmptySkillContext(req,res) {
 // the empty skill context above and an empty list of enabled plugin packages.
 export function serveEmptyHostState(req,res) {
   if(serveEmptySkillContext(req,res))return true;
-  if(req.method!=='GET' || new URL(req.url,'http://fixture.local').pathname!=='/api/plugins/packages/enabled')return false;
-  res.end(JSON.stringify({code:0,data:{packages:[]}}));
-  return true;
+  const pathname = new URL(req.url,'http://fixture.local').pathname;
+  if(req.method==='GET' && pathname==='/api/plugins/packages/enabled'){
+    res.end(JSON.stringify({code:0,data:{packages:[]}}));
+    return true;
+  }
+  if(req.method==='GET' && pathname==='/api/assistant/runtime/mcp-servers'){
+    res.end(JSON.stringify({code:0,data:{fingerprint:'empty',servers:[]}}));
+    return true;
+  }
+  return false;
 }

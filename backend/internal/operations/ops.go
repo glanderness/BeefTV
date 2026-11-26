@@ -28,6 +28,7 @@ func RegisterDefaultOps(r *Registry) {
 	registerGenerationEstimateOp(r)
 	registerMediaOps(r)
 	registerFileReadOp(r)
+	registerFileExportOp(r)
 	registerBusinessGatewayOps(r)
 	registerSkillOps(r)
 	registerSkillMarketOps(r)

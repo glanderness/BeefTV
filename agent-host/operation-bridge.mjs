@@ -341,6 +341,20 @@ export function createOperationBridge({
           if (descriptor.id !== 'canvas.task.bind' || !data?.replayed) {
             collectTurnEffects(turn, descriptor.id, data?.result, opId, { noTurnCanvas: descriptor.noTurnCanvas === true });
           }
+          let scannedPdfImageParts = [];
+          if (descriptor.id === 'file.read' && Array.isArray(data?.result?.images) && data.result.images.length > 0) {
+            scannedPdfImageParts = data.result.images
+              .filter((img) => img && typeof img.data === 'string' && img.data.length > 0 && typeof img.mimeType === 'string')
+              .map((img) => ({ type: 'image', data: img.data, mimeType: img.mimeType }));
+            const { images: rawImages, ...restResult } = data.result;
+            data = {
+              ...data,
+              result: {
+                ...restResult,
+                imagePages: rawImages.map((img) => ({ page: img.page, width: img.width, height: img.height })),
+              },
+            };
+          }
           const projected = descriptor.id === 'canvas.get'
             ? canvasReadView(data, readView)
             : descriptor.id === 'canvas.nodes.get'
@@ -348,6 +362,9 @@ export function createOperationBridge({
               : canvasWriteView(data, descriptor.id, params);
           const converted = mediaToolResult(projected, descriptor.id, { ...mediaModel, originTurnId:turn.turnId,
             ...(generation.durable ? {nativePartStore} : {}) });
+          if (scannedPdfImageParts.length > 0 && Array.isArray(converted?.content)) {
+            converted.content = [...converted.content, ...scannedPdfImageParts];
+          }
           const evidence = mediaEvidence(data?.result, descriptor.id);
           const facts = evidence ? undefined : mediaFacts(data?.result, descriptor.id);
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed, ...rebaseNote,

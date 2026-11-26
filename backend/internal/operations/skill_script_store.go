@@ -334,6 +334,7 @@ func ProposeOrRunSkillScript(ctx context.Context, db *gorm.DB, skillSvc *skills.
 			_ = UpsertSkillScriptProposal(db, userID, proposal)
 			return nil, mapDomainError(runErr)
 		}
+		PersistScriptOutputResources(db, skillSvc.DataDir(), userID, proposal.CanvasID, proposal.ProposalID, res)
 		proposal.Status = scriptStatusFromResult(res)
 		proposal.Result = res
 		proposal.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -412,6 +413,7 @@ func ConfirmSkillScriptProposal(ctx context.Context, db *gorm.DB, skillSvc *skil
 		_ = UpsertSkillScriptProposal(db, userID, *proposal)
 		return nil, nil, mapDomainError(runErr)
 	}
+	PersistScriptOutputResources(db, skillSvc.DataDir(), userID, proposal.CanvasID, proposal.ProposalID, res)
 	proposal.Status = scriptStatusFromResult(res)
 	proposal.Result = res
 	proposal.UpdatedAt = time.Now().UTC().Format(time.RFC3339)

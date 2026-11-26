@@ -2073,6 +2073,47 @@
     "replay": "unsafe"
   },
   {
+    "id": "file.export",
+    "summary": "把助手生成的剧本、字幕、分镜表或结构化文本保存为可下载交付文件卡片（.md/.srt/.csv/.json/.txt/.html 等）",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "content": {
+          "description": "文件文本内容（UTF-8，不超过 4MB）",
+          "type": "string"
+        },
+        "fileName": {
+          "description": "导出文件名（含扩展名，如 分镜脚本.md、对白字幕.srt、分镜表.csv）",
+          "type": "string"
+        },
+        "mimeType": {
+          "description": "可选 MIME 类型，留空时按扩展名推断",
+          "type": "string"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        }
+      },
+      "required": [
+        "canvasId",
+        "fileName",
+        "content",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [
+      "full-access",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
     "id": "file.read",
     "summary": "分页读取用户上传的文档或文本内容（支持纯文本/Markdown/CSV/JSON/SRT/代码/DOCX/XLSX/PPTX/PDF）",
     "readOnly": true,
