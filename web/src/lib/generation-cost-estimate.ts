@@ -1,5 +1,7 @@
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-config";
+import { isMidjourneyImageModel, resolveMidjourneyEffectiveSize } from "@/lib/midjourney-image";
 import { normalizeImageValue, normalizeVideoValue, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import { estimateGenerationCost, type CostEstimate, type CostEstimateTarget, type GenerationCostEstimate } from "@/services/api/cost-estimate";
 import type { AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasBatchRow, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
@@ -51,11 +53,14 @@ export function canvasNodeCostTarget({
         return { modelKey, kind: "audio", parameters: { count: "1" }, text };
     }
     if (mode === "image") {
+        const effectiveSize = isMidjourneyImageModel(modelKey)
+            ? resolveMidjourneyEffectiveSize(prompt, config.size, mergedImageCapabilityConfig(config, modelKey).size.presets) || config.size
+            : config.size;
         return {
             modelKey,
             kind: "image",
             parameters: cleanParameters({
-                size: config.size,
+                size: effectiveSize,
                 quality: config.quality,
                 count: config.count,
                 seedreamMode: config.seedreamMode,

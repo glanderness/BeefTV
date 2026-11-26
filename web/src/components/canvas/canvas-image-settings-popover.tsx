@@ -11,6 +11,7 @@ import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 import { seedreamFamily, seedreamSizeLabel } from "@/lib/seedream-image";
+import { isMidjourneyImageModel, midjourneySettingsSummary } from "@/lib/midjourney-image";
 
 type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
@@ -35,7 +36,9 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
     const profile = mergedImageCapabilityConfig(config, config.model || config.imageModel);
     const normalized = normalizeImageValue(profile, config);
-    const seedream = seedreamFamily(config.model || config.imageModel);
+    const activeModel = config.model || config.imageModel;
+    const seedream = seedreamFamily(activeModel);
+    const isMidjourney = isMidjourneyImageModel(activeModel);
     const layers = config.seedreamMode === "layers";
     const sizeLabel = (seedream && seedreamSizeLabel(profile, normalized.size, layers)) || imageSizeLabel(normalized.size, profile);
     const countDisplay = imageCountDisplay(config, profile, seedream);
@@ -46,6 +49,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
         ...(showCount && profile.maxOutputs > 1 ? [`${normalized.count} ${countDisplay.unit}`] : []),
         ...(countDisplay.groupLimit ? [`每组最多 ${countDisplay.groupLimit} 张`] : []),
         ...(profile.transparentBackground.supported && normalized.transparentBackground === "true" ? ["透明"] : []),
+        ...(isMidjourney ? midjourneySettingsSummary(config) : []),
     ];
     const summary = summaryOverride || summaryParts.join(" · ");
     const hasSettings = profile.size.parameter !== "none" || profile.quality.supported || profile.transparentBackground.supported || (showCount && profile.maxOutputs > 1);

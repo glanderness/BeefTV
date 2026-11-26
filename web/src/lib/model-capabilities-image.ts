@@ -170,7 +170,7 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         const presets = "presets" in contract ? contract.presets as ImageResolutionOption[] : undefined;
         return {
             references: { promptMaxChars: contract.promptMaxChars, maxImages: contract.maxImages, maxImageBytes: contract.maxImageBytes, maskSupported: false },
-            size: { parameter: "size", values: [...new Set([...Object.keys(contract.sizes), ...(contract.fixedOutputs ? Object.values(contract.sizes) : []), ...(presets?.flatMap((preset) => [preset.ratio, preset.size]) || [])])], default: "1:1", allowCustom: contract.minSide !== contract.maxSide, ...(presets ? { presets } : {}) },
+            size: { parameter: "size", values: [...new Set([...Object.keys(contract.sizes), ...(contract.fixedOutputs ? Object.values(contract.sizes) : []), ...(presets?.flatMap((preset) => [preset.ratio, preset.size]) || [])])], default: "1:1", allowCustom: !presets?.length && contract.minSide !== contract.maxSide, ...(presets ? { presets } : {}) },
             quality: { supported: false, values: [], default: "auto" },
             transparentBackground: { supported: false, default: false },
             responseFormat: { supported: Boolean(contract.fixedOutputs) }, outputFormat: { supported: false }, maxOutputs: contract.fixedOutputs || 1, fixedOutputs: contract.fixedOutputs, generationOutputs: "generationOutputs" in contract ? contract.generationOutputs as number[] : undefined,

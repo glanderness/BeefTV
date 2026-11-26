@@ -7,8 +7,11 @@ import type { GenerationTask } from "@/services/api/task-center";
 test("Midjourney exposes fixed four-image settings and tracks delivery for each candidate", () => {
     const profile = defaultModelCapabilityConfig("openai-image", "midjourney-v8.2").image!;
     expect(normalizeImageValue(profile, { count: "1", size: "16:9", quality: "high" })).toMatchObject({ count: "4", size: "16:9", quality: "auto" });
-    expect(profile.size.presets?.filter((preset) => preset.tier === "2k")).toHaveLength(0);
+    expect(profile.size.presets?.filter((preset) => preset.tier === "1k")).toHaveLength(8);
+    expect(profile.size.presets?.filter((preset) => preset.tier === "2k")).toHaveLength(8);
+    expect(profile.size.presets?.filter((preset) => preset.tier === "4k")).toHaveLength(0);
     expect(normalizeImageValue(profile, { count: "4", size: "1456x816" }).size).toBe("1456x816");
+    expect(normalizeImageValue(profile, { count: "4", size: "2944x1648" }).size).toBe("2944x1648");
     const nodes = [0, 1].map((index) => ({ id: String(index), type: CanvasNodeType.Image, title: "MJ", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { taskOutputIndex: index, content: `image:${index}` } }));
     const task = { id: "task", type: "canvas_image", status: "succeeded", stage: "delivery_paused", outputs: [{ outputIndex: 0, materializedAssetId: "first" }, { outputIndex: 1, materializationErrorCode: "delivery_paused" }] } as GenerationTask;
     expect(canvasGenerationTaskNodes(nodes, "0", task)[0]!.metadata!.status).toBe("success");
@@ -49,7 +52,7 @@ test("Midjourney upgrades stale official gateway size and total-count settings",
  const config = {channels:[{id:"beeftv",baseUrl:"https://beeftv.app/v1",models:["midjourney-v8.2"],modelProfiles:[{model:"midjourney-v8.2",protocol:"openai-image" as const,capabilityConfig:legacy}]}]};
  const profile = modelCapabilityConfigFor(config,"beeftv::midjourney-v8.2").image!;
  expect(profile.generationOutputs).toEqual([4,8,12]);
- expect(profile.size.presets).toHaveLength(7);
+ expect(profile.size.presets).toHaveLength(16);
  expect(normalizeImageValue(profile,{size:"1456x816",quality:"2k",count:"8"})).toMatchObject({quality:"auto",count:"8",size:"1456x816"});
 });
 

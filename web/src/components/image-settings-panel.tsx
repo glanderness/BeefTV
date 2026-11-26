@@ -10,8 +10,10 @@ import { normalizeImageValue, type ImageCapabilityConfig } from "@/lib/model-cap
 import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import { type AiConfig } from "@/stores/use-config-store";
 import { seedreamFamily, seedreamResolutionTiers } from "@/lib/seedream-image";
+import { isMidjourneyImageModel, type MidjourneySettingKey } from "@/lib/midjourney-image";
 import { SeedreamSizePicker } from "./seedream-size-picker";
 import { SeedreamSettings } from "./seedream-settings";
+import { MidjourneySettings } from "./midjourney-settings";
 
 const qualityOptions = [
     { value: "auto", label: "自动" },
@@ -48,7 +50,7 @@ const aspectOptions: AspectOption[] = [
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "transparentBackground" | "count" | "seedreamMode" | "seedreamMaxImages" | "seedreamOutputFormat" | "seedreamOptimize" | "seedreamWatermark", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "transparentBackground" | "count" | "seedreamMode" | "seedreamMaxImages" | "seedreamOutputFormat" | "seedreamOptimize" | "seedreamWatermark" | MidjourneySettingKey, value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     showQuality?: boolean;
@@ -61,8 +63,10 @@ type ImageSettingsPanelProps = {
 };
 
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, showQuality = true, showTransparent = true, showSize = true, showCount = true, className = "w-[304px] space-y-3 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 3 }: ImageSettingsPanelProps) {
-    const profile = mergedImageCapabilityConfig(config, config.model || config.imageModel);
-    const seedream = seedreamFamily(config.model || config.imageModel);
+    const activeModel = config.model || config.imageModel;
+    const profile = mergedImageCapabilityConfig(config, activeModel);
+    const seedream = seedreamFamily(activeModel);
+    const isMidjourney = isMidjourneyImageModel(activeModel);
     const normalized = normalizeImageValue(profile, config);
     const quality = normalized.quality;
     const transparentBackground = normalized.transparentBackground === "true";
@@ -150,6 +154,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     </>}
                     {seedream && <SeedreamSettings family={seedream} profile={profile} config={config} onChange={onConfigChange} />}
                 </section>}
+                {isMidjourney ? <MidjourneySettings config={config} onChange={onConfigChange} /> : null}
             </div>
         </ImageSettingsTheme>
     );

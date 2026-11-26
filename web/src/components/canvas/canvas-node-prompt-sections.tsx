@@ -11,6 +11,8 @@ import { CanvasPromptFontControl } from "./canvas-prompt-font-control";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasReferenceFeedback, type useCanvasReferenceCheck } from "./canvas-reference-feedback";
 import { CanvasNodePromptWarnings } from "./canvas-node-prompt-panel-controls";
+import { MidjourneyPromptNotice } from "@/components/midjourney-settings";
+import { isMidjourneyImageModel, parseMidjourneyPrompt, stripUnsupportedMidjourneyFlags } from "@/lib/midjourney-image";
 import { ConnectedReferenceShelf, ReferenceToolsPopover, VideoReferenceModeSwitch, referenceShelfHeading } from "./canvas-node-reference-shelf";
 import { PromptResizeHandle } from "./canvas-prompt-resize-handles";
 import { setCanvasNodePromptSelection } from "@/lib/canvas/canvas-text-mention";
@@ -348,6 +350,13 @@ export function CanvasNodePromptEditorSection({
                 onReplace={(issue) => onReferenceActionChange({ type: "replace", token: issue.token, key: Date.now() })}
                 onLocateNode={onLocateReferenceNode}
             />
+            {mode === "image" && isMidjourneyImageModel(config.model) ? (
+                <MidjourneyPromptNotice
+                    unsupportedFlags={parseMidjourneyPrompt(prompt).unsupportedFlags}
+                    theme={theme}
+                    onClean={() => onUpdatePrompt(stripUnsupportedMidjourneyFlags(prompt))}
+                />
+            ) : null}
             <CanvasNodePromptWarnings
                 config={config}
                 currentModelCompatibilityError={currentModelCompatibilityError}

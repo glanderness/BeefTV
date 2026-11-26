@@ -64,7 +64,7 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 		}
 		return &ImageCapabilityConfig{
 			References: ImageReferenceConfig{PromptMaxChars: contract.PromptMaxChars, MaxImages: contract.MaxImages, MaxImageBytes: contract.MaxImageBytes},
-			Size:       ImageSizeConfig{Parameter: "size", Values: values, Default: "1:1", AllowCustom: contract.MinSide != contract.MaxSide, Presets: presets},
+			Size:       ImageSizeConfig{Parameter: "size", Values: values, Default: "1:1", AllowCustom: len(presets) == 0 && contract.MinSide != contract.MaxSide, Presets: presets},
 			Quality:    ImageQualityConfig{Default: "auto"}, MaxOutputs: max(1, contract.FixedOutputs), FixedOutputs: contract.FixedOutputs, GenerationOutputs: contract.GenerationOutputs,
 			ResponseFormat: ImageResponseFormat{Supported: contract.FixedOutputs > 0},
 		}
