@@ -83,7 +83,7 @@ export function useCanvasBatchDownloadPending(): boolean {
     return useSyncExternalStore(subscribeBatchPending, isCanvasBatchDownloadPending, () => false);
 }
 
-function resolveBatchDownloadItem(node: CanvasNodeData, index: number, total: number): ResolvedBatchItem {
+function resolveBatchDownloadItem(node: CanvasNodeData): ResolvedBatchItem {
     const content = node?.metadata?.content?.trim() || "";
     const resourceId = ownedResourceIdFromMediaRef(node?.metadata?.storageKey, content);
     const valid = Boolean((content || resourceId) && isDownloadableMediaNodeType(node.type));
@@ -91,7 +91,7 @@ function resolveBatchDownloadItem(node: CanvasNodeData, index: number, total: nu
         node,
         content,
         resourceId,
-        fileName: buildBatchDownloadFilename(node, index, total),
+        fileName: buildBatchDownloadFilename(node),
         valid,
     };
 }
@@ -103,7 +103,7 @@ export function collectDownloadableMediaNodes(
     const selectedSet = selectedIds instanceof Set ? selectedIds : new Set(selectedIds);
     if (selectedSet.size === 0) return [];
     const selected = nodes
-        .filter((node) => selectedSet.has(node.id) && resolveBatchDownloadItem(node, 0, 1).valid)
+        .filter((node) => selectedSet.has(node.id) && resolveBatchDownloadItem(node).valid)
         .sort((a, b) => a.position.y - b.position.y);
 
     const rows: CanvasNodeData[][] = [];
@@ -119,14 +119,22 @@ export function collectDownloadableMediaNodes(
     return rows.flatMap((row) => row.sort((a, b) => a.position.x - b.position.x || a.id.localeCompare(b.id)));
 }
 
-export function buildBatchDownloadFilename(
-    node: CanvasNodeData,
-    index: number,
-    total: number = index + 1,
-): string {
-    const padWidth = Math.max(2, String(Math.max(total, index + 1)).length);
-    const prefix = String(Math.max(1, index + 1)).padStart(padWidth, "0");
-    return `${prefix}_${buildCanvasMediaDownloadFileName(node, { fallbackName: defaultBatchMediaLabel(node.type) })}`;
+export function buildBatchDownloadFilename(node: CanvasNodeData): string {
+    return buildCanvasMediaDownloadFileName(node, { fallbackName: defaultBatchMediaLabel(node.type) });
+}
+
+function deduplicateBatchDownloadFilename(fileName: string, usedLower: Set<string>): string {
+    const dot = fileName.lastIndexOf(".");
+    const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
+    const ext = dot > 0 ? fileName.slice(dot) : "";
+    for (let suffix = 0; ; suffix += 1) {
+        const candidate = suffix === 0 ? fileName : `${stem} (${suffix})${ext}`;
+        const lower = candidate.toLowerCase();
+        if (!usedLower.has(lower)) {
+            usedLower.add(lower);
+            return candidate;
+        }
+    }
 }
 
 export async function batchDownloadCanvasMediaNodes(
@@ -140,7 +148,7 @@ export async function batchDownloadCanvasMediaNodes(
     const useDefaultNative = !options.fetchImpl && !options.triggerDownload && nativeShell;
     const nativeSaver = options.saveNativeBatch ?? (useDefaultNative ? saveOwnedNativeMediaBatch : undefined);
     const nativeDirChooser = options.chooseNativeBatchDir ?? (useDefaultNative ? chooseOwnedNativeMediaBatchDirectory : undefined);
-    const resolved = nodes.map((node, index) => resolveBatchDownloadItem(node, index, nodes.length));
+    const resolved = nodes.map((node) => resolveBatchDownloadItem(node));
 
     if (nativeSaver) {
         const nativeResult = await tryDesktopNativeBatchDownload(resolved, fetchImpl, nativeDirChooser, nativeSaver);
@@ -151,6 +159,7 @@ export async function batchDownloadCanvasMediaNodes(
 
     let downloaded = 0;
     const failures: BatchDownloadFailure[] = [];
+    const usedBrowserNamesLower = new Set<string>();
 
     for (let index = 0; index < resolved.length; index += 1) {
         const item = resolved[index];
@@ -158,10 +167,11 @@ export async function batchDownloadCanvasMediaNodes(
             failures.push({ fileName: item.fileName, reason: "缺少可下载的媒体内容" });
             continue;
         }
+        const filename = deduplicateBatchDownloadFilename(item.fileName, usedBrowserNamesLower);
         const reason = await downloadSingleNodeMedia({
             content: item.content,
             resourceId: item.resourceId,
-            filename: item.fileName,
+            filename,
             fetchImpl,
             hasCustomFetch: Boolean(options.fetchImpl),
             loadResourceBlob: options.loadResourceBlob ?? getResourceBlob,
@@ -171,7 +181,7 @@ export async function batchDownloadCanvasMediaNodes(
         if (!reason) {
             downloaded += 1;
         } else {
-            failures.push({ fileName: item.fileName, reason });
+            failures.push({ fileName: filename, reason });
         }
         if (index < resolved.length - 1 && staggerMs > 0) {
             await delay(staggerMs);

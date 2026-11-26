@@ -88,7 +88,7 @@ describe("canvas media download", () => {
     test("单张下载与批量下载共用同一扩展名剥离和清理规则", () => {
         const jpegNode = mediaNode({ title: "封面.jpeg", metadata: { content: "/api/resources/res-1/file", mimeType: "image/jpeg" } });
         expect(buildCanvasMediaDownloadFileName(jpegNode)).toBe("封面.jpg");
-        expect(buildBatchDownloadFilename(jpegNode, 0, 3)).toBe("01_封面.jpg");
+        expect(buildBatchDownloadFilename(jpegNode)).toBe("封面.jpg");
     });
 });
 
