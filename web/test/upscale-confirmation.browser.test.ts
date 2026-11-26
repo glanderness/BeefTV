@@ -26,7 +26,7 @@ beforeAll(async () => {
     server = Bun.serve({ port: 0, async fetch(request) {
         const path = new URL(request.url).pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
-        if (path === "/api/media-upscale/capabilities") return Response.json({ code: 0, data: { cloudProcessing: true, maxVideoDurationMs: 300000, modes: [{ mediaType: "image", mode: "precision", models: ["Standard V2"], scales: [1, 2, 3, 4], outputFormats: ["png", "jpeg"] }, { mediaType: "video", mode: "generative", models: ["tencent-video-enhance-seedance2"], scales: [1, 2, 3, 4], outputFormats: ["mp4"] }] } });
+        if (path === "/api/media-upscale/capabilities") return Response.json({ code: 0, data: { cloudProcessing: true, maxVideoDurationMs: 300000, modes: [{ mediaType: "image", mode: "precision", models: ["Standard V2"], modelOptions: [{ id: "topaz-standard-v2", label: "Standard V2" }], scales: [1, 2, 3, 4], outputFormats: ["png", "jpeg"] }, { mediaType: "video", mode: "generative", models: ["tencent-video-enhance-seedance2"], modelOptions: [{ id: "tencent-video-enhance-seedance2", label: "Seedance2", billingMode: "mps_video_seconds" }], scales: [1, 2, 3, 4], outputFormats: ["mp4"] }] } });
         if (path === "/api/media-upscale/estimate") { estimates.push(await request.json() as Record<string, unknown>); return Response.json({ code: 0, data: { mediaType: "image", source: { width: 100, height: 100 }, output: { width: 200, height: 200 }, currency: "CNY", reservation: 1.25, generationSubmitted: false, cloudProcessing: true } }); }
         if (path.startsWith("/api/tasks/by-operation/")) return Response.json({ code: 404, msg: "not found" }, { status: 404 });
         if (path === "/api/media-upscale/tasks") {
@@ -206,3 +206,53 @@ test("an empty processor attaches the parameter panel below the node at both zoo
     expect(normal.width).toBeCloseTo(360);
     expect((await panel.boundingBox())!.y).toBeGreaterThan(normal.y + normal.height);
 });
+
+test("falls back to server-advertised upscale model when preset IDs are replaced upstream", async () => {
+    await page.route("**/api/media-upscale/capabilities", route => route.fulfill({
+        json: {
+            code: 0,
+            data: {
+                cloudProcessing: true,
+                maxVideoDurationMs: 300000,
+                modes: [
+                    { mediaType: "image", mode: "precision", models: ["topaz-standard-v3"], modelOptions: [{ id: "topaz-standard-v3", label: "Standard V3" }], scales: [1, 2, 3, 4], outputFormats: ["png"] },
+                    { mediaType: "video", mode: "generative", models: ["tencent-video-enhance-v3"], modelOptions: [{ id: "tencent-video-enhance-v3", label: "Enhance V3", billingMode: "mps_video_seconds" }], scales: [1, 2, 3, 4], outputFormats: ["mp4"] },
+                ],
+            },
+        },
+    }));
+    await page.goto(server.url + "?video");
+    await page.getByText("预计先扣 ¥1.25", { exact: true }).waitFor({ timeout: 5_000 });
+    expect(estimates.at(-1)).toMatchObject({ model: "tencent-video-enhance-v3" });
+    await page.getByRole("button", { name: "开始批量超分", exact: true }).click();
+    await page.waitForFunction(() => JSON.parse(document.getElementById("snapshot")!.textContent!).observed === "original-task");
+    expect(creates[0]).toMatchObject({ model: "tencent-video-enhance-v3" });
+}, 12_000);
+
+test("fallback video model without mps billing omits targetShortEdge, and image-only patch does not persist 720p or block canvas delete", async () => {
+    await page.route("**/api/media-upscale/capabilities", route => route.fulfill({
+        json: {
+            code: 0,
+            data: {
+                cloudProcessing: true,
+                maxVideoDurationMs: 300000,
+                modes: [
+                    { mediaType: "image", mode: "precision", models: ["Standard V2"], modelOptions: [{ id: "topaz-standard-v2", label: "Standard V2" }], scales: [1, 2, 3, 4], outputFormats: ["png"] },
+                    { mediaType: "video", mode: "generative", models: ["Starlight Fast 2"], modelOptions: [{ id: "topaz-starlight-fast-2", label: "Starlight Fast 2" }], scales: [1, 2, 3, 4], outputFormats: ["mp4"] },
+                ],
+            },
+        },
+    }));
+    await page.goto(server.url + "?video");
+    await page.getByText("预计先扣 ¥1.25", { exact: true }).waitFor({ timeout: 5_000 });
+    expect(await page.getByLabel("输出清晰度").count()).toBe(0);
+    expect(estimates.at(-1)?.targetShortEdge).toBeUndefined();
+    expect(await page.locator("[data-canvas-keyboard-scope]").count()).toBe(0);
+
+    await page.goto(server.url.toString());
+    await page.getByLabel("图片输出尺寸").click();
+    await page.locator(".ant-select-item-option").filter({ hasText: "4K" }).click();
+    const snapshot = JSON.parse(await page.locator("#snapshot").innerText());
+    const processor = snapshot.nodes.find((node: { id: string }) => node.id === "processor");
+    expect(processor.metadata.upscale.videoTargetShortEdge).toBeUndefined();
+}, 12_000);

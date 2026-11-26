@@ -78,7 +78,7 @@ func RecoverFailedVideos(
 			return ctx.Err()
 		}
 		*afterID = candidate.ID
-		if err := recoverOne(WithAutomaticRecovery(ctx), candidate); err != nil && !errors.Is(err, repository.ErrTaskProviderRecoveryConflict) {
+		if err := recoverOne(ctx, candidate); err != nil && !errors.Is(err, repository.ErrTaskProviderRecoveryConflict) {
 			last = err
 		}
 	}
@@ -202,7 +202,7 @@ func RecoverFailedVideo(
 	if err != nil {
 		return err
 	}
-	if task.Status != model.TaskStatusFailed || (AutomaticRecovery(ctx) && task.RecoveryPaused) || !VideoRecoveryNeedsPolling(*task) {
+	if task.Status != model.TaskStatusFailed || !VideoRecoveryNeedsPolling(*task) {
 		return nil
 	}
 	hydrateReqID(task)
@@ -282,7 +282,7 @@ func RecoverFailedImageForUser(
 	if !needsPoll(*task) && !needsRecheck(*task) {
 		return task, nil
 	}
-	_ = recoverImg(ctx, *task)
+	recoverErr := recoverImg(ctx, *task)
 	updated, err := repo.TaskForUser(userID, taskID)
 	if err != nil {
 		return nil, err
@@ -290,6 +290,9 @@ func RecoverFailedImageForUser(
 	if updated.Status == model.TaskStatusSucceeded {
 		_ = deliver(*updated)
 		return repo.TaskForUser(userID, taskID)
+	}
+	if recoverErr != nil && !errors.Is(recoverErr, repository.ErrTaskProviderRecoveryConflict) {
+		updated.RecoveryLastError = RecoveryAttemptError(recoverErr)
 	}
 	return updated, nil
 }
@@ -312,8 +315,15 @@ func RecoverFailedVideoOrUpscaleForUser(
 	if !VideoRecoveryNeedsPolling(*task) {
 		return task, nil
 	}
-	_ = recoverVid(ctx, *task)
-	return repo.TaskForUser(userID, taskID)
+	recoverErr := recoverVid(ctx, *task)
+	updated, err := repo.TaskForUser(userID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if updated.Status != model.TaskStatusSucceeded && recoverErr != nil && !errors.Is(recoverErr, repository.ErrTaskProviderRecoveryConflict) {
+		updated.RecoveryLastError = RecoveryAttemptError(recoverErr)
+	}
+	return updated, nil
 }
 
 type ManagedToolRecoveryDeps struct {
@@ -466,12 +476,6 @@ func QueryFailedVideoTaskWithDeps(ctx context.Context, deps VideoTaskRecoveryDep
 		}
 	}()
 
-	if AutomaticRecovery(ctx) {
-		current, err := deps.Repo.TaskForUser(claimUserID, task.ID)
-		if err != nil || current.RecoveryPaused {
-			return nil, err
-		}
-	}
 	recoveryCtx, cancelRecovery := ProviderTaskRecoveryContext(ctx)
 	defer cancelRecovery()
 	queryCtx := deps.BindAnalytics(recoveryCtx, *task)
@@ -511,7 +515,6 @@ func QueryFailedVideoTaskWithDeps(ctx context.Context, deps VideoTaskRecoveryDep
 		result, providerStatus, err = generation.QueryProtocolAdapterVideoTask(queryCtx, input, adapter, providerRequestID)
 	}
 	if err != nil {
-		_ = deps.Repo.RecordTaskRecoveryAttempt(*task, RecoveryAttemptError(err))
 		if outcome := deps.ClassifyOutcome(*task, providerStatus, err); outcome != "" {
 			var next *time.Time
 			if VideoSettlementNeedsPolling(*task) {
@@ -526,7 +529,6 @@ func QueryFailedVideoTaskWithDeps(ctx context.Context, deps VideoTaskRecoveryDep
 		return nil, err
 	}
 	if result == nil {
-		_ = deps.Repo.RecordTaskRecoveryAttempt(*task, "")
 		var next *time.Time
 		if VideoSettlementNeedsPolling(*task) {
 			at := time.Now().Add(deps.Backoff(*task))
@@ -549,7 +551,6 @@ func QueryFailedVideoTaskWithDeps(ctx context.Context, deps VideoTaskRecoveryDep
 
 	result, err = deps.PersistGeneratedMedia(*task, result)
 	if err != nil {
-		_ = deps.Repo.RecordTaskRecoveryAttempt(*task, RecoveryAttemptError(err))
 		_ = deps.Log(task.UserID, task.ID, "error", "人工查询已取得视频，但结果保存失败", err.Error())
 		return nil, err
 	}

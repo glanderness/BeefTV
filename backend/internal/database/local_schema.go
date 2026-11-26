@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 33
+const CurrentSchemaVersion int64 = 32
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -207,20 +207,6 @@ func canonicalLocalMigrations() []localMigration {
 			).Error
 		}},
 		{version: 32, name: "assistant-referenced-resources", apply: migrateAssistantReferencedResources},
-		{version: 33, name: "task-recovery-controls", apply: func(tx *gorm.DB) error {
-			// Preview builds recorded task recovery controls at v32. Fill in
-			// the assistant column when that ledger entry occupied v32.
-			if err := migrateAssistantReferencedResources(tx); err != nil {
-				return err
-			}
-			if err := ensureSQLiteColumn(tx, "tasks", "recovery_paused", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-				return err
-			}
-			if err := ensureSQLiteColumn(tx, "tasks", "recovery_last_attempt_at", "DATETIME"); err != nil {
-				return err
-			}
-			return ensureSQLiteColumn(tx, "tasks", "recovery_last_error", "TEXT")
-		}},
 	}
 }
 
@@ -541,7 +527,7 @@ func RequireLocalSchema(db *gorm.DB) error {
 	if version != CurrentSchemaVersion {
 		return fmt.Errorf("本地工作区数据库版本为 %d，期望 %d，请启用自动迁移", version, CurrentSchemaVersion)
 	}
-	for _, col := range []string{"recovery_outcome", "beef_usage_state", "beef_billing_state", "beef_reconcile_deadline", "image_job_id", "recovery_paused", "recovery_last_attempt_at", "recovery_last_error"} {
+	for _, col := range []string{"recovery_outcome", "beef_usage_state", "beef_billing_state", "beef_reconcile_deadline", "image_job_id"} {
 		if has, err := sqliteHasColumn(db, "tasks", col); err != nil {
 			return err
 		} else if !has {

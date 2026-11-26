@@ -133,7 +133,7 @@ test("canvas panel only counts generating nodes and removes ended or deleted tas
     let terminal = false;
     let unavailable = false;
     const task = (id: string, status: string, nodeId?: string, phase = "running") => ({
-        id, projectId: "test-canvas", type: "canvas_video", model: id === "live" ? "Test Live Model" : "MAGI-2", status, prompt: id === "live" ? "" : id, attempts: 1,
+        id, projectId: "test-canvas", type: "canvas_video", model: id === "live" ? "Test Live Model" : "Test Video Model", status, prompt: id === "live" ? "" : id, attempts: 1,
         clientContext: nodeId ? { nodeId } : undefined,
         outcome: { phase, regenerate: "blocked", reason: "provider_result_pending" },
         createdAt: "2026-11-25T06:56:21Z", updatedAt: "2026-11-26T06:23:55Z",

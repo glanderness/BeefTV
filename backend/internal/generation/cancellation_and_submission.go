@@ -669,8 +669,8 @@ func EstimateMediaUpscale(ctx context.Context, user string, request topaz.Reques
 		srcDurationMs = facts.DurationMs
 	}
 	outputScale := input.Upscale.Factor
-	if request.TargetShortEdge != 0 {
-		outputScale = float64(request.TargetShortEdge) / float64(min(srcWidth, srcHeight))
+	if facts.EffectiveFactor > 0 {
+		outputScale = facts.EffectiveFactor
 	}
 	return map[string]any{
 		"mediaType":           input.Mode,

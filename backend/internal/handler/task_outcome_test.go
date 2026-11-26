@@ -794,35 +794,3 @@ func TestCanvasAllActiveTasksCountsPastPageLimit(t *testing.T) {
 		t.Fatalf("status=%d total=%d err=%v", response.Code, len(body.Data), err)
 	}
 }
-
-func TestPauseRecoveryKeepsReceiptAndExcludesBackgroundScan(t *testing.T) {
-	h := newRetiredAgentHarness(t)
-	owner, err := h.svc.WorkspaceOwner("local")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lastAttempt := time.Now().UTC().Truncate(time.Second)
-	row := model.Task{ID: "pause-original", UserID: owner.ID, ProjectID: "recovery-canvas", Type: "canvas_video", Status: model.TaskStatusFailed, ErrorCode: "download_failed", Stage: "任务失败", ProviderRequestID: "receipt-original", RecoveryLastAttemptAt: &lastAttempt, RecoveryLastError: "下载连接失败，TLS 握手未完成"}
-	if err := h.db.Create(&row).Error; err != nil {
-		t.Fatal(err)
-	}
-	repo := repository.New(h.db)
-	for _, paused := range []bool{true, false} {
-		response := h.do(t, http.MethodPost, "/api/tasks/"+row.ID+"/recovery-pause", map[string]bool{"paused": paused})
-		var body struct {
-			Data model.Task `json:"data"`
-		}
-		if err := json.Unmarshal(response.Body.Bytes(), &body); response.Code != 200 || err != nil {
-			t.Fatalf("status=%d err=%v body=%s", response.Code, err, response.Body.String())
-		}
-		got := body.Data
-		if got.RecoveryPaused != paused || got.ProviderRequestID != row.ProviderRequestID || got.Status != row.Status ||
-			got.Outcome == nil || got.Outcome.Phase != "retrievable" || got.RecoveryLastAttemptAt == nil || !got.RecoveryLastAttemptAt.Equal(lastAttempt) {
-			t.Fatalf("unexpected recovery state: %+v", got)
-		}
-		candidates, err := repo.FailedVideosForRecovery("", 10)
-		if err != nil || (len(candidates) == 0) != paused {
-			t.Fatalf("paused=%v candidate count=%d err=%v", paused, len(candidates), err)
-		}
-	}
-}

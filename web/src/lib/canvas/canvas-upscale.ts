@@ -41,6 +41,25 @@ export type CanvasUpscaleQuote = { sourceId: string; sourceKey: string; params: 
 export function upscaleSourceKey(node: CanvasNodeData) {
     return JSON.stringify([node.id, node.type, node.metadata?.storageKey, node.metadata?.content]);
 }
+export function createCachedUpscaleResourcePreparer(prepare: (node: CanvasNodeData) => Promise<string>) {
+    const cache = new Map<string, Promise<string>>();
+    return {
+        prepare(node: CanvasNodeData) {
+            const key = upscaleSourceKey(node);
+            const cached = cache.get(key);
+            if (cached) return cached;
+            const pending = Promise.resolve().then(() => prepare(node)).catch((error) => {
+                if (cache.get(key) === pending) cache.delete(key);
+                throw error;
+            });
+            cache.set(key, pending);
+            return pending;
+        },
+        clear() {
+            cache.clear();
+        },
+    };
+}
 export function isUpscaleItemSettled(item: CanvasUpscaleBatchItem, output?: CanvasNodeData["metadata"]) {
     return Boolean(item.detachedResult || (output?.taskStatus === "succeeded" && (output.content || output.storageKey))
         || output?.taskStatus === "failed" || output?.taskStatus === "cancelled");

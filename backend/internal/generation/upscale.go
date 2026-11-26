@@ -72,12 +72,13 @@ func ValidateUpscaleInput(input Input) error {
 var upscaleOwnedSource = regexp.MustCompile(`^resource:[A-Za-z0-9_-]{1,128}$`)
 
 type UpscaleSourceFacts struct {
-	Bytes      int64
-	MIME       string
-	Width      int
-	Height     int
-	DurationMs int64
-	FrameRate  float64
+	Bytes           int64
+	MIME            string
+	Width           int
+	Height          int
+	DurationMs      int64
+	FrameRate       float64
+	EffectiveFactor float64
 }
 
 // Preparation uses the existing owner-scoped media reader and gateway upload.
@@ -157,6 +158,7 @@ func prepareUpscaleMetadata(ctx context.Context, input Input) (Input, UpscaleSou
 		options.Factor = factor
 		input.Upscale = &options
 	}
+	facts.EffectiveFactor = input.Upscale.Factor
 	return input, facts, nil
 }
 

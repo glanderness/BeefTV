@@ -1658,6 +1658,28 @@ func TestVideoUpscaleTierUsesProbedDimensionsForEstimateAndSubmit(t *testing.T) 
 	if prepared.Upscale.Factor != wantFactor || stored.Upscale.Factor != request.Scale {
 		t.Fatalf("submit preflight factor=%v, original factor=%v", prepared.Upscale.Factor, stored.Upscale.Factor)
 	}
+
+	// Verify 4x cap consistency between EstimateMediaUpscale output dimensions and submitted factor (300px -> 1440p caps at 4x = 1200px).
+	smallSource := newLocalUpscaleResources(t, "video", upscaleClip(t, 400, 300, false))
+	smallRuntime := taskRuntime(func(r *Runtime) {
+		r.Endpoints.BeefTVVideoBaseURL = server.URL
+		r.Resources = smallSource
+	})
+	smallBind := func(ctx context.Context, meta CallMeta) context.Context {
+		r := smallRuntime
+		r.Call = meta
+		return WithRuntime(ctx, r)
+	}
+	cappedReq := request
+	cappedReq.TargetShortEdge = 1440
+	cappedQuote, err := EstimateMediaUpscale(context.Background(), "user-1", cappedReq, metadata, credentials, smallBind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cappedOut := cappedQuote["output"].(map[string]any)
+	if cappedOut["width"] != 1600 || cappedOut["height"] != 1200 {
+		t.Fatalf("capped estimate output dimensions should match 4x factor (1600x1200), got %#v", cappedOut)
+	}
 }
 
 func TestUpscaleFactorForTargetSelectsRequestedMPSTier(t *testing.T) {

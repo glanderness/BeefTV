@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 type spyRecoveryPort struct {
@@ -222,5 +223,77 @@ func TestRecoverTaskRoutesOnlyFreeRecoveryAndNeverCreatesOrRetries(t *testing.T)
 	}
 	if store.retryRun != 0 || store.createRun != 0 {
 		t.Fatalf("RecoverTask must never call Retry (%d) or CreateWithLimit (%d)", store.retryRun, store.createRun)
+	}
+}
+
+func TestManualRecoveryPopulatesTransientLastErrorWithoutSchemaMigration(t *testing.T) {
+	_, db, _ := specializedSQLite(t, nil)
+	repo := repository.New(db)
+	videoTask := model.Task{
+		ID:        "vid-tls-fail",
+		UserID:    "user-1",
+		ProjectID: "canvas-1",
+		Type:      "canvas_video",
+		Status:    model.TaskStatusFailed,
+	}
+	imageTask := model.Task{
+		ID:        "img-tls-fail",
+		UserID:    "user-1",
+		ProjectID: "canvas-1",
+		Type:      "canvas_image",
+		Status:    model.TaskStatusFailed,
+	}
+	if err := db.Create(&videoTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&imageTask).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	gotVideo, err := RecoverFailedVideoOrUpscaleForUser(
+		context.Background(),
+		repo,
+		func(model.Task) error { return nil },
+		func(context.Context, model.Task) error { return errors.New("remote error: tls: handshake failure") },
+		"user-1",
+		videoTask.ID,
+	)
+	if err != nil {
+		t.Fatalf("RecoverFailedVideoOrUpscaleForUser error = %v", err)
+	}
+	if gotVideo.RecoveryLastError != "下载连接失败，TLS 握手未完成" {
+		t.Fatalf("expected translated TLS handshake error, got %q", gotVideo.RecoveryLastError)
+	}
+
+	gotConflict, err := RecoverFailedVideoOrUpscaleForUser(
+		context.Background(),
+		repo,
+		func(model.Task) error { return nil },
+		func(context.Context, model.Task) error { return repository.ErrTaskProviderRecoveryConflict },
+		"user-1",
+		videoTask.ID,
+	)
+	if err != nil {
+		t.Fatalf("RecoverFailedVideoOrUpscaleForUser conflict error = %v", err)
+	}
+	if gotConflict.RecoveryLastError != "" {
+		t.Fatalf("expected empty RecoveryLastError on recovery conflict, got %q", gotConflict.RecoveryLastError)
+	}
+
+	gotImage, err := RecoverFailedImageForUser(
+		context.Background(),
+		repo,
+		func(model.Task) error { return nil },
+		func(model.Task) bool { return true },
+		func(model.Task) bool { return false },
+		func(context.Context, model.Task) error { return errors.New("remote error: tls: handshake failure") },
+		"user-1",
+		imageTask.ID,
+	)
+	if err != nil {
+		t.Fatalf("RecoverFailedImageForUser error = %v", err)
+	}
+	if gotImage.RecoveryLastError != "下载连接失败，TLS 握手未完成" {
+		t.Fatalf("expected translated image TLS handshake error, got %q", gotImage.RecoveryLastError)
 	}
 }

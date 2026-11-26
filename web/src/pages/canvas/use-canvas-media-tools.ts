@@ -15,6 +15,7 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canCanvasNodeAcceptGenerationTask } from "@/lib/canvas/canvas-generation-task-identity";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { fitNodeSize, VIDEO_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size";
+import { createCachedUpscaleResourcePreparer } from "@/lib/canvas/canvas-upscale";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { persistOwnedCanvasMediaNodes } from "@/lib/canvas/canvas-media-persist";
 import { extractVideoAudioToCanvasNode } from "@/lib/canvas/extract-video-audio";
@@ -77,6 +78,7 @@ export function useCanvasMediaTools({
     const extractingAudioNodeRef = useRef(false);
     const projectIdRef = useRef(projectId);
     const depthObserversRef = useRef(new Set<AbortController>());
+    const upscaleResourcePreparerRef = useRef<ReturnType<typeof createCachedUpscaleResourcePreparer> | null>(null);
     projectIdRef.current = projectId;
     const { lifetime, mountedRef } = useCanvasOwnerLifetime(projectId);
     const beginMediaOperation = useCallback(() => createCanvasMediaOperation(lifetime, projectId, () => projectIdRef.current, () => mountedRef.current), [lifetime, mountedRef, projectId]);
@@ -86,6 +88,7 @@ export function useCanvasMediaTools({
         setSubtitleEraseNodeId(null);
         extractingAudioNodeRef.current = false;
         setExtractingAudioNodeId(null);
+        upscaleResourcePreparerRef.current?.clear();
     }, [projectId]);
 
     useEffect(() => () => {
@@ -142,18 +145,21 @@ export function useCanvasMediaTools({
     const prepareUpscaleResource = useCallback(async (node: CanvasNodeData) => {
         const existing = ownedResourceIdFromMediaRef(node.metadata?.storageKey, node.metadata?.content);
         if (existing) return existing;
-        const key = node.metadata?.storageKey || "";
-        const video = node.type === CanvasNodeType.Video;
-        let blob = key ? await (video ? getMediaBlob(key) : getImageBlob(key)) : null;
-        if (!blob) {
-            const url = video ? await resolveMediaUrl(key, node.metadata?.content) : await resolveImageUrl(key, node.metadata?.content);
-            if (!url) throw new Error("无法读取原素材");
-            const response = await fetch(url);
-            if (!response.ok) throw new Error("读取原素材失败");
-            blob = await response.blob();
-        }
-        const resource = await uploadResourceFile(blob, video ? "video" : "image", { width: node.metadata?.naturalWidth, height: node.metadata?.naturalHeight });
-        return resource.id;
+        upscaleResourcePreparerRef.current ??= createCachedUpscaleResourcePreparer(async (target) => {
+            const key = target.metadata?.storageKey || "";
+            const video = target.type === CanvasNodeType.Video;
+            let blob = key ? await (video ? getMediaBlob(key) : getImageBlob(key)) : null;
+            if (!blob) {
+                const url = video ? await resolveMediaUrl(key, target.metadata?.content) : await resolveImageUrl(key, target.metadata?.content);
+                if (!url) throw new Error("无法读取原素材");
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("读取原素材失败");
+                blob = await response.blob();
+            }
+            const resource = await uploadResourceFile(blob, video ? "video" : "image", { width: target.metadata?.naturalWidth, height: target.metadata?.naturalHeight });
+            return resource.id;
+        });
+        return upscaleResourcePreparerRef.current.prepare(node);
     }, []);
 
     const observeAIUpscale = useCallback((task: GenerationTask, targetNodeId: string) => {

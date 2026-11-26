@@ -174,7 +174,7 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 	if pager, ok := s.store.(activeCandidateStore); ok {
 		const pageSize = 100
 		collected := make([]Summary, 0, min(want, pageSize))
-		seen := make(map[string]struct{}, want)
+		seen := make(map[string]struct{}, min(want, pageSize))
 		var beforeCreatedAt *time.Time
 		var beforeID string
 		for len(collected) < want {

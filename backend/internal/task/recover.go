@@ -18,15 +18,6 @@ const (
 )
 
 type manualRecoveryKey struct{}
-type automaticRecoveryKey struct{}
-
-func WithAutomaticRecovery(ctx context.Context) context.Context {
-	return context.WithValue(ctx, automaticRecoveryKey{}, true)
-}
-func AutomaticRecovery(ctx context.Context) bool {
-	enabled, _ := ctx.Value(automaticRecoveryKey{}).(bool)
-	return enabled
-}
 
 // WithManualRecovery 标记这次恢复由用户手动发起（继续取回）。只有手动恢复才允许
 // 把冻结的原请求按原编号补交；后台恢复只查询，避免几小时后突然开始生成、扣费。

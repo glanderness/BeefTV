@@ -58,10 +58,7 @@ export type GenerationTask = {
     providerCancelRequestedAt?: string;
     providerCancelledAt?: string;
     errorCode?: string;
-    recoveryPaused?: boolean;
-    recoveryLastAttemptAt?: string;
     recoveryLastError?: string;
-    nextPollAt?: string;
     officialStatus?: "pending" | "processing" | "completed" | "failed" | "cancelled";
     receiptRecorded?: boolean;
     previewUrl?: string;
@@ -407,10 +404,9 @@ export function retryGenerationTask(id: string, options?: { signal?: AbortSignal
 // 解除 apiClient 默认的 4 秒短超时，同时避免请求在无 AbortSignal 时无限挂起。
 export const TASK_RECOVER_TIMEOUT_MS = 16 * 60 * 1000;
 
-export function recoverTask(id: string, options?: { signal?: AbortSignal; queryOnly?: boolean }) {
+export function recoverTask(id: string, options?: { signal?: AbortSignal }) {
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover`, undefined, {
-        signal: options?.signal,
-        params: options?.queryOnly ? { queryOnly: true } : undefined,
+        ...options,
         timeout: TASK_RECOVER_TIMEOUT_MS,
     }).then((task) => {
         publishGenerationTaskTelemetry(task);

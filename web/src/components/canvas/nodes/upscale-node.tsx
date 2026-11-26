@@ -1,4 +1,4 @@
-import { useContext, useRef, useState, type CSSProperties } from "react";
+import { useContext, useId, useRef, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Select } from "antd";
 import { ArrowUp, LoaderCircle, WandSparkles } from "lucide-react";
@@ -26,6 +26,8 @@ const mayRetry = (failures: number, error: Error) =>
 export function UpscaleNodePanel({ node, theme, readOnly = false }: { node: CanvasNodeData; theme: CanvasTheme; readOnly?: boolean }) {
     const actions = useCanvasNodeActions();
     const { getNode } = useContext(CanvasNodeGraphContext);
+    const videoResolutionId = useId();
+    const imageSizeId = useId();
     const upstream = useUpstreamNodes(node.id);
     const inputs = [...new Map(upstream.filter(item =>
         (item.type === CanvasNodeType.Image || item.type === CanvasNodeType.Video) &&
@@ -42,22 +44,40 @@ export function UpscaleNodePanel({ node, theme, readOnly = false }: { node: Canv
         retry: mayRetry,
     });
     const imageMode = capabilities.data?.modes.find(mode => mode.mediaType === "image" && mode.mode === "precision" &&
-        (mode.models.includes(imagePreset) || mode.models.includes("Standard V2")));
-    const videoMode = capabilities.data?.modes.find(mode => mode.mediaType === "video" && mode.mode === "generative" && mode.models.includes(videoPreset));
+        (mode.models.includes(imagePreset) || mode.models.includes("Standard V2")))
+        ?? capabilities.data?.modes.find(mode => mode.mediaType === "image" && mode.mode === "precision" && mode.models.length > 0)
+        ?? capabilities.data?.modes.find(mode => mode.mediaType === "image" && mode.models.length > 0);
+    const videoMode = capabilities.data?.modes.find(mode => mode.mediaType === "video" && mode.mode === "generative" && mode.models.includes(videoPreset))
+        ?? capabilities.data?.modes.find(mode => mode.mediaType === "video" && mode.modelOptions?.some(opt => opt.billingMode === "mps_video_seconds"))
+        ?? capabilities.data?.modes.find(mode => mode.mediaType === "video" && mode.mode === "generative" && mode.models.length > 0)
+        ?? capabilities.data?.modes.find(mode => mode.mediaType === "video" && mode.models.length > 0);
+    const resolvedImageModel = imageMode?.models.includes(imagePreset) ? imagePreset
+        : imageMode?.models.includes("Standard V2") ? "Standard V2"
+        : imageMode?.modelOptions?.[0]?.id || imageMode?.models[0] || "Standard V2";
+    const resolvedVideoModelOption = videoMode?.modelOptions?.find(opt => opt.id === videoPreset)
+        ?? videoMode?.modelOptions?.find(opt => opt.billingMode === "mps_video_seconds")
+        ?? videoMode?.modelOptions?.[0];
+    const resolvedVideoModel = videoMode?.models.includes(videoPreset) ? videoPreset
+        : resolvedVideoModelOption?.id || videoMode?.models[0] || videoPreset;
+    const videoSupportsTargetShortEdge = resolvedVideoModelOption?.billingMode === "mps_video_seconds";
     const saved = node.metadata?.upscale || createDefaultUpscaleSettings();
-    const defaultTarget = Math.max(720, ...videos.map(video => {
+    const defaultTarget = videos.length ? Math.max(720, ...videos.map(video => {
         const width = video.metadata?.naturalWidth || 0;
         const height = video.metadata?.naturalHeight || 0;
         if (!width || !height) return 1080;
         const desired = Math.round(Math.min(width, height) * saved.scale);
         return resolutions.find(item => item.value >= desired)?.value ?? 2160;
-    }));
+    })) : undefined;
     const settings = {
         ...saved,
         channelId: "beeftv",
-        videoTargetShortEdge: saved.videoTargetShortEdge ?? defaultTarget,
-        video: { mode: "generative" as const, model: videoPreset },
-        image: { mode: "precision" as const, model: imageMode?.models.includes(imagePreset) ? imagePreset : "Standard V2", outputFormat: "png" },
+        videoTargetShortEdge: videoSupportsTargetShortEdge ? (saved.videoTargetShortEdge ?? defaultTarget) : undefined,
+        video: { mode: videoMode?.mode ?? ("generative" as const), model: resolvedVideoModel },
+        image: {
+            mode: imageMode?.mode ?? ("precision" as const),
+            model: resolvedImageModel,
+            outputFormat: imageMode?.outputFormats.includes("png") ? "png" : (imageMode?.outputFormats[0] || "png"),
+        },
     };
     const patch = (change: Partial<typeof settings>) => actions.updateMetadata?.(node.id, { upscale: { ...settings, ...change } });
     const modelAvailable = (!videos.length || videoMode) && (!images.length || imageMode);
@@ -145,7 +165,7 @@ export function UpscaleNodePanel({ node, theme, readOnly = false }: { node: Canv
     const showVideo = videos.length > 0;
     const statusIsError = notice || quote.isError || modelError;
     return (
-        <section aria-label="画质提升参数" data-canvas-keyboard-scope
+        <section aria-label="画质提升参数"
             className="canvas-node-composer canvas-node-composer--libtv canvas-node-composer-type flex flex-col gap-2.5"
             style={{ background: theme.node.panel, color: theme.node.text, boxShadow: theme.node.shadow,
                 "--canvas-composer-surface": theme.node.panel, "--canvas-composer-control-surface": theme.toolbar.itemHover } as CSSProperties}>
@@ -155,9 +175,9 @@ export function UpscaleNodePanel({ node, theme, readOnly = false }: { node: Canv
                     <WandSparkles aria-hidden className="size-3.5 shrink-0" />
                     <span>BeefTV超分模型</span>
                 </div>
-                {showVideo ? <>
-                    <label htmlFor="upscale-video-resolution" style={{ color: theme.node.muted }}>分辨率</label>
-                    <Select id="upscale-video-resolution" aria-label="输出清晰度" size="small"
+                {showVideo && videoSupportsTargetShortEdge ? <>
+                    <label htmlFor={videoResolutionId} style={{ color: theme.node.muted }}>分辨率</label>
+                    <Select id={videoResolutionId} aria-label="输出清晰度" size="small"
                         disabled={readOnly || busy || resuming}
                         options={resolutions.map((resolution, index) => ({ ...resolution, disabled: videos.some(video => {
                             const short = Math.min(video.metadata?.naturalWidth || 0, video.metadata?.naturalHeight || 0);
@@ -166,8 +186,8 @@ export function UpscaleNodePanel({ node, theme, readOnly = false }: { node: Canv
                         value={settings.videoTargetShortEdge} onChange={videoTargetShortEdge => patch({ videoTargetShortEdge })} />
                 </> : null}
                 {images.length ? <>
-                    <label htmlFor="upscale-image-size" style={{ color: theme.node.muted }}>图片尺寸</label>
-                    <Select id="upscale-image-size" aria-label="图片输出尺寸" size="small" value={settings.scale}
+                    <label htmlFor={imageSizeId} style={{ color: theme.node.muted }}>图片尺寸</label>
+                    <Select id={imageSizeId} aria-label="图片输出尺寸" size="small" value={settings.scale}
                         options={imageScales} disabled={readOnly || busy || resuming} onChange={scale => patch({ scale })} />
                 </> : null}
             </div>
