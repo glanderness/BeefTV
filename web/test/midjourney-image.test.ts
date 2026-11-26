@@ -176,7 +176,8 @@ describe("midjourney-image", () => {
             referenceImages: [],
             referenceVideos: [],
             referenceAudios: [],
-            referenceTexts: [],
+            characterReferences: [],
+            resolvedCharacterVersions: [],
             resolvedCharacterVoices: [],
         };
         const baseConfig = makeMidjourneyConfig({ mjRaw: "false", mjStylize: "100" });
