@@ -582,9 +582,11 @@ test("sidebar utility icons show the shared tooltip above the control", async ()
             await button.hover();
             const tooltip = page.locator(".app-workspace-sidebar-tooltip").getByText(label, { exact: true });
             await tooltip.waitFor({ state: "visible" });
-            const hint = (await tooltip.boundingBox())!;
             const control = (await button.boundingBox())!;
-            expect(hint.y + hint.height).toBeLessThan(control.y);
+            await page.waitForFunction(({ label, controlTop }) =>
+                Array.from(document.querySelectorAll(".app-workspace-sidebar-tooltip .app-workspace-sidebar-tooltip-content")).some((hint) =>
+                    hint.textContent?.trim() === label && hint.getBoundingClientRect().bottom < controlTop,
+                ), { label, controlTop: control.y }, { timeout: 5000 });
         }
         await theme.click();
         const switchedLabel = themeLabel === "切换到浅色模式" ? "切换到深色模式" : "切换到浅色模式";

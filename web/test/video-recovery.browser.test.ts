@@ -95,7 +95,7 @@ test("canvas recovery explains query-only behavior and prevents duplicate reques
     expect(await page.getByText("查询原任务并取回生成结果，不会重新生成。").count()).toBe(1);
     expect(await page.getByText("视频下载中断，请取回结果").count()).toBe(1);
     await page.getByRole("button", { name: "double retrieve" }).evaluate((button: HTMLButtonElement) => button.click());
-    await page.getByText("原任务仍在处理中，请稍后再取回结果").waitFor();
+    await page.getByText("原任务仍未取回，请查看任务状态").waitFor();
     expect(requests.filter((request) => request.startsWith("POST"))).toEqual(["POST /api/tasks/original/recover"]);
 });
 
@@ -105,7 +105,7 @@ test("a failed retrieval remains retryable without creating a generation", async
     await page.getByText("连接中断，请稍后取回").waitFor();
     fail = false;
     await page.getByRole("button", { name: "取回结果", exact: true }).click();
-    await page.getByText("原任务仍在处理中，请稍后再取回结果").waitFor();
+    await page.getByText("原任务仍未取回，请查看任务状态").waitFor();
     expect(requests.filter((request) => request.startsWith("POST"))).toEqual(Array(2).fill("POST /api/tasks/original/recover"));
 });
 
@@ -113,7 +113,7 @@ test("missing provider receipt hides retrieval and switching canvas suppresses s
     await page.getByRole("button", { name: "取回结果", exact: true }).click();
     await page.getByRole("button", { name: "switch project" }).evaluate((button: HTMLButtonElement) => button.click());
     await page.waitForTimeout(700);
-    expect(await page.getByText("原任务仍在处理中，请稍后再取回结果").count()).toBe(0);
+    expect(await page.getByText("原任务仍未取回，请查看任务状态").count()).toBe(0);
     await page.reload();
     await page.getByRole("button", { name: "missing receipt" }).evaluate((button: HTMLButtonElement) => button.click());
     expect(await page.getByRole("button", { name: "取回结果", exact: true }).count()).toBe(0);

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CANVAS_MAIN_DOCK_CLEARANCE, getNodePanelPosition } from "@/components/canvas/canvas-workspace-overlays";
+import { CANVAS_MAIN_DOCK_CLEARANCE, getNodePanelPosition } from "@/lib/canvas/canvas-viewport";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { createCanvasStageOverlayProps, makeCanvasNode } from "./helpers/canvas-stage-overlays-fixture";
 
@@ -17,8 +17,6 @@ const mediaNode = {
 const panelOverlayCalls: Array<Record<string, unknown>> = [];
 
 mock.module("@/components/canvas/canvas-workspace-overlays", () => ({
-    CANVAS_MAIN_DOCK_CLEARANCE,
-    getNodePanelPosition,
     CanvasNodePanelOverlay: (props: Record<string, unknown>) => {
         panelOverlayCalls.push(props);
         return null;

@@ -242,23 +242,17 @@ test("video preview viewer toggles play/pause on Space without triggering when a
     expect(await page.evaluate(() => document.querySelector("video")!.paused)).toBe(true);
 }, 20_000);
 
-test("active task panel exposes 停止取回 for succeeded delivery-pending tasks and 取消任务 for running tasks", async () => {
+test("active task panel hides ended delivery tasks and allows cancelling running tasks", async () => {
     await page.goto(`${server.url}?mode=task-panel`);
-    await page.getByRole("button", { name: /生成任务/ }).click();
+    const panel = page.getByRole("region", { name: "当前画布生成任务" });
+    await panel.getByRole("button", { name: /生成任务/ }).click();
+    expect(await panel.getByText("1 项", { exact: true }).count()).toBe(1);
+    expect(await panel.getByRole("listitem").count()).toBe(1);
+    expect(await panel.getByText(/正在取回结果/).count()).toBe(0);
+    expect(await panel.getByRole("button", { name: "停止取回", exact: true }).count()).toBe(0);
 
-    // Expand delivery-pending succeeded task
-    await page.getByRole("button", { name: /正在取回结果|系统正在自动取回结果/ }).click();
-    const stopFetchBtn = page.getByRole("button", { name: "停止取回", exact: true });
-    await stopFetchBtn.waitFor({ state: "visible" });
-    await stopFetchBtn.click();
-    await expect(page.getByTestId("cancelled-log").textContent()).resolves.toBe("task-delivery-1:succeeded");
-
-    // Expand running task
-    await page.getByRole("button", { name: /生成中/ }).click();
-    const cancelBtn = page.getByRole("button", { name: "取消任务", exact: true });
-    await cancelBtn.waitFor({ state: "visible" });
-    await cancelBtn.click();
-    await expect(page.getByTestId("cancelled-log").textContent()).resolves.toBe("task-delivery-1:succeeded,task-running-1:running");
+    await panel.getByRole("button", { name: "取消任务", exact: true }).click();
+    await expect(page.getByTestId("cancelled-log").textContent()).resolves.toBe("task-running-1:running");
 }, 20_000);
 
 test("asset picker sidebar lists personal folders with counts and filters assets by folder", async () => {

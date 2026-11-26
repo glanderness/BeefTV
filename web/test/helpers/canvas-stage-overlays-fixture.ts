@@ -85,6 +85,7 @@ export function createCanvasStageOverlayProps(overrides: OverlayStageFixtureOver
         generation: {
             generateImageFromTextNode: noop,
             generateFinalVideoFromDraftNode: noop,
+            canRetakeVideo: () => false,
             createVideoEditNodeFromVideo: noop,
         } as unknown as CanvasProjectStageOverlaysProps["generation"],
         uploads: {
@@ -185,7 +186,6 @@ export function createCanvasStageOverlayProps(overrides: OverlayStageFixtureOver
 
 export function createCanvasStageProps(overrides: OverlayStageFixtureOverrides = {}): CanvasProjectStageProps {
     const noop = () => undefined;
-    const noopAsync = async () => undefined;
     return {
         ...createCanvasStageOverlayProps(overrides),
         projectId: "canvas-test",
@@ -193,7 +193,13 @@ export function createCanvasStageProps(overrides: OverlayStageFixtureOverrides =
         effectiveConfig: {} as CanvasProjectStageProps["effectiveConfig"],
         shortcutRequestNonce: 0,
         versions: {} as CanvasProjectStageProps["versions"],
-        activeTasks: [],
+        activeTaskQuery: {
+            tasks: [],
+            loading: false,
+            refreshing: false,
+            refreshFailed: false,
+            refetch: async () => { throw new Error("Unexpected active task refresh"); },
+        },
         historyState: { canUndo: false, canRedo: false } as CanvasProjectStageProps["historyState"],
         undoCanvas: noop,
         redoCanvas: noop,

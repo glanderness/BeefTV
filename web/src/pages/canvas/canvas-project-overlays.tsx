@@ -15,7 +15,8 @@ const CanvasNodeLightingPanel = lazy(() =>
 );
 import { CanvasOverlayLayerContainer } from "@/components/canvas/canvas-overlay-layer";
 import { CANVAS_VIDEO_RETAKE_PANEL_HEIGHT, CanvasVideoInlineTrimOverlay } from "@/components/canvas/canvas-video-inline-trim";
-import { CANVAS_MAIN_DOCK_CLEARANCE, CanvasConnectionCreateMenu, CanvasNodePanelOverlay, getNodePanelPosition } from "@/components/canvas/canvas-workspace-overlays";
+import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay } from "@/components/canvas/canvas-workspace-overlays";
+import { CANVAS_MAIN_DOCK_CLEARANCE, getNodePanelPosition } from "@/lib/canvas/canvas-viewport";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { Minimap } from "@/components/canvas/canvas-mini-map";
 import type { CanvasImageEmotionPayload } from "@/components/canvas/canvas-node-emotion-panel";
@@ -352,7 +353,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
                 onSuperResolve={createUpscaleProcessingNode}
                 onDraftToFinal={generation.generateFinalVideoFromDraftNode}
                 onVideoEditOperation={generation.createVideoEditNodeFromVideo}
-                onVideoRetake={!readOnly && toolbarNode && generation.canRetakeVideo(toolbarNode) ? openVideoRetakePanel : undefined}
+                onVideoRetake={!readOnly && toolbarNode?.type === CanvasNodeType.Video && generation.canRetakeVideo(toolbarNode) ? openVideoRetakePanel : undefined}
                 onAngle={(node) => { setDialogNodeId(null); setAngleNodeId((current) => (current === node.id ? null : node.id)); }}
                 onLighting={(node) => { setDialogNodeId(null); setLightingNodeId((current) => (current === node.id ? null : node.id)); }}
                 onPanorama={openPanoramaConfig}
