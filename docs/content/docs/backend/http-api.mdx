@@ -265,7 +265,11 @@ BeefTV 官方算力视频模型的控件与校验使用 `/v1/models` 下发的 `
 | `POST /assistant/session-config` | 按会话设置思考深度（`thinkingLevel: "off" \| "minimal" \| "low" \| "medium" \| "high"`）；需写权限且仅在当前会话空闲时生效 |
 | `POST /assistant/compact` | 手动压缩指定会话较早的对话上下文（可选 `instructions`，最长 4000 字符），返回最新上下文占用统计；需写权限且仅在当前会话空闲时生效 |
 | `GET/PUT /assistant/host/config`、`POST /assistant/host/start|stop` | 宿主生命周期：需 owner 凭据 + 本机同源；启动命令只取本机配置，绝不接受请求体传入的可执行命令 |
-| `GET/POST /assistant/mcp-servers`、`PUT/PATCH/DELETE /assistant/mcp-servers/:name`、`POST /assistant/mcp-servers/reload`、`POST /assistant/mcp-servers/:name/test` | 内置助手直连的外部 MCP 服务配置（支持 `stdio` 与 `Streamable HTTP`）：`env`/`headers` 密文加密保存且不回显浏览器，仅本机宿主凭 `X-Beeftv-Agent-Token` 通过 `GET /assistant/runtime/mcp-servers` 读取解密配置；外部 MCP 工具默认按需发现（`deferred`）并在只读模式下禁用 |
+| `POST /assistant/sessions/fork` | 基于官方 Durable `conversation.fork()` 从指定已完成回合分叉出独立分支会话，保留原分支不受影响 |
+| `POST /assistant/turns/:turnId/proposals/:proposalId/auto-confirm` | 当用户在 `/assistant/settings` 开启 `autoConfirmMaxCny`（会话小额免确认额度）时，服务端重新核对固定报价与本会话累计自动确认花费，未超限且非原地重做时自动批准并执行；超限或报价未知时拒绝并退回手动确认 |
+| `GET/PUT /assistant/mcp-servers*`、`POST /assistant/mcp-servers/reload`、`POST /assistant/mcp-servers/:name/test` | 内置助手直连的外部 MCP 服务配置（支持 `stdio` 与 `Streamable HTTP`）：`env`/`headers` 密文加密保存且不回显浏览器，仅本机宿主凭 `X-Beeftv-Agent-Token` 通过 `GET /assistant/runtime/mcp-servers` 读取解密配置；外部 MCP 工具默认按需发现（`deferred`）并在只读模式下禁用 |
+| `GET/PUT /projects/:id/creative-bible`、`GET/PUT /canvas-projects/:id/creative-bible` | 项目级（及独立画布级）创作设定集读写，支持 `expectedRevision` 乐观锁；同时通过统一操作 `project.bible.get` 与 `project.bible.update` 向内置助手和外部 MCP 开放，非空设定集自动注入内置助手上下文 |
+| `GET/PUT /agent-clients/guardrails` | 外部 Agent（Claude Code / Codex / Cursor 等）可选付费护栏：支持切换 `allow` / `propose_only` 及配置单次/每日预估金额上限（人民币），超限时直接向终端返回结构化错误，不弹阻塞审批窗口 |
 
 按轮撤销不依赖浏览器流或宿主的最后一条消息：轮前文档由后端在转发前落盘，变更摘要由该轮自己的写入回执重建，
 因此浏览器断流（没有 `turn_end`）、用户取消或后端在回合中途重启之后，已经落地的助手写入仍然可以撤销。

@@ -24,6 +24,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasWorkspaceMode } from "@/types/canvas";
 import { highlightAssistantNodes } from "./canvas-assistant-highlight";
 import { CanvasAssistantSidebar } from "./canvas-assistant-sidebar";
+import { useExternalMcpActivityToast } from "@/hooks/use-external-mcp-activity-toast";
 import { CanvasProjectEditorDialogs } from "./canvas-project-editor-dialogs";
 import { CanvasProjectStage } from "./canvas-project-stage";
 import { CanvasTopBar } from "./canvas-project-top-bar";
@@ -416,7 +417,8 @@ function InfiniteCanvasPage() {
     });
 
     const assistantContinuation = useCanvasAssistantContinuation(assistant, !readOnly && internalAssistantEnabled);
-    const { runAssistantProposal, assistantProposalFeedback, runningProposalIds } = useCanvasAssistantProposal({
+    useExternalMcpActivityToast(!readOnly);
+    const { runAssistantProposal, autoConfirmAssistantProposal, assistantProposalFeedback, runningProposalIds } = useCanvasAssistantProposal({
         projectId,
         addedSkills,
         nodesRef,
@@ -428,6 +430,54 @@ function InfiniteCanvasPage() {
         onContinuationArmed: assistantContinuation.refresh,
         handleGenerateNode: generation.handleGenerateNode,
     });
+
+    const seenAutoConfirmProposalsRef = useRef<Set<string> | null>(null);
+    const autoConfirmSessionRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!assistant.historyLoaded) return;
+        const key = `${projectId}:${assistant.sessionId || ""}`;
+        if (autoConfirmSessionRef.current !== key || seenAutoConfirmProposalsRef.current === null) {
+            autoConfirmSessionRef.current = key;
+            const baseline = new Set<string>();
+            for (const turn of assistant.turns) {
+                for (const proposal of turn.proposals || []) baseline.add(proposal.proposalId);
+            }
+            seenAutoConfirmProposalsRef.current = baseline;
+            return;
+        }
+        if (readOnly || assistant.autoConfirmMaxCny <= 0) {
+            for (const turn of assistant.turns) {
+                for (const proposal of turn.proposals || []) seenAutoConfirmProposalsRef.current.add(proposal.proposalId);
+            }
+            return;
+        }
+        // 流式收尾阶段（onTurnEnd 刚写入新回合但 streaming 尚未清零）不能把新提案标成已见过，
+        // 否则流结束后自动确认永远不会触发。
+        if (assistant.streaming || assistant.sessionBusy || assistant.compacting) {
+            return;
+        }
+        const latestTurn = assistant.turns.at(-1);
+        if (!latestTurn || latestTurn.proposalsInvalidated || assistant.turnStatus[latestTurn.turnId]?.undone) return;
+        for (const proposal of latestTurn.proposals || []) {
+            if (seenAutoConfirmProposalsRef.current.has(proposal.proposalId)) continue;
+            seenAutoConfirmProposalsRef.current.add(proposal.proposalId);
+            if (proposal.regenerate || assistant.handledProposals.has(proposal.proposalId)) continue;
+            void autoConfirmAssistantProposal(proposal, latestTurn.turnId);
+        }
+    }, [
+        assistant.autoConfirmMaxCny,
+        assistant.compacting,
+        assistant.handledProposals,
+        assistant.historyLoaded,
+        assistant.sessionBusy,
+        assistant.sessionId,
+        assistant.streaming,
+        assistant.turnStatus,
+        assistant.turns,
+        autoConfirmAssistantProposal,
+        projectId,
+        readOnly,
+    ]);
 
     const uploads = useCanvasUpload({
         pageUi,

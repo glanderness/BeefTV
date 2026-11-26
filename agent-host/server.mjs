@@ -225,7 +225,14 @@ const durable = createDurableSessionStore({
         !Number.isSafeInteger(canvas.revision) || canvas.revision < 0 ||
         (canvas.nodes != null && !Array.isArray(canvas.nodes)) ||
         (canvas.connections != null && !Array.isArray(canvas.connections))) throw new Error('invalid_canvas_read_result');
-    return { ...canvas, nodes: canvas.nodes ?? [], connections: canvas.connections ?? [] };
+    return {
+      ...canvas,
+      nodes: canvas.nodes ?? [],
+      connections: canvas.connections ?? [],
+      ...(typeof result?.creativeBibleDigest === 'string' && result.creativeBibleDigest.trim()
+        ? { creativeBibleDigest: result.creativeBibleDigest.trim() }
+        : {}),
+    };
   },
   authorizeTurn: async ({canvasId, turnId,sessionId}) => {
     const state = await ops.opsRequest('GET', `/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
@@ -485,6 +492,17 @@ const server = http.createServer(async (req, res) => {
       await durable.releaseIdleSession(canvasId);
       legacy.writeCurrentSessionId(canvasId, sessionId);
       respond(res, 200, { sessionId });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/sessions/fork') {
+      const body = await readJsonBody(req);
+      const canvasId = String(body.canvasId || '').trim();
+      const sessionId = String(body.sessionId || '').trim();
+      const turnId = String(body.turnId || '').trim();
+      if (!canvasId || !sessionId || !turnId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
+      if (await isLiveEntryBusy(canvasId)) { respond(res, 409, { code: 409, reason: 'session_busy' }); return; }
+      const forked = await durable.forkSession(canvasId, { sessionId, turnId });
+      respond(res, 200, forked);
       return;
     }
     if (req.method === 'DELETE' && (url.pathname === '/sessions' || url.pathname.startsWith('/sessions/'))) {

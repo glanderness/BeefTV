@@ -99,7 +99,7 @@ func registerAgentProxyTurnRoutes(
 		ok(c, gin.H{"runnable": true})
 	})
 
-	r.POST("/assistant/turns/:turnId/proposals/:proposalId/production", func(c *gin.Context) {
+	confirmProductionHandler := func(c *gin.Context, autoBudget bool) {
 		if strings.TrimSpace(c.GetHeader("X-Beeftv-Client")) != "" || isAssistantHostRequest(c, svc) {
 			c.JSON(http.StatusForbidden, gin.H{
 				"code":   http.StatusForbidden,
@@ -123,12 +123,21 @@ func registerAgentProxyTurnRoutes(
 			return
 		}
 		payload.ProposalID = c.Param("proposalId")
+		payload.AutoBudget = autoBudget
 		result, err := svc.ConfirmAssistantProduction(c.GetString("agentUserId"), c.Param("turnId"), payload)
 		if err != nil {
 			failAssistantProposal(c, err)
 			return
 		}
 		ok(c, result)
+	}
+
+	r.POST("/assistant/turns/:turnId/proposals/:proposalId/production", func(c *gin.Context) {
+		confirmProductionHandler(c, false)
+	})
+
+	r.POST("/assistant/turns/:turnId/proposals/:proposalId/auto-confirm", func(c *gin.Context) {
+		confirmProductionHandler(c, true)
 	})
 
 	r.GET("/assistant/generation-orders", func(c *gin.Context) {

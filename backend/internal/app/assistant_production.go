@@ -21,6 +21,7 @@ type AssistantProductionConfirmation struct {
 	Targets      []operations.GenerationTarget `json:"targets"`
 	ContinuePlan bool                          `json:"continuePlan,omitempty"`
 	Regenerate   bool                          `json:"regenerate,omitempty"`
+	AutoBudget   bool                          `json:"-"`
 }
 
 func (s *Service) ConfirmAssistantProduction(userID, turnID string, input AssistantProductionConfirmation) (any, error) {
@@ -72,6 +73,14 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		if err != nil {
 			return err
 		}
+		var autoEval *operations.AutoConfirmEvaluation
+		if input.AutoBudget {
+			autoEval, err = operations.EvaluateAssistantAutoConfirm(tx, domain, userID, input.CanvasID, turnID, input.ProposalID, input.NodeIDs, input.Targets, shouldRegenerate)
+			if err != nil {
+				return err
+			}
+			approvedBy = operations.ApprovedByAutoBudget
+		}
 		plan := operations.GenerationAuthorization{SourceTurnID: turnID, ProposalID: input.ProposalID, Targets: current, Regenerate: shouldRegenerate}
 		if err = operations.ValidateTurnOrderConflictInTx(tx, userID, input.CanvasID, turnID, plan); err != nil {
 			return err
@@ -83,7 +92,7 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		}
 		for _, target := range current {
 			if wanted[target.NodeID] {
-				if target.Kind != input.Kind {
+				if input.Kind != "" && input.Kind != "mixed" && target.Kind != input.Kind {
 					return operations.InvalidArg("invalid_kind", "首批素材类型不一致")
 				}
 				batch = append(batch, target)
@@ -101,6 +110,7 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		if err != nil {
 			return err
 		}
+		operations.AttachAutoConfirmResult(result, autoEval)
 		var continuationID string
 		if isMultiStage {
 			turns := assistantturns.New(assistantturns.NewStore(domain.repo), assistantCanvasFactory{s}, s.assistantTurnDir())

@@ -1,9 +1,10 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, App } from "antd";
-import { ArrowLeft, Plus } from "lucide-react";
+import { Alert, App, Button } from "antd";
+import { ArrowLeft, BookOpen, Plus } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 
+import { CreativeBibleDrawer } from "@/components/project/creative-bible-drawer";
 import { getProjectCore, getProjectOverview, getProjectUnitWorkspace, listProjectUnits } from "@/services/api/projects";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
@@ -38,6 +39,7 @@ export default function ProjectDetailPage() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { message } = App.useApp();
+    const [bibleOpen, setBibleOpen] = useState(false);
     const pluginViews = usePluginSlot("project.view");
     const activePluginView = pluginViews.find((entry) => entry.payload.id === view);
     const activeView: DetailView = unitId || view === "workflow" ? "workflow" : chapterId ? "chapters" : views.some((item) => item.key === view) ? view as DetailView : "overview";
@@ -118,7 +120,9 @@ export default function ProjectDetailPage() {
                     chapterHref={chapterHref}
                     workflowHref={workflowHref}
                     onCreateCanvas={createCanvas}
+                    onOpenBible={() => setBibleOpen(true)}
                 />
+                <CreativeBibleDrawer open={bibleOpen} onClose={() => setBibleOpen(false)} projectId={projectId} />
                 {detail.project.status === "archived" ? <Alert type="warning" showIcon banner message="项目已归档，恢复后才能创建画布和生成任务" className="!border-x-0 !border-t-0" /> : null}
                 <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                     <div className={!activePluginView && (activeView === "chapters" || activeView === "workflow" || activeView === "editor") ? "min-h-0 flex-1" : "thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5 lg:px-8 lg:py-7"}>
@@ -141,7 +145,7 @@ export default function ProjectDetailPage() {
     );
 }
 
-function ProjectWorkspaceHeader({ detail, projectId, activeView, unitId, stage, chapterHref, workflowHref, onCreateCanvas }: { detail: ProjectDetail; projectId: string; activeView: string; unitId?: string; stage?: string; chapterHref: string; workflowHref: string; onCreateCanvas: () => void }) {
+function ProjectWorkspaceHeader({ detail, projectId, activeView, unitId, stage, chapterHref, workflowHref, onCreateCanvas, onOpenBible }: { detail: ProjectDetail; projectId: string; activeView: string; unitId?: string; stage?: string; chapterHref: string; workflowHref: string; onCreateCanvas: () => void; onOpenBible: () => void }) {
     const archived = detail.project.status === "archived";
     const pluginViews = usePluginSlot("project.view");
     const createCanvasLabel = activeView === "chapters" && detail.units.length ? "新建当前章节画布" : "新建项目画布";
@@ -187,6 +191,9 @@ function ProjectWorkspaceHeader({ detail, projectId, activeView, unitId, stage, 
                 })}
             </nav>
             <div className="project-workspace-actions">
+                <Button size="small" icon={<BookOpen size={14} />} onClick={onOpenBible}>
+                    设定集
+                </Button>
                 {activeView === "workflow" ? (
                     <WorkflowChapterNavigator projectId={projectId} units={detail.units} unitId={unitId} stage={stage} />
                 ) : (

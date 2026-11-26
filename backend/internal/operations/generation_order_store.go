@@ -192,6 +192,15 @@ func MarkGenerationOrderSubmittedInTx(
 		if strings.TrimSpace(order.SourceTurnID) == "" {
 			order.SourceTurnID = turnID
 		}
+		if resultMap, ok := admitResult.(map[string]any); ok {
+			if sid, _ := resultMap["sessionId"].(string); strings.TrimSpace(sid) != "" {
+				order.SessionID = strings.TrimSpace(sid)
+			}
+			if est, ok := resultMap["estimatedCny"].(float64); ok && est >= 0 {
+				cp := roundCNY(est)
+				order.EstimatedCNY = &cp
+			}
+		}
 		if len(targets) > 0 {
 			order.Targets = targets
 		}
@@ -232,6 +241,15 @@ func MarkGenerationOrderSubmittedInTx(
 			ContinuationID: continuationID,
 			CreatedAt:      now,
 			UpdatedAt:      now,
+		}
+		if resultMap, ok := admitResult.(map[string]any); ok {
+			if sid, _ := resultMap["sessionId"].(string); strings.TrimSpace(sid) != "" {
+				order.SessionID = strings.TrimSpace(sid)
+			}
+			if est, ok := resultMap["estimatedCny"].(float64); ok && est >= 0 {
+				cp := roundCNY(est)
+				order.EstimatedCNY = &cp
+			}
 		}
 	}
 	if err := UpsertGenerationOrderInTx(tx, userID, order); err != nil {

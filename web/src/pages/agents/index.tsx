@@ -17,6 +17,7 @@ import { ApiError } from "@/services/api/request";
 
 import { agentClientDisplayLabel, agentClientKindLabel, agentClientKinds, agentClientLastUsedLabel, agentClientModeLabel, agentIntegrationAction, agentIntegrationHint, agentIntegrationStatusLabel } from "./agent-client-presentation";
 import { AssistantMcpSection } from "./assistant-mcp-section";
+import { ExternalGuardrailSection } from "./external-guardrail-section";
 import { RecentMCPCalls } from "./recent-mcp-calls";
 import { AgentConnectPanel } from "./agent-connect-panel";
 
@@ -153,6 +154,7 @@ export default function AgentsPage() {
                             })}
                         </ul>
                     </TableSurface>
+                    <ExternalGuardrailSection />
                     <AssistantMcpSection />
                     <RecentMCPCalls />
                     {cli && !cli.available && (

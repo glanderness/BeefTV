@@ -1,8 +1,9 @@
 import { createClientId } from "@/lib/client-id";
 import { Button, Dropdown, Tooltip } from "antd";
-import { History, MessageSquarePlus, Trash2, X, ArrowUpRight } from "lucide-react";
+import { BookOpen, History, MessageSquarePlus, Trash2, X, ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { CreativeBibleDrawer } from "@/components/project/creative-bible-drawer";
 import { AppDrawer } from "@/components/ui/product/app-drawer";
 import { assetLibraryQueryKey, assetPickerQueryKey } from "@/components/assets/asset-view-session";
 import { appQueryClient } from "@/lib/query-client";
@@ -68,6 +69,7 @@ export function CanvasAssistantSidebar(props: Props) {
     const [loadedDraftIdentity, setLoadedDraftIdentity] = useState<string | null>(null);
     const draftWriteVersion = useRef(0);
     const [skillsOpen, setSkillsOpen] = useState(false);
+    const [bibleOpen, setBibleOpen] = useState(false);
     const [skillInstallOpen, setSkillInstallOpen] = useState(false);
     const [skillInstallGeneration, setSkillInstallGeneration] = useState(0);
     const [referencePickerOpen, setReferencePickerOpen] = useState(false);
@@ -207,7 +209,10 @@ export function CanvasAssistantSidebar(props: Props) {
                   key: item.sessionId,
                   label: (
                       <div className="flex items-center justify-between gap-2">
-                          <span className="min-w-0 flex-1 truncate">{displayTitle}</span>
+                          <span className="min-w-0 flex-1 truncate">
+                              {item.forkedFrom ? <span className="mr-1 rounded border border-[var(--border)] px-1 py-0.5 text-[11px] text-[var(--user-ink-muted)]">分支</span> : null}
+                              {displayTitle}
+                          </span>
                           <button
                               type="button"
                               className="inline-flex size-6 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
@@ -245,6 +250,9 @@ export function CanvasAssistantSidebar(props: Props) {
                         </span>
                     ) : null}
                 </div>
+                <Tooltip title="项目创作设定集（角色、画风与禁忌，助手与外部工具共用）">
+                    <Button type="text" size="small" aria-label="创作设定集" icon={<BookOpen className="size-4" />} onClick={() => setBibleOpen(true)} />
+                </Tooltip>
                 <Link to="/skills" className="canvas-assistant-meta" aria-label="打开技能市场和我的投稿">技能</Link>
                 <Tooltip title="新对话">
                     <Button type="text" size="small" aria-label="新对话" disabled={assistant.streaming || assistant.sessionBusy || assistant.compacting} icon={<MessageSquarePlus className="size-4" />} onClick={() => void assistant.startNewSession()} />
@@ -323,6 +331,7 @@ export function CanvasAssistantSidebar(props: Props) {
                         generationDisabled={assistant.streaming || assistant.sessionBusy || assistant.compacting || assistant.awaitingReceipt || !assistant.historyLoaded || Boolean(assistant.historyError)}
                         onLocate={onLocateNodes}
                         onUndo={(turnId) => void assistant.undoTurn(turnId)}
+                        onFork={!readOnly && Boolean(assistant.sessionId?.startsWith("durable:")) ? (turnId) => void assistant.forkSession(turnId) : undefined}
                         onRunProposal={onRunProposal}
                         onRunScriptProposal={(proposal, turnId, alwaysAllow) => void assistant.runScriptProposal(proposal, turnId, alwaysAllow)}
                         runningScriptProposalIds={assistant.runningScriptProposalIds}
@@ -404,6 +413,8 @@ export function CanvasAssistantSidebar(props: Props) {
                 onPermissionChange={assistant.setPermissionMode}
                 thinkingLevel={assistant.thinkingLevel}
                 onThinkingLevelChange={(level) => void assistant.setThinkingLevel(level)}
+                autoConfirmMaxCny={assistant.autoConfirmMaxCny}
+                onAutoConfirmMaxCnyChange={!readOnly ? (limit) => void assistant.setAutoConfirmMaxCny(limit) : undefined}
                 contextUsage={assistant.contextUsage}
                 canCompact={Boolean(assistant.sessionId?.startsWith("durable:")) && assistant.turns.length > 0}
                 compacting={assistant.compacting}
@@ -446,6 +457,7 @@ export function CanvasAssistantSidebar(props: Props) {
                 setSkillsOpen(true);
                 void loadSkills();
             }} />
+            <CreativeBibleDrawer open={bibleOpen} onClose={() => setBibleOpen(false)} canvasId={assistant.canvasId} />
                 </>
             )}
         </div>

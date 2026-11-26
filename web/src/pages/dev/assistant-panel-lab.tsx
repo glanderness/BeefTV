@@ -80,6 +80,8 @@ function stubController(open: boolean, setOpen: (next: boolean) => void, width: 
         setPermissionMode: noop,
         thinkingLevel: "low",
         setThinkingLevel: asyncNoop,
+        autoConfirmMaxCny: 0,
+        setAutoConfirmMaxCny: asyncNoop,
         contextUsage: status?.available
             ? { estimatedTokens: 24600, contextWindow: 200000, percent: 12, totalInput: 28000, totalOutput: 2100, cacheRead: 18400, cacheWrite: 900 }
             : null,
@@ -111,6 +113,7 @@ function stubController(open: boolean, setOpen: (next: boolean) => void, width: 
         dismissError: noop,
         startNewSession: asyncNoop,
         activateSession: asyncNoop,
+        forkSession: async () => false,
         deleteSession: async () => true,
         handleDeleteSession: async () => true,
         undoTurn: asyncNoop,

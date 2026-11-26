@@ -4,6 +4,8 @@ import { ApiError, http } from "@/services/api/request";
 export type AssistantSettings = {
     /** 打开后，助手运行技能里的脚本前不再弹出确认卡片。 */
     skillScriptAutoRun: boolean;
+    /** 可选：单次会话内小额生成免确认上限（元），0 表示每次都需手动确认。 */
+    autoConfirmMaxCny?: number;
 };
 
 /**
@@ -30,6 +32,6 @@ export async function getAssistantSettings() {
     return http.get<AssistantSettings>("/assistant/settings", await headers());
 }
 
-export async function updateAssistantSettings(input: AssistantSettings) {
+export async function updateAssistantSettings(input: Partial<AssistantSettings>) {
     return http.patch<AssistantSettings>("/assistant/settings", input, await headers());
 }

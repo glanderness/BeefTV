@@ -419,6 +419,31 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 		hostJSON(c, http.MethodPost, "/sessions/activate", body)
 	})
 
+	r.POST("/assistant/sessions/fork", func(c *gin.Context) {
+		if !guard(c, true) {
+			return
+		}
+		body, payload, valid := readAssistantBody(c, struct {
+			CanvasID  string `json:"canvasId"`
+			SessionID string `json:"sessionId"`
+			TurnID    string `json:"turnId"`
+		}{})
+		if !valid {
+			return
+		}
+		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		if !assistantSessionIDPattern.MatchString(strings.TrimSpace(payload.SessionID)) || strings.TrimSpace(payload.TurnID) == "" {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("请指定要分叉的会话和轮次"))
+			return
+		}
+		if !stopAssistantContinuationsForIntent(c, svc, host, payload.CanvasID, "") {
+			return
+		}
+		hostJSON(c, http.MethodPost, "/sessions/fork", body)
+	})
+
 	r.DELETE("/assistant/sessions/:sessionId", func(c *gin.Context) {
 		if !guard(c, true) {
 			return

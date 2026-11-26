@@ -5,6 +5,7 @@ import {
     confirmAssistantScriptProposal,
     createAssistantSession,
     deleteAssistantSession,
+    forkAssistantSession,
     undoAssistantTurn,
     type AssistantScriptProposal,
     type AssistantThinkingLevel,
@@ -239,9 +240,44 @@ export function useAssistantSessionActions({
         }
     }, [activeCanvasRef, isLiveRun, loadHistory, namespaceRef, rememberProposal, rerenderIfActive, runFor]);
 
+    const forkSession = useCallback(async (turnId: string) => {
+        const originNamespace = namespaceRef.current;
+        const targetCanvas = activeCanvasRef.current;
+        const run = runFor(targetCanvas);
+        if (run.streaming || run.sessionBusy || run.compacting || !run.sessionId || !turnId) return false;
+        run.sessionBusy = true;
+        ++run.historyRequest;
+        rerenderIfActive(targetCanvas);
+        try {
+            const forked = await forkAssistantSession(targetCanvas, run.sessionId, turnId);
+            if (!isLiveRun(originNamespace, targetCanvas, run)) return false;
+            run.historyLoaded = false;
+            run.plan = null;
+            run.error = null;
+            run.compactNotice = "已从这一轮创建分支对话，可放心尝试不同创意方向。";
+            if (await loadHistory(targetCanvas, forked.sessionId) && isLiveRun(originNamespace, targetCanvas, run)) {
+                run.recovery = null;
+                run.turnStatus = {};
+                run.reasoning = [];
+                run.reasoningOpen = {};
+                run.lastSent = null;
+                run.pendingUserText = null;
+                run.pendingContinuationId = null;
+            }
+            return true;
+        } catch {
+            if (isLiveRun(originNamespace, targetCanvas, run)) run.error = "没能创建分支对话，当前对话仍然保留。请重试。";
+            return false;
+        } finally {
+            run.sessionBusy = false;
+            if (isLiveRun(originNamespace, targetCanvas, run)) rerenderIfActive(targetCanvas);
+        }
+    }, [activeCanvasRef, isLiveRun, loadHistory, namespaceRef, rerenderIfActive, runFor]);
+
     return {
         startNewSession,
         activateSession,
+        forkSession,
         deleteSession,
         undoTurn,
         runScriptProposal,

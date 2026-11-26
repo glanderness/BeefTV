@@ -63,6 +63,23 @@ export async function confirmAssistantProduction(canvasId: string, turnId: strin
     }, { ...(await uiSessionConfig()), timeout: PRODUCTION_CONFIRM_TIMEOUT_MS });
 }
 
+export async function autoConfirmAssistantProduction(canvasId: string, turnId: string, proposal: AssistantGenerationProposal, continuePlan = false) {
+    const normalized = normalizeAssistantProposal(proposal);
+    return http.post<{
+        taskIds: string[];
+        continuationId?: string;
+        orderId?: string;
+        order?: GenerationOrder;
+        autoConfirmed?: boolean;
+        estimatedCny?: number;
+        sessionSpentCny?: number;
+        limitCny?: number;
+    }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(normalized.proposalId)}/auto-confirm`, {
+        canvasId, kind: normalized.kind, nodeIds: normalized.nodeIds, targets: normalized.production?.targets, continuePlan,
+        ...(normalized.regenerate ? { regenerate: true } : {}),
+    }, { ...(await uiSessionConfig()), timeout: PRODUCTION_CONFIRM_TIMEOUT_MS });
+}
+
 export async function listGenerationOrders(canvasId: string) {
     return http.get<{ orders: GenerationOrder[] }>(`/assistant/generation-orders?canvasId=${encodeURIComponent(canvasId)}`, await uiSessionConfig());
 }
@@ -101,6 +118,16 @@ export async function activateAssistantSession(canvasId: string, sessionId: stri
     return data.sessionId;
 }
 
+export async function forkAssistantSession(canvasId: string, sessionId: string, turnId: string): Promise<{ sessionId: string; conversationId?: number; turnCount?: number }> {
+    const data = await http.post<{ sessionId: string; conversationId?: number; turnCount?: number }>(
+        "/assistant/sessions/fork",
+        { canvasId, sessionId, turnId },
+        await assistantMutationConfig(),
+    );
+    if (!data?.sessionId) throw new Error("没能创建分支对话，请重试");
+    return data;
+}
+
 export async function deleteAssistantSession(canvasIdOrSessionId: string, maybeSessionId?: string): Promise<{ deleted: boolean; sessionId: string; currentSessionId: string | null }> {
     const hasCanvas = typeof maybeSessionId === "string";
     const canvasId = hasCanvas ? canvasIdOrSessionId : "";
@@ -124,6 +151,7 @@ export async function getAssistantHistory(canvasId: string, sessionId?: string):
         pausedTurnReason: data.pausedTurnReason ?? null,
         thinkingLevel: data.thinkingLevel ? assistantThinkingLevel(data.thinkingLevel) : undefined,
         contextUsage: data.contextUsage ?? null,
+        forkedFrom: data.forkedFrom ?? null,
         turns: data.turns.map((turn) => ({
             ...turn,
             proposals: Array.isArray(turn.proposals) ? turn.proposals.map(normalizeAssistantProposal) : [],

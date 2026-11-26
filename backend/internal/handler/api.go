@@ -106,6 +106,7 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc CanvasAPIService, depend
 	}
 	RegisterDesktopSkillRoutes(api, svc, skillsDomain)
 	RegisterDesktopUserDataRoutes(api, svc, canvasDomain, promptDomain, assetLibrary, resourceDomain, playbackDomain, svc, svc, svc)
+	RegisterCreativeBibleRoutes(api, svc)
 	// 登记表在进程内单实例（避免每请求新建导致并发丢记录）。
 	// 凭据管理属于组合根职责：路由注册不产生文件副作用。
 	clients := agentops.NewClientRegistry(dataDir)

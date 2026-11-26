@@ -56,6 +56,8 @@ type Props = {
     onPermissionChange?: (mode: AssistantPermissionMode) => void;
     thinkingLevel?: AssistantThinkingLevel;
     onThinkingLevelChange?: (level: AssistantThinkingLevel) => void;
+    autoConfirmMaxCny?: number;
+    onAutoConfirmMaxCnyChange?: (limit: number) => void;
     contextUsage?: AssistantContextUsage | null;
     canCompact?: boolean;
     compacting?: boolean;
@@ -89,6 +91,8 @@ export function CanvasAssistantComposer({
     onPermissionChange,
     thinkingLevel = "low",
     onThinkingLevelChange,
+    autoConfirmMaxCny = 0,
+    onAutoConfirmMaxCnyChange,
     contextUsage,
     canCompact,
     compacting,
@@ -189,6 +193,26 @@ export function CanvasAssistantComposer({
                             { value: "canvas", label: "当前画布", title: "查看素材并修改当前画布" },
                             { value: "full-access", label: "完全访问", title: "查看素材，可修改所有画布" },
                         ]} />
+                </Tooltip> : null}
+                {onAutoConfirmMaxCnyChange ? <Tooltip title="可选：本会话小额生成在额度内自动发起，超过或未知报价仍需手动确认">
+                    <Select
+                        className="canvas-assistant-permission"
+                        size="small"
+                        variant="borderless"
+                        aria-label="小额免确认额度"
+                        value={autoConfirmMaxCny}
+                        disabled={disabled}
+                        placement="topRight"
+                        popupMatchSelectWidth={false}
+                        onChange={(value) => onAutoConfirmMaxCnyChange(Number(value) || 0)}
+                        options={[
+                            { value: 0, label: "手动确认", title: "每次付费生成均需点击确认" },
+                            { value: 2, label: "免确认 ¥2", title: "本会话累计 ¥2 以内自动发起" },
+                            { value: 5, label: "免确认 ¥5", title: "本会话累计 ¥5 以内自动发起" },
+                            { value: 10, label: "免确认 ¥10", title: "本会话累计 ¥10 以内自动发起" },
+                            { value: 20, label: "免确认 ¥20", title: "本会话累计 ¥20 以内自动发起" },
+                        ]}
+                    />
                 </Tooltip> : null}
                 </div>
                 <div className="canvas-assistant-composer-actions">

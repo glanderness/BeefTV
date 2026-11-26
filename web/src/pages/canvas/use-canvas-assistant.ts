@@ -7,6 +7,7 @@ import { emitPluginEvent } from "@/lib/plugins/plugin-events";
 import { ApiError } from "@/services/api/request";
 import { getActiveUserScope, onStorageNamespaceChange, scopedLocalStorage } from "@/lib/user-scope";
 import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
+import { getAssistantSettings, updateAssistantSettings } from "@/services/api/assistant-settings";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { saveCanvasForAssistant } from "@/services/assistant-canvas-save";
 import {
@@ -671,6 +672,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const {
         startNewSession,
         activateSession,
+        forkSession,
         deleteSession,
         undoTurn,
         runScriptProposal,
@@ -688,6 +690,31 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         loadHistory,
         rememberProposal,
     });
+
+    const [autoConfirmMaxCny, setAutoConfirmMaxCnyState] = useState<number>(0);
+    useEffect(() => {
+        let cancelled = false;
+        void getAssistantSettings()
+            .then((settings) => {
+                if (!cancelled && typeof settings?.autoConfirmMaxCny === "number" && Number.isFinite(settings.autoConfirmMaxCny)) {
+                    setAutoConfirmMaxCnyState(Math.max(0, settings.autoConfirmMaxCny));
+                }
+            })
+            .catch(() => { /* ignore when assistant settings unavailable */ });
+        return () => { cancelled = true; };
+    }, [namespace]);
+
+    const setAutoConfirmMaxCny = useCallback(async (limit: number) => {
+        const clean = Number.isFinite(limit) && limit > 0 ? limit : 0;
+        const previous = autoConfirmMaxCny;
+        setAutoConfirmMaxCnyState(clean);
+        try {
+            const saved = await updateAssistantSettings({ autoConfirmMaxCny: clean });
+            setAutoConfirmMaxCnyState(typeof saved?.autoConfirmMaxCny === "number" ? saved.autoConfirmMaxCny : clean);
+        } catch {
+            setAutoConfirmMaxCnyState(previous);
+        }
+    }, [autoConfirmMaxCny]);
 
     const run = runFor(canvasId);
     const nsPrefix = `${namespace}:`;
@@ -719,6 +746,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         setPermissionMode,
         thinkingLevel: run.thinkingLevel ?? preferredThinkingLevel ?? "low",
         setThinkingLevel,
+        autoConfirmMaxCny,
+        setAutoConfirmMaxCny,
         contextUsage: run.contextUsage,
         compacting: run.compacting,
         compactNotice: run.compactNotice,
@@ -748,6 +777,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         dismissError,
         startNewSession,
         activateSession,
+        forkSession,
         deleteSession,
         handleDeleteSession: deleteSession,
         undoTurn,

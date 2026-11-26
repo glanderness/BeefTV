@@ -58,7 +58,7 @@ func continuationView(row model.AssistantContinuation) ContinuationView {
 }
 
 func (s *Service) ArmContinuation(userID string, input ContinuationInput) (*ContinuationView, error) {
-	if len(input.NodeIDs) == 0 || (input.Kind != "image" && input.Kind != "video" && input.Kind != "audio") || !strings.HasPrefix(input.ProposalID, "gp-") {
+	if len(input.NodeIDs) == 0 || (input.Kind != "image" && input.Kind != "video" && input.Kind != "audio" && input.Kind != "mixed") || !strings.HasPrefix(input.ProposalID, "gp-") {
 		return nil, continuationError("invalid")
 	}
 	sum := sha256.Sum256([]byte(userID + "\x00" + input.SourceTurnID + "\x00" + input.ProposalID))
@@ -113,7 +113,12 @@ func (s *Service) ArmContinuation(userID string, input ContinuationInput) (*Cont
 			owned[n.ID] = n.Type
 		}
 		for _, id := range input.NodeIDs {
-			if owned[id] != input.Kind {
+			nodeType := owned[id]
+			if input.Kind == "mixed" {
+				if nodeType != "image" && nodeType != "video" && nodeType != "audio" {
+					return continuationError("target_changed")
+				}
+			} else if nodeType != input.Kind {
 				return continuationError("target_changed")
 			}
 		}
@@ -251,7 +256,14 @@ func (s *Service) continuationResults(tx *gorm.DB, row *model.AssistantContinuat
 			if err != nil {
 				return nil, nil, err
 			}
-			if task.Type != "canvas_"+row.Kind {
+			taskKind := row.Kind
+			if row.Kind == "mixed" {
+				derived := strings.TrimPrefix(task.Type, "canvas_")
+				if derived != "image" && derived != "video" && derived != "audio" {
+					return nil, nil, continuationError("task_mismatch")
+				}
+				taskKind = derived
+			} else if task.Type != "canvas_"+row.Kind {
 				return nil, nil, continuationError("task_mismatch")
 			}
 			var input struct {
@@ -272,7 +284,7 @@ func (s *Service) continuationResults(tx *gorm.DB, row *model.AssistantContinuat
 				return nil, nil, continuationError("task_mismatch")
 			}
 			ids = append(ids, task.ID)
-			inspection, err := InspectTaskTargetsInTx(tx, row.UserID, task, row.Kind, input.Metadata.NodeID, targets, func(nodeID string) (map[string]any, bool) {
+			inspection, err := InspectTaskTargetsInTx(tx, row.UserID, task, taskKind, input.Metadata.NodeID, targets, func(nodeID string) (map[string]any, bool) {
 				meta, exists := nodes[nodeID]
 				return meta, exists
 			})

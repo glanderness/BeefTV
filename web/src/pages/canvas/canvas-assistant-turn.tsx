@@ -1,6 +1,6 @@
 import { App, Button } from "antd";
 import copy from "copy-to-clipboard";
-import { Crosshair, Undo2 } from "lucide-react";
+import { Crosshair, GitBranch, Undo2 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -29,6 +29,7 @@ type Props = {
     generationDisabled?: boolean;
     onLocate: (nodeIds: string[]) => void;
     onUndo: (turnId: string) => void;
+    onFork?: (turnId: string) => void;
     onRunProposal: (proposal: AssistantGenerationProposal, turnId: string) => void;
     onRunScriptProposal?: (proposal: AssistantScriptProposal, turnId: string, alwaysAllowSession: boolean) => void;
     runningScriptProposalIds?: ReadonlySet<string>;
@@ -71,7 +72,7 @@ export function CanvasAssistantUserMessage({ text, selectedCount, continuationId
     );
 }
 
-export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, onLocate, onUndo, onRunProposal, onRunScriptProposal, runningScriptProposalIds, scriptProposalFeedback, onDismissProposal, onContinue, nodes, onCheckResults, reasoningOpen, onReasoningOpenChange }: Props) {
+export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, onLocate, onUndo, onFork, onRunProposal, onRunScriptProposal, runningScriptProposalIds, scriptProposalFeedback, onDismissProposal, onContinue, nodes, onCheckResults, reasoningOpen, onReasoningOpenChange }: Props) {
     const { message } = App.useApp();
     const config = useEffectiveConfig();
     const toolCardEntries = usePluginSlot("assistant.toolCard");
@@ -348,6 +349,20 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                     </div>
                 );
             })}
+
+            {onFork ? (
+                <div className="canvas-assistant-card-actions">
+                    <Button
+                        type="text"
+                        size="small"
+                        disabled={generationDisabled}
+                        icon={<GitBranch className="size-3.5" />}
+                        onClick={() => onFork(turn.turnId)}
+                    >
+                        从此处分叉试稿
+                    </Button>
+                </div>
+            ) : null}
         </div>
     );
 }

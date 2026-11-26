@@ -468,6 +468,7 @@ export function createDurableSessionStore({
     });
   }
   const deleteSession = (canvasId, sessionId) => repository.deleteSession(canvasId, sessionId, { refreshCanvasBusy, isEntryBusy, readSafeCurrentPointer });
+  const forkSession = (canvasId, opts) => repository.forkSession(canvasId, opts, { refreshCanvasBusy, isEntryBusy });
   const recordEvent = (canvasId, payload) => repository.recordEvent(canvasId, payload, { ensureSession, readSafeCurrentPointer });
   async function configureSession(canvasId, { sessionId = '', thinkingLevel: nextThinking } = {}) {
     const cleanLevel = String(nextThinking || '').trim().toLowerCase();
@@ -561,6 +562,7 @@ export function createDurableSessionStore({
     resolveCurrentSession,
     ensureSession,
     ensureCurrentSession,
+    forkSession,
     deleteSession,
     submit,
     recover,

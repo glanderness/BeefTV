@@ -101,4 +101,34 @@ func RegisterMCPActivity(api *gin.RouterGroup, repo *repository.Repository, user
 		}
 		ok(c, rows)
 	})
+	api.GET("/agent-clients/guardrails", func(c *gin.Context) {
+		if !requireDesktopUITrust(c, svc, trust) {
+			return
+		}
+		cfg := operations.GetExternalGenerationGuardrail(repo.DB())
+		ok(c, operations.ExternalGuardrailStatus{
+			ExternalGenerationGuardrail: cfg,
+			TodaySpentCNY:               operations.TodayExternalEstimatedSpendCNY(repo.DB(), userID, time.Now()),
+		})
+	})
+	api.PUT("/agent-clients/guardrails", func(c *gin.Context) {
+		if !requireDesktopUITrust(c, svc, trust) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+		var req operations.ExternalGenerationGuardrail
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, operations.InvalidArg("invalid_params", "请填写有效的外部 Agent 护栏配置"))
+			return
+		}
+		saved, err := operations.SetExternalGenerationGuardrail(repo.DB(), req)
+		if err != nil {
+			failAssistantProposal(c, err)
+			return
+		}
+		ok(c, operations.ExternalGuardrailStatus{
+			ExternalGenerationGuardrail: saved,
+			TodaySpentCNY:               operations.TodayExternalEstimatedSpendCNY(repo.DB(), userID, time.Now()),
+		})
+	})
 }

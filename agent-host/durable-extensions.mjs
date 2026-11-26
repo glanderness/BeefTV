@@ -24,6 +24,8 @@ const requestSignature = (messages) => crypto.createHash('sha256').update(JSON.s
 const DEFERRED_HOST_TOOL_LABELS = new Set([
   'business.list',
   'business.call',
+  'project.bible.get',
+  'project.bible.update',
   'skill.market.search',
   'skill.market.get',
   'skill.market.file',

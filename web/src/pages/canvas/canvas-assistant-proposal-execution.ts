@@ -44,7 +44,7 @@ export function buildConfirmedGenerationConfig(
 
 export async function executeAssistantProposal({ proposal, nodes, claims, isHandled, confirmRunnable, prepare, confirmOrder, generate, markHandled, notify, stillOwns }: ProposalExecution) {
     const kind = proposal.kind;
-    if (kind === "audio" && !confirmOrder) { notify("请将配音加入完整制作方案后确认。"); return; }
+    if ((kind === "audio" || kind === "mixed") && !confirmOrder) { notify("请将混合素材或配音加入统一制作方案后确认。"); return; }
     if (isHandled || claims.has(proposal.proposalId)) {
         notify("这项提案已提交或正在提交，请在任务列表查看进度。");
         return;
@@ -55,7 +55,8 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
         return;
     }
     const modelKey = proposalModelKey(proposal.modelKey);
-    if (!modelKey) {
+    const hasPerTargetModels = Boolean(proposal.targets?.length && proposal.targets.every((item) => Boolean(proposalModelKey(item.modelKey))));
+    if (!modelKey && !hasPerTargetModels) {
         notify("这项提案缺少模型信息，请让助手重新提出生成方案后再确认。");
         return;
     }
@@ -119,8 +120,8 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
                 return;
             }
         }
-        if (kind === "audio") {
-            notify("请将配音加入完整制作方案后确认。");
+        if (kind === "audio" || kind === "mixed" || !modelKey) {
+            notify("请通过统一生成方案确认混合素材或配音任务。");
             return;
         }
         await Promise.allSettled(confirmedTargets.map(async (node) => {

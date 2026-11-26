@@ -347,16 +347,38 @@ export function buildStudioDigest(canvas, { maxBytes = 3600, selectedNodeIds = [
   }
   const selected = selectedNodeIds.map((id) => byId.get(id)).filter(Boolean);
   if (selected.length) lines.push(`用户选中：${selected.slice(0, 8).map((node) => `${node.id}「${clip(node.title, 14)}」`).join('、')}`);
+  const bibleDigest = typeof canvas?.creativeBibleDigest === 'string' ? canvas.creativeBibleDigest.trim() : '';
+
+  const clipUtf8 = (str, byteLimit) => {
+    if (Buffer.byteLength(str, 'utf8') <= byteLimit) return str;
+    let out = '';
+    for (const ch of str) {
+      if (Buffer.byteLength(out + ch + '…', 'utf8') > byteLimit) break;
+      out += ch;
+    }
+    return `${out}…`;
+  };
+
+  let boundedBible = '';
+  let bodyBudget = maxBytes;
+  if (bibleDigest) {
+    const bibleBudget = Math.max(400, Math.floor(maxBytes * 0.45));
+    boundedBible = clipUtf8(bibleDigest, bibleBudget);
+    bodyBudget = Math.max(800, maxBytes - Buffer.byteLength(boundedBible, 'utf8') - 1);
+  }
 
   let text = lines.join('\n');
-  // 超预算时从分镜明细开始收缩，保证概况、进行中、失败这些关键信息留下。
-  while (Buffer.byteLength(text, 'utf8') > maxBytes) {
+  // 超预算时从分镜明细开始收缩，保证概况、进行中、失败与创作设定集留下。
+  while (Buffer.byteLength(text, 'utf8') > bodyBudget) {
     const index = lines.findLastIndex((line) => line.startsWith('  镜'));
-    if (index < 0) { text = clip(text, Math.floor(maxBytes / 3)); break; }
+    if (index < 0) { text = clipUtf8(text, bodyBudget); break; }
     lines.splice(index, 1);
     const hidden = lines.filter((line) => line.startsWith('…')).length;
     if (!hidden) lines.push('…分镜明细已收缩，需要时用 canvas_get 读取分镜板');
     text = lines.join('\n');
+  }
+  if (boundedBible) {
+    text = `${text}\n${boundedBible}`;
   }
   return { text, snapshot: snapshotOf(nodes), stats: { revision: canvas?.revision ?? null, nodes: nodes.length, connections: connections.length } };
 }

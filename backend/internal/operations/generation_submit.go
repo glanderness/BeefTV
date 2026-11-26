@@ -113,6 +113,8 @@ type GenerationOrder struct {
 	Targets             []GenerationTarget          `json:"targets"`
 	TargetViews         []GenerationOrderTargetView `json:"targetViews,omitempty"`
 	SourceTurnID        string                      `json:"sourceTurnId,omitempty"`
+	SessionID           string                      `json:"sessionId,omitempty"`
+	EstimatedCNY        *float64                    `json:"estimatedCny,omitempty"`
 	TaskIDs             []string                    `json:"taskIds,omitempty"`
 	Regenerate          bool                        `json:"regenerate,omitempty"`
 	ContinuationID      string                      `json:"continuationId,omitempty"`
@@ -120,8 +122,9 @@ type GenerationOrder struct {
 	UpdatedAt           string                      `json:"updatedAt"`
 }
 
-// IsOwnerConfirmed reports whether this order was explicitly confirmed by the workspace
-// owner (UI confirmation or owner-authenticated CLI), never by an external caller's auto mode.
+// IsOwnerConfirmed reports whether this order was confirmed by the workspace owner
+// (UI confirmation, owner-authenticated CLI, or server-enforced assistant auto-budget),
+// never by an external caller's auto mode.
 func (o GenerationOrder) IsOwnerConfirmed() bool {
 	if o.Status != GenerationOrderSubmitted {
 		return false
@@ -129,6 +132,8 @@ func (o GenerationOrder) IsOwnerConfirmed() bool {
 	switch strings.TrimSpace(o.ApprovedBy) {
 	case "ui", "owner", "owner-cli":
 		return true
+	case ApprovedByAutoBudget:
+		return o.CallerKind == CallerAssistant
 	default:
 		return false
 	}
@@ -210,7 +215,7 @@ func BuildGenerationOrderTargetViews(domain Domain, targets []GenerationTarget) 
 	return views
 }
 
-const generationSubmitParams = `{"type":"object","properties":{"canvasId":{"type":"string"},"proposalId":{"type":"string"},"orderId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1},"kind":{"type":"string","enum":["image","video","audio"]},"expectedRevision":{"type":"integer","minimum":1},"expectedModelConfigRevision":{"type":"integer","minimum":0}},"required":["canvasId","nodeIds"]}`
+const generationSubmitParams = `{"type":"object","properties":{"canvasId":{"type":"string"},"proposalId":{"type":"string"},"orderId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1},"kind":{"type":"string","enum":["image","video","audio","mixed"]},"expectedRevision":{"type":"integer","minimum":1},"expectedModelConfigRevision":{"type":"integer","minimum":0}},"required":["canvasId","nodeIds"]}`
 
 // generationAdmissionMode 区分两种付费受理。参数、校验和审批流程相同，
 // 只有节点旧结果的释放规则不同（见 generation_resubmit.go）。
@@ -335,8 +340,12 @@ func admitGeneration(ctx *Context, raw json.RawMessage, mode generationAdmission
 	}
 	var modelConfigRevision int64
 	var firstChoice AssistantGenerationModel
+	filterKind := strings.ToLower(strings.TrimSpace(args.Kind))
+	if filterKind == "mixed" {
+		filterKind = ""
+	}
 	for i, target := range targets {
-		if args.Kind != "" && target.Kind != args.Kind {
+		if filterKind != "" && target.Kind != filterKind {
 			return nil, InvalidArg("generation_kind_mismatch", "请按素材类型分批生成")
 		}
 		if external {
@@ -361,7 +370,7 @@ func admitGeneration(ctx *Context, raw json.RawMessage, mode generationAdmission
 		n, _ := v.(map[string]any)
 		nodes[dependencyString(n, "id")] = n
 	}
-	if err = validateGenerationDependencies(doc, nodes, args.NodeIDs, args.Kind); err != nil {
+	if err = validateGenerationDependencies(doc, nodes, args.NodeIDs, filterKind); err != nil {
 		return nil, err
 	}
 	// 「每次问我」下 regenerate 不能自批：先在这张生成单上登记「原地重做」，
@@ -391,6 +400,14 @@ func admitGeneration(ctx *Context, raw json.RawMessage, mode generationAdmission
 		}, nil
 	}
 	if external {
+		var estimatedCNY *float64
+		if db := ctx.DB(); db != nil && !(approvalMode == ApprovalModeAsk && existingOrder != nil && existingOrder.IsOwnerConfirmed()) {
+			est, guardErr := CheckExternalGenerationGuardrail(db, ctx.Domain, ctx.UserID, nodes, targets, time.Now())
+			if guardErr != nil {
+				return nil, guardErr
+			}
+			estimatedCNY = est
+		}
 		port, ok := ctx.Domain.(ExternalGenerationAdmission)
 		if !ok {
 			return nil, Unsupported("generation_unavailable", "当前工作区不能提交生成")
@@ -399,9 +416,15 @@ func admitGeneration(ctx *Context, raw json.RawMessage, mode generationAdmission
 		if err != nil {
 			return nil, err
 		}
+		if outMap, ok := out.(map[string]any); ok && estimatedCNY != nil {
+			outMap["estimatedCny"] = *estimatedCNY
+		}
 		if hasOrderRecorder {
 			now := time.Now().UTC().Format(time.RFC3339)
 			order := buildSubmittedExternalOrder(ctx, args.CanvasID, proposalID, currentRevision, modelConfigRevision, firstChoice, targets, existingOrder, out, now, mode == generationRegenerate)
+			if estimatedCNY != nil {
+				order.EstimatedCNY = estimatedCNY
+			}
 			if err := orderRecorder.RecordGenerationOrder(ctx.UserID, order); err != nil {
 				return nil, AsError(err)
 			}

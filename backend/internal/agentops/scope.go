@@ -81,6 +81,11 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 			return nil
 		}
 		return denied("只能搜索当前画布所属项目")
+	case "project.bible.get":
+		if s.canvasAllowed(args.CanvasID) {
+			return nil
+		}
+		return denied("只能读取当前画布所属项目的创作设定集")
 	case "skill.catalog", "skill.market.search", "skill.market.get", "skill.market.file":
 		return nil
 	case "skill.publish.status":
