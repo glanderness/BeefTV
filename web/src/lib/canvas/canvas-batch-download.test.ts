@@ -82,7 +82,7 @@ describe("canvas-batch-download", () => {
         ]);
     });
 
-    test("batch filenames follow canvas rows regardless of node storage order", () => {
+    test("batch order follows canvas rows regardless of node storage order and preserves node titles", () => {
         const firstRowRight = makeNode({ id: "right", type: CanvasNodeType.Image, position: { x: 300, y: 0 }, metadata: { content: "/right.png" } });
         const firstRowLeft = makeNode({ id: "left", type: CanvasNodeType.Image, position: { x: 200, y: 48 }, metadata: { content: "/left.png" } });
         const secondRow = makeNode({ id: "next", type: CanvasNodeType.Image, position: { x: 100, y: 49 }, metadata: { content: "/next.png" } });
@@ -91,20 +91,28 @@ describe("canvas-batch-download", () => {
 
         for (const [first, second, third] of [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]) {
             const sorted = collectDownloadableMediaNodes([nodes[first], nodes[second], nodes[third]], selectedIds);
-            assert.deepEqual(sorted.map((node, index) => buildBatchDownloadFilename(node, index, sorted.length)), [
-                "01_left.png", "02_right.png", "03_next.png",
+            assert.deepEqual(sorted.map((node) => buildBatchDownloadFilename(node)), [
+                "left.png", "right.png", "next.png",
             ]);
         }
     });
 
-    test("buildBatchDownloadFilename pads index, sanitizes title, and infers extension", () => {
+    test("buildBatchDownloadFilename preserves canvas node title, sanitizes invalid chars, and infers extension", () => {
+        const numberedVideo = makeNode({
+            id: "v0",
+            type: CanvasNodeType.Video,
+            title: "1",
+            metadata: { content: "https://example.com/1.mp4", mimeType: "video/mp4" },
+        });
+        assert.equal(buildBatchDownloadFilename(numberedVideo), "1.mp4");
+
         const videoNode = makeNode({
             id: "v1",
             type: CanvasNodeType.Video,
             title: "镜头1:开场/雨夜?",
             metadata: { content: "https://example.com/shot1.mp4", mimeType: "video/mp4" },
         });
-        assert.equal(buildBatchDownloadFilename(videoNode, 0, 8), "01_镜头1_开场_雨夜.mp4");
+        assert.equal(buildBatchDownloadFilename(videoNode), "镜头1_开场_雨夜.mp4");
 
         const untitledImage = makeNode({
             id: "img2",
@@ -112,7 +120,7 @@ describe("canvas-batch-download", () => {
             title: "   ",
             metadata: { content: "https://example.com/frame.webp?token=1" },
         });
-        assert.equal(buildBatchDownloadFilename(untitledImage, 1, 8), "02_图片.webp");
+        assert.equal(buildBatchDownloadFilename(untitledImage), "图片.webp");
 
         const audioNode = makeNode({
             id: "aud3",
@@ -120,7 +128,37 @@ describe("canvas-batch-download", () => {
             title: "角色对白.wav",
             metadata: { content: "blob:http://localhost/audio-1", mimeType: "audio/wav" },
         });
-        assert.equal(buildBatchDownloadFilename(audioNode, 2, 120), "003_角色对白.wav");
+        assert.equal(buildBatchDownloadFilename(audioNode), "角色对白.wav");
+    });
+
+    test("batchDownloadCanvasMediaNodes deduplicates colliding node titles in browser mode while keeping unique names untouched", async () => {
+        const nodes: CanvasNodeData[] = [
+            makeNode({ id: "v1", type: CanvasNodeType.Video, title: "1", metadata: { storageKey: "resource:r1", mimeType: "video/mp4" } }),
+            makeNode({ id: "v2", type: CanvasNodeType.Video, title: "16", metadata: { storageKey: "resource:r2", mimeType: "video/mp4" } }),
+            makeNode({ id: "v3", type: CanvasNodeType.Video, title: "Shot", metadata: { storageKey: "resource:r3", mimeType: "video/mp4" } }),
+            makeNode({ id: "v4", type: CanvasNodeType.Video, title: "shot", metadata: { storageKey: "resource:r4", mimeType: "video/mp4" } }),
+            makeNode({ id: "v5", type: CanvasNodeType.Video, title: "Shot (1)", metadata: { storageKey: "resource:r5", mimeType: "video/mp4" } }),
+            makeNode({ id: "v6", type: CanvasNodeType.Video, title: "Shot", metadata: { storageKey: "resource:r6", mimeType: "video/mp4" } }),
+        ];
+
+        const triggered: string[] = [];
+        const result = await batchDownloadCanvasMediaNodes(nodes, {
+            staggerMs: 0,
+            loadResourceBlob: async () => new Blob(["mp4"], { type: "video/mp4" }),
+            triggerDownload: (_href, filename) => {
+                triggered.push(filename);
+            },
+        });
+
+        assert.deepEqual(result, { downloaded: 6, failed: 0 });
+        assert.deepEqual(triggered, [
+            "1.mp4",
+            "16.mp4",
+            "Shot.mp4",
+            "shot (1).mp4",
+            "Shot (1) (1).mp4",
+            "Shot (2).mp4",
+        ]);
     });
 
     test("batchDownloadCanvasMediaNodes downloads sequentially with fetch or CORS anchor fallback", async () => {
@@ -166,10 +204,10 @@ describe("canvas-batch-download", () => {
         assert.equal(result.downloaded, 2);
         assert.equal(result.failed, 1);
         assert.equal(result.failures?.length, 1);
-        assert.equal(result.failures?.[0]?.fileName, "03_缺失视频.mp4");
+        assert.equal(result.failures?.[0]?.fileName, "缺失视频.mp4");
         assert.deepEqual(triggered.map((item) => item.filename), [
-            "01_镜头1视频.mp4",
-            "02_镜头2分镜.png",
+            "镜头1视频.mp4",
+            "镜头2分镜.png",
         ]);
         assert.equal(triggered[1]?.href, "https://cdn.example.com/2.png");
     });
@@ -208,6 +246,15 @@ describe("canvas-batch-download", () => {
                     mimeType: "image/png",
                 },
             }),
+            makeNode({
+                id: "v3",
+                type: CanvasNodeType.Video,
+                title: "镜头1",
+                metadata: {
+                    storageKey: "resource:res-video-3",
+                    mimeType: "video/mp4",
+                },
+            }),
         ];
 
         let fetchCalls = 0;
@@ -226,11 +273,12 @@ describe("canvas-batch-download", () => {
                     return { saved: items.length, failed: 0, cancelled: false };
                 },
             });
-            assert.deepEqual(result, { downloaded: 2, failed: 0, cancelled: false });
+            assert.deepEqual(result, { downloaded: 3, failed: 0, cancelled: false });
             assert.equal(fetchCalls, 0);
             assert.deepEqual(savedBatches, [[
-                { fileName: "01_镜头1.mp4", resourceId: "res-video-1" },
-                { fileName: "02_镜头2.png", resourceId: "res-img-2" },
+                { fileName: "镜头1.mp4", resourceId: "res-video-1" },
+                { fileName: "镜头2.png", resourceId: "res-img-2" },
+                { fileName: "镜头1.mp4", resourceId: "res-video-3" },
             ]]);
 
             const cancelled = await batchDownloadCanvasMediaNodes(nodes, {
@@ -523,7 +571,7 @@ describe("canvas-batch-download", () => {
         assert.deepEqual(result, { downloaded: 1, failed: 0 });
         assert.deepEqual(loadedKeys, ["resource:res-auth-1"]);
         assert.equal(triggered.length, 1);
-        assert.equal(triggered[0]?.filename, "01_本地视频.mp4");
+        assert.equal(triggered[0]?.filename, "本地视频.mp4");
         assert.equal(triggered[0]?.href.startsWith("blob:"), true);
     });
 
@@ -654,7 +702,7 @@ describe("canvas-batch-download", () => {
         const outcome = await run1;
         assert.equal(outcome?.downloaded, 2);
         assert.equal(outcome?.failed, 0);
-        assert.deepEqual(downloadedNames, ["01_首帧.png", "02_镜头一.mp4"]);
+        assert.deepEqual(downloadedNames, ["首帧.png", "镜头一.mp4"]);
 
         // Load error must surface via message.error instead of looking like an empty project.
         const errLogs: string[] = [];
