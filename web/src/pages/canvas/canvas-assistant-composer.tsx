@@ -34,6 +34,11 @@ const PERMISSION_SHORT_LABEL: Record<AssistantPermissionMode, string> = {
     "full-access": "全部",
 };
 
+const PASSIVE_TOOLTIP_STYLES = {
+    root: { pointerEvents: "none" as const },
+    container: { pointerEvents: "none" as const },
+};
+
 function formatUsageCount(count: number): string {
     if (!Number.isFinite(count) || count <= 0) return "0";
     if (count >= 1000) return `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k`;
@@ -315,7 +320,7 @@ export function CanvasAssistantComposer({
                 <CanvasAssistantModelPicker busy={disabled || streaming || Boolean(modelBusy)} />
 
                 {onThinkingLevelChange ? (
-                    <Tooltip title={permissionLocked ? "处理中暂不可切换思考深度" : "调节当前对话的思考深度"}>
+                    <Tooltip styles={PASSIVE_TOOLTIP_STYLES} title={permissionLocked ? "处理中暂不可切换思考深度" : "调节当前对话的思考深度"}>
                         <Select
                             className="canvas-assistant-thinking"
                             size="small"
@@ -333,7 +338,7 @@ export function CanvasAssistantComposer({
                 ) : null}
 
                 {onPermissionChange ? (
-                    <Tooltip title={permissionLocked ? "本轮权限已固定，结束后可更改" : "选择助手可访问和修改的范围"}>
+                    <Tooltip styles={PASSIVE_TOOLTIP_STYLES} title={permissionLocked ? "本轮权限已固定，结束后可更改" : "选择助手可访问和修改的范围"}>
                         <Select
                             className="canvas-assistant-permission"
                             size="small"
@@ -392,7 +397,7 @@ export function CanvasAssistantComposer({
                             </div>
                         }
                     >
-                        <Tooltip title={autoConfirmOpen && !disabled ? "" : "单会话小额生成免确认额度"}>
+                        <Tooltip styles={PASSIVE_TOOLTIP_STYLES} title={autoConfirmOpen && !disabled ? "" : "单会话小额生成免确认额度"}>
                             <button
                                 type="button"
                                 className="canvas-assistant-autoconfirm-btn"

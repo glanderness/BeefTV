@@ -241,13 +241,23 @@ export function assistantProductionScope(proposal: AssistantGenerationProposal):
     return "single-step";
 }
 
+export function isMergedMultiModelProposal(proposal: AssistantGenerationProposal): boolean {
+    if (proposal.kind === "mixed") return true;
+    const orderTargets = proposal.targets?.length ? proposal.targets : proposal.order?.targetViews || [];
+    if (orderTargets.length > 1) {
+        const distinctModels = new Set(orderTargets.map((item) => item.modelKey || item.model).filter(Boolean));
+        if (distinctModels.size > 1 || !proposal.modelKey) return true;
+    }
+    return false;
+}
+
 export function assistantProposalConfirmLabel(proposal: AssistantGenerationProposal): string {
     if (proposal.regenerate) return "确认并原地重做";
     const scope = assistantProductionScope(proposal);
     if (scope === "full-production") return "确认并制作整片";
     if (scope === "staged-plan") return "确认制作方案";
     if (scope === "single-step") return "确认并生成";
-    if (proposal.kind === "mixed" || !proposal.modelKey) return "一键确认生成";
+    if (isMergedMultiModelProposal(proposal)) return "一键确认生成";
     return "生成";
 }
 
@@ -302,7 +312,7 @@ export function assistantProposalText(
     if (productionParts) {
         return [productionParts.header, ...productionParts.targetLines, ...(productionParts.footer ? [productionParts.footer] : [])].join("\n\n");
     }
-    if (proposal.kind === "mixed" || !proposal.modelKey) {
+    if (isMergedMultiModelProposal(proposal)) {
         const orderTargets = proposal.targets?.length ? proposal.targets : proposal.order?.targetViews || [];
         const images = orderTargets.filter((item) => item.kind === "image").length;
         const videos = orderTargets.filter((item) => item.kind === "video").length;

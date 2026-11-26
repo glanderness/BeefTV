@@ -356,7 +356,7 @@ test("permission choices persist; trusted active mode locks the turn and supplem
     const selector = page.getByRole("combobox", { name: "助手权限" });
     await page.waitForFunction(() => !document.querySelector<HTMLInputElement>('input[aria-label="助手权限"]')?.disabled);
     const selectedText = () => selector.locator('xpath=ancestor::div[contains(@class,"ant-select")][1]').innerText();
-    expect(await selectedText()).toBe("当前画布");
+    expect(await selectedText()).toBe("画布");
     await selector.click();
     await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText("完全访问", { exact: true }).click();
     await page.getByRole("textbox", { name: "给助手的消息" }).fill("查看全部项目");
@@ -365,7 +365,7 @@ test("permission choices persist; trusted active mode locks the turn and supplem
     expect(chats.at(-1)?.permissionMode).toBe("full-access");
     await page.reload();
     await page.waitForFunction(() => !document.querySelector<HTMLInputElement>('input[aria-label="助手权限"]')?.disabled);
-    expect(await selectedText()).toBe("完全访问");
+    expect(await selectedText()).toBe("全部");
     activePermissionMode = "read-only"; running = true;
     await page.reload(); await page.getByRole("button", { name: "停止", exact: true }).waitFor();
     expect(await selector.isDisabled()).toBe(true);
@@ -378,12 +378,12 @@ test("permission choices persist; trusted active mode locks the turn and supplem
     expect(supplements.at(-1)?.permissionMode).toBeUndefined();
     activePermissionMode = undefined;
     await page.reload(); await page.getByRole("button", { name: "停止", exact: true }).waitFor();
-    expect(await selectedText()).toBe("当前画布"); // Legacy active turns keep their original scope.
+    expect(await selectedText()).toBe("画布"); // Legacy active turns keep their original scope.
     expect(await selector.isDisabled()).toBe(true);
     running = false;
     await page.reload();
     await page.waitForFunction(() => !document.querySelector<HTMLInputElement>('input[aria-label="助手权限"]')?.disabled);
-    expect(await selectedText()).toBe("完全访问");
+    expect(await selectedText()).toBe("全部");
     // 助手侧栏有 220ms 的进场位移动画，动画期间页面会短暂比视口宽；这里等它出现并停稳，
     // 断言的是稳定后的布局，不会因为恰好取到动画中间一帧而失败。
     await page.waitForFunction(() => {
@@ -739,7 +739,7 @@ test("thinking level switcher, context usage pill, manual compaction, and 16-ite
     await page.getByText("上下文 24%", { exact: true }).waitFor();
     const thinkingSelect = page.getByRole("combobox", { name: "思考深度" });
     const thinkingText = () => thinkingSelect.locator('xpath=ancestor::div[contains(@class,"ant-select")][1]').innerText();
-    expect(await thinkingText()).toBe("轻量思考");
+    expect(await thinkingText()).toBe("轻量");
 
     // 切换思考深度失败时必须回滚显示，且不污染本地偏好
     rejectNextSessionConfig = true;
@@ -747,7 +747,7 @@ test("thinking level switcher, context usage pill, manual compaction, and 16-ite
     const failedConfigRes = page.waitForResponse(response => response.url().endsWith("/assistant/session-config"));
     await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").getByText("关闭思考", { exact: true }).click();
     await failedConfigRes;
-    expect(await thinkingText()).toBe("轻量思考");
+    expect(await thinkingText()).toBe("轻量");
 
     // 切换思考深度成功 -> 调用 /api/assistant/session-config 并持久化
     await thinkingSelect.click();
@@ -755,7 +755,7 @@ test("thinking level switcher, context usage pill, manual compaction, and 16-ite
     await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").getByText("深度思考", { exact: true }).click();
     await configRes;
     expect(sessionConfigRequests.at(-1)).toEqual({ canvasId: "input-canvas", sessionId: durableId, thinkingLevel: "high" });
-    expect(await thinkingText()).toBe("深度思考");
+    expect(await thinkingText()).toBe("深度");
 
     // 悬停上下文占用显示上下文估算与缓存复用量（使用用户语，不暴露英文 token 术语）
     await page.getByText("上下文 24%", { exact: true }).hover();
@@ -791,7 +791,7 @@ test("thinking level switcher, context usage pill, manual compaction, and 16-ite
     // 刷新后思考深度保持深度思考；非 Durable 旧会话不展示压缩按钮
     await page.reload();
     await page.getByText("上下文 8%", { exact: true }).waitFor();
-    expect(await thinkingText()).toBe("深度思考");
+    expect(await thinkingText()).toBe("深度");
     serverSessionId = "legacy-jsonl-1";
     serverThinkingLevel = undefined;
     serverContextUsage = null;
