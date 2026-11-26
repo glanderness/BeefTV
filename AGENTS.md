@@ -96,6 +96,7 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的本地优�
 ## 7. 文档、脱敏与防止屎山
 
 - 根 `README.md`（中文准稿）只保留定位、概览、快速开始、部署、安全与文档入口，每次修改同步更新 `README.en.md` 并保留顶部语言切换；详细专题写进 `docs/content/docs/`（功能与代码地图见 `overview/features.mdx`、`backend/code-map.mdx`），API、数据表、SSE、资源存储、部署或安全变化时同步对应专题文档，未确认状态留在任务或 PR 中。
+- `README.md` 与 `README.en.md` 顶部的「最近更新 / Recent updates」每版控制在 1–2 行内，应用内更新日志（`web/src/components/layout/app-changelog.zh.ts`）同样面向普通用户编写：只写重要且用户能直接感知的新增功能与体验修复，使用易懂的日常语言，不堆砌内部接口路径、状态码、依赖包名、字段名或重构细节；完整工程变更留在 `CHANGELOG.md` 与 GitHub Release。
 - 公开文档默认中文、不写过期日期，命令/端口/环境变量以当前脚本和 Compose 为准；文档、代码、提交说明与 PR 描述严禁出现密码、Token、Cookie、真实账号、机器路径、会话编号、飞书表号、内部授权记录、预算金额、线上日志号或客户/内部人名，也不绑定旧上游网关品牌名（统一用 `BeefTV 官方算力`）。提交格式：`<type>(<scope>): <业务模块> - <变更摘要>`（`type` 为 `feat|fix|refactor|perf|docs|test|build|ci|chore|revert`）。团队内部评审与发版审批另存私有工作区，AI 代理默认不自行合并 PR 或直接发版。
 - **防止屎山守则**：
   - 同一个业务结论只在一处计算；修 bug 前先查同类规则散落几处，有多处先合并再修。
