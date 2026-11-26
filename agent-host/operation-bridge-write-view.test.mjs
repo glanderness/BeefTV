@@ -350,4 +350,46 @@ describe('node write receipts keep their identity within official tool output li
     expect(parsed.result.configuredCount).toBe(500);
     expect(parsed.result.nodes.length + (parsed.result.omittedNodeCount || 0)).toBe(500);
   });
+
+  test('business.list retains tool params schemas while staying bounded within 40KiB', () => {
+    const tools = Array.from({ length: 12 }, (_, i) => ({
+      id: `business_get_item_${i + 1}`,
+      method: 'GET',
+      path: `/items/:id`,
+      readOnly: true,
+      summary: `查询条目 ${i + 1}`,
+      params: {
+        type: 'object',
+        properties: {
+          path: { type: 'object', properties: { id: { type: 'string', minLength: 1 } }, required: ['id'] },
+          query: { type: 'object', properties: { page: { type: 'integer' } } },
+        },
+      },
+    }));
+    const data = { result: { total: 12, offset: 0, limit: 50, tools } };
+    const view = canvasWriteView(data, 'business.list');
+    expect(Buffer.byteLength(JSON.stringify(view), 'utf8')).toBeLessThanOrEqual(40000);
+    expect(view.result.tools).toHaveLength(12);
+    expect(view.result.tools[0].params).toEqual(tools[0].params);
+
+    // 单个超大 params schema 会被裁剪且绝不会把整页退化成空数组。
+    const hugeProps = Object.fromEntries(
+      Array.from({ length: 120 }, (_, idx) => [`field_${idx}`, { type: 'string', description: '超长字段说明'.repeat(80) }]),
+    );
+    const hugeView = canvasWriteView({
+      result: {
+        total: 2,
+        offset: 0,
+        limit: 10,
+        tools: [
+          { id: 'huge.tool', method: 'POST', path: '/api/huge', readOnly: false, summary: '大参数工具', params: { type: 'object', properties: hugeProps } },
+          { id: 'small.tool', method: 'GET', path: '/api/small', readOnly: true, summary: '小参数工具', params: { type: 'object', properties: { id: { type: 'string' } } } },
+        ],
+      },
+    }, 'business.list');
+    expect(hugeView.result.tools.length).toBeGreaterThanOrEqual(1);
+    expect(hugeView.result.tools[0].id).toBe('huge.tool');
+    expect(hugeView.result.tools[0].params?.omittedPropertyCount).toBeGreaterThan(0);
+    expect(Buffer.byteLength(JSON.stringify(hugeView), 'utf8')).toBeLessThanOrEqual(40000);
+  });
 });

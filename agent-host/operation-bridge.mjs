@@ -176,6 +176,7 @@ export function createOperationBridge({
       name: toolName,
       label: descriptor.id,
       readOnly: descriptor.readOnly === true,
+      noTurnCanvas: descriptor.noTurnCanvas === true,
       replay: descriptor.replay === 'safe' ? 'safe' : 'unsafe',
       description: descriptor.summary + canvasWriteViewDescription(descriptor.id),
       parameters: scopedSchema(descriptor.params, mode !== 'canvas' || descriptor.id === 'canvas.get' || descriptor.id === 'canvas.nodes.get', descriptor.id),
@@ -338,7 +339,7 @@ export function createOperationBridge({
           }
           // A binding replay projects the current canvas, not a write by this turn.
           if (descriptor.id !== 'canvas.task.bind' || !data?.replayed) {
-            collectTurnEffects(turn, descriptor.id, data?.result, opId);
+            collectTurnEffects(turn, descriptor.id, data?.result, opId, { noTurnCanvas: descriptor.noTurnCanvas === true });
           }
           const projected = descriptor.id === 'canvas.get'
             ? canvasReadView(data, readView)

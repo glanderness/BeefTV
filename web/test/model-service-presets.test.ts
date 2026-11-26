@@ -1289,3 +1289,16 @@ test("dynamic partner hot-onboards without desktop rebuild, renders cached icon 
         ]);
     }
 });
+
+test("serviceModelProfile maps third-party catalog anthropic and gemini endpoint hints to native assistant protocols", () => {
+    const channel = createModelChannel({ id: "relay-byok", baseUrl: "https://relay.example.com/v1" });
+    const withNativeProtocols = [
+        ...protocols,
+        { value: "claude-api", label: "Anthropic Messages", capability: "text", authType: "anthropic", create: "POST /v1/messages", contentType: "application/json", media: "none", enabled: true } as ModelProtocolDefinition,
+        { value: "gemini-generate-content", label: "Google Gemini", capability: "text", authType: "google-api-key", create: "POST /v1beta/models", contentType: "application/json", media: "none", enabled: true } as ModelProtocolDefinition,
+    ];
+    const claude = serviceModelProfile(channel, { id: "claude-sonnet-4-6", supportedEndpointTypes: ["anthropic"] }, withNativeProtocols);
+    expect(claude.protocol).toBe("claude-api");
+    const gemini = serviceModelProfile(channel, { id: "gemini-2.5-pro", supportedEndpointTypes: ["gemini"] }, withNativeProtocols);
+    expect(gemini.protocol).toBe("gemini-generate-content");
+});

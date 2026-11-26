@@ -167,16 +167,24 @@ export function approvalReason(name, args, businessTools = [], quotes = new Map(
 
 // ---- 生成完接着做：设置、任务判定与唤醒文案 ----
 
+export const currentSettingsVersion = 2
+export const legacyDefaultStepLimit = 40
 export const defaultPluginSettings = Object.freeze({ autoContinue: true, stepLimit: 0 })
 export const minimumStepLimit = 0
 export const maximumStepLimit = 1000
 
 // 设置文件来自本机磁盘，读坏或旧字段都以默认值继续，避免插件整体不可用。
+// 旧版本（无 settingsVersion 或 < 2）把当时默认的 40 步上限一并写进了磁盘，
+// 更新插件后自动迁为 0（不限）；其他自定义数字以及升级后显式改回 40 的配置都保留。
 export function normalizeSettings(value) {
   const autoContinue = typeof value?.autoContinue === 'boolean' ? value.autoContinue : defaultPluginSettings.autoContinue
-  const stepLimit = Number.isInteger(value?.stepLimit) && value.stepLimit >= minimumStepLimit && value.stepLimit <= maximumStepLimit
+  const version = Number.isInteger(value?.settingsVersion) ? value.settingsVersion : 1
+  const rawStepLimit = Number.isInteger(value?.stepLimit) && value.stepLimit >= minimumStepLimit && value.stepLimit <= maximumStepLimit
     ? value.stepLimit
     : defaultPluginSettings.stepLimit
+  const stepLimit = version < currentSettingsVersion && rawStepLimit === legacyDefaultStepLimit
+    ? defaultPluginSettings.stepLimit
+    : rawStepLimit
   return { autoContinue, stepLimit }
 }
 

@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"strconv"
 	"strings"
+
+	"infinite-canvas/backend/internal/outbound"
 )
 
 // 助手不可用的机器可读原因；UI 按 reason 映射文案，不解析 msg。
@@ -43,17 +45,23 @@ type Provider struct {
 	Protocol      string
 	BaseURL       string
 	APIKey        string
+	Headers       []outbound.OutboundHeader
 	ContextWindow int
 	MaxTokens     int
 }
 
 // Fingerprint 是「当前生效的供应商配置」的稳定指纹：变化即说明宿主环境已过期。
-// 密钥只进哈希，不进任何可读输出。
+// 密钥与自定义请求头只进哈希，不进任何可读输出。
 func (p Provider) Fingerprint() string {
 	sum := sha256.Sum256([]byte(p.APIKey))
-	digest := sha256.Sum256([]byte(strings.Join([]string{
+	parts := []string{
 		p.ChannelID, p.Model, p.BaseURL, p.Protocol, hex.EncodeToString(sum[:]),
 		strconv.Itoa(p.ContextWindow), strconv.Itoa(p.MaxTokens),
-	}, "\x00")))
+	}
+	for _, header := range p.Headers {
+		hSum := sha256.Sum256([]byte(header.Name + "\x01" + header.Value))
+		parts = append(parts, hex.EncodeToString(hSum[:]))
+	}
+	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(digest[:])
 }

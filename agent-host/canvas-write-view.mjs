@@ -185,14 +185,41 @@ export function canvasWriteView(data, operation, params = {}) {
       },
     };
     const budget = Math.max(0, MAX_WRITE_VIEW_BYTES - 512 - jsonBytes(skeleton));
-    const fitted = fitBudgetedArray(data.result.tools, budget, (tool) => ({
+    const compactSchema = (schema, maxProps = 24) => {
+      if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+      if (jsonBytes(schema) <= 4096) return schema;
+      const slim = {};
+      if (schema.type) slim.type = schema.type;
+      if (Array.isArray(schema.required)) slim.required = schema.required.slice(0, maxProps);
+      if (schema.properties && typeof schema.properties === 'object') {
+        const entries = Object.entries(schema.properties);
+        slim.properties = Object.fromEntries(entries.slice(0, maxProps).map(([k, v]) => [
+          k,
+          v && typeof v === 'object' ? { ...(v.type ? { type: v.type } : {}), ...(Array.isArray(v.enum) ? { enum: v.enum.slice(0, 12) } : {}) } : v,
+        ]));
+        if (entries.length > maxProps) slim.omittedPropertyCount = entries.length - maxProps;
+      }
+      return slim;
+    };
+    const baseTool = (tool) => ({
       id: tool?.id,
       method: tool?.method,
       path: tool?.path,
       readOnly: tool?.readOnly,
       ...(tool?.submitsGeneration ? { submitsGeneration: true } : {}),
       summary: previewShort(tool?.summary, 140),
+    });
+    const fitted = fitBudgetedArray(data.result.tools, budget, (tool) => ({
+      ...baseTool(tool),
+      ...(tool?.params && typeof tool.params === 'object' ? { params: compactSchema(tool.params) } : {}),
     }));
+    // 单条工具的 params 仍超出剩余预算时，至少保留该工具的标识与摘要并标记 paramsOmitted，避免整页退化成 tools: []。
+    if (fitted.items.length === 0 && data.result.tools.length > 0) {
+      const first = baseTool(data.result.tools[0]);
+      if (data.result.tools[0]?.params) first.paramsOmitted = true;
+      fitted.items.push(first);
+      fitted.omitted = Math.max(0, data.result.tools.length - 1);
+    }
     return {
       ...data,
       result: {

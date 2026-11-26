@@ -220,12 +220,19 @@ func TestAssistantCannotUseWorkspaceWideOps(t *testing.T) {
 			t.Fatalf("助手 schema 不应要求模型填写 operationId: %s", descriptor.ID)
 		}
 	}
-	if visible["asset.list"] || visible["canvas.search"] {
-		t.Fatalf("助手看到了工作区级操作: %v", visible)
+	if !visible["asset.list"] || !visible["canvas.search"] || !visible["generation.estimate"] {
+		t.Fatalf("画布助手应能只读查询工作区素材/画布/费用估算: %v", visible)
 	}
-	_, err := h.execute(t, h.assistant(), "asset.list", "", map[string]any{})
+	if visible["canvas.document.commit"] || visible["canvas.create"] || visible["business.list"] || visible["business.call"] {
+		t.Fatalf("画布模式助手不应看到整页提交/新建画布/底层业务网关: %v", visible)
+	}
+	_, err := h.execute(t, h.assistant(), "canvas.create", "canvas-create-denied", map[string]any{"title": "forbidden"})
 	if got := opErr(t, err); got.Code != operations.CodePermissionDenied {
-		t.Fatalf("助手执行 asset.list 应被拒: %v", err)
+		t.Fatalf("画布模式助手执行 canvas.create 应被拒: %v", err)
+	}
+	desc, ok := h.registry.Descriptor("canvas.create")
+	if !ok || !desc.NoTurnCanvas {
+		t.Fatalf("canvas.create descriptor 应透出 noTurnCanvas=true: %+v", desc)
 	}
 	manual := h.registry.List(operations.ManualCaller(false))
 	if len(manual) != 56 {

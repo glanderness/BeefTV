@@ -1,7 +1,7 @@
 import type { AiConfig, ModelChannel, ModelCapability } from "@/stores/use-config-store";
 import { createModelChannel } from "@/stores/use-config-store";
 import { defaultModelCapabilityConfig, hasUserModelCapability, hasVersionedModelCapability } from "@/lib/model-capabilities";
-import { inferProtocolCapabilityFromModel, modelProtocolDefinition, modelProtocolDefinitionFor, type ModelProtocolDefinition } from "@/lib/model-protocols";
+import { inferProtocolCapabilityFromModel, modelProtocolDefinition, modelProtocolDefinitionFor, protocolForEndpointHint, type ModelProtocolDefinition } from "@/lib/model-protocols";
 import { cleanChannelBaseUrl, isRawChannelBaseUrl } from "@/lib/channel-url";
 import { catalogEndpointCapability, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 import { serviceCredentialGuide } from "@/lib/service-credentials";
@@ -321,8 +321,10 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
         ark: { text: "chat-completion", image: "volcengine-ark-image", video: "volcengine-ark-video" },
     };
     const candidates = plugin?.candidates ?? baseCandidates[preset] ?? {};
-    const endpoints: Record<string, string> = { "responses": "openai-response", "openai-responses": "openai-response", "chat.completions": "chat-completion", "chat-completions": "chat-completion", "images.generations": "openai-image", "image-generation": "openai-image", "audio.speech": "openai-audio", "openai-video": "newapi", "openai-videos": "newapi", "video-generations-json": "video-generations-json", "volcengine-ark-video": "volcengine-ark-video" };
-    const endpoint = item.supportedEndpointTypes?.map((value) => endpoints[value.trim().toLowerCase()]).find((id) => protocols.some((p) => p.value === id && p.capability === capability && p.enabled !== false));
+    const presetEndpointOverrides: Record<string, string> = { "openai-video": "newapi", "openai-videos": "newapi", "video-generations-json": "video-generations-json", "volcengine-ark-video": "volcengine-ark-video" };
+    const endpoint = item.supportedEndpointTypes
+        ?.map((value) => protocolForEndpointHint([value], presetEndpointOverrides))
+        .find((id) => Boolean(id) && protocols.some((p) => p.value === id && p.capability === capability && p.enabled !== false));
     const inherited = modelProtocolDefinitionFor(channel.interfaceType, capability, protocols)?.value;
     let proposed = inherited || endpoint || candidates[capability];
     // Model names identify a family, not a provider's wire protocol. Ask the

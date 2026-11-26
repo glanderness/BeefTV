@@ -10,6 +10,12 @@ const resources = new Map<string, { bytes: Buffer; kind: string; mimeType: strin
 const chats: Record<string, any>[] = [], supplements: Record<string, any>[] = [];
 const externalConnections: Record<string, any>[] = [];
 const undoRequests: Record<string, any>[] = [];
+const sessionConfigRequests: Record<string, any>[] = [];
+const compactRequests: Record<string, any>[] = [];
+let serverSessionId = "s1";
+let serverThinkingLevel: string | undefined = "low";
+let serverContextUsage: Record<string, any> | null = null;
+let rejectNextSessionConfig = false;
 let rejectNextUndo = false;
 let running = false, cancelled = false, nextId = 0, failNextAsset = false;
 let activePermissionMode: string | undefined;
@@ -113,7 +119,32 @@ beforeAll(async () => {
             if (failHistoryStatus > 0) {
                 return Response.json({ code: failHistoryStatus, reason: "host_unreachable", msg: "host unreachable" }, { status: failHistoryStatus });
             }
-            return ok({ sessionId: "s1", turns, ...(pausedTurnReason ? { pausedTurnReason } : {}), active: running && !cancelled ? { turnId: "busy", userText: "继续创作", permissionMode: activePermissionMode, selectedNodeIds: [], attachments: [], skills: [], supplements: [], status: "running", createdAt: "2026-10-08" } : null });
+            return ok({
+                sessionId: serverSessionId,
+                turns,
+                ...(serverThinkingLevel ? { thinkingLevel: serverThinkingLevel } : {}),
+                ...(serverContextUsage ? { contextUsage: serverContextUsage } : {}),
+                ...(pausedTurnReason ? { pausedTurnReason } : {}),
+                active: running && !cancelled ? { turnId: "busy", userText: "继续创作", permissionMode: activePermissionMode, selectedNodeIds: [], attachments: [], skills: [], supplements: [], status: "running", createdAt: "2026-10-08" } : null,
+            });
+        }
+        if (pathname.endsWith("/assistant/session-config") && req.method === "POST") {
+            const body = await req.json();
+            sessionConfigRequests.push(body);
+            if (rejectNextSessionConfig) {
+                rejectNextSessionConfig = false;
+                return Response.json({ code: 503, reason: "host_unreachable" }, { status: 503 });
+            }
+            if (typeof body.thinkingLevel === "string") serverThinkingLevel = body.thinkingLevel;
+            return ok({ sessionId: body.sessionId || serverSessionId, thinkingLevel: serverThinkingLevel, ...(serverContextUsage ? { contextUsage: serverContextUsage } : {}) });
+        }
+        if (pathname.endsWith("/assistant/compact") && req.method === "POST") {
+            const body = await req.json();
+            compactRequests.push(body);
+            if (serverContextUsage) {
+                serverContextUsage = { ...serverContextUsage, estimatedTokens: 16000, percent: 8 };
+            }
+            return ok({ sessionId: body.sessionId || serverSessionId, compacted: true, entryId: 12, thinkingLevel: serverThinkingLevel, ...(serverContextUsage ? { contextUsage: serverContextUsage } : {}) });
         }
         if (pathname.endsWith("/assistant/steer")) { supplements.push(await req.json()); return ok({ accepted: true }); }
         if (pathname.endsWith("/assistant/cancel")) { cancelled = true; running = false; return ok({ accepted: true }); }
@@ -150,6 +181,12 @@ beforeEach(() => {
     pausedTurnReason = undefined;
     failHistoryStatus = 0;
     sessionSummaries = [];
+    sessionConfigRequests.length = 0;
+    compactRequests.length = 0;
+    serverSessionId = "s1";
+    serverThinkingLevel = "low";
+    serverContextUsage = null;
+    rejectNextSessionConfig = false;
 });
 
 test("real Sidebar handles file, paste, drop, attachment-only, purpose/range, draft restore and busy supplement", async () => {
@@ -656,3 +693,107 @@ test("real Sidebar attaches arbitrary document files without polluting asset lib
     expect(chat?.references).toEqual(chat?.attachments.map((item: any) => ({ kind: "resource", id: item.resourceId })));
     await page.close();
 }, 30000);
+
+test("thinking level switcher, context usage pill, manual compaction, and 16-item canvas reference limit work in real Sidebar", async () => {
+    running = false;
+    cancelled = false;
+    turns.length = 0;
+    turns.push({
+        turnId: "ctx-1",
+        userText: "帮我拆解前五镜分镜脚本",
+        selectedNodeIds: [],
+        reply: "已经整理好前五镜的分镜结构，可以继续细化人物与灯光。",
+        attachments: [],
+        skills: [],
+        toolCalls: [],
+        proposals: [],
+        change: null,
+        error: null,
+        cancelled: false,
+        createdAt: "2026-10-08",
+    });
+    const durableId = "durable:11111111-1111-1111-1111-111111111111";
+    serverSessionId = durableId;
+    serverThinkingLevel = "low";
+    serverContextUsage = {
+        estimatedTokens: 48200,
+        contextWindow: 200000,
+        percent: 24,
+        totalInput: 52000,
+        totalOutput: 3400,
+        cacheRead: 36000,
+        cacheWrite: 1200,
+    };
+
+    const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
+    await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
+    await page.evaluate(() => new Promise<void>(resolve => {
+        const req = indexedDB.deleteDatabase("beeftv-assistant-input");
+        req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    }));
+    await page.reload();
+
+    await page.getByText("上下文 24%", { exact: true }).waitFor();
+    const thinkingSelect = page.getByRole("combobox", { name: "思考深度" });
+    const thinkingText = () => thinkingSelect.locator('xpath=ancestor::div[contains(@class,"ant-select")][1]').innerText();
+    expect(await thinkingText()).toBe("轻量思考");
+
+    // 切换思考深度失败时必须回滚显示，且不污染本地偏好
+    rejectNextSessionConfig = true;
+    await thinkingSelect.click();
+    const failedConfigRes = page.waitForResponse(response => response.url().endsWith("/assistant/session-config"));
+    await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").getByText("关闭思考", { exact: true }).click();
+    await failedConfigRes;
+    expect(await thinkingText()).toBe("轻量思考");
+
+    // 切换思考深度成功 -> 调用 /api/assistant/session-config 并持久化
+    await thinkingSelect.click();
+    const configRes = page.waitForResponse(response => response.url().endsWith("/assistant/session-config"));
+    await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").getByText("深度思考", { exact: true }).click();
+    await configRes;
+    expect(sessionConfigRequests.at(-1)).toEqual({ canvasId: "input-canvas", sessionId: durableId, thinkingLevel: "high" });
+    expect(await thinkingText()).toBe("深度思考");
+
+    // 悬停上下文占用显示上下文估算与缓存复用量（使用用户语，不暴露英文 token 术语）
+    await page.getByText("上下文 24%", { exact: true }).hover();
+    await page.getByRole("tooltip").getByText(/48k \/ 200k.*缓存 36k/).waitFor();
+
+    // 等入场动画稳定后检查无横向溢出
+    await page.waitForFunction(() => {
+        const sidebars = [...document.querySelectorAll(".canvas-assistant-sidebar")];
+        return sidebars.length > 0 && sidebars.every(el => el.getAnimations().every(animation => animation.playState !== "running"));
+    }, { timeout: 5000 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+    // 触发手动压缩上下文 -> 调用 /api/assistant/compact 并更新占用与提示
+    const compactRes = page.waitForResponse(response => response.url().endsWith("/assistant/compact"));
+    await page.getByRole("button", { name: "压缩上下文", exact: true }).click();
+    await compactRes;
+    expect(compactRequests.at(-1)).toEqual({ canvasId: "input-canvas", sessionId: durableId });
+    await page.getByText("上下文 8%", { exact: true }).waitFor();
+    await page.getByText("已压缩较早对话上下文，后续对话会保留关键信息。", { exact: true }).waitFor();
+
+    // 画布参考素材上限统一为 16（超过旧上限 8 仍可添加到 16，第 17 个报新上限提示）
+    for (let i = 0; i < 16; i++) {
+        await page.getByRole("button", { name: "画布素材", exact: true }).click();
+        await page.getByRole("button", { name: "画布人像", exact: true }).click();
+    }
+    expect(await page.locator(".canvas-assistant-attachment").count()).toBe(16);
+    expect(await page.getByText("一次最多添加 8 份参考素材").count()).toBe(0);
+    await page.getByRole("button", { name: "画布素材", exact: true }).click();
+    await page.getByRole("button", { name: "画布人像", exact: true }).click();
+    await page.getByText("一次最多添加 16 个文件或素材", { exact: true }).waitFor();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+    // 刷新后思考深度保持深度思考；非 Durable 旧会话不展示压缩按钮
+    await page.reload();
+    await page.getByText("上下文 8%", { exact: true }).waitFor();
+    expect(await thinkingText()).toBe("深度思考");
+    serverSessionId = "legacy-jsonl-1";
+    serverThinkingLevel = undefined;
+    serverContextUsage = null;
+    await page.reload();
+    await page.getByText("已经整理好前五镜的分镜结构，可以继续细化人物与灯光。", { exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: "压缩上下文", exact: true }).count()).toBe(0);
+    await page.close();
+}, 45000);

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/assistant"
+	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/protocol"
 )
 
@@ -15,12 +16,16 @@ const (
 )
 
 // assistantProtocols 是助手会话支持的文本协议。配置里历史上同时出现
-// "responses"/"openai-response" 与 "gemini-generate-content"/"google-gemini-generate-content"，这里都接受并归一。
+// "responses"/"openai-response"、"claude-api"/"anthropic-messages"/"claude-messages" 与
+// "gemini-generate-content"/"google-gemini-generate-content"，这里都接受并归一。
 var assistantProtocols = map[string]string{
 	"chat-completion":                "chat-completion",
 	"claude-api":                     "claude-api",
+	"anthropic-messages":             "claude-api",
+	"claude-messages":                "claude-api",
 	"responses":                      "responses",
 	"openai-response":                "responses",
+	"openai-responses":               "responses",
 	"gemini-generate-content":        "gemini-generate-content",
 	"google-gemini-generate-content": "gemini-generate-content",
 }
@@ -37,9 +42,10 @@ type AssistantChannel struct {
 	ID            string                  `json:"id"`
 	Name          string                  `json:"name"`
 	BaseURL       string                  `json:"baseUrl"`
-	APIKey        string                  `json:"apiKey"`
-	CredentialRef string                  `json:"credentialRef"`
-	Enabled       bool                    `json:"enabled"`
+	APIKey        string                    `json:"apiKey"`
+	CredentialRef string                    `json:"credentialRef"`
+	Headers       []outbound.OutboundHeader `json:"headers,omitempty"`
+	Enabled       bool                      `json:"enabled"`
 	Pinned        bool                    `json:"pinned"`
 	Scope         string                  `json:"scope"`
 	APIFormat     string                  `json:"apiFormat"`
@@ -134,10 +140,29 @@ func ResolveAssistantChannelModel(snapshot AssistantConfigSnapshot, modelKey str
 		return assistant.Provider{}, AssistantReasonProtocolUnsupported
 	}
 	contextWindow, maxTokens := channelModelLimits(channel, modelID)
+	normalizedHeaders, err := outbound.NormalizeOutboundHeaders(channel.Headers)
+	if err != nil && len(channel.Headers) > 0 {
+		// 兼容升级前落盘的旧配置：单个异常头不连坐丢弃其余合法头（如 Referer / CF-AIG-Authorization）。
+		seen := make(map[string]struct{}, len(channel.Headers))
+		normalizedHeaders = make([]outbound.OutboundHeader, 0, len(channel.Headers))
+		for _, item := range channel.Headers {
+			single, itemErr := outbound.NormalizeOutboundHeaders([]outbound.OutboundHeader{item})
+			if itemErr != nil || len(single) == 0 {
+				continue
+			}
+			key := strings.ToLower(single[0].Name)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			normalizedHeaders = append(normalizedHeaders, single[0])
+		}
+	}
 	provider := assistant.Provider{
 		ChannelID: channel.ID, ChannelName: AssistantChannelName(channel),
 		Model: modelID, ModelKey: modelKey, Protocol: protocol,
 		BaseURL: strings.TrimSpace(channel.BaseURL), APIKey: strings.TrimSpace(channel.APIKey),
+		Headers: normalizedHeaders,
 		ContextWindow: contextWindow, MaxTokens: maxTokens,
 	}
 	if provider.BaseURL == "" {

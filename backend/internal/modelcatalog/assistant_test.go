@@ -121,6 +121,54 @@ func TestResolveAssistantGenerationModelRejectsKindMismatch(t *testing.T) {
 	}
 }
 
+func TestResolveAssistantProviderBYOKProtocolsAndHeaders(t *testing.T) {
+	var snapshot AssistantConfigSnapshot
+	raw := `{
+		"assistantModel": "claude-byok::claude-sonnet-4-6",
+		"channels": [
+			{
+				"id": "claude-byok",
+				"name": "My Claude Relay",
+				"enabled": true,
+				"baseUrl": "https://relay.example.com/v1",
+				"apiKey": "sk-ant-byok",
+				"headers": [{"name": "x-relay-tenant", "value": "team-1"}],
+				"models": ["claude-sonnet-4-6"],
+				"modelProfiles": [{"model": "claude-sonnet-4-6", "capability": "text", "protocol": "anthropic-messages"}]
+			},
+			{
+				"id": "gemini-byok",
+				"name": "My Gemini",
+				"enabled": true,
+				"apiFormat": "gemini",
+				"baseUrl": "https://generativelanguage.googleapis.com",
+				"apiKey": "AIza-test",
+				"headers": [{"name": "Authorization", "value": "Bearer blocked"}],
+				"models": ["gemini-2.5-pro"],
+				"modelProfiles": [{"model": "gemini-2.5-pro", "capability": "text"}]
+			}
+		]
+	}`
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	claudeProv, reason := ResolveAssistantChannelModel(snapshot, "claude-byok::claude-sonnet-4-6", nil)
+	if reason != "" || claudeProv.Protocol != "claude-api" {
+		t.Fatalf("claude BYOK resolve = (%#v, %q), want protocol claude-api", claudeProv, reason)
+	}
+	if len(claudeProv.Headers) != 1 || claudeProv.Headers[0].Name != "X-Relay-Tenant" || claudeProv.Headers[0].Value != "team-1" {
+		t.Fatalf("claude BYOK headers = %#v", claudeProv.Headers)
+	}
+
+	geminiProv, reason := ResolveAssistantChannelModel(snapshot, "gemini-byok::gemini-2.5-pro", nil)
+	if reason != "" || geminiProv.Protocol != "gemini-generate-content" {
+		t.Fatalf("gemini BYOK resolve = (%#v, %q), want protocol gemini-generate-content", geminiProv, reason)
+	}
+	if len(geminiProv.Headers) != 0 {
+		t.Fatalf("blocked Authorization header must fail closed, got %#v", geminiProv.Headers)
+	}
+}
+
 func TestResolveAssistantGenerationModelNormalizesUnqualifiedKey(t *testing.T) {
 	snapshot := AssistantConfigSnapshot{
 		ImageModel: "beeftv::gpt-image-2",

@@ -131,9 +131,15 @@ test('header timeout is terminal and retains completed tools across an explicit 
 });
 
 test('production 180s request wait preserves prompt Stop before headers with one dispatch', {timeout: 15000}, async t => {
+  const prevRetention = process.env.BEEFTV_AGENT_CACHE_RETENTION;
+  delete process.env.BEEFTV_AGENT_CACHE_RETENTION;
+  t.after(() => {
+    if (prevRetention === undefined) delete process.env.BEEFTV_AGENT_CACHE_RETENTION;
+    else process.env.BEEFTV_AGENT_CACHE_RETENTION = prevRetention;
+  });
   const open = Harness.open.bind(Harness);
   t.mock.method(Harness, 'open', (storage, options, context) => {
-    assert.deepEqual(options.settings.stream, {timeoutMs: 180000, maxRetries: 0});
+    assert.deepEqual(options.settings.stream, {timeoutMs: 180000, maxRetries: 0, cacheRetention: 'long'});
     assert.deepEqual(options.settings.retry, {maxRetries: 0});
     return open(storage, options, context);
   });

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState, type MutableRefObject } from "react";
 import {
     activateAssistantSession,
+    configureAssistantSession,
     confirmAssistantScriptProposal,
     createAssistantSession,
     deleteAssistantSession,
     undoAssistantTurn,
     type AssistantScriptProposal,
+    type AssistantThinkingLevel,
 } from "@/services/api/agent-assistant";
 import type { CanvasRun } from "./canvas-assistant-recovery";
 
@@ -14,6 +16,7 @@ type SessionActionDeps = {
     namespaceRef: MutableRefObject<string>;
     activeCanvasRef: MutableRefObject<string>;
     onCanvasChangedRef: MutableRefObject<((canvasId: string, changedNodeIds: string[]) => void) | undefined>;
+    preferredThinkingLevelRef: MutableRefObject<AssistantThinkingLevel | null>;
     runFor: (id: string) => CanvasRun;
     isLiveRun: (expectedNs: string, id: string, candidate: CanvasRun) => boolean;
     rerenderIfActive: (id: string) => void;
@@ -29,6 +32,7 @@ export function useAssistantSessionActions({
     namespaceRef,
     activeCanvasRef,
     onCanvasChangedRef,
+    preferredThinkingLevelRef,
     runFor,
     isLiveRun,
     rerenderIfActive,
@@ -47,7 +51,7 @@ export function useAssistantSessionActions({
         const originNamespace = namespaceRef.current;
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
-        if (run.streaming || run.sessionBusy) return;
+        if (run.streaming || run.sessionBusy || run.compacting) return;
         run.sessionBusy = true;
         ++run.historyRequest;
         rerenderIfActive(targetCanvas);
@@ -61,12 +65,27 @@ export function useAssistantSessionActions({
             run.reasoningOpen = {};
             run.plan = null;
             run.error = null;
+            run.thinkingLevel = preferredThinkingLevelRef.current;
+            run.contextUsage = null;
+            run.compactNotice = null;
             run.pendingUserText = null;
             run.pendingContinuationId = null;
             run.lastSent = null;
             run.turnStatus = {};
             run.historyLoaded = true;
             run.historyError = null;
+            const preferredThinking = preferredThinkingLevelRef.current;
+            if (sessionId && preferredThinking) {
+                try {
+                    const configured = await configureAssistantSession(targetCanvas, preferredThinking, sessionId);
+                    if (isLiveRun(originNamespace, targetCanvas, run) && run.sessionId === sessionId) {
+                        run.thinkingLevel = configured.thinkingLevel;
+                        if (configured.contextUsage) run.contextUsage = configured.contextUsage;
+                    }
+                } catch {
+                    // 新建对话已经成功，思考深度配置失败不阻断新对话。
+                }
+            }
             void loadHistory(targetCanvas);
         } catch {
             if (isLiveRun(originNamespace, targetCanvas, run)) run.error = "没能新建对话，当前对话仍然保留。请重试。";
@@ -80,7 +99,7 @@ export function useAssistantSessionActions({
         const originNamespace = namespaceRef.current;
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
-        if (run.streaming || run.sessionBusy) return;
+        if (run.streaming || run.sessionBusy || run.compacting) return;
         run.sessionBusy = true;
         ++run.historyRequest;
         rerenderIfActive(targetCanvas);
@@ -90,6 +109,9 @@ export function useAssistantSessionActions({
             // 激活成功但读取失败时阻止把旧显示当作新对话继续发送。
             run.historyLoaded = false;
             run.plan = null;
+            run.thinkingLevel = null;
+            run.contextUsage = null;
+            run.compactNotice = null;
             if (await loadHistory(targetCanvas, activated) && isLiveRun(originNamespace, targetCanvas, run)) {
                 run.recovery = null;
                 run.turnStatus = {};
@@ -112,7 +134,7 @@ export function useAssistantSessionActions({
         const originNamespace = namespaceRef.current;
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
-        if (run.streaming || run.sessionBusy || !sessionId) return false;
+        if (run.streaming || run.sessionBusy || run.compacting || !sessionId) return false;
         run.sessionBusy = true;
         ++run.historyRequest;
         rerenderIfActive(targetCanvas);
@@ -129,6 +151,9 @@ export function useAssistantSessionActions({
                 run.reasoningOpen = {};
                 run.plan = null;
                 run.error = null;
+                run.thinkingLevel = null;
+                run.contextUsage = null;
+                run.compactNotice = null;
                 run.pendingUserText = null;
                 run.pendingContinuationId = null;
                 run.lastSent = null;

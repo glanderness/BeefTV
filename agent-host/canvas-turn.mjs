@@ -49,21 +49,173 @@ function isQwenHybridThinkingModel(modelId) {
   return QWEN_HYBRID_MODEL_RE.test(slug) && !NON_HYBRID_QWEN_VARIANT_RE.test(slug);
 }
 
+function isOpenRouterBaseUrl(baseUrl) {
+  try {
+    const host = new URL(String(baseUrl || '').trim()).hostname.toLowerCase();
+    return host === 'openrouter.ai' || host.endsWith('.openrouter.ai');
+  } catch {
+    return false;
+  }
+}
+
+function isOfficialAnthropicBaseUrl(baseUrl) {
+  try {
+    return new URL(String(baseUrl || '').trim()).hostname.toLowerCase() === 'api.anthropic.com';
+  } catch {
+    return false;
+  }
+}
+
+function isOfficialOpenAIBaseUrl(baseUrl) {
+  try {
+    return new URL(String(baseUrl || '').trim()).hostname.toLowerCase() === 'api.openai.com';
+  } catch {
+    return false;
+  }
+}
+
+function stripDateSuffix(slug) {
+  return String(slug || '').replace(/-(?:\d{8}|\d{4}-\d{2}-\d{2})$/, '');
+}
+
+function inferAnthropicReasoning(modelId) {
+  const slug = normalizeModelSlug(modelId);
+  if (!slug) return false;
+  if (/-thinking(?:$|-)/.test(slug)) return true;
+  if (!/^claude-/.test(slug)) return false;
+  // Claude 3 / 3.5 系列不支持 extended thinking（3.7 及 4/5 系列支持）。
+  if (/^claude-3(?:(?:\.5|-5)(?:$|-)|-(?:opus|sonnet|haiku)(?:$|-))/.test(slug)) {
+    return false;
+  }
+  return true;
+}
+
+function inferGoogleReasoning(modelId) {
+  const slug = normalizeModelSlug(modelId);
+  if (!slug) return false;
+  return (
+    /^gemini-(?:2\.5|3(?:\.\d+)?|[4-9]|[1-9]\d)(?:$|-)/.test(slug) ||
+    /^gemini-(?:flash|pro)(?:-lite)?-latest$/.test(slug) ||
+    /^gemma-?4(?:$|-)/.test(slug) ||
+    /-thinking(?:$|-)/.test(slug)
+  );
+}
+
+function inferGoogleThinkingLevelMap(modelId, catalogModel) {
+  if (catalogModel?.thinkingLevelMap) {
+    return structuredClone(catalogModel.thinkingLevelMap);
+  }
+  const slug = normalizeModelSlug(modelId);
+  // Gemini 2.5 Pro 不支持 thinkingBudget=0；除此处声明 off:null 外，
+  // 实际出网兜底由 media-content.mjs 的 adaptGoogleMediaRequest 把 thinkingBudget=0 抬到 128。
+  if (/^gemini-2\.5-pro(?:$|-)/.test(slug)) {
+    return { off: null };
+  }
+  if (/^gemma-?4(?:$|-)/.test(slug)) {
+    return { off: null, minimal: 'MINIMAL', low: null, medium: null, high: 'HIGH' };
+  }
+  if (
+    /^gemini-(?:3(?:\.\d+)?|[4-9]|[1-9]\d)(?:$|-)/.test(slug) ||
+    /^gemini-(?:flash|pro)(?:-lite)?-latest$/.test(slug)
+  ) {
+    const isPro = /(?:^|-)pro(?:$|-)/.test(slug);
+    return {
+      off: null,
+      minimal: isPro ? null : 'minimal',
+      low: 'low',
+      medium: 'medium',
+      high: 'high',
+      xhigh: null,
+      max: null,
+    };
+  }
+  return undefined;
+}
+
+function inferOpenAIResponsesReasoning(modelId) {
+  const slug = normalizeModelSlug(modelId);
+  if (!slug || /-chat(?:$|-)/.test(slug)) return false;
+  return /^(?:o[134](?:$|-)|gpt-(?:[5-9]|[1-9]\d)(?:$|[.-])|codex(?:$|-))/.test(slug);
+}
+
+function inferOpenAIResponsesThinkingLevelMap(modelId, catalogModel) {
+  if (catalogModel?.thinkingLevelMap) {
+    return structuredClone(catalogModel.thinkingLevelMap);
+  }
+  const slug = normalizeModelSlug(modelId);
+  if (!inferOpenAIResponsesReasoning(slug)) return undefined;
+  // o1/o3/o4 与初代 gpt-5（非 5.1+）拒绝 effort="none"，关闭思考时避免发非法 effort。
+  if (/^o[134](?:$|-)/.test(slug)) {
+    return { off: null, minimal: null };
+  }
+  if (/^gpt-5(?:$|-(?!\d)|\.0(?:$|-))/.test(slug)) {
+    return { off: null };
+  }
+  return undefined;
+}
+
+function inferLegacyDefaultMaxTokens(api, modelId) {
+  const slug = normalizeModelSlug(modelId);
+  if (api === 'anthropic-messages') {
+    if (/^claude-3-(?:opus|sonnet|haiku)(?:$|-)/.test(slug)) return 4096;
+    if (/^claude-3(?:\.5|-5)(?:$|-)/.test(slug)) return 8192;
+  }
+  if (api === 'google-generative-ai' && /^gemini-(?:1\.5|2\.0)(?:$|-)/.test(slug)) {
+    return 8192;
+  }
+  return 16384;
+}
+
+function preferredCatalogProviders(api, modelId, baseUrl) {
+  const canonicalByApi = {
+    'anthropic-messages': 'anthropic',
+    'openai-responses': 'openai',
+    'google-generative-ai': 'google',
+  };
+  const ordered = [];
+  const push = (provider) => {
+    if (provider && !ordered.includes(provider)) ordered.push(provider);
+  };
+  if (api === 'openai-completions' && (isDashScopeBaseUrl(baseUrl) || isQwenHybridThinkingModel(modelId))) {
+    for (const p of QWEN_CATALOG_PROVIDERS) push(p);
+  }
+  if (canonicalByApi[api]) push(canonicalByApi[api]);
+  for (const p of CATALOG_PROVIDERS) push(p);
+  return ordered;
+}
+
 function findCatalogModel(modelId, api, baseUrl = '') {
   if (!modelId) return null;
-  const preferQwen = api === 'openai-completions' && (isDashScopeBaseUrl(baseUrl) || isQwenHybridThinkingModel(modelId));
-  const providers = preferQwen
-    ? [...QWEN_CATALOG_PROVIDERS, ...CATALOG_PROVIDERS.filter((p) => !QWEN_CATALOG_PROVIDERS.includes(p))]
-    : CATALOG_PROVIDERS;
-  let fallback = null;
+  const providers = preferredCatalogProviders(api, modelId, baseUrl);
+  const slug = normalizeModelSlug(modelId);
+  const undatedSlug = stripDateSuffix(slug);
+  let sameApiSlug = null;
+  let sameApiUndated = null;
+  let crossApiExact = null;
+  let crossApiSlug = null;
+  let crossApiUndated = null;
   for (const provider of providers) {
     for (const candidate of getBuiltinModels(provider)) {
-      if (candidate.id !== modelId) continue;
-      if (candidate.api === api) return { model: candidate, sameApi: true };
-      if (!fallback) fallback = candidate;
+      const candidateSlug = normalizeModelSlug(candidate.id);
+      const isSameApi = candidate.api === api;
+      if (candidate.id === modelId) {
+        if (isSameApi) return { model: candidate, sameApi: true };
+        if (!crossApiExact) crossApiExact = candidate;
+      } else if (slug && candidateSlug === slug) {
+        if (isSameApi && !sameApiSlug) sameApiSlug = candidate;
+        else if (!isSameApi && !crossApiSlug) crossApiSlug = candidate;
+      } else if (undatedSlug && undatedSlug !== slug && candidateSlug === undatedSlug) {
+        if (isSameApi && !sameApiUndated) sameApiUndated = candidate;
+        else if (!isSameApi && !crossApiUndated) crossApiUndated = candidate;
+      }
     }
   }
-  return fallback ? { model: fallback, sameApi: false } : null;
+  if (sameApiSlug) return { model: sameApiSlug, sameApi: true };
+  if (sameApiUndated) return { model: sameApiUndated, sameApi: true };
+  if (crossApiExact) return { model: crossApiExact, sameApi: false };
+  if (crossApiSlug) return { model: crossApiSlug, sameApi: false };
+  if (crossApiUndated) return { model: crossApiUndated, sameApi: false };
+  return null;
 }
 
 // This compatibility route has returned concatenated arguments for distinct
@@ -152,9 +304,9 @@ function pushUpdatedNodeIds(turn, ids) {
   }
 }
 
-export function collectTurnEffects(turn, opID, result, operationId) {
+export function collectTurnEffects(turn, opID, result, operationId, { noTurnCanvas = false } = {}) {
   if (!turn || !result || typeof result !== 'object') return turn;
-  if (opID === 'canvas.timeline.render' || opID === 'canvas.create' || opID === 'task.cancel' || opID === 'business.call') return turn;
+  if (noTurnCanvas || opID === 'canvas.timeline.render') return turn;
   if (turn.canvasId && result.canvasId && typeof result.revision==='number') {
     turn.canvasChanges ||= {};
     const target=turn.canvasChanges[result.canvasId] ||= {...newTurnAccumulator(),revisionBefore:result.canvasId===turn.canvasId ? turn.revisionBefore : result.revision-1};
@@ -299,27 +451,153 @@ export function providerRegistration({ api, baseUrl, modelId, maxTokens, context
   const needsQwenThinkingFallback = api === 'openai-completions' &&
     !catalogCompat?.thinkingFormat &&
     (isQwenHybridThinkingModel(modelId) || (isDashScopeBaseUrl(baseUrl) && !isNonHybridDashScopeModel(modelId)));
-  const compat = api === 'openai-completions'
-    ? {
-        ...catalogCompat,
-        ...(needsQwenThinkingFallback ? { thinkingFormat: 'qwen', supportsReasoningEffort: false } : {}),
-        promptCacheKeyMode: 'enabled',
-      }
-    : catalogCompat ? { ...catalogCompat } : undefined;
+  const needsOpenRouterClaudeCache = api === 'openai-completions' &&
+    !catalogCompat?.cacheControlFormat &&
+    isOpenRouterBaseUrl(baseUrl) &&
+    /claude/i.test(modelId);
+  let compat;
+  if (api === 'openai-completions') {
+    compat = {
+      ...catalogCompat,
+      ...(needsQwenThinkingFallback ? { thinkingFormat: 'qwen', supportsReasoningEffort: false } : {}),
+      ...(needsOpenRouterClaudeCache ? { cacheControlFormat: 'anthropic' } : {}),
+      promptCacheKeyMode: 'enabled',
+    };
+  } else if (api === 'anthropic-messages') {
+    // 非官方 Anthropic 域名（第三方中转 / 代理网关）默认关闭 1h 缓存 TTL 与私有 2026 beta 字段，
+    // 保留标准 5m ephemeral 缓存与常规思考协议，避免中转站返回 400。
+    compat = isOfficialAnthropicBaseUrl(baseUrl)
+      ? (catalogCompat ? { ...catalogCompat } : undefined)
+      : {
+          ...catalogCompat,
+          allowedFallbackModels: undefined,
+          supportsLongCacheRetention: false,
+          supportsMessageThreads: false,
+          supportsMidConvoEffort: false,
+          supportsMidConvoSystemMessages: false,
+          supportsMidConvoToolChanges: false,
+          supportsStrictTools: false,
+        };
+  } else if (api === 'openai-responses') {
+    // 非官方 OpenAI 域名关闭 OpenAI/Codex 私有扩展字段，保留标准 Responses + prompt_cache_key 避免网关 400。
+    compat = isOfficialOpenAIBaseUrl(baseUrl)
+      ? (catalogCompat ? { ...catalogCompat } : undefined)
+      : {
+          ...catalogCompat,
+          supportsLongCacheRetention: false,
+          supportsMidConvoEffort: false,
+          supportsMidConvoSystemMessages: false,
+          supportsAdditionalTools: false,
+          supportsToolSearch: false,
+          supportsExplicitPromptCacheMode: false,
+          supportsStrictMode: false,
+          supportsOpenAIGrammarTools: false,
+        };
+  } else {
+    compat = catalogCompat ? { ...catalogCompat } : undefined;
+  }
+  const reasoning = catalogModel
+    ? Boolean(catalogModel.reasoning)
+    : api === 'anthropic-messages'
+      ? inferAnthropicReasoning(modelId)
+      : api === 'google-generative-ai'
+        ? inferGoogleReasoning(modelId)
+        : api === 'openai-responses'
+          ? inferOpenAIResponsesReasoning(modelId)
+          : needsQwenThinkingFallback;
+  const thinkingLevelMap = api === 'google-generative-ai'
+    ? inferGoogleThinkingLevelMap(modelId, catalogModel)
+    : api === 'openai-responses'
+      ? inferOpenAIResponsesThinkingLevelMap(modelId, catalogModel)
+      : catalogModel?.thinkingLevelMap
+        ? structuredClone(catalogModel.thinkingLevelMap)
+        : undefined;
+  const resolvedContextWindow = Number(contextWindow) > 0
+    ? Number(contextWindow)
+    : (catalogModel?.contextWindow || 200000);
+  const resolvedMaxTokens = Number(maxTokens) > 0
+    ? Number(maxTokens)
+    : Math.min(catalogModel?.maxTokens || inferLegacyDefaultMaxTokens(api, modelId), 32768);
+  // 费用核算以服务端定价接口为唯一来源，不在宿主登记表继承第三方内置目录价。
+  const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   return {
     name: 'BeefTV', baseUrl, apiKey: '$BEEFTV_AGENT_API_KEY', api,
     models: [{
       id: modelId,
       name: modelId,
-      reasoning: catalogModel ? Boolean(catalogModel.reasoning) : (api === 'anthropic-messages' || needsQwenThinkingFallback),
-      ...(catalogModel?.thinkingLevelMap ? { thinkingLevelMap: structuredClone(catalogModel.thinkingLevelMap) } : {}),
+      reasoning,
+      ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
       ...(compat ? { compat } : {}),
       input: Array.isArray(catalogModel?.input) ? [...catalogModel.input] : ['text', 'image'],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow,
-      maxTokens,
+      cost,
+      contextWindow: resolvedContextWindow,
+      maxTokens: resolvedMaxTokens,
     }],
   };
+}
+
+// 与 Go 侧 outbound.blockedOutboundHeader 保持一致，保留 CF-AIG-Authorization 等合法网关头。
+const BLOCKED_CUSTOM_HEADERS = new Set([
+  'accept',
+  'authorization',
+  'x-api-key',
+  'x-goog-api-key',
+  'x-beeftv-agent-token',
+  'host',
+  'content-length',
+  'content-type',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+  'proxy-connection',
+  'te',
+  'trailer',
+  'upgrade',
+  'forwarded',
+  'cookie',
+  'set-cookie',
+  'proxy-authorization',
+]);
+
+// 解析 Go 后端通过 BEEFTV_AGENT_HEADERS 下发的渠道自定义请求头；
+// 仅保留合法 RFC 9110 可见 ASCII 字面键值（避免 Fetch Headers.set 抛 ByteString TypeError），
+// 且不走 pi-ai 的 $ENV / !cmd 解析器。
+export function parseHostHeadersEnv(rawValue = '') {
+  const trimmed = String(rawValue || '').trim();
+  if (!trimmed) return [];
+  let decoded;
+  try {
+    decoded = JSON.parse(trimmed);
+  } catch {
+    return [];
+  }
+  const pairs = Array.isArray(decoded)
+    ? decoded.map((item) => [item?.name, item?.value])
+    : decoded && typeof decoded === 'object'
+      ? Object.entries(decoded)
+      : [];
+  const result = [];
+  const seen = new Set();
+  for (const [rawName, rawVal] of pairs) {
+    const name = String(rawName || '').trim();
+    const value = String(rawVal || '').trim();
+    if (!name || !value) continue;
+    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]{1,128}$/.test(name)) continue;
+    if (!/^[\t\x20-\x7e]+$/.test(value) || value.length > 4096) continue;
+    const lower = name.toLowerCase();
+    if (
+      BLOCKED_CUSTOM_HEADERS.has(lower) ||
+      lower.startsWith('x-forwarded-') ||
+      lower.startsWith('x-canvas-') ||
+      seen.has(lower)
+    ) {
+      continue;
+    }
+    seen.add(lower);
+    result.push([name, value]);
+    if (result.length >= 32) break;
+  }
+  return result;
 }
 
 // providerUnavailableReason 给出机器可读原因，交给后端的状态投影使用。

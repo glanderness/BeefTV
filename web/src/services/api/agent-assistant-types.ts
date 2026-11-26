@@ -22,6 +22,24 @@ export function assistantPermissionMode(value: unknown): AssistantPermissionMode
     return value === "read-only" || value === "full-access" ? value : "canvas";
 }
 
+export type AssistantThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
+
+export function assistantThinkingLevel(value: unknown): AssistantThinkingLevel {
+    return value === "off" || value === "minimal" || value === "low" || value === "medium" || value === "high"
+        ? value
+        : "low";
+}
+
+export type AssistantContextUsage = {
+    estimatedTokens: number;
+    contextWindow: number;
+    percent: number | null;
+    totalInput: number;
+    totalOutput: number;
+    cacheRead: number;
+    cacheWrite: number;
+};
+
 export type AgentHostStatus = {
     available: boolean;
     reason?: string;
@@ -357,6 +375,8 @@ export type AssistantHistory = {
     sessionId: string;
     plan?: AssistantPlan | null;
     pausedTurnReason?: string | null;
+    thinkingLevel?: AssistantThinkingLevel;
+    contextUsage?: AssistantContextUsage | null;
     turns: (AssistantTurn & { undone?: boolean })[];
     active?: { turnId: string; requestId?: string; continuationId?: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
         references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running";
@@ -465,6 +485,12 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
             return "你已经换到别的对话了，请重新发送这条消息";
         case "session_not_running":
             return "这一轮已经结束，请查看最新结果后发送新消息";
+        case "invalid_thinking_level":
+            return "思考深度设置不受支持，请重新选择后再试。";
+        case "compaction_failed":
+            return "压缩上下文失败，当前对话内容已保留，请稍后再试。";
+        case "host_timeout":
+            return "助手处理耗时过长，请稍后重新读取对话查看结果。";
         default:
             return fallback;
     }

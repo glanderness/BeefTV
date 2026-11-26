@@ -25,7 +25,9 @@ const BLOCKED_HEADERS = new Set([
     "trailer",
     "upgrade",
     "forwarded",
+    "x-api-key",
     "x-goog-api-key",
+    "x-beeftv-agent-token",
 ]);
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
@@ -101,7 +103,7 @@ export function validateChannelHeaders(headers?: ChannelHeader[]) {
         const normalizedName = name.toLowerCase();
         if (BLOCKED_HEADERS.has(normalizedName) || normalizedName.startsWith("x-canvas-") || normalizedName.startsWith("x-forwarded-")) return `${name} 由系统管理，不允许自定义`;
         if (seen.has(normalizedName)) return `请求头不能重复：${name}`;
-        if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) return `${name} 的值包含非法控制字符`;
+        if (!/^[\t\x20-\x7e]*$/.test(value)) return `${name} 的值仅支持标准 ASCII 可见字符`;
         if (name.length > 128 || value.length > 4096) return "单个请求头名称或值过长";
         totalBytes += new TextEncoder().encode(name + value).length;
         if (totalBytes > 16 * 1024) return "自定义请求头总大小不能超过 16KB";

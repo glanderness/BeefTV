@@ -10,6 +10,7 @@ export function installModelFetchProxy({
   isRawBaseUrl,
   modelApi,
   modelId,
+  customHeaders = [],
   turnBudgetContext,
   nativePartStore,
   lifetimeBudget,
@@ -44,7 +45,14 @@ export function installModelFetchProxy({
             if (!budget?.turnId || !budget.canvasId) throw new Error('media_authorization_missing');
             let actual;
             if (budget.sessionId) {
-              const pinned = budget.nativeHistory?.origins.get(`${source.toolCallId}:${nativeSourceKey(source)}`);
+              const sourceKey = nativeSourceKey(source);
+              const pinned = budget.nativeHistory?.origins.get(`${source.toolCallId}:${sourceKey}`)
+                || (!source.toolCallId && source.originTurnId
+                  ? budget.nativeHistory?.byOriginSource?.get(`${source.originTurnId}:${sourceKey}`)
+                  : undefined)
+                || (!source.toolCallId && !source.originTurnId
+                  ? budget.nativeHistory?.bySource?.get(sourceKey)
+                  : undefined);
               if (!pinned || (source.originTurnId && source.originTurnId !== pinned.originTurnId)) throw new Error('native_history_requires_reference');
               const { toolCallId, originTurnId, ...nativeSource } = source;
               await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(pinned.originTurnId)}/bind-session`, { sessionId: budget.sessionId, historical: pinned.historical, currentTurnId: budget.turnId, source: nativeSource });
@@ -98,6 +106,16 @@ export function installModelFetchProxy({
       outbound.push(entry);
       if (outbound.length > 200) outbound.shift();
       dispatchDiagnostics.record(entry);
+      if (Array.isArray(customHeaders) && customHeaders.length > 0) {
+        const merged = new Headers(typeof input !== 'string' ? input.headers : undefined);
+        if (options.headers) {
+          new Headers(options.headers).forEach((value, key) => merged.set(key, value));
+        }
+        for (const [name, value] of customHeaders) {
+          merged.set(name, value);
+        }
+        options = { ...options, headers: merged };
+      }
       const startedAt = Date.now();
       return await fetchModelWithProgressIdle(input, options, {
         fetch: realFetch,

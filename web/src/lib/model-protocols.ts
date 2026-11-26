@@ -57,9 +57,10 @@ const BUILTIN_PROTOCOL_CAPABILITIES: Record<ModelProtocol, ProtocolCapability> =
     "async-audio": "audio",
 };
 export function modelProtocolCapability(value: string | undefined, definitions: ModelProtocolDefinition[] = []) {
-    const definition = modelProtocolDefinition(value, definitions);
+    const normalized = normalizeModelProtocol(value);
+    const definition = modelProtocolDefinition(normalized, definitions);
     if (definition) return definition.capability;
-    return value ? BUILTIN_PROTOCOL_CAPABILITIES[value] : undefined;
+    return normalized ? BUILTIN_PROTOCOL_CAPABILITIES[normalized] : undefined;
 }
 export function isVolcengineArkImageProtocol(protocol?: string) {
     return protocol === "volcengine-ark-image" || protocol === "volcengine-ark-agent-plan-image";
@@ -72,25 +73,52 @@ export function protocolForModelCatalog(_endpointTypes: string[] = []): ModelPro
     // plugin or an explicit model configuration must supply it.
     return undefined;
 }
+const EXPLICIT_ENDPOINT_PROTOCOLS: Record<string, ModelProtocol> = {
+    "image-generation": "openai-image",
+    images: "openai-image",
+    "images.generations": "openai-image",
+    "openai-video": "openai-videos",
+    "openai-videos": "openai-videos",
+    videos: "openai-videos",
+    "videos.generations": "openai-videos",
+    "audio.speech": "openai-audio",
+    "audio-speech": "openai-audio",
+    "openai-response": "openai-response",
+    "openai-responses": "openai-response",
+    "openai-response-compact": "openai-response",
+    responses: "openai-response",
+    anthropic: "claude-api",
+    "anthropic-messages": "claude-api",
+    "claude-messages": "claude-api",
+    messages: "claude-api",
+    gemini: "gemini-generate-content",
+    "gemini-generate-content": "gemini-generate-content",
+    "chat.completions": "chat-completion",
+    "chat-completions": "chat-completion",
+};
+export function protocolForEndpointHint(endpointTypes: string[] = [], overrides?: Record<string, ModelProtocol>): ModelProtocol | undefined {
+    for (const raw of endpointTypes) {
+        const key = raw.trim().toLowerCase();
+        const mapped = overrides?.[key] ?? EXPLICIT_ENDPOINT_PROTOCOLS[key];
+        if (mapped) return mapped;
+    }
+    return undefined;
+}
 export function protocolForBeefTVCatalog(endpointTypes: string[] = []): ModelProtocol | undefined {
     // Only explicit wire contracts map to host protocol IDs; generic "openai"
     // metadata cannot replace a user's configured protocol.
-    const endpoints = endpointTypes.map((value) => value.trim().toLowerCase());
-    const mappings: Array<[string, string[]]> = [
-        ["openai-image", ["image-generation", "images", "images.generations"]],
-        ["openai-videos", ["openai-video", "videos", "videos.generations"]],
-        ["openai-audio", ["audio.speech", "audio-speech"]],
-        ["openai-response", ["openai-response", "openai-response-compact", "responses"]],
-        ["claude-api", ["anthropic", "messages"]],
-        ["gemini-generate-content", ["gemini"]],
-        ["chat-completion", ["chat.completions", "chat-completions"]],
-    ];
-    return mappings.find(([, aliases]) => aliases.some((alias) => endpoints.includes(alias)))?.[0];
+    return protocolForEndpointHint(endpointTypes);
 }
 export function modelProtocolSummary(value: string | undefined, definitions: ModelProtocolDefinition[] = []) { const protocol = modelProtocolDefinition(value, definitions); return protocol ? [protocol.create, protocol.contentType, protocol.poll, protocol.media].filter(Boolean).join(" · ") : "还没选接口格式，或这个接口已不可用。"; }
+const PROTOCOL_ALIASES: Record<string, ModelProtocol> = {
+    "google-gemini-generate-content": "gemini-generate-content",
+    "anthropic-messages": "claude-api",
+    "claude-messages": "claude-api",
+    "openai-responses": "openai-response",
+};
 export function normalizeModelProtocol(value: unknown): ModelProtocol | undefined {
     const protocol = typeof value === "string" && value.trim() ? value.trim() : undefined;
-    return protocol === "google-gemini-generate-content" ? "gemini-generate-content" : protocol;
+    return protocol ? (PROTOCOL_ALIASES[protocol] ?? protocol) : undefined;
 }
 
 export const STANDARD_PROTOCOLS: Record<ProtocolCapability, ModelProtocol[]> = {

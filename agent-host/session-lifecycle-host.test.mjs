@@ -244,7 +244,7 @@ test('真实宿主：空新会话跨进程重启和模型切换仍可激活，�
       expect(activated.status).toBe(200);
       expect(activated.payload.sessionId).toBe(sessionId);
       const history = await api('/history?canvasId=empty-restart');
-      expect(history.payload).toEqual({ sessionId, turns: [], active: null });
+      expect(history.payload).toMatchObject({ sessionId, turns: [], active: null });
       const listed = await api('/sessions?canvasId=empty-restart');
       expect(listed.payload.currentSessionId).toBe(sessionId);
       expect((await api('/health')).payload.model).toBe(modelId || 'synthetic');

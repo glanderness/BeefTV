@@ -11,13 +11,16 @@ import {
 import {
     ASSISTANT_STATUS_TIMEOUT_MS,
     agentAssistantFailureText,
+    assistantThinkingLevel,
     normalizeAssistantProposal,
     type AgentHostStatus,
+    type AssistantContextUsage,
     type AssistantGenerationProposal,
     type AssistantHistory,
     type AssistantScriptProposal,
     type AssistantScriptRunResult,
     type AssistantSessionList,
+    type AssistantThinkingLevel,
     type AssistantUndoFailure,
     type AssistantUndoResult,
     type GenerationOrder,
@@ -31,6 +34,7 @@ export { streamAgentChat, cancelAgentChat, steerAgentChat } from "./agent-assist
 const SKILL_SCRIPT_MAX_TIMEOUT_SEC = 1800;
 const SKILL_SCRIPT_CONFIRM_TIMEOUT_MS = (SKILL_SCRIPT_MAX_TIMEOUT_SEC + 30) * 1000;
 const PRODUCTION_CONFIRM_TIMEOUT_MS = 30_000;
+const ASSISTANT_COMPACT_TIMEOUT_MS = 240_000;
 
 export async function confirmAssistantScriptProposal(
     canvasId: string,
@@ -118,12 +122,43 @@ export async function getAssistantHistory(canvasId: string, sessionId?: string):
         active: data.active,
         plan: data.plan ?? null,
         pausedTurnReason: data.pausedTurnReason ?? null,
+        thinkingLevel: data.thinkingLevel ? assistantThinkingLevel(data.thinkingLevel) : undefined,
+        contextUsage: data.contextUsage ?? null,
         turns: data.turns.map((turn) => ({
             ...turn,
             proposals: Array.isArray(turn.proposals) ? turn.proposals.map(normalizeAssistantProposal) : [],
             error: turn.error ? agentAssistantFailureText(turn.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
         })),
     };
+}
+
+export async function configureAssistantSession(
+    canvasId: string,
+    thinkingLevel: AssistantThinkingLevel,
+    sessionId?: string,
+): Promise<{ sessionId: string; thinkingLevel: AssistantThinkingLevel; contextUsage?: AssistantContextUsage | null }> {
+    return http.post(
+        "/assistant/session-config",
+        { canvasId, ...(sessionId ? { sessionId } : {}), thinkingLevel },
+        await assistantMutationConfig(),
+    );
+}
+
+export async function compactAssistantSession(
+    canvasId: string,
+    sessionId?: string,
+    instructions?: string,
+): Promise<{ sessionId: string; compacted: boolean; entryId?: number | null; thinkingLevel?: AssistantThinkingLevel; contextUsage?: AssistantContextUsage | null }> {
+    const sessionConfig = await uiSessionConfig();
+    return http.post(
+        "/assistant/compact",
+        {
+            canvasId,
+            ...(sessionId ? { sessionId } : {}),
+            ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
+        },
+        { ...sessionConfig, timeout: ASSISTANT_COMPACT_TIMEOUT_MS },
+    );
 }
 
 /**

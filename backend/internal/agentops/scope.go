@@ -74,7 +74,7 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 		return denied("只能修改当前画布")
 	}
 	switch op.ID {
-	case "model.catalog":
+	case "model.catalog", "asset.list", "canvas.search", "generation.estimate":
 		return nil
 	case "project.media.search", "project.canvas.search":
 		if args.CanvasID == s.CanvasID {

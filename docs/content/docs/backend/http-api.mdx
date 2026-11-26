@@ -62,7 +62,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 BeefTV 官方算力渠道刷新目录时，直接消费服务端 `/v1/models` 内联返回的模型能力与价格，条件同步支持 `ETag` / `If-None-Match`（`304 Not Modified`）与客户端版本升级自动失效。估算只采用官方渠道保存的价格，其他渠道即使配置里写了价格也不采用。`model.catalog` 不返回这些价格明细，费用通过下面的估算获取。
 
-只读操作 `generation.estimate` 接收至少 1 个 `targets:[{ modelKey, kind, parameters?, referenceImages?, referenceVideos?, text? }]`，`kind` 为 `image`、`video` 或 `audio`，`parameters` 与生成节点参数同名（如 `size`、`quality`、`count`、`vquality`、`seconds`），配音传台词 `text`。返回 `items[{ amount, label, approx?, variable?, basis, text, reserve? }]` 与 `summary{ amount, priced, unknown, approx?, text }`：`label` 为服务端统一格式化的紧凑按钮价格标签，`variable=true` 表示按实际输出量结算且生成前无固定单价；`amount=null` 表示暂无价格，原因写在 `text`，不按 0 计入合计；`approx=true` 表示按 Token 或字数折算；`reserve` 是先扣、出账后结算的金额，同样不计入合计。`canvas.generation.propose` 的 `targets[].estimate`、`estimate` 与 `production.estimate` 用同一套计算。对已连接的 BeefTV 官方算力渠道优先调用服务端 `POST /v1/pricing/estimate` 获取权威估价，离线、服务端不可达或自建/BYOK 渠道无缝回退到本地已保存目录估算；全程只读，不建任务、不扣费；内置助手的画布模式不提供这个操作，直接使用提案里的估算。
+只读操作 `generation.estimate` 接收至少 1 个 `targets:[{ modelKey, kind, parameters?, referenceImages?, referenceVideos?, text? }]`，`kind` 为 `image`、`video` 或 `audio`，`parameters` 与生成节点参数同名（如 `size`、`quality`、`count`、`vquality`、`seconds`），配音传台词 `text`。返回 `items[{ amount, label, approx?, variable?, basis, text, reserve? }]` 与 `summary{ amount, priced, unknown, approx?, text }`：`label` 为服务端统一格式化的紧凑按钮价格标签，`variable=true` 表示按实际输出量结算且生成前无固定单价；`amount=null` 表示暂无价格，原因写在 `text`，不按 0 计入合计；`approx=true` 表示按 Token 或字数折算；`reserve` 是先扣、出账后结算的金额，同样不计入合计。`canvas.generation.propose` 的 `targets[].estimate`、`estimate` 与 `production.estimate` 用同一套计算。对已连接的 BeefTV 官方算力渠道优先调用服务端 `POST /v1/pricing/estimate` 获取权威估价，离线、服务端不可达或自建/BYOK 渠道无缝回退到本地已保存目录估算；全程只读，不建任务、不扣费；内置助手的当前画布模式、只读模式和完全访问模式均可直接调用。
 
 MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方中文男女音色建议、默认音色及语速范围，仍允许用户的有效自定义音色 ID。当前路径未接入自由朗读指令，`instructionsSupported=false`；旁白 prompt 只放台词，不能用编造的音色名或指令承诺情绪效果。
 
@@ -248,7 +248,7 @@ BeefTV 官方算力视频模型的控件与校验使用 `/v1/models` 下发的 `
 
 - 会话默认范围是当前画布，加上当前画布文档里真实关联的素材与生成任务（沿用画布既有的媒体引用解析）。
 - 界面上明确 @ 引用或附加的素材、画布在对话入口逐项校验归属后写入回合记录；当前画布模式中，额外画布只读。
-- 当前画布模式拒绝跨画布写和无关素材/任务读取，并隐藏工作区级列举（`asset.list`、`canvas.search`）。只读与完全访问模式开放本用户工作区读取；完全访问允许带目标 ID 的跨画布写入，所有目标仍在领域服务校验当前归属。
+- 当前画布模式拒绝跨画布写和无关任务读取，但允许只读列举本用户工作区素材、画布和估价（`asset.list`、`canvas.search`、`generation.estimate`），保持写入仍锁定在当前画布。只读与完全访问模式开放本用户工作区读取；完全访问允许带目标 ID 的跨画布写入，所有目标仍在领域服务校验当前归属。
 - 已登记读写客户端与 owner 直连保持原有工作区读写能力；它们即使拿到 `turnId` 也不能出示归属，带上回合头会被拒绝。
 - 回合只在开启期间接受归属；结算或撤销之后不再接受新写入，模型侧也无法自己生成授权。
 
@@ -260,6 +260,8 @@ BeefTV 官方算力视频模型的控件与校验使用 `/v1/models` 下发的 `
 | `POST /assistant/ui-session` | 签发短期限 UI 会话凭据；需本机同源，并且能出示 owner 凭据（或显式本地引导开关） |
 | `POST /assistant/chat` | NDJSON 流式对话：先用 `session` 行返回实际 `sessionId`，再发 `text_snapshot`（`text` 替换本轮已显示文字）、`reasoning_snapshot`（`segments: [{id,text,status}]` 整段替换本轮已收到的可读思考，`status` 为 `streaming` 或 `done`；从没有可读思考时不发这一行，已经显示过又变空时发空数组让页面撤掉旧内容）、`plan`（`plan` 为最新制作计划，`null` 表示清空）与 `turn_end` 结算；断流或 `observer_error` 不表示结算。`turn_end`、历史回合与进行中的回合（宿主取得初始投影后）总是带同形 `reasoning`，没有可读思考时是空数组，旧记录可能没有这个字段。思考只含模型已返回的普通文本、块身份与阶段，不含签名、redacted 载荷、工具参数与上游原文。旧 JSONL 会话交接后重复请求复用其 Durable 接续会话，界面应立即保存 `sessionId` 用于恢复。可带 `references: [{kind,id}]` 追加已校验的素材/画布引用；宿主凭据与模型密钥由后端注入，页面不接触 |
 | `POST /assistant/cancel` | 取消指定画布正在进行的回合 |
+| `POST /assistant/session-config` | 按会话设置思考深度（`thinkingLevel: "off" \| "minimal" \| "low" \| "medium" \| "high"`）；需写权限且仅在当前会话空闲时生效 |
+| `POST /assistant/compact` | 手动压缩指定会话较早的对话上下文（可选 `instructions`，最长 4000 字符），返回最新上下文占用统计；需写权限且仅在当前会话空闲时生效 |
 | `GET/PUT /assistant/host/config`、`POST /assistant/host/start|stop` | 宿主生命周期：需 owner 凭据 + 本机同源；启动命令只取本机配置，绝不接受请求体传入的可执行命令 |
 
 按轮撤销不依赖浏览器流或宿主的最后一条消息：轮前文档由后端在转发前落盘，变更摘要由该轮自己的写入回执重建，

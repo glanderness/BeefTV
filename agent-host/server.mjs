@@ -11,7 +11,7 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isCorruptSessionArtifactError, isDurableSessionId, publicDurableTurn, TRANSIENT_UNRESUMABLE_REASONS } from './durable-session-owner.mjs';
 import { createDurableTurnProjection } from './durable-turn-projection.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
-import { parseHostBaseUrlEnv, providerRegistration, providerUnavailableReason,
+import { parseHostBaseUrlEnv, parseHostHeadersEnv, providerRegistration, providerUnavailableReason,
   turnContextPrefix, unflushedSessionHistory, toolCallCapabilityContext } from './canvas-turn.mjs';
 import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
@@ -22,6 +22,7 @@ import { createDispatchDiagnostics } from './dispatch-diagnostics.mjs';
 import { createPluginPackageController } from './plugin-packages.mjs';
 import { installModelFetchProxy } from './model-fetch-proxy.mjs';
 import { handleEventsRoute } from './events-route.mjs';
+import { openHostTelemetry } from './durable-telemetry.mjs';
 import {
   authorized as checkAuthorized,
   instanceOK as checkInstanceOK,
@@ -56,9 +57,10 @@ const MODEL_ID = (process.env.BEEFTV_AGENT_MODEL || '').trim();
 const MODEL_API = (process.env.BEEFTV_AGENT_API || 'openai-completions').trim();
 const { baseUrl: BASE_URL, isRaw: IS_RAW_BASE_URL } = parseHostBaseUrlEnv(process.env.BEEFTV_AGENT_BASE_URL || '');
 const API_KEY = process.env.BEEFTV_AGENT_API_KEY || '';
-// Thinking shares this ceiling with the answer (pi-ai adds its budget within it).
-const MAX_OUTPUT_TOKENS = Number(process.env.BEEFTV_AGENT_MAX_TOKENS || 16384);
-const CONTEXT_WINDOW = Number(process.env.BEEFTV_AGENT_CONTEXT_WINDOW || 200000);
+const CUSTOM_HEADERS = parseHostHeadersEnv(process.env.BEEFTV_AGENT_HEADERS || '');
+// 仅在渠道显式声明上限或环境变量注入时覆盖，未配置时交给内置目录模型默认值。
+const MAX_OUTPUT_TOKENS = Number(process.env.BEEFTV_AGENT_MAX_TOKENS || 0);
+const CONTEXT_WINDOW = Number(process.env.BEEFTV_AGENT_CONTEXT_WINDOW || 0);
 const MAX_REQUESTS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_REQUESTS_PER_TURN || 0);
 const MAX_TOOL_STEPS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN || 0);
 const LIFETIME_REQUEST_BUDGET = Number(process.env.BEEFTV_AGENT_TOTAL_REQUEST_BUDGET || 0);
@@ -115,6 +117,7 @@ const { outbound, getDispatched } = installModelFetchProxy({
   isRawBaseUrl: IS_RAW_BASE_URL,
   modelApi: MODEL_API,
   modelId: MODEL_ID,
+  customHeaders: CUSTOM_HEADERS,
   turnBudgetContext,
   nativePartStore,
   lifetimeBudget,
@@ -148,15 +151,29 @@ const pluginController = createPluginPackageController({
   },
 });
 
+const hostTelemetry = await openHostTelemetry(DATA_DIR);
+
 const durable = createDurableSessionStore({
   sessionRoot: SESSION_ROOT, workspaceRoot: WORKSPACE_ROOT, buildTools: ops.buildTools,
   legacy,
+  telemetry: hostTelemetry.telemetry,
   extensions: () => pluginController.getExtensions(),
   getModels: entry => {
     const models = createModels();
     const provider = modelRuntime?.getProvider(PROVIDER_ID);
     if (!provider) return models;
     const budgeted = fn => (...args) => {
+      if (entry.compacting && !entry.busy) {
+        const compactBudget = {
+          sessionId: entry.sessionId,
+          canvasId: entry.canvasId,
+          requestId: 'compact',
+          maxRequests: 0,
+          requests: 0,
+          generation: { durable: true, aborted: false },
+        };
+        return turnBudgetContext.run(compactBudget, () => fn.call(provider, ...args));
+      }
       if (!entry.budget) entry.budget = createDurableTurnBudget(entry,{maxRequests:MAX_REQUESTS_PER_TURN,maxToolSteps:MAX_TOOL_STEPS_PER_TURN});
       entry.budget.sessionId=entry.sessionId; entry.budget.nativeHistory=entry.nativeHistory;
     entry.budget.generation = entry.generation;
@@ -605,6 +622,27 @@ const server = http.createServer(async (req, res) => {
         throw error;
       }
     }
+    if (req.method === 'POST' && url.pathname === '/session-config') {
+      const body = await readJsonBody(req);
+      const canvasId = String(body.canvasId || '').trim();
+      const sessionId = String(body.sessionId || '').trim();
+      const thinkingLevel = String(body.thinkingLevel || '').trim().toLowerCase();
+      if (!canvasId || !thinkingLevel) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
+      const result = await durable.configureSession(canvasId, { sessionId, thinkingLevel });
+      respond(res, 200, result);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/compact') {
+      const body = await readJsonBody(req);
+      const canvasId = String(body.canvasId || '').trim();
+      const sessionId = String(body.sessionId || '').trim();
+      const instructions = typeof body.instructions === 'string' ? body.instructions.slice(0, 4000) : '';
+      if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
+      if (providerReason) { respond(res, 503, { code: 503, reason: providerReason }); return; }
+      const result = await durable.compactSession(canvasId, { sessionId, instructions });
+      respond(res, 200, result);
+      return;
+    }
     if (req.method === 'POST' && url.pathname === '/events') {
       await handleEventsRoute(req, res, {
         durable,
@@ -702,6 +740,7 @@ async function shutdown() {
   } catch (error) {
     console.error(`agent-host: 关闭时释放会话失败 ${error?.message || error}`);
   }
+  await hostTelemetry.close();
   await new Promise((resolve) => server.close(() => resolve()));
   process.exit(0);
 }

@@ -37,7 +37,7 @@ test('unsupported audio MIME fails closed before dispatch adaptation', () => {
     expect(() => adaptMediaRequest(transcript('BEEFTV_MEDIA_PART_V1:' + JSON.stringify(unsupported)), model)).toThrow('invalid_media_content');
   }
 });
-test('Google native inlineData is unchanged by the OpenAI compatibility adapter', () => {
+test('Google native inlineData is unchanged by the OpenAI compatibility adapter, while media markers adapt to inlineData', () => {
   const payload = { contents: [{ role: 'user', parts: [
     { text: 'Listen to the audio.' },
     { inlineData: { mimeType: 'audio/wav', data: part().data } },
@@ -45,6 +45,25 @@ test('Google native inlineData is unchanged by the OpenAI compatibility adapter'
   const before = structuredClone(payload);
   expect(adaptMediaRequest(payload, { api: 'google-generative-ai', modelId: model.modelId })).toBe(payload);
   expect(payload).toEqual(before);
+
+  const googleModel = { api: 'google-generative-ai', modelId: 'gemini-2.5-pro' };
+  expect(mediaCapabilityContext(googleModel)).toContain('video 连续视频和 audio 音频');
+  const videoPart = { ...part('video/mp4'), source: { ...part('video/mp4').source, canvasId: 'c1', nodeId: 'n1' } };
+  const result = mediaToolResult({ result: { content: [videoPart] } }, 'media.inspect', googleModel);
+  const markerText = result.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+  const googlePayload = {
+    contents: [
+      { role: 'model', parts: [{ functionCall: { name: 'media_inspect', args: { nodeId: 'n1' } } }] },
+      { role: 'user', parts: [{ functionResponse: { name: 'media_inspect', id: 'call-g1', response: { output: markerText } } }] },
+    ],
+  };
+  const adapted = adaptMediaRequest(googlePayload, googleModel);
+  expect(adapted.contents).toHaveLength(3);
+  // functionResponse 轮次必须与 functionCall 严格 1:1 对应，不混入非 functionResponse parts。
+  expect(adapted.contents[1].parts).toHaveLength(1);
+  expect(adapted.contents[1].parts[0].functionResponse.response.output).not.toContain('BEEFTV_MEDIA_PART_V1:');
+  expect(adapted.contents[2].role).toBe('user');
+  expect(adapted.contents[2].parts.at(-1)).toEqual({ inlineData: { mimeType: 'video/mp4', data: videoPart.data } });
 });
 test('unsupported routes, tampered media and untrusted tool markers fail closed', () => {
   expect(() => mediaToolResult({ result: { content: [part()] } }, 'media.inspect', { ...model, modelId: 'claude-opus-5-5' })).toThrow('media_input_unsupported');

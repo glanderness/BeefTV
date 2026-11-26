@@ -2,10 +2,10 @@
 // 与模型请求前后的钩子装配进官方 Durable Registry。
 import crypto from 'node:crypto';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels } from '@earendil-works/pi-ai/models';
 import { defineExtension, defineTool, GenerationTask, hook } from '@earendil-works/pi-durable';
 import { officialNativeHistory } from './native-history.mjs';
 import { downgradeUnpinnedAssistantMessages } from './media-content.mjs';
+import { adaptProviderPromptCache } from './prompt-cache.mjs';
 import { SYSTEM_PROMPT } from './system-prompt.mjs';
 import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, loadPinnedSkills, loadedSkillRecord,
   normalizeSkillCatalog, sameSkillPin, skillsToLoad, activeSkillProjection, guardSkillModelRequests } from './skill-resource.mjs';
@@ -155,7 +155,7 @@ export function createDurableSkillController({ skills, state, update, lock, offi
 
   async function changeSkillContext(entry, change) {
     return lock(entry.canvasId, async () => {
-      if (entry.busy || (await state(entry)).active) throw fail('session_busy');
+      if (entry.busy || entry.compacting || (await state(entry)).active) throw fail('session_busy');
       await flushPendingSkillRollback(entry);
       await resetPendingScope(entry, await readSkillContext(entry, ''));
       await skills.changeContext(entry, change, '');
@@ -293,10 +293,11 @@ export async function installDurableExtensions({
       : tool.label === 'skill.script.run'
         ? '。首次运行需用户确认并结束本轮；plan_update 可与本调用同一次响应发出。'
         : ''), parameters: tool.parameters,
-    replay: durableToolReplay(tool), executionMode: 'sequential',
+    replay: durableToolReplay(tool),
+    executionMode: tool.readOnly === true && tool.label !== 'canvas.generation.propose' && tool.label !== 'skill.script.run' ? 'parallel' : 'sequential',
     ...(['media.overview', 'media.inspect', 'media.check', 'media.review'].includes(tool.label)
       ? { outputLimits: { maxBytes: 64 * 1024 * 1024, maxLines: 100000 } }
-      : ['skill.load', 'skill.file'].includes(tool.label)
+      : ['skill.load', 'skill.file', 'file.read'].includes(tool.label)
         ? { outputLimits: { maxBytes: 128 * 1024, maxLines: 4000 } }
         : {}),
     execute: async (args, api, context) => {
@@ -421,6 +422,10 @@ export async function installDurableExtensions({
     name: 'beeftv.operations.v1',
     tools,
     hooks: [hook(GenerationTask, {
+      beforeProviderRequest: ({ model, payload }) => {
+        const adapted = adaptProviderPromptCache(payload, model?.api, { sessionId: entry.sessionId });
+        return adapted === payload ? undefined : { payload: adapted };
+      },
       afterResponse: async (message, ...rest) => {
         normalizeModelTransportError(message, ...rest);
         // 本次响应是否带提方案调用：同批的 plan_update 也要请求结束本轮，否则官方 Durable 因为
@@ -606,7 +611,7 @@ export async function installDurableExtensions({
     }
   };
   entry.reloadPluginExtensions = async (newExtensions) => {
-    if (entry.busy) {
+    if (entry.busy || entry.compacting) {
       entry.pendingPluginExtensions = Array.isArray(newExtensions) ? [...newExtensions] : [];
       return;
     }
@@ -632,40 +637,10 @@ export async function installDurableExtensions({
   applyPluginExtensionsToRegistry(await extensions(entry));
 
   let models = await getModels(entry);
-  // 渠道缓存亲和性：把 Durable 会话 ID 作为上游缓存路由键。
-  // Anthropic 走 metadata.user_id；OpenAI 兼容网关走 prompt_cache_key（仅在模型 compat 开启时）。
-  if (models && typeof models.getProviders === 'function') {
-    const bound = createModels();
-    for (const provider of models.getProviders()) {
-      const wrap = (fn) => (model, context, options) => {
-        const callerOnPayload = options?.onPayload;
-        const nextOptions = {
-          ...options,
-          sessionId: entry.sessionId,
-          ...(model?.api === 'anthropic-messages' ? { metadata: { ...options?.metadata, user_id: entry.sessionId } } : {}),
-          onPayload: async (payload, currentModel) => {
-            let next = callerOnPayload ? (await callerOnPayload(payload, currentModel)) ?? payload : payload;
-            if (
-              (currentModel || model)?.api === 'openai-completions' &&
-              (currentModel || model)?.compat?.promptCacheKeyMode === 'enabled' &&
-              options?.cacheRetention !== 'none' &&
-              next &&
-              typeof next === 'object' &&
-              !next.prompt_cache_key
-            ) {
-              next = { ...next, prompt_cache_key: entry.sessionId };
-            }
-            return next;
-          },
-        };
-        return fn.call(provider, model, context, nextOptions);
-      };
-      bound.setProvider({ ...provider, stream: wrap(provider.stream), streamSimple: wrap(provider.streamSimple) });
-    }
-    models = bound;
-  }
   if (skills) {
     models = guardSkillModelRequests(models, async (model, request, signal) => {
+      // 空闲手动压缩只做历史摘要，不处于任何 Go 对话回合内，不校验已结束回合授权与技能上下文。
+      if (entry.compacting && !entry.busy) return;
       await authorization(entry, entry.turn.turnId);
       const projection = await resolveActiveSkills(entry, signal);
       if (entry.generation.preparedRequests?.has(requestSignature(request.messages))) {

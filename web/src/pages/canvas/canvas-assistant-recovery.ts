@@ -3,12 +3,14 @@ import {
     type AgentChatReference,
     type AgentHostStatus,
     type AssistantAttachment,
+    type AssistantContextUsage,
     type AssistantHistory,
     type AssistantPermissionMode,
     type AssistantPlan,
     type AssistantReasoningSegment,
     type AssistantSessionSummary,
     type AssistantSkillSelection,
+    type AssistantThinkingLevel,
     type AssistantTurn,
     type AssistantUndoFailure,
 } from "@/services/api/agent-assistant";
@@ -43,6 +45,10 @@ export type CanvasRun = {
     historyRequest: number;
     pausedTurnReason: string | null;
     pausedStatusKey: string | null;
+    thinkingLevel: AssistantThinkingLevel | null;
+    contextUsage: AssistantContextUsage | null;
+    compacting: boolean;
+    compactNotice: string | null;
     sessionBusy: boolean;
     dispatched: boolean;
     backgroundActive: boolean;
@@ -103,6 +109,10 @@ export const createCanvasRun = (): CanvasRun => ({
     historyRequest: 0,
     pausedTurnReason: null,
     pausedStatusKey: null,
+    thinkingLevel: null,
+    contextUsage: null,
+    compacting: false,
+    compactNotice: null,
     sessionBusy: false,
     dispatched: false,
     backgroundActive: false,
