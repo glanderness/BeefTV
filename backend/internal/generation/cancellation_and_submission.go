@@ -637,7 +637,9 @@ func UpscaleInput(ctx context.Context, user string, request topaz.Request, ensur
 	if kind == "video" {
 		format = ""
 	}
-	input = Input{Mode: kind, Config: config, Upscale: &UpscaleOptions{Factor: int(request.Scale), OutputFormat: format, MaxVideoBytes: maxVideoBytes}}
+	input = Input{Mode: kind, Config: config, Upscale: &UpscaleOptions{
+		Factor: request.Scale, TargetShortEdge: request.TargetShortEdge, OutputFormat: format, MaxVideoBytes: maxVideoBytes,
+	}}
 	media := []Media{{StorageKey: "resource:" + resource.ID, MimeType: resource.MimeType, Width: resource.Width, Height: resource.Height, DurationMs: resource.DurationMs}}
 	if kind == "image" {
 		input.ReferenceImages = media
@@ -666,10 +668,14 @@ func EstimateMediaUpscale(ctx context.Context, user string, request topaz.Reques
 	if facts.DurationMs > 0 {
 		srcDurationMs = facts.DurationMs
 	}
+	outputScale := input.Upscale.Factor
+	if facts.EffectiveFactor > 0 {
+		outputScale = facts.EffectiveFactor
+	}
 	return map[string]any{
 		"mediaType":           input.Mode,
 		"source":              map[string]any{"width": srcWidth, "height": srcHeight, "durationMs": srcDurationMs},
-		"output":              map[string]any{"width": int(math.Round(float64(srcWidth) * request.Scale)), "height": int(math.Round(float64(srcHeight) * request.Scale)), "durationMs": srcDurationMs},
+		"output":              map[string]any{"width": int(math.Round(float64(srcWidth) * outputScale)), "height": int(math.Round(float64(srcHeight) * outputScale)), "durationMs": srcDurationMs},
 		"reservation":         estimate.Reservation,
 		"currency":            estimate.Currency,
 		"billingMode":         estimate.BillingMode,

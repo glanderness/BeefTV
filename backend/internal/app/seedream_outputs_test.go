@@ -29,7 +29,15 @@ func TestSeedreamDeliveryRecoversAllOutputsWithoutResubmitting(t *testing.T) {
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(map[string]any{"id": canvasID, "title": "Seedream", "revision": revision, "nodes": []any{map[string]any{"id": "root", "type": "image", "position": map[string]any{"x": 0, "y": 0}, "metadata": map[string]any{"taskId": task.ID, "content": "previous-last-output"}}}, "connections": []any{}})
+	raw, _ := json.Marshal(map[string]any{
+		"id": canvasID, "title": "Seedream", "revision": revision,
+		"nodes": []any{
+			map[string]any{"id": "source", "type": "image", "position": map[string]any{"x": 0, "y": 0}},
+			map[string]any{"id": "root", "type": "image", "position": map[string]any{"x": 440, "y": 0},
+				"metadata": map[string]any{"taskId": task.ID, "seedreamMode": "layers", "content": "previous-last-output"}},
+		},
+		"connections": []any{map[string]any{"id": "source-link", "fromNodeId": "source", "toNodeId": "root"}},
+	})
 	if _, err := svc.UpsertUserCanvasProject("local", raw); err != nil {
 		t.Fatal(err)
 	}
@@ -50,10 +58,14 @@ func TestSeedreamDeliveryRecoversAllOutputsWithoutResubmitting(t *testing.T) {
 	}
 	doc := read(svc)
 	nodes := doc["nodes"].([]any)
-	if len(nodes) != 3 {
-		t.Fatalf("got %d nodes, want all three outputs", len(nodes))
+	if len(nodes) != 4 {
+		t.Fatalf("got %d nodes, want source and all three outputs", len(nodes))
 	}
-	for i, rawNode := range nodes {
+	edges := doc["connections"].([]any)
+	if len(edges) != 3 {
+		t.Fatalf("got %d edges, want one per layer output", len(edges))
+	}
+	for i, rawNode := range nodes[1:] {
 		node := rawNode.(map[string]any)
 		meta := node["metadata"].(map[string]any)
 		if node["id"] != localtask.SeedreamOutputNodeID(task, i) || meta["storageKey"] != fmt.Sprintf("resource:seedream-resource-%d", i) || meta["taskOutputIndex"] != float64(i) {
@@ -62,6 +74,10 @@ func TestSeedreamDeliveryRecoversAllOutputsWithoutResubmitting(t *testing.T) {
 		if i == 1 && (node["title"] != "Plant" || meta["imageLayer"] == nil) {
 			t.Fatal("layer metadata lost")
 		}
+		edge := edges[i].(map[string]any)
+		if edge["fromNodeId"] != "source" || edge["toNodeId"] != node["id"] {
+			t.Fatalf("output %d not connected to original image: %v", i, edge)
+		}
 	}
 	// A new service has no in-memory effect registry. Recovery must rely on the
 	// persisted identities and never need an upstream HTTP client.
@@ -69,10 +85,11 @@ func TestSeedreamDeliveryRecoversAllOutputsWithoutResubmitting(t *testing.T) {
 	if err := restarted.recoverCanvasTaskBindings(task); err != nil {
 		t.Fatal(err)
 	}
-	if got := read(restarted); got["revision"] != doc["revision"] || len(got["nodes"].([]any)) != 3 {
+	if got := read(restarted); got["revision"] != doc["revision"] || len(got["nodes"].([]any)) != 4 {
 		t.Fatal("restart duplicated or rewrote delivered outputs")
 	}
-	doc["nodes"] = []any{nodes[0], nodes[2]}
+	doc["nodes"] = []any{nodes[0], nodes[1], nodes[3]}
+	doc["connections"] = []any{edges[0], edges[2]}
 	deleted, _ := json.Marshal(doc)
 	if _, err := restarted.UpsertUserCanvasProject("local", deleted); err != nil {
 		t.Fatal(err)
@@ -80,7 +97,7 @@ func TestSeedreamDeliveryRecoversAllOutputsWithoutResubmitting(t *testing.T) {
 	if err := restarted.recoverCanvasTaskBindings(task); err != nil {
 		t.Fatal(err)
 	}
-	if got := read(restarted); len(got["nodes"].([]any)) != 2 {
-		t.Fatal("deleted output resurrected")
+	if got := read(restarted); len(got["nodes"].([]any)) != 3 || len(got["connections"].([]any)) != 2 {
+		t.Fatal("deleted output or edge resurrected")
 	}
 }

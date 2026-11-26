@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
@@ -98,6 +99,16 @@ func (s *Service) RecoverTask(ctx context.Context, userID, id string) (*model.Ta
 	default:
 		return nil, kernel.BadAuthRequest(RecoverUnsupportedStatusText)
 	}
+}
+
+func RecoveryAttemptError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "tls: handshake failure") {
+		return "下载连接失败，TLS 握手未完成"
+	}
+	return generation.ClassifyError(err).UserMessage()
 }
 
 func mapRecoveryError(err error) error {

@@ -1,5 +1,5 @@
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
-import { canvasMediaNodeOrigin, canvasMediaNodeRole } from "@/lib/canvas/canvas-node-semantics";
+import { canvasMediaNodeOrigin, canvasMediaNodeRole, isSeedreamLayerOutput } from "@/lib/canvas/canvas-node-semantics";
 
 type Size = {
     width: number;
@@ -102,7 +102,40 @@ export function repairOverlappingImageBatches(nodes: CanvasNodeData[]): CanvasNo
             return offset ? { ...node, position: { x: origin.x + offset.x, y: origin.y + offset.y } } : node;
         });
     }
-    return result;
+    return repairOverlappingSeedreamLayers(result);
+}
+
+function repairOverlappingSeedreamLayers(nodes: CanvasNodeData[]): CanvasNodeData[] {
+    const batches = new Map<string, CanvasNodeData[]>();
+    for (const node of nodes) {
+        const taskId = node.metadata?.taskId;
+        if (!taskId || !isSeedreamLayerOutput(node)) continue;
+        const batch = batches.get(taskId) ?? [];
+        batch.push(node);
+        batches.set(taskId, batch);
+    }
+
+    const moved = new Map<string, CanvasNodeData>();
+    for (const batch of batches.values()) {
+        if (batch.length < 2) continue;
+        batch.sort((a, b) => (a.metadata?.taskOutputIndex ?? 0) - (b.metadata?.taskOutputIndex ?? 0));
+        const isFixed = (node: CanvasNodeData) => node.metadata?.locked || node.metadata?.workflowSlot;
+        const placed = batch.filter(isFixed);
+        for (const node of batch) {
+            if (isFixed(node)) continue;
+            const overlaps = placed.some((other) => rectanglesOverlap(node.position, node, other.position, other, 0));
+            if (overlaps) {
+                const obstacles = nodes.filter((other) => other.id !== node.id).map((other) => moved.get(other.id) ?? other);
+                const position = findAvailableGenerationGroupPosition(obstacles, node.position, node);
+                const aligned = { ...node, position };
+                moved.set(node.id, aligned);
+                placed.push(aligned);
+            } else {
+                placed.push(node);
+            }
+        }
+    }
+    return moved.size ? nodes.map((node) => moved.get(node.id) ?? node) : nodes;
 }
 
 export function findAvailableGenerationGroupPosition(nodes: CanvasNodeData[], preferred: Position, groupSize: Size): Position {
@@ -125,11 +158,11 @@ function resolveCollisions(nodes: CanvasNodeData[], preferred: Position, groupSi
     return candidate;
 }
 
-function rectanglesOverlap(firstPosition: Position, firstSize: Size, secondPosition: Position, secondSize: Size) {
+export function rectanglesOverlap(firstPosition: Position, firstSize: Size, secondPosition: Position, secondSize: Size, clearance = NODE_CLEARANCE) {
     return !(
-        firstPosition.x + firstSize.width + NODE_CLEARANCE <= secondPosition.x ||
-        firstPosition.x >= secondPosition.x + secondSize.width + NODE_CLEARANCE ||
-        firstPosition.y + firstSize.height + NODE_CLEARANCE <= secondPosition.y ||
-        firstPosition.y >= secondPosition.y + secondSize.height + NODE_CLEARANCE
+        firstPosition.x + firstSize.width + clearance <= secondPosition.x ||
+        firstPosition.x >= secondPosition.x + secondSize.width + clearance ||
+        firstPosition.y + firstSize.height + clearance <= secondPosition.y ||
+        firstPosition.y >= secondPosition.y + secondSize.height + clearance
     );
 }

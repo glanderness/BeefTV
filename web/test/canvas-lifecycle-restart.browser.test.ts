@@ -112,6 +112,27 @@ test("opening an old taskless failure saves its classification and local outcome
     } finally { await page.close(); }
 }, 30000);
 
+test("reopening a canvas saves the separation of overlapping Seedream layers without another edit", async () => {
+    const imageMetadata = { status: "success", seedreamMode: "layers", taskId: "split", taskOutcome: { phase: "ready", regenerate: "allowed", reason: "result_ready" } };
+    backend.nodes[0]!.metadata = { ...imageMetadata, taskOutputIndex: 0, content: "base.png", locked: true };
+    backend.nodes[1]!.metadata = { ...imageMetadata, taskOutputIndex: 1, content: "layer.png" };
+    backend.nodes[1]!.position = { x: 20, y: 40 };
+    release();
+    const page = await browser.newPage();
+    try {
+        await page.goto(server.url.toString());
+        await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:6");
+        await page.evaluate(() => (window as any).__lifecycle.pulse());
+        expect(commits.length).toBeGreaterThan(0);
+        expect(backend.nodes[0]!.position).toEqual({ x: 0, y: 0 });
+        const { x, y } = backend.nodes[1]!.position;
+        expect(x >= 320 || y >= 200).toBe(true);
+        expect(backend.nodes[1]!.metadata).toMatchObject({ taskId: "split", content: "layer.png" });
+        expect(backend.connections).toEqual(remote.connections);
+        expect(taskPosts).toHaveLength(0);
+    } finally { await page.close(); }
+}, 30000);
+
 test("first image submission flushes an unobserved preparation state without a false conflict", async () => {
     const page = await browser.newPage();
     const warnings: string[] = [];

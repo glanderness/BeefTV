@@ -167,7 +167,8 @@ function InfiniteCanvasPage() {
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
     const [workspaceView, setWorkspaceView] = useState<"workflow" | "storyboard">("workflow");
 
-    const { tasks: activeTasks } = useCanvasActiveTasks(projectId, projectLoaded);
+    const activeTaskQuery = useCanvasActiveTasks(projectId, projectLoaded);
+    const activeTasks = activeTaskQuery.tasks;
     const selectedNodeIdsRef = useRef(selectedNodeIds);
 
     const { adoptExternalSnapshot, getHistoryCleanupContext, historyPausedRef, historyState, redoCanvas, resetHistory, undoCanvas } = useCanvasHistory({
@@ -661,7 +662,7 @@ function InfiniteCanvasPage() {
                                 pageUi={pageUi}
                                 workflowsRef={workflowsRef}
                                 versions={versions}
-                                activeTasks={activeTasks}
+                                activeTaskQuery={activeTaskQuery}
                                 historyState={historyState}
                                 undoCanvas={undoCanvas}
                                 redoCanvas={redoCanvas}

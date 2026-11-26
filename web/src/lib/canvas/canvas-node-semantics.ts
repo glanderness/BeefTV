@@ -33,6 +33,12 @@ export function canQuickReferenceCanvasMediaNode(node: CanvasNodeData | null | u
     return Boolean(node.metadata?.content || node.metadata?.storageKey || node.metadata?.previewContent);
 }
 
+export function isSeedreamLayerOutput(node: CanvasNodeData): boolean {
+    const metadata = node.metadata;
+    return node.type === CanvasNodeType.Image && metadata?.seedreamMode === "layers"
+        && typeof metadata.taskOutputIndex === "number" && metadata.status !== "loading" && hasMediaResource(node);
+}
+
 /** Reads explicit semantics first and falls back to legacy persisted data. */
 export function canvasMediaNodeRole(node: CanvasNodeData | null | undefined): CanvasMediaNodeRole | null {
     if (!node || !isCanvasMediaNode(node)) return null;
@@ -117,7 +123,7 @@ export function canOpenCanvasNodePromptPanel(node: CanvasNodeData | null | undef
         return canvasMediaNodeRole(node) === "generator" || canvasMediaNodeOrigin(node) === "generated";
     }
     // Generation is opt-in; viewers and containers never inherit a composer.
-    return node.type === CanvasNodeType.Config || node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Skill;
+    return node.type === CanvasNodeType.Config || node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Skill || node.type === CanvasNodeType.Upscale;
 }
 
 /** Adds durable semantics to legacy media nodes without mutating the loaded snapshot. */

@@ -118,7 +118,14 @@ function Harness() {
                     <div style={{ position: "relative", height: 500 }}>
                         <CanvasActiveTaskPanel
                             tasks={[sampleTaskDelivery, sampleTaskRunning]}
+                            nodes={[sampleTaskDelivery, sampleTaskRunning].map(task => ({
+                                ...sampleVideoNode,
+                                id: `node-${task.id}`,
+                                type: task.type === "canvas_image" ? CanvasNodeType.Image : CanvasNodeType.Video,
+                                metadata: { taskId: task.id },
+                            }))}
                             topInset="16px"
+                            onLocateNode={() => undefined}
                             onCancelTask={(task) => setCancelledIds((prev) => [...prev, `${task.id}:${task.status}`])}
                         />
                     </div>

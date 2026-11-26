@@ -1,6 +1,6 @@
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
-import { repairOverlappingImageBatches } from "@/lib/canvas/canvas-generation-layout";
+import { rectanglesOverlap, repairOverlappingImageBatches } from "@/lib/canvas/canvas-generation-layout";
 import { interruptFileUpload } from "@/lib/canvas/canvas-file-upload";
 import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { nodeReferenceImage } from "./canvas-project-generation-metadata";
@@ -66,14 +66,25 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[] = []) {
     const configWidth = NODE_DEFAULT_SIZE[CanvasNodeType.Config].width;
     const configHeight = NODE_DEFAULT_SIZE[CanvasNodeType.Config].height;
     let changed = false;
+    const upscaleSize = NODE_DEFAULT_SIZE[CanvasNodeType.Upscale];
+    const restoredGeometry = new Map(sourceNodes.map(node => [node.id, node]));
     const reset = sourceNodes.map((node) => {
         const mediaNode = ensureMediaNodeMinimumSize(interruptFileUpload(node));
-        const resizedNode =
+        let resizedNode =
             mediaNode.type === CanvasNodeType.Config && (mediaNode.width < configWidth || mediaNode.height < configHeight)
                 ? { ...mediaNode, width: Math.max(mediaNode.width, configWidth), height: Math.max(mediaNode.height, configHeight) }
                 : mediaNode.type === CanvasNodeType.Script && mediaNode.height < NODE_DEFAULT_SIZE[CanvasNodeType.Script].height
                   ? { ...mediaNode, height: NODE_DEFAULT_SIZE[CanvasNodeType.Script].height }
                   : mediaNode;
+        if (mediaNode.type === CanvasNodeType.Upscale && (mediaNode.width !== upscaleSize.width || mediaNode.height !== upscaleSize.height)) {
+            // Keep existing connections and positions. Grow legacy cards only into free space.
+            const hasRoom = !sourceNodes.some(other => other.id !== node.id && other.parentId === node.parentId &&
+                rectanglesOverlap(node.position, upscaleSize, other.position, restoredGeometry.get(other.id) ?? other, 0));
+            const width = hasRoom ? upscaleSize.width : Math.min(node.width, upscaleSize.width);
+            const height = hasRoom ? upscaleSize.height : Math.min(node.height, upscaleSize.height);
+            if (width !== node.width || height !== node.height) resizedNode = { ...mediaNode, width, height };
+            restoredGeometry.set(node.id, resizedNode);
+        }
         const restoredNode = markGenerationRecoveryRestore(resizedNode.metadata?.status === "loading" ? { ...resizedNode, metadata: { ...resizedNode.metadata, errorDetails: "正在从任务中心恢复生成状态..." } } : resizedNode);
         if (restoredNode !== node) changed = true;
         return restoredNode;

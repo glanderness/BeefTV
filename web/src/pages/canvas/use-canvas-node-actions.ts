@@ -14,6 +14,7 @@ type UseCanvasNodeActionsParams = {
     updateNodeFromContent: CanvasNodeActionContextValue["updateNode"];
     updateMediaNodeFromContent: CanvasNodeActionContextValue["updateMediaNode"];
     addPanoramaCaptureNode: CanvasNodeActionContextValue["addPanoramaCaptureNode"];
+    prepareUpscaleResource?: CanvasNodeActionContextValue["prepareUpscaleResource"];
     startUpscaleBatch: CanvasNodeActionContextValue["startUpscaleBatch"];
     recoverAIUpscale: CanvasNodeActionContextValue["recoverUpscaleResult"];
     stepImageHistory?: CanvasNodeActionContextValue["stepImageHistory"];
@@ -33,6 +34,7 @@ export function useCanvasNodeActions({
     updateNodeFromContent,
     updateMediaNodeFromContent,
     addPanoramaCaptureNode,
+    prepareUpscaleResource,
     startUpscaleBatch,
     recoverAIUpscale,
     stepImageHistory,
@@ -54,6 +56,7 @@ export function useCanvasNodeActions({
             updateNode: updateNodeFromContent,
             updateMediaNode: updateMediaNodeFromContent,
             addPanoramaCaptureNode,
+            prepareUpscaleResource,
             startUpscaleBatch,
             recoverUpscaleResult: recoverAIUpscale,
             stepImageHistory,
@@ -74,6 +77,7 @@ export function useCanvasNodeActions({
             recoverAIUpscale,
             replaceCanvasNodeMedia,
             restorePreviousHistoryImage,
+            prepareUpscaleResource,
             startUpscaleBatch,
             stepImageHistory,
             updateMediaNodeFromContent,

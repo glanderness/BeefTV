@@ -17,6 +17,19 @@ const videoNode: CanvasNodeData = {
 };
 
 describe("CanvasVideoInlineTrim", () => {
+    test("retake combines the same range selector with an instruction and an explicit generation action", () => {
+        const html = renderToStaticMarkup(
+            <CanvasVideoInlineTrim node={videoNode} busy={false} onCancel={() => {}} onRetake={() => {}} />,
+        );
+        expect(html).toContain('aria-label="片段重拍"');
+        expect(html).not.toContain(">片段重拍<");
+        expect(html).toContain('aria-label="调整片段起点"');
+        expect(html).toContain('aria-label="重拍要求"');
+        expect(html).toContain('00:00.000–00:12.000');
+        expect(html).toContain('disabled=""><span>生成重拍</span>');
+        expect(html).not.toContain('aria-label="确认剪辑"');
+    });
+
     test("renders a LibTV-style filmstrip range editor with accessible cancel and confirm actions", () => {
         const html = renderToStaticMarkup(
             <CanvasVideoInlineTrim node={videoNode} busy={false} onCancel={() => {}} onConfirm={() => {}} />,

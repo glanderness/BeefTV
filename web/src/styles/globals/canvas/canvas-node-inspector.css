@@ -73,15 +73,6 @@
         100% { opacity: 0; transform: scale(0.9); }
     }
 
-    /* 任务进度条 shimmer 扫描动画（对应 #98 决策3）*/
-    @keyframes canvas-task-progress-shimmer {
-        0% { transform: translateX(-100%); }
-        100% { transform: translateX(200%); }
-    }
-    .canvas-task-progress-shimmer {
-        animation: canvas-task-progress-shimmer 1.4s linear infinite;
-    }
-
     /* 节点内进度：上游百分比久未变化时改为循环扫描，不再显示停住的进度条。
        减少动效时不动，只铺一层浅色满条，表示仍在进行。 */
     @keyframes canvas-node-progress-indeterminate {

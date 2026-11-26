@@ -105,6 +105,37 @@ func TestCanvasTaskBindReplayReturnsCurrentProjection(t *testing.T) {
 	}
 }
 
+func TestCanvasTaskBindKeepsCompletedDraftProviderIdentity(t *testing.T) {
+	h := newHarness(t)
+	now := time.Now()
+	if err := h.service.Database().Create(&model.Resource{
+		ID: "draft-video", UserID: h.userID, Kind: "video", Status: model.ResourceStatusReady,
+		MimeType: "video/mp4", Size: 12, Width: 854, Height: 480, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "local-draft-task", UserID: h.userID, ProjectID: h.canvasID, Type: "canvas_video",
+		Model: "beeftv::seedance-2.5", Status: model.TaskStatusSucceeded, ProviderRequestID: "upstream-draft-task",
+		InputJSON:  "{\"config\":{\"videoDraft\":\"true\"},\"metadata\":{\"source\":\"canvas\",\"nodeId\":\"draft-node\"}}",
+		ResultJSON: "{\"video\":{\"resourceId\":\"draft-video\"}}",
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	if err := h.service.Database().Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := h.service.DeliverSucceededTask(task); err != nil {
+		t.Fatal(err)
+	}
+	h.addNode(t, "draft-node", "video", "样片", map[string]any{"taskId": task.ID, "draft": "true", "status": "loading"})
+	if _, err := h.bindTask(t, task.ID, "draft-node", 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.nodeMetaString(t, "draft-node", "taskProviderRequestId"); got != task.ProviderRequestID {
+		t.Fatalf("completed draft provider identity = %q, want authoritative task receipt", got)
+	}
+}
+
 func TestCanvasTaskBindReplayIgnoresJSONKeyOrder(t *testing.T) {
 	h := newHarness(t)
 	task := h.seedReadyCanvasImageTask(t, "task-bind-key-order", "node-key-order", "键序", 3, 4)

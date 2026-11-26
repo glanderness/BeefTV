@@ -164,14 +164,17 @@ func (s *Service) list(userID string, options ListOptions) ([]Summary, error) {
 	if want <= 0 || want > 100 {
 		want = 50
 	}
+	if options.AllActive && options.ProjectID != "" {
+		want = int(^uint(0) >> 1)
+	}
 	evidenceReadable := true
 	if health, ok := s.store.(evidenceHealthStore); ok {
 		evidenceReadable = health.EvidenceReadable()
 	}
 	if pager, ok := s.store.(activeCandidateStore); ok {
 		const pageSize = 100
-		collected := make([]Summary, 0, want)
-		seen := make(map[string]struct{}, want)
+		collected := make([]Summary, 0, min(want, pageSize))
+		seen := make(map[string]struct{}, min(want, pageSize))
 		var beforeCreatedAt *time.Time
 		var beforeID string
 		for len(collected) < want {

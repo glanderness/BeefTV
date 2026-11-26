@@ -16,10 +16,14 @@ export function seedreamFamily(model = "") {
     return "";
 }
 
+export function seedreamSupportsLayerSplit(family: string) {
+    return family === "5.5" || family === "pro" || family === "flash";
+}
+
 export function seedreamImageCapability(model: string): ImageCapabilityConfig | undefined {
     const family = seedreamFamily(model);
     if (!family) return;
-    const modern = family === "5.5" || family === "pro" || family === "flash";
+    const modern = seedreamSupportsLayerSplit(family);
     return {
         references: { promptMaxChars: 32000, maxImages: modern ? 10 : 14, maxImageBytes: 30 * 1024 * 1024, maskSupported: false },
         size: { parameter: "size", values: modern ? ["1K", "1.5K", "2K"] : family === "lite" ? ["2K", "3K", "4K"] : family === "4.0" ? ["1K", "2K", "4K"] : ["2K", "4K"], default: "2K", allowCustom: true },

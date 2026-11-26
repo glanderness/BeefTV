@@ -4,9 +4,11 @@ import { beefTVImageContract } from "@/lib/beeftv-image-contracts";
 import { survivingGenerationHistoryImageOutputs } from "@/lib/canvas/canvas-generation-history";
 
 import { getNodeSpec } from "@/constant/canvas";
+import { findAvailableGenerationGroupPosition } from "@/lib/canvas/canvas-generation-layout";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { modelCompatibilityError } from "@/lib/model-selection";
 import { seedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
+import { seedreamFamily, seedreamSupportsLayerSplit } from "@/lib/seedream-image";
 import { applyGenerationTaskResultToNodes, applyMaterializedGenerationTaskResultToNodes, generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
 import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
 import { bindMissingCanvasResourceAssets, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
@@ -16,7 +18,7 @@ import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { Asset } from "@/stores/use-asset-store";
-import { selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
+import { normalizeModelOptionValue, selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 
 import { CanvasOwnerAbandonedError, canvasOwnerCanPersist, canvasOwnerEpochMatches, canvasOwnerUserMatches, type CanvasOwnerEpoch } from "./canvas-owner-epoch";
@@ -131,6 +133,32 @@ export function createImageNodeFromTextSource(input: {
     const connection = { id: input.connectionId || nanoid(), fromNodeId: sourceNode.id, toNodeId: imageNode.id };
     const nextNodes = input.nodes.map((item) => (item.id === sourceNode.id ? { ...item, metadata: { ...item.metadata, content: prompt, richText: undefined, prompt, status: NODE_STATUS_SUCCESS } } : item)).concat(imageNode);
     return { ok: true, imageNode, connection, nextNodes, nextConnections: [...input.connections, connection] };
+}
+
+export function createImageLayerSplit(source: CanvasNodeData, config: AiConfig, nodes: CanvasNodeData[], isReady: (model: string) => boolean) {
+    const available = selectableModelsByCapability(config, "image").filter((model) =>
+        seedreamSupportsLayerSplit(seedreamFamily(model)) && isReady(model));
+    const preferred = [source.metadata?.model, config.imageModel]
+        .map((model) => normalizeModelOptionValue(model, config.channels));
+    const model = preferred.find((key) => available.includes(key))
+        || available.find((key) => seedreamFamily(key) === "5.5")
+        || available[0];
+    if (!model) return null;
+
+    const prompt = "图层拆分：保留原图构图，将主体和其他独立元素拆为透明图层，补齐被遮挡的背景。";
+    const node = createCanvasNode(CanvasNodeType.Image, { x: 0, y: 0 }, {
+        model, prompt, composerContent: prompt, size: "auto", count: 1,
+        seedreamMode: "layers", seedreamOutputFormat: "png", transparentBackground: "false",
+        generationResultPlacement: "replace-node",
+    });
+    node.title = "图层拆分";
+    node.width = source.width;
+    node.height = source.height;
+    node.position = findAvailableGenerationGroupPosition(nodes, {
+        x: source.position.x + source.width + 96,
+        y: source.position.y,
+    }, node);
+    return { node, model, prompt, connection: { id: nanoid(), fromNodeId: source.id, toNodeId: node.id } };
 }
 
 export function createInsertingHistoryGate() {

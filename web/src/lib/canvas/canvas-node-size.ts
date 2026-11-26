@@ -1,5 +1,5 @@
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { hasMediaResource } from "@/lib/canvas/canvas-node-semantics";
+import { hasMediaResource, isSeedreamLayerOutput } from "@/lib/canvas/canvas-node-semantics";
 import { CanvasNodeType, isBuiltinCanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 export const MEDIA_NODE_MIN_SIZE = { width: 420, height: 236 } as const;
@@ -49,7 +49,10 @@ export function fitNodeSize(width: number, height: number, maxWidth: number = ME
 export function fitImageNodeToDecodedSize(node: CanvasNodeData, naturalWidth: number, naturalHeight: number): CanvasNodeData {
     const metadata = node.metadata;
     const needsMetadata = metadata?.naturalWidth !== naturalWidth || metadata?.naturalHeight !== naturalHeight;
-    const keepGeometry = metadata?.freeResize || metadata?.manualSize || metadata?.locked || metadata?.workflowSlot;
+    // Split layers already have their own card bounds. The image fits inside
+    // the card even when its decoded ratio differs from the initial metadata.
+    const keepLayerFrame = isSeedreamLayerOutput(node) && keepsSavedMediaGeometry(node);
+    const keepGeometry = keepLayerFrame || metadata?.freeResize || metadata?.manualSize || metadata?.locked || metadata?.workflowSlot;
     // Batch spacing was calculated with these bounds. Image decoding must not
     // silently enlarge every card after the grid has already been placed.
     const isBatch = metadata?.isBatchRoot || metadata?.batchRootId;
@@ -136,7 +139,7 @@ export function ensureMediaNodeMinimumSize(node: CanvasNodeData) {
     }
     const naturalWidth = node.metadata?.naturalWidth || 0;
     const naturalHeight = node.metadata?.naturalHeight || 0;
-    const requestedSize = node.type === CanvasNodeType.Image && node.metadata?.generationType === "edit"
+    const requestedSize = node.type === CanvasNodeType.Image && node.metadata?.generationType === "edit" && !isSeedreamLayerOutput(node)
         ? nodeSizeFromRatio(node.metadata.size || "auto", node.width, node.height)
         : null;
     const naturalRatio = naturalWidth / Math.max(1, naturalHeight);

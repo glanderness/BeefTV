@@ -1,4 +1,4 @@
-import type { CanvasNodeData, ViewportTransform } from "@/types/canvas";
+import type { CanvasNodeData, Position, ViewportTransform } from "@/types/canvas";
 
 export type CanvasBounds = {
     left: number;
@@ -65,5 +65,49 @@ export function interpolateViewport(from: ViewportTransform, to: ViewportTransfo
         x: from.x + (to.x - from.x) * t,
         y: from.y + (to.y - from.y) * t,
         k: from.k + (to.k - from.k) * t,
+    };
+}
+
+export const CANVAS_MAIN_DOCK_CLEARANCE = 80;
+
+function constrainNodePanelPosition(left: number, top: number, viewportSize: { width: number; height: number }, panelWidth: number, panelHeight: number, preferredTop: number, keepBelowNode = false, avoidBottomDock = false) {
+    const gap = 16;
+    // Keep the compact composer below the node on short viewports; LibTV
+    // reserves only a small gap above the bottom controls.
+    const bottomReserve = avoidBottomDock ? CANVAS_MAIN_DOCK_CLEARANCE : 16;
+    const maxLeft = Math.max(gap, viewportSize.width - panelWidth - gap);
+    const maxTop = Math.max(gap, viewportSize.height - panelHeight - bottomReserve);
+    return {
+        left: Math.min(Math.max(left, gap), maxLeft),
+        top: keepBelowNode
+            ? (avoidBottomDock ? Math.min(top, maxTop) : top)
+            : Math.min(Math.max(top > maxTop ? preferredTop - panelHeight - gap : top, gap), maxTop),
+    };
+}
+
+export function getAttachedNodePanelPosition(nodeElement: HTMLElement, container: HTMLElement, panelWidth: number, panelHeight: number, keepBelowNode = false, avoidBottomDock = false) {
+    const gap = 16;
+    const nodeRect = nodeElement.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const viewportSize = { width: container.clientWidth, height: container.clientHeight };
+    const left = nodeRect.left - containerRect.left + nodeRect.width / 2 - panelWidth / 2;
+    const preferredTop = nodeRect.top - containerRect.top;
+    const top = nodeRect.bottom - containerRect.top + gap;
+    return {
+        ...constrainNodePanelPosition(left, top, viewportSize, panelWidth, panelHeight, preferredTop, keepBelowNode, avoidBottomDock),
+        placement: "below" as const,
+    };
+}
+
+export function getNodePanelPosition(node: CanvasNodeData, viewport: ViewportTransform, viewportSize: { width: number; height: number }, panelWidth: number, panelHeight: number, dragOffset?: Position | null, keepBelowNode = false, avoidBottomDock = false) {
+    const gap = 16;
+    const offsetX = dragOffset?.x || 0;
+    const offsetY = dragOffset?.y || 0;
+    const nodeCenterX = viewport.x + (node.position.x + offsetX + node.width / 2) * viewport.k;
+    const nodeTop = viewport.y + (node.position.y + offsetY) * viewport.k;
+    const nodeBottom = viewport.y + (node.position.y + offsetY + node.height) * viewport.k;
+    return {
+        ...constrainNodePanelPosition(nodeCenterX - panelWidth / 2, nodeBottom + gap, viewportSize, panelWidth, panelHeight, nodeTop, keepBelowNode, avoidBottomDock),
+        placement: "below" as const,
     };
 }

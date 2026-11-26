@@ -604,7 +604,7 @@ func TestActiveOnlyEvidenceUnreadablePrioritizesOlderActiveTasksAndDetectsMissin
 
 func TestActiveOnlyEvidenceProbeDetectsMissingAttemptNumberAndCallLogUserIDAndSurfacesOlderCancelledBeyondSucceeded(t *testing.T) {
 	cases := []struct {
-		name  string
+		name     string
 		breakSQL []string
 	}{
 		{
@@ -769,5 +769,28 @@ func TestActiveOnlyImageSubmissionsUnreadableSurfacesAttemptedImageWithinBounded
 	}
 	if !found {
 		t.Fatalf("expected attempted-cancelled-image in activeOnly response, got %d items", len(env.Data))
+	}
+}
+
+func TestCanvasAllActiveTasksCountsPastPageLimit(t *testing.T) {
+	h := newRetiredAgentHarness(t)
+	owner, err := h.svc.WorkspaceOwner("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	rows := make([]model.Task, 110)
+	for i := range rows {
+		rows[i] = model.Task{ID: fmt.Sprintf("active-count-%03d", i), UserID: owner.ID, ProjectID: "busy-canvas", Type: "canvas_video", Status: model.TaskStatusQueued, CreatedAt: now.Add(time.Duration(i) * time.Second)}
+	}
+	if err := h.db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	response := h.do(t, http.MethodGet, "/api/tasks?projectId=busy-canvas&pageSize=30&activeOnly=true&allActive=true", nil)
+	var body struct {
+		Data []model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); response.Code != 200 || err != nil || len(body.Data) != len(rows) {
+		t.Fatalf("status=%d total=%d err=%v", response.Code, len(body.Data), err)
 	}
 }

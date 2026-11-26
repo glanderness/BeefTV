@@ -135,7 +135,7 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
                 context.lineWidth = 2 * pixel;
                 strokeBox(context, { x: x - 2 * pixel, y: y - 2 * pixel, width: w + 4 * pixel, height: h + 4 * pixel }, radius);
             }
-            if (!propsRef.current.pinnedNodeIds?.has(node.id) && !node.metadata?.reusableWorkflow) {
+            if (node.type !== CanvasNodeType.Upscale && !propsRef.current.pinnedNodeIds?.has(node.id) && !node.metadata?.reusableWorkflow) {
                 drawNodeTitle(context, node.title, box, k, selectedNodeIds.has(node.id) ? theme.node.text : theme.node.label);
             }
         }

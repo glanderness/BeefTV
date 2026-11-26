@@ -128,3 +128,60 @@ test("legacy metadata-only history never requests a nonexistent backend task", a
     await page.waitForTimeout(2_200);
     expect(reads).toEqual([]);
 });
+
+test("canvas panel only counts generating nodes and removes ended or deleted tasks", async () => {
+    let terminal = false;
+    let unavailable = false;
+    const task = (id: string, status: string, nodeId?: string, phase = "running") => ({
+        id, projectId: "test-canvas", type: "canvas_video", model: id === "live" ? "Test Live Model" : "Test Video Model", status, prompt: id === "live" ? "" : id, attempts: 1,
+        clientContext: nodeId ? { nodeId } : undefined,
+        outcome: { phase, regenerate: "blocked", reason: "provider_result_pending" },
+        createdAt: "2026-11-25T06:56:21Z", updatedAt: "2026-11-26T06:23:55Z",
+    });
+    await page.route("**/api/tasks?*", route => {
+        expect(new URL(route.request().url()).searchParams.get("allActive")).toBe("true");
+        if (unavailable) return route.fulfill({ status: 503, json: { code: 1, msg: "unavailable" } });
+        return route.fulfill({ json: { code: 0, data: [
+            task("live", terminal ? "failed" : "running", undefined, terminal ? "retrievable" : "running"),
+            task("fail", terminal ? "failed" : "running", "fail-node", terminal ? "retrievable" : "running"),
+            task("succeed", terminal ? "succeeded" : "running", "succeed-node", terminal ? "fetching" : "running"),
+            task("cancel", terminal ? "cancelled" : "queued", "cancel-node", terminal ? "retrievable" : "running"),
+            task("child-task", "running", "child"),
+            task("orphan", "running", "missing-node"),
+            task("recovery-task", "failed", "recovery-node", "retrievable"),
+            ...Array.from({ length: terminal ? 0 : 34 }, (_, i) => task(`queued-${i}`, "queued", `queued-node-${i}`)),
+        ] } });
+    });
+
+    await page.goto(server.url + "?panel");
+    const panel = page.getByRole("region", { name: "当前画布生成任务" });
+    await panel.getByText("39 项", { exact: true }).waitFor({ timeout: 4500 });
+    await panel.getByRole("button", { name: /生成任务/ }).click();
+    const rows = panel.getByRole("listitem");
+    expect(await rows.count()).toBe(39);
+    expect(await panel.getByText(/recovery-task|orphan/).count()).toBe(0);
+    await panel.getByRole("button", { name: /Test Live Model/ }).click();
+    await panel.getByRole("button", { name: "定位到画布节点", exact: true }).click();
+    expect(await page.getByRole("status", { name: "定位结果" }).innerText()).toBe("live-node");
+
+    unavailable = true;
+    await page.getByRole("button", { name: "读取最新任务" }).click();
+    await panel.getByText("刷新失败，显示上次状态").waitFor({ timeout: 5500 });
+    await page.getByRole("button", { name: "删除视频节点" }).click();
+    await panel.getByText("刷新失败，显示上次状态").waitFor();
+    expect(await rows.count()).toBe(39); // 38 remaining tasks and one refresh status row.
+
+    terminal = true;
+    unavailable = false;
+    await panel.getByRole("button", { name: "重试刷新" }).click();
+    await panel.getByText("1 项", { exact: true }).waitFor();
+    expect(await rows.count()).toBe(1);
+    await page.getByRole("button", { name: "删除工作流画框" }).click();
+    await panel.waitFor({ state: "detached" });
+    const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/tasks");
+    await page.getByRole("button", { name: "读取最新任务" }).click();
+    await refreshed;
+    expect(await panel.count()).toBe(0);
+    await page.getByRole("button", { name: "继续取回" }).click();
+    expect(await page.getByRole("status", { name: "取回任务" }).innerText()).toBe("recovery-task");
+}, 15_000);

@@ -488,6 +488,7 @@ func TestRunManagedVideoTaskAppliesTaskTypeConstraints(t *testing.T) {
 		wantSeconds    any
 		wantNoRatio    bool
 		wantNoSeconds  bool
+		quality        string
 	}{
 		{
 			name:           "inpaint locks adaptive ratio and duration -1",
@@ -545,6 +546,7 @@ func TestRunManagedVideoTaskAppliesTaskTypeConstraints(t *testing.T) {
 			wantOp:        "draft_to_final",
 			wantNoRatio:   true,
 			wantNoSeconds: true,
+			quality:       "1080p",
 		},
 	}
 
@@ -630,6 +632,10 @@ func TestRunManagedVideoTaskAppliesTaskTypeConstraints(t *testing.T) {
 			if meta == nil {
 				meta = map[string]any{"videoEditOperation": tc.operation}
 			}
+			quality := tc.quality
+			if quality == "" {
+				quality = "720p"
+			}
 			input := Input{
 				Mode:   "video",
 				Prompt: "replace background",
@@ -639,7 +645,7 @@ func TestRunManagedVideoTaskAppliesTaskTypeConstraints(t *testing.T) {
 					BaseURL:              server.URL,
 					APIKey:               "fixture",
 					Model:                "opaque-video-model",
-					VQuality:             "720p",
+					VQuality:             quality,
 					Size:                 "16:9",
 					VideoSeconds:         "5",
 				},

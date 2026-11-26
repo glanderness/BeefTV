@@ -1,243 +1,182 @@
-import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
-import { ChevronDown, ChevronUp, Clock3, ListTodo, LoaderCircle, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDown, LocateFixed } from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
 
-import { aceternityMotion } from "@/lib/aceternity-motion";
-import { formatTaskKind, generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel } from "@/lib/generation-task-display";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { findCanvasGenerationTaskTarget } from "@/lib/canvas/canvas-generation-task-identity";
+import { formatTaskKind, generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel, operationLabelByValue } from "@/lib/generation-task-display";
+import { configuredModelDisplayName } from "@/lib/model-selection";
 import type { GenerationTask } from "@/services/api/task-center";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
+import { useConfigStore } from "@/stores/use-config-store";
+import type { CanvasNodeData } from "@/types/canvas";
 
 // 顶栏是绝对定位浮层，面板必须按调用方传入的 topInset 避让；专注模式隐藏顶栏时传小间距。
-export function CanvasActiveTaskPanel({ tasks, align = "right", topInset = "var(--canvas-topbar-offset)", onCancelTask }: { tasks: GenerationTask[]; align?: "left" | "right"; topInset?: string; onCancelTask?: (task: GenerationTask) => void }) {
+export function CanvasActiveTaskPanel({ tasks, nodes, align = "right", topInset = "var(--canvas-topbar-offset)", onCancelTask, onLocateNode, refreshFailed, refreshing, onRefresh }: {
+    tasks: GenerationTask[];
+    nodes: readonly CanvasNodeData[];
+    align?: "left" | "right";
+    topInset?: string;
+    onCancelTask?: (task: GenerationTask) => void;
+    onLocateNode: (nodeId: string) => void;
+    refreshFailed?: boolean;
+    refreshing?: boolean;
+    onRefresh?: () => void;
+}) {
     const theme = canvasThemes[useActiveTheme()];
-    const reducedMotion = useReducedMotion();
+    const config = useConfigStore((state) => state.config);
+    const listId = useId();
     const [now, setNow] = useState(() => Date.now());
     const [open, setOpen] = useState(false);
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+    const visibleTasks = useMemo(() => tasks.flatMap((task) => {
+        if (task.status !== "queued" && task.status !== "running") return [];
+        const target = findCanvasGenerationTaskTarget(task, nodes);
+        if (!target || (target.metadata?.taskId && target.metadata.taskId !== task.id)) return [];
+        return [{ task, targetId: target.id }];
+    }), [tasks, nodes]);
+    const ticking = open && visibleTasks.length > 0;
 
     useEffect(() => {
-        if (!tasks.length) return;
+        if (!ticking) return;
+        setNow(Date.now());
         const timer = window.setInterval(() => setNow(Date.now()), 1_000);
         return () => window.clearInterval(timer);
-    }, [tasks.length]);
+    }, [ticking]);
 
     useEffect(() => {
-        if (expandedTaskId && !tasks.some((task) => task.id === expandedTaskId)) setExpandedTaskId(null);
-    }, [expandedTaskId, tasks]);
+        if (expandedTaskId && !visibleTasks.some(({ task }) => task.id === expandedTaskId)) setExpandedTaskId(null);
+    }, [expandedTaskId, visibleTasks]);
 
-    if (!tasks.length) return null;
-
-    const motionTransition = reducedMotion ? { duration: 0 } : aceternityMotion.spring.panel;
+    if (!visibleTasks.length) return null;
 
     return (
-        <AnimatePresence initial={false}>
-            <motion.div
-                key="canvas-active-task-panel"
-                data-canvas-no-zoom
-                initial={{ opacity: 0, y: -8, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -8, scale: 0.98 }}
-                transition={motionTransition}
-                className={`pointer-events-none absolute z-[var(--z-panel-floating)] w-[var(--canvas-panel-width)] ${align === "left" ? "left-3" : "right-3"}`}
-                style={{ top: topInset }}
+        <section
+            data-canvas-no-zoom
+            aria-label="当前画布生成任务"
+            className={`absolute z-[var(--z-panel-floating)] w-[var(--canvas-panel-width)] overflow-hidden rounded-[var(--panel-radius)] border ${align === "left" ? "left-3" : "right-3"}`}
+            style={{ top: topInset, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 8px 24px ${theme.spatial.shadow}` }}
+        >
+            <button
+                type="button"
+                className="flex min-h-10 w-full items-center gap-3 px-3.5 py-2 text-left text-xs hover:bg-foreground/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
+                aria-expanded={open}
+                aria-controls={listId}
+                onClick={() => setOpen((value) => !value)}
             >
-                <LayoutGroup id="canvas-active-tasks">
-                    <motion.section
-                        layout
-                        className="pointer-events-auto overflow-hidden rounded-[var(--panel-radius)] border backdrop-blur-2xl"
-                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 24px 72px ${theme.spatial.shadow}` }}
-                        aria-label="当前画布生成任务"
-                    >
-                        <motion.button
-                            type="button"
-                            layout
-                            className="flex min-h-12 w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
-                            onClick={() => setOpen((value) => !value)}
-                            aria-expanded={open}
-                            aria-controls="canvas-active-task-list"
-                        >
-                            <span className="flex min-w-0 items-center gap-2">
-                                <span className="grid size-8 shrink-0 place-items-center rounded-[var(--dock-item-radius)]" style={{ background: theme.accent.primarySoft, color: theme.accent.primary }}>
-                                    <ListTodo className="size-4" />
-                                </span>
-                                <span className="min-w-0">
-                                    <span className="block text-sm font-semibold leading-5">生成任务</span>
-                                    <span className="block truncate text-[var(--fs-label)]" style={{ color: theme.node.muted }} aria-live="polite">
-                                        当前画布 · {tasks.length} 个进行中
-                                    </span>
-                                </span>
-                            </span>
-                            <span className="flex shrink-0 items-center gap-2" style={{ color: theme.accent.primary }}>
-                                <LoaderCircle className="size-4 animate-spin opacity-70 motion-reduce:animate-none" />
-                                {open ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
-                            </span>
-                        </motion.button>
+                <span className="flex-1 font-semibold">生成任务</span>
+                <span className="tabular-nums" style={{ color: theme.node.muted }} aria-live="polite">{refreshFailed ? "刷新失败" : `${visibleTasks.length} 项`}</span>
+                <ChevronDown className={`size-3.5 shrink-0 ${open ? "rotate-180" : ""}`} style={{ color: theme.node.muted }} aria-hidden />
+            </button>
 
-                        <AnimatePresence initial={false}>
-                            {open ? (
-                                <motion.div
-                                    id="canvas-active-task-list"
-                                    layout
-                                    initial={{ opacity: 0, height: 0 }}
-                                    animate={{ opacity: 1, height: "auto" }}
-                                    exit={{ opacity: 0, height: 0 }}
-                                    transition={motionTransition}
-                                    className="thin-scrollbar max-h-[min(70vh,520px)] space-y-2 overflow-y-auto px-2.5 pb-2.5"
-                                >
-                                    {tasks.map((task) => (
-                                        <ActiveTaskCard
-                                            key={task.id}
-                                            task={task}
-                                            now={now}
-                                            theme={theme}
-                                            expanded={expandedTaskId === task.id}
-                                            onToggle={() => setExpandedTaskId((current) => (current === task.id ? null : task.id))}
-                                            onCancelTask={onCancelTask}
-                                            reducedMotion={Boolean(reducedMotion)}
-                                        />
-                                    ))}
-                                </motion.div>
-                            ) : null}
-                        </AnimatePresence>
-                    </motion.section>
-                </LayoutGroup>
-            </motion.div>
-        </AnimatePresence>
+            <ul id={listId} hidden={!open} className="thin-scrollbar m-0 max-h-[min(70vh,520px)] list-none overflow-y-auto border-t p-0" style={{ borderColor: theme.toolbar.border }}>
+                {open && refreshFailed && <li className="flex items-center justify-between gap-2 border-b px-3.5 py-2 text-xs" style={{ borderColor: theme.toolbar.border }}>
+                    <span role="status">刷新失败，显示上次状态</span>
+                    <button type="button" className="shrink-0 hover:underline" disabled={refreshing} onClick={onRefresh}>重试刷新</button>
+                </li>}
+                {open && visibleTasks.map(({ task, targetId }) => {
+                    const expanded = expandedTaskId === task.id;
+                    return (
+                        <ActiveTaskRow
+                            key={task.id}
+                            task={task}
+                            modelName={task.model && configuredModelDisplayName(config, task.model)}
+                            now={now}
+                            theme={theme}
+                            expanded={expanded}
+                            onToggle={() => setExpandedTaskId((current) => (current === task.id ? null : task.id))}
+                            onCancelTask={onCancelTask}
+                            onLocate={() => onLocateNode(targetId)}
+                        />
+                    );
+                })}
+            </ul>
+        </section>
     );
 }
 
-function ActiveTaskCard({
-    task,
-    now,
-    theme,
-    expanded,
-    onToggle,
-    onCancelTask,
-    reducedMotion,
-}: {
+function ActiveTaskRow({ task, modelName, now, theme, expanded, onToggle, onCancelTask, onLocate }: {
     task: GenerationTask;
+    modelName?: string;
     now: number;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     expanded: boolean;
     onToggle: () => void;
     onCancelTask?: (task: GenerationTask) => void;
-    reducedMotion: boolean;
+    onLocate: () => void;
 }) {
-    const showsProgress = generationTaskShowsProgress(task);
-    const progress = showsProgress && typeof task.progress === "number" ? Math.max(0, Math.min(100, Math.round(task.progress))) : showsProgress && task.status === "queued" ? 0 : undefined;
-    const startedAt = task.startedAt || task.createdAt;
-    const ended = task.status !== "queued" && task.status !== "running";
-    const elapsedMs = Math.max(0, (ended && task.completedAt ? parseTime(task.completedAt) : now) - parseTime(startedAt));
-    const durationLabel = `${task.status === "queued" ? "已等待" : ended ? "执行耗时" : "已运行"} ${formatDuration(elapsedMs)}`;
-    const statusTone = task.status === "running" ? theme.accent.primary : theme.node.muted;
-    const transition = reducedMotion ? { duration: 0 } : aceternityMotion.spring.panel;
+    const detailsId = useId();
+    const kind = (task.operation && operationLabelByValue.get(task.operation)) || formatTaskKind(task);
+    const title = modelName && modelName.split(/\s*·\s*/).at(-1) !== kind ? `${modelName} · ${kind}` : modelName || kind;
+    const status = generationTaskStatusLabel(task);
+    const stage = generationTaskStageLabel(task);
+    const summary = status === "生成中" ? stage : status;
+    const extraStage = stage !== summary ? stage : "";
+    const progress = generationTaskShowsProgress(task) && typeof task.progress === "number" && Number.isFinite(task.progress)
+        ? Math.min(100, Math.round(task.progress))
+        : 0;
+    const startedAt = Date.parse(task.startedAt || task.createdAt);
+    const elapsed = formatDuration(Math.max(0, now - (Number.isFinite(startedAt) ? startedAt : now)));
+    const elapsedLabel = task.status === "queued" ? "已等待" : "已运行";
+    const prompt = task.prompt?.trim();
+    const rowLayout = "grid grid-cols-[minmax(0,1fr)_auto_0.875rem] items-center gap-2";
+
+    const heading = (
+        <>
+            <span className="truncate font-medium leading-5" title={title}>{title}</span>
+            <span className="justify-self-end leading-5 tabular-nums" aria-label={`${elapsedLabel} ${elapsed}`} title={elapsedLabel} style={{ color: theme.node.muted }}>
+                {elapsed}
+            </span>
+            <ChevronDown className={`size-3.5 ${expanded ? "rotate-180" : ""}`} style={{ color: theme.node.muted }} aria-hidden />
+        </>
+    );
 
     return (
-        <motion.article layout layoutId={`canvas-active-task-${task.id}`} className="overflow-hidden rounded-xl border" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}>
-            <button type="button" className="block w-full p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px]" onClick={onToggle} aria-expanded={expanded}>
-                <div className="flex min-w-0 items-start gap-2">
-                    <motion.span layout="position" className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md" style={{ background: `${statusTone}18`, color: statusTone }}>
-                        <ListTodo className="size-3.5" />
-                    </motion.span>
-                    <span className="min-w-0 flex-1">
-                        <span className="flex items-center justify-between gap-2">
-                            <span className="truncate text-xs font-semibold" title={formatTaskKind(task)}>
-                                {formatTaskKind(task)}
-                            </span>
-                            <span className="shrink-0 rounded-full border px-1.5 py-0.5 text-[var(--fs-tiny)] font-medium" style={{ borderColor: `${statusTone}44`, color: statusTone }}>
-                                {generationTaskStatusLabel(task)}
-                            </span>
-                        </span>
-                        <span className="mt-1 block truncate text-[var(--fs-label)]" style={{ color: theme.node.muted }} title={generationTaskStageLabel(task)}>
-                            {generationTaskStageLabel(task)}
-                        </span>
-                    </span>
-                    {expanded ? <ChevronUp className="mt-0.5 size-3.5 shrink-0" style={{ color: theme.node.muted }} /> : <ChevronDown className="mt-0.5 size-3.5 shrink-0" style={{ color: theme.node.muted }} />}
-                </div>
-
-                {showsProgress ? (
-                    <div className="mt-3 h-1.5 overflow-hidden rounded-full" style={{ background: theme.toolbar.itemHover }}>
-                        {progress !== undefined ? (
-                            <motion.div className="relative h-full rounded-full overflow-hidden" animate={{ width: `${progress}%` }} transition={reducedMotion ? { duration: 0 } : { duration: 0.3, ease: "easeOut" }} style={{ background: statusTone }}>
-                                {/* 进度条 shimmer 扫描动画（对应 #98 决策3）*/}
-                                {task.status === "running" && !reducedMotion ? (
-                                    <span className="absolute inset-0 canvas-task-progress-shimmer" style={{ background: "linear-gradient(90deg, transparent, rgba(255,255,255,.3), transparent)" }} aria-hidden />
-                                ) : null}
-                            </motion.div>
-                        ) : (
-                            // indeterminate 模式（无具体百分比，从左到右循环扫描）
-                            <motion.div
-                                className="h-full rounded-full"
-                                initial={{ width: "20%", x: "-100%" }}
-                                animate={{ width: "20%", x: "400%" }}
-                                transition={reducedMotion ? { duration: 0 } : { duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
-                                style={{ background: statusTone }}
-                            />
-                        )}
-                    </div>
-                ) : null}
-
-                {/* 进度百分比显示（对应 #98 决策3：列表视图）*/}
-                {progress !== undefined && task.status === "running" ? (
-                    <div className="mt-1 flex items-center justify-between text-[var(--fs-micro)]" style={{ color: theme.node.muted }}>
-                        <span>{durationLabel}</span>
-                        <span className="font-medium tabular-nums" style={{ color: statusTone }}>
-                            {progress}%
-                        </span>
-                    </div>
-                ) : (
-                    <div className="mt-3 grid grid-cols-1 gap-2 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
-                        <span className="inline-flex min-w-0 items-center gap-1 truncate" title={durationLabel}>
-                            <Clock3 className="size-3 shrink-0" />
-                            {durationLabel}
-                        </span>
-                    </div>
-                )}
+        <li className="border-b px-3.5 py-2.5 text-xs last:border-b-0" style={{ borderColor: theme.toolbar.border }}>
+            <button
+                type="button"
+                className={`${rowLayout} w-full rounded-sm text-left focus-visible:outline focus-visible:outline-2`}
+                onClick={onToggle}
+                aria-expanded={expanded}
+                aria-controls={detailsId}
+            >
+                {heading}
             </button>
-
-            <AnimatePresence initial={false}>
-                {expanded ? (
-                    <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={transition}
-                        className="border-t px-3 pb-3 pt-2 text-[var(--fs-label)]"
-                        style={{ borderColor: theme.toolbar.border, color: theme.node.muted }}
+            <div className={`${rowLayout} mt-0.5`}>
+                <span className="break-words leading-4" style={{ color: theme.node.muted }}>
+                    {summary}
+                    {progress > 0 && <span className="whitespace-nowrap tabular-nums"> · {progress}%</span>}
+                </span>
+                {onCancelTask && (
+                    <button
+                        type="button"
+                        className="min-h-6 justify-self-end whitespace-nowrap rounded-sm font-medium leading-4 hover:underline focus-visible:outline focus-visible:outline-2"
+                        style={{ color: theme.accent.danger }}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onCancelTask?.(task);
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
                     >
-                        <div className="flex items-center justify-between gap-2">
-                            <span>当前阶段</span>
-                            <span className="max-w-[200px] truncate text-right" style={{ color: theme.node.text }}>
-                                {generationTaskStageLabel(task)}
-                            </span>
-                        </div>
-                        {onCancelTask && (task.status === "queued" || task.status === "running" || task.status === "succeeded") ? (
-                            <button
-                                type="button"
-                                className="mt-3 inline-flex h-7 items-center gap-1 rounded-[var(--r-sm)] px-2 text-[var(--fs-tiny)] font-medium transition-colors"
-                                style={{ background: `${theme.accent.danger}16`, color: theme.accent.danger }}
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    onCancelTask(task);
-                                }}
-                                onMouseDown={(event) => event.stopPropagation()}
-                            >
-                                <XCircle className="size-3" />
-                                {task.status === "succeeded" ? "停止取回" : "取消任务"}
-                            </button>
-                        ) : null}
-                    </motion.div>
-                ) : null}
-            </AnimatePresence>
-        </motion.article>
+                        取消任务
+                    </button>
+                )}
+            </div>
+            <div id={detailsId} hidden={!expanded} className="mt-2 space-y-1 break-words leading-4" style={{ color: theme.node.muted }}>
+                {extraStage && <div>{extraStage}</div>}
+                <button
+                    type="button"
+                    title="定位到画布节点"
+                    className="group flex w-full items-start gap-2 rounded-sm text-left leading-4 hover:text-foreground focus-visible:outline focus-visible:outline-2"
+                    onClick={onLocate}
+                    onMouseDown={(event) => event.stopPropagation()}
+                >
+                    {prompt && <span className="sr-only">定位到画布节点</span>}
+                    <span className="line-clamp-2 min-w-0 flex-1">{prompt || "定位到画布节点"}</span>
+                    <LocateFixed className="mt-0.5 size-3.5 shrink-0 opacity-70 group-hover:opacity-100" aria-hidden />
+                </button>
+            </div>
+        </li>
     );
-}
-
-function parseTime(value?: string) {
-    if (!value) return Date.now();
-    const time = new Date(value).getTime();
-    return Number.isFinite(time) ? time : Date.now();
 }
 
 function formatDuration(value: number) {

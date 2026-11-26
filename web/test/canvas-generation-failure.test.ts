@@ -7,6 +7,7 @@ import { computeTaskCenterStats, isTaskBadgeActive, isTaskFailed, isTaskSucceede
 import { resolveMetadataReferences, generationTaskMetadata, resetGenerationTaskMetadata } from "../src/lib/canvas/canvas-project-generation";
 import { ApiError } from "../src/services/api/request";
 import { explainGenerationError, formatGenerationDiagnostics, unchangedModeratedPrompt } from "../src/lib/generation-error";
+import { findCanvasGenerationTaskTarget } from "../src/lib/canvas/canvas-generation-task-identity";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import { listGenerationTasks, type GenerationTask } from "../src/services/api/task-center";
 import moderationFixtures from "../../fixtures/moderation-errors.json";
@@ -43,6 +44,19 @@ test("backend canvas revision 409 offers reload without treating it as a model f
 });
 const task: GenerationTask = { id: "task-failure", type: "canvas_image", status: "failed", prompt: "draw", attempts: 1, createdAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-26T00:00:00Z", errorCode: "content_policy_violation", error: "opaque" };
 const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: `https://example.test/${id}.png`, storageKey } });
+
+test("task navigation uses the submitted node or its existing task binding", () => {
+    const samePrompt = { ...image("other", "other.png"), metadata: { prompt: task.prompt, taskId: "another-task" } };
+    const output = { ...image("output", "output.png"), metadata: { prompt: task.prompt, taskId: task.id } };
+    const submitted = image("submitted", "submitted.png");
+    const activeTask = { ...task, clientContext: { nodeId: submitted.id } };
+    const legacyTask = { ...task, inputJson: JSON.stringify({ metadata: { nodeId: submitted.id } }) };
+
+    expect(findCanvasGenerationTaskTarget(activeTask, [samePrompt, output, submitted])).toBe(submitted);
+    expect(findCanvasGenerationTaskTarget(legacyTask, [samePrompt, output, submitted])).toBe(submitted);
+    expect(findCanvasGenerationTaskTarget(activeTask, [samePrompt, output])).toBe(output);
+    expect(findCanvasGenerationTaskTarget(activeTask, [samePrompt])).toBeUndefined();
+});
 
 test("complete image input rejection permits changed input while uncertain tasks stay locked", () => {
     const corrected: GenerationTask = { ...task, stage: "任务失败", errorCode: "moderation_input", error: "输入文本未通过内容安全审核。请调整提示词后重新生成。" };

@@ -58,6 +58,7 @@ export type GenerationTask = {
     providerCancelRequestedAt?: string;
     providerCancelledAt?: string;
     errorCode?: string;
+    recoveryLastError?: string;
     officialStatus?: "pending" | "processing" | "completed" | "failed" | "cancelled";
     receiptRecorded?: boolean;
     previewUrl?: string;
@@ -152,6 +153,7 @@ export type GenerationTaskPageRequest = {
     limit: number;
     projectId?: string;
     activeOnly: boolean;
+    allActive?: boolean;
     cursor?: string;
 };
 
@@ -176,7 +178,7 @@ type GenerationTaskListDependencies = {
 const defaultGenerationTaskListDependencies: GenerationTaskListDependencies = {
     listBackendPage: async (page, signal) => ({
         tasks: await http.get<GenerationTask[]>("/tasks", {
-                params: { pageSize: Math.min(page.limit, 100), projectId: page.projectId, activeOnly: page.activeOnly || undefined },
+                params: { pageSize: Math.min(page.limit, 100), projectId: page.projectId, activeOnly: page.activeOnly || undefined, allActive: page.allActive || undefined },
                 signal,
             }),
     }),
@@ -190,14 +192,15 @@ export function isActiveGenerationTask(task: Pick<GenerationTask, "status" | "ou
     return task.status === "queued" || task.status === "running";
 }
 
-export async function listGenerationTasks(limit = 30, options?: { projectId?: string; activeOnly?: boolean }, dependencies: GenerationTaskListDependencies = defaultGenerationTaskListDependencies, signal?: AbortSignal) {
+export async function listGenerationTasks(limit = 30, options?: { projectId?: string; activeOnly?: boolean; allActive?: boolean; orderBy?: "createdAt" }, dependencies: GenerationTaskListDependencies = defaultGenerationTaskListDependencies, signal?: AbortSignal) {
     const observationRequest = beginTaskReferenceObservation();
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const boundedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(10_000, Math.trunc(limit))) : 30;
+    const boundedLimit = options?.allActive && options.activeOnly && options.projectId ? Infinity : Number.isFinite(limit) ? Math.max(1, Math.min(10_000, Math.trunc(limit))) : 30;
     const baseRequest = {
         limit: Math.min(100, boundedLimit),
         ...(options?.projectId ? { projectId: options.projectId } : {}),
         activeOnly: options?.activeOnly === true,
+        ...(boundedLimit === Infinity ? { allActive: true } : {}),
     } satisfies GenerationTaskPageRequest;
     const backendPageReader =
         dependencies.listBackendPage ??
@@ -221,7 +224,12 @@ export async function listGenerationTasks(limit = 30, options?: { projectId?: st
     return backendTasks
         .filter((task) => !options?.projectId || task.projectId === options.projectId)
         .filter((task) => !options?.activeOnly || isActiveGenerationTask(task))
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))
+        .sort((left, right) => {
+            const order = options?.orderBy === "createdAt"
+                ? Date.parse(right.createdAt) - Date.parse(left.createdAt)
+                : right.updatedAt.localeCompare(left.updatedAt);
+            return order || right.id.localeCompare(left.id);
+        })
         .slice(0, boundedLimit);
 }
 

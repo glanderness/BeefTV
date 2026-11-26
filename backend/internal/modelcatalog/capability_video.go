@@ -548,8 +548,8 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 			return kernel.BadAuthRequest("高清成片需要关联已完成的有声样片任务 ID")
 		}
 		res := normalizeResolution(input.Config.VQuality)
-		if res != "720p" && res != "1080p" {
-			return kernel.BadAuthRequest("样片转高清成片仅支持 720p 或 1080p 分辨率")
+		if res != "1080p" {
+			return kernel.BadAuthRequest("样片转高清成片需要 1080P，请从原样片发起")
 		}
 		if len(profile.Resolutions) > 0 && videoResolutionNameRequest(profile, input.Config.VQuality) == "" {
 			return kernel.BadAuthRequest("输出分辨率不在当前模型支持范围内")

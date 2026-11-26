@@ -52,7 +52,6 @@ import { ColorGradeNodeContent } from "./nodes/color-grade-node";
 import { HtmlNodeContent } from "./nodes/html-node";
 import { PanoramaNodeContent } from "./nodes/panorama-node";
 import { SvgNodeContent } from "./nodes/svg-node";
-import { UpscaleNodeContent } from "./nodes/upscale-node";
 
 const LazyChartNodeContent = lazy(() => import("./nodes/chart-node").then((module) => ({ default: module.ChartNodeContent })));
 
@@ -125,7 +124,7 @@ export function CanvasNodeContent(props: CanvasNodeContentProps) {
     const pluginStates = usePluginStore((state) => state.pluginStates);
     const runtimeStatuses = usePluginStore((state) => state.runtimeStatuses);
     const operation = useOperationProgress(state => canvasNodeOperation(state.entries, props.projectId, props.node.id, props.node.metadata?.taskId));
-    if (props.node.type === CanvasNodeType.Upscale) return <UpscaleNodeContent node={props.node} theme={props.theme} />;
+    if (props.node.type === CanvasNodeType.Upscale) return <span className="pointer-events-none select-none text-2xl" style={{ color: props.theme.node.muted }}>配置参数提升画质</span>;
     if (isFileUploadOverlayActive(props.node.metadata)) return <CanvasFileUploadContent node={props.node} theme={props.theme} reduceMotion={props.reduceMediaEffects} />;
     if (operation) return <CanvasNodeGenerationProgress node={props.node} theme={props.theme} operation={operation} onOpenTaskDetails={props.onOpenTaskDetails} onCancelTask={props.onCancelTask} />;
     const hasCustomContent = usesCanvasCustomNodeContent(props.node, props.isEditingContent);

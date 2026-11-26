@@ -21,6 +21,11 @@ export function generationTaskNodeId(task: GenerationTask) {
     return task.clientContext?.nodeId || generationTaskInput(task)?.metadata?.nodeId || "";
 }
 
+export function findCanvasGenerationTaskTarget(task: GenerationTask, nodes: readonly CanvasNodeData[]) {
+    const nodeId = generationTaskNodeId(task);
+    return nodes.find((node) => node.id === nodeId) ?? nodes.find((node) => node.metadata?.taskId === task.id);
+}
+
 export function resolveEffectiveCanvasNodeOrigin(meta: CanvasNodeData["metadata"]) {
     const rawOrigin = meta?.resultOrigin;
     if (rawOrigin && rawOrigin !== "unknown") return rawOrigin;

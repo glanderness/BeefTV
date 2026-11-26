@@ -45,7 +45,7 @@ export type CanvasProjectStageProps = {
     pageUi: ReturnType<typeof createCanvasPageUiStore>;
     workflowsRef: RefObject<CanvasWorkflowsHandle | null>;
     versions: ReturnType<typeof useCanvasVersionHistory>;
-    activeTasks: ReturnType<typeof useCanvasActiveTasks>["tasks"];
+    activeTaskQuery: ReturnType<typeof useCanvasActiveTasks>;
     historyState: ReturnType<typeof useCanvasHistory>["historyState"];
     undoCanvas: () => void;
     redoCanvas: () => void;
@@ -76,7 +76,7 @@ export function CanvasProjectStage(props: CanvasProjectStageProps) {
         shortcutRequestNonce,
         pageUi,
         versions,
-        activeTasks,
+        activeTaskQuery,
         historyState,
         undoCanvas,
         redoCanvas,
@@ -396,7 +396,16 @@ export function CanvasProjectStage(props: CanvasProjectStageProps) {
                         </CanvasNodeActionContext.Provider>
                     </InfiniteCanvas>
 
-                    <CanvasActiveTaskPanel tasks={activeTasks} onCancelTask={generation.cancelCanvasTask} topInset={focusMode ? "var(--space-3)" : "var(--canvas-topbar-offset)"} />
+                    <CanvasActiveTaskPanel
+                        tasks={activeTaskQuery.tasks}
+                        refreshFailed={activeTaskQuery.refreshFailed}
+                        refreshing={activeTaskQuery.refreshing}
+                        onRefresh={() => void activeTaskQuery.refetch()}
+                        nodes={nodes}
+                        onLocateNode={(nodeId) => mediaSelection.locateCanvasNode(nodeId, { openPromptPanel: false, openToolbar: false })}
+                        onCancelTask={readOnly ? undefined : generation.cancelCanvasTask}
+                        topInset={focusMode ? "var(--space-3)" : "var(--canvas-topbar-offset)"}
+                    />
 
                     {focusMode ? (
                         <CanvasFocusModeBar
@@ -467,6 +476,7 @@ export function CanvasProjectStage(props: CanvasProjectStageProps) {
             </div>
 
             <CanvasProjectStageOverlays
+                nodeGraphContext={nodeGraphContext}
                 currentProject={currentProject}
                 workspaceMode={workspaceMode}
                 readOnly={readOnly}

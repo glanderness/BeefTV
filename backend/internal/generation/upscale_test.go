@@ -29,6 +29,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/protocol"
+	"infinite-canvas/backend/internal/topaz"
 )
 
 func newLocalUpscaleResources(t *testing.T, kind string, data []byte) fileUpscaleResources {
@@ -238,7 +239,7 @@ func TestUpscaleExecuteFourModelsUsesOwnedUploadAndOriginalResult(t *testing.T) 
 
 func TestUpscaleRejectsOwnerAndInvalidInputBeforePaidSubmit(t *testing.T) {
 	input := Input{Mode: "image", Prompt: "AI 超分", Config: Config{BaseURL: "https://beeftv.app/v1", Model: "topaz-standard-v2"}, Upscale: &UpscaleOptions{Factor: 2}, ReferenceImages: []Media{{StorageKey: "resource:source"}}}
-	for _, factor := range []int{0, 5} {
+	for _, factor := range []float64{0, 1.5, 5} {
 		changed := input
 		changed.Upscale = &UpscaleOptions{Factor: factor}
 		if ValidateUpscaleInput(changed) == nil {
@@ -1570,5 +1571,135 @@ func TestProtocolResultAdapterStreamsToFileAndPersistErrorIsNotDownloadError(t *
 	CaptureTaskFailureDiagnostics(&task, err, "local_result")
 	if task.FailureDiagnostics == nil || task.FailureDiagnostics.Source != "local_result" || task.FailureDiagnostics.Stage != "保存视频结果" {
 		t.Fatalf("unexpected diagnostics for VideoPersistError: %+v", task.FailureDiagnostics)
+	}
+}
+
+func TestVideoUpscaleTierUsesProbedDimensionsForEstimateAndSubmit(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	source := newLocalUpscaleResources(t, "video", upscaleClip(t, 880, 496, false))
+	source.width, source.height, source.durationMs = 320, 180, 15000
+
+	const modelName = "topaz-starlight-fast-2"
+	var estimateBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/media-upscale/capabilities":
+			_, _ = io.WriteString(w, `{"supported_models":[{"id":"topaz-starlight-fast-2","label":"Starlight Fast 2","media_type":"video","mode":"generative","billing_mode":"mps_video_seconds"}]}`)
+		case "/v1/media-upscale/estimate":
+			if err := json.NewDecoder(r.Body).Decode(&estimateBody); err != nil {
+				t.Errorf("decode estimate body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(UpscaleEstimate{Model: modelName, Currency: "CNY", Reservation: 2.5})
+		default:
+			t.Errorf("unexpected request during estimate: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	runtime := taskRuntime(func(r *Runtime) {
+		r.Endpoints.BeefTVVideoBaseURL = server.URL
+		r.Resources = source
+	})
+	bind := func(ctx context.Context, meta CallMeta) context.Context {
+		r := runtime
+		r.Call = meta
+		return WithRuntime(ctx, r)
+	}
+	metadata := func(context.Context, string, string) (*model.Resource, error) {
+		return &model.Resource{
+			ID: "source", Status: model.ResourceStatusReady, Kind: "video", MimeType: "video/mp4",
+			Width: source.width, Height: source.height, DurationMs: source.durationMs,
+		}, nil
+	}
+	credentials := func() (string, string, string, string, error) {
+		return "synthetic-key", server.URL, "", "", nil
+	}
+	request := topaz.Request{
+		ResourceID: "source", ChannelID: "beeftv", Model: modelName, Mode: "generative",
+		Scale: 2, TargetShortEdge: 1080, ClientOperationID: "video-upscale-tier",
+	}
+	quote, err := EstimateMediaUpscale(context.Background(), "user-1", request, metadata, credentials, bind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := quote["source"].(map[string]any)
+	output := quote["output"].(map[string]any)
+	if src["width"] != 880 || src["height"] != 496 || src["durationMs"] != int64(1000) ||
+		output["width"] != 1916 || output["height"] != 1080 {
+		t.Fatalf("estimate dimensions or duration do not match the local file and selected tier: %#v", quote)
+	}
+	wantFactor := 1080.0 / 496
+	if estimateBody["upscale_factor"] != wantFactor || estimateBody["width"] != float64(880) ||
+		estimateBody["height"] != float64(496) || estimateBody["duration_seconds"] != float64(1) {
+		t.Fatalf("estimate provider payload did not use the probed source and selected tier: %#v", estimateBody)
+	}
+	if _, hasURL := estimateBody["video_url"]; hasURL {
+		t.Fatalf("estimate sent a source URL: %#v", estimateBody)
+	}
+
+	_, payload, err := BuildMediaUpscaleTaskPayload(context.Background(), "user-1", request, metadata, credentials, bind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored Input
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := prepareOwnedUpscaleSource(bind(context.Background(), CallMeta{UserID: "user-1"}), stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Upscale.Factor != wantFactor || stored.Upscale.Factor != request.Scale {
+		t.Fatalf("submit preflight factor=%v, original factor=%v", prepared.Upscale.Factor, stored.Upscale.Factor)
+	}
+
+	// Verify 4x cap consistency between EstimateMediaUpscale output dimensions and submitted factor (300px -> 1440p caps at 4x = 1200px).
+	smallSource := newLocalUpscaleResources(t, "video", upscaleClip(t, 400, 300, false))
+	smallRuntime := taskRuntime(func(r *Runtime) {
+		r.Endpoints.BeefTVVideoBaseURL = server.URL
+		r.Resources = smallSource
+	})
+	smallBind := func(ctx context.Context, meta CallMeta) context.Context {
+		r := smallRuntime
+		r.Call = meta
+		return WithRuntime(ctx, r)
+	}
+	cappedReq := request
+	cappedReq.TargetShortEdge = 1440
+	cappedQuote, err := EstimateMediaUpscale(context.Background(), "user-1", cappedReq, metadata, credentials, smallBind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cappedOut := cappedQuote["output"].(map[string]any)
+	if cappedOut["width"] != 1600 || cappedOut["height"] != 1200 {
+		t.Fatalf("capped estimate output dimensions should match 4x factor (1600x1200), got %#v", cappedOut)
+	}
+}
+
+func TestUpscaleFactorForTargetSelectsRequestedMPSTier(t *testing.T) {
+	for _, tt := range []struct {
+		source, target int
+		want           float64
+	}{
+		{496, 1080, 1080.0 / 496},
+		{1080, 1440, 1440.0 / 1080},
+		{300, 1440, 4},
+		{240, 720, 3},
+		{200, 1080, 4},
+		{1080, 720, 0},
+		{180, 1080, 0},
+		{496, 1000, 0},
+		{0, 1080, 0},
+	} {
+		got, err := upscaleFactorForTarget(tt.source, tt.target)
+		if got != tt.want || (err != nil) != (tt.want == 0) {
+			t.Errorf("source %d, target %d: factor %v, error %v; want %v", tt.source, tt.target, got, err, tt.want)
+		}
 	}
 }

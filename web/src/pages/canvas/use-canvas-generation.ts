@@ -392,12 +392,15 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 if (signal.aborted) return;
                 message.success("视频已取回并放回画布，未重新生成");
             } else {
-                message.info("原任务仍在处理中，请稍后再取回结果");
+                const reason = recoveredTask.recoveryLastError || (recoveredTask.errorCode === "download_failed" ? recoveredTask.error : undefined);
+                if (reason) message.error(reason);
+                else message.info("原任务仍未取回，请查看任务状态");
             }
             void queryClient.invalidateQueries({ queryKey: ["task-details", projectId, task.id] });
         } catch (error) {
             if (!signal.aborted) message.error(error instanceof Error ? error.message : "暂时无法取回结果，请稍后再试");
         } finally {
+            if (!signal.aborted) void queryClient.invalidateQueries({ queryKey: ["canvas-active-tasks", projectId] });
             if (retrievalRef.current === retrieval) {
                 retrievalRef.current = null;
                 setRetrievingTaskId(null);

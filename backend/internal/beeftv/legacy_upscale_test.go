@@ -16,7 +16,7 @@ func TestLegacyUpscaleBodyEstimateMetadataContract(t *testing.T) {
 	if _, hasURL := imgBody["image_url"]; hasURL {
 		t.Fatalf("metadata-only image estimate must not emit image_url: %#v", imgBody)
 	}
-	if imgBody["width"] != 1920 || imgBody["height"] != 1080 || imgBody["upscale_factor"] != 2 || imgBody["output_format"] != "png" {
+	if imgBody["width"] != 1920 || imgBody["height"] != 1080 || imgBody["upscale_factor"] != float64(2) || imgBody["output_format"] != "png" {
 		t.Fatalf("unexpected image estimate body: %#v", imgBody)
 	}
 
@@ -24,7 +24,7 @@ func TestLegacyUpscaleBodyEstimateMetadataContract(t *testing.T) {
 	vidBody := LegacyUpscaleBody(LegacyUpscaleInput{
 		Model:           "topaz-starlight-fast-2",
 		MediaType:       "video",
-		Factor:          2,
+		Factor:          2.125,
 		Width:           1920,
 		Height:          1080,
 		DurationSeconds: 12.5,
@@ -34,7 +34,7 @@ func TestLegacyUpscaleBodyEstimateMetadataContract(t *testing.T) {
 	if _, hasURL := vidBody["video_url"]; hasURL {
 		t.Fatalf("metadata-only video estimate must not emit video_url: %#v", vidBody)
 	}
-	if vidBody["width"] != 1920 || vidBody["height"] != 1080 || vidBody["duration_seconds"] != 12.5 || vidBody["frame_rate"] != float64(24) {
+	if vidBody["width"] != 1920 || vidBody["height"] != 1080 || vidBody["upscale_factor"] != 2.125 || vidBody["duration_seconds"] != 12.5 || vidBody["frame_rate"] != float64(24) {
 		t.Fatalf("unexpected video estimate body: %#v", vidBody)
 	}
 

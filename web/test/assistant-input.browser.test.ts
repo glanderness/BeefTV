@@ -680,6 +680,9 @@ test("real Sidebar attaches arbitrary document files without polluting asset lib
     await page.reload();
     await page.getByRole("combobox", { name: "script-outline.md 的用途" }).waitFor();
     expect(await page.locator(".canvas-assistant-file-card").count()).toBe(3);
+    await page.locator(".canvas-assistant-sidebar").evaluate(async sidebar => {
+        await Promise.all(sidebar.getAnimations().map(animation => animation.finished));
+    });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByRole("textbox", { name: "给助手的消息" }).fill("按这些文档拆解镜头");
     const sent = page.waitForResponse(response => response.url().endsWith("/assistant/chat"));

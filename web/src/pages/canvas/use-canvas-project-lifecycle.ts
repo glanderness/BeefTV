@@ -11,7 +11,7 @@ import { canvasAppearanceForTheme, DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanv
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
 import { normalizeCanvasNodeTimestamps } from "@/lib/canvas/canvas-node-timestamps";
-import { normalizeCanvasMediaNodeSemanticsList } from "@/lib/canvas/canvas-node-semantics";
+import { isSeedreamLayerOutput, normalizeCanvasMediaNodeSemanticsList } from "@/lib/canvas/canvas-node-semantics";
 import { normalizeWorkflowContainers } from "@/lib/canvas/reusable-workflow-instance";
 import { migrateDirectorCanvas } from "@/lib/canvas/director/director-node-migration";
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
@@ -55,7 +55,8 @@ function openCanvasNodes(project: CanvasProject) {
     const directorMigration = migrateDirectorCanvas(sourceNodes, sourceScenes);
     const migratedNodes = normalizeWorkflowContainers(directorMigration.nodes);
     const migration = { ...directorMigration, nodes: migratedNodes };
-    const hasNodeMigration = directorMigration.nodes.some((node, index) => node !== sourceNodes[index])
+    const hasNodeMigration = sourceNodes.some((node, index) => isSeedreamLayerOutput(node) && node.position !== project.nodes?.[index]?.position)
+        || directorMigration.nodes.some((node, index) => node !== sourceNodes[index])
         || migratedNodes.some((node, index) => node !== directorMigration.nodes[index])
         || migration.directorScenes !== sourceScenes;
     const nodes = normalizeCanvasMediaNodeSemanticsList(normalizeCanvasNodeTimestamps(migratedNodes, {

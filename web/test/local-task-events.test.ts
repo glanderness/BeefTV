@@ -2,6 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { apiClient } from "../src/services/api/request";
 import {
     createGenerationTaskSubscriptionService,
+    listGenerationTasks,
     shouldUseTaskTextEvents,
     waitForGenerationTask,
     type GenerationTask,
@@ -21,6 +22,7 @@ function buildTask(overrides: Partial<GenerationTask>): GenerationTask {
         status: "running",
         stage: "生成中",
         attempts: 1,
+        prompt: "",
         createdAt: "2026-10-01T00:00:00Z",
         updatedAt: "2026-10-01T00:00:00Z",
         ...overrides,
@@ -41,6 +43,21 @@ test("local canvas task panel continues querying authoritative task state", () =
     expect(shouldEnableCanvasActiveTaskQuery(true, "local-project")).toBe(true);
     expect(shouldEnableCanvasActiveTaskQuery(false, "local-project")).toBe(false);
     expect(shouldEnableCanvasActiveTaskQuery(true, "")).toBe(false);
+});
+
+test("canvas active tasks stay in submission order when an older task reports progress", async () => {
+    const newer = buildTask({ id: "newer", projectId: "local-project", createdAt: "2026-09-30T19:01:00-05:00", updatedAt: "2026-10-01T00:02:00Z" });
+    const older = buildTask({ id: "older", projectId: "local-project" });
+    const updatedOlder = { ...older, updatedAt: "2026-10-01T00:03:00Z", progress: 50 };
+    const options = { projectId: "local-project", activeOnly: true, orderBy: "createdAt" } as const;
+    const tasksBeforePoll = await listGenerationTasks(30, options, { listBackend: async () => [newer, older] });
+    const tasksAfterPoll = await listGenerationTasks(30, options, { listBackend: async () => [updatedOlder, newer] });
+    const history = await listGenerationTasks(30, { projectId: "local-project" }, { listBackend: async () => [newer, updatedOlder] });
+
+    expect(tasksBeforePoll.map(task => task.id)).toEqual(["newer", "older"]);
+    expect(tasksAfterPoll.map(task => task.id)).toEqual(["newer", "older"]);
+    expect(tasksAfterPoll[1]?.progress).toBe(50);
+    expect(history.map(task => task.id)).toEqual(["older", "newer"]);
 });
 
 test("waitForGenerationTask follows server-authoritative state past legacy 10m image cutoff without fabricating client timeout", async () => {

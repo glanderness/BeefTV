@@ -12,10 +12,11 @@ export function useCanvasActiveTasks(projectId: string, enabled: boolean) {
         queryKey: ["canvas-active-tasks", projectId],
         // Agent 的持久化执行仍复用任务队列生命周期，但不应占据画布右上角的“生成任务”浮层。
         // 保留这页中的全部生成任务，面板支持滚动，数量与实际任务一致。
-        queryFn: () => listGenerationTasks(30, { projectId, activeOnly: true }).then((tasks) => tasks.filter((task) => !isRetiredAgentTask(task))),
+        queryFn: ({ signal }) => listGenerationTasks(30, { projectId, activeOnly: true, allActive: true, orderBy: "createdAt" }, undefined, signal).then((tasks) => tasks.filter((task) => !isRetiredAgentTask(task))),
         enabled: shouldEnableCanvasActiveTaskQuery(enabled, projectId),
-        refetchInterval: (current) => (current.state.data?.length ? 2_000 : 10_000),
+        refetchInterval: (current) => (current.state.data?.some(task => task.status === "queued" || task.status === "running") ? 2_000 : 10_000),
         refetchOnWindowFocus: true,
+        retry: 1,
     });
 
     useEffect(() => {
@@ -37,6 +38,7 @@ export function useCanvasActiveTasks(projectId: string, enabled: boolean) {
         tasks: query.data || [],
         loading: query.isLoading,
         refreshing: query.isFetching,
+        refreshFailed: query.isError,
         refetch: query.refetch,
     };
 }

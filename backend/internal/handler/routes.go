@@ -180,9 +180,11 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc taskRouteService, hostedProfile 
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
+		projectID := c.Query("projectId")
 		tasks, err := requestTaskPort(c, svc).TasksWithOptions(user.ID, localtask.ListOptions{
 			Limit:      pageSize,
-			ProjectID:  c.Query("projectId"),
+			ProjectID:  projectID,
+			AllActive:  projectID != "" && c.Query("allActive") == "true",
 			ActiveOnly: c.Query("activeOnly") == "true",
 		})
 		if err != nil {

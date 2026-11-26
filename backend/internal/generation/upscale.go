@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,9 +23,10 @@ import (
 )
 
 type UpscaleOptions struct {
-	Factor        int    `json:"factor"`
-	OutputFormat  string `json:"outputFormat,omitempty"`
-	MaxVideoBytes int64  `json:"maxVideoBytes,omitempty"`
+	Factor          float64 `json:"factor"`
+	TargetShortEdge int     `json:"targetShortEdge,omitempty"`
+	OutputFormat    string  `json:"outputFormat,omitempty"`
+	MaxVideoBytes   int64   `json:"maxVideoBytes,omitempty"`
 }
 
 func UpscaleMediaType(model string) string {
@@ -43,8 +45,12 @@ func ValidateUpscaleInput(input Input) error {
 	if (kind != "image" && kind != "video") || input.Config.Model == "" || input.Upscale == nil {
 		return PreparationUserError{Category: CategoryInvalidParams, Reason: "超分模型、素材类型或参数无效", Action: "请重新选择超分模型和素材后重试"}
 	}
-	if input.Upscale.Factor < 1 || input.Upscale.Factor > 4 {
-		return PreparationUserError{Category: CategoryInvalidParams, Reason: "放大倍数须为 1 至 4 的整数", Action: "请调整放大倍数后重试"}
+	factor := input.Upscale.Factor
+	if math.IsNaN(factor) || factor < 1 || factor > 4 {
+		return PreparationUserError{Category: CategoryInvalidParams, Reason: "放大倍数须为 1 至 4", Action: "请调整放大倍数后重试"}
+	}
+	if kind == "image" && (factor != math.Trunc(factor) || input.Upscale.TargetShortEdge != 0) {
+		return PreparationUserError{Category: CategoryInvalidParams, Reason: "图片放大倍数须为 1 至 4 的整数", Action: "请调整放大倍数后重试"}
 	}
 	if kind == "image" && (len(input.ReferenceImages) != 1 || len(input.ReferenceVideos) != 0) || kind == "video" && (len(input.ReferenceVideos) != 1 || len(input.ReferenceImages) != 0) || len(input.ReferenceAudios) != 0 || input.Mask != nil {
 		return PreparationUserError{Category: CategoryInvalidParams, Reason: "每个超分任务需要一个同类型素材", Action: "请连接单个对应类型的图片或视频素材后重试"}
@@ -66,12 +72,13 @@ func ValidateUpscaleInput(input Input) error {
 var upscaleOwnedSource = regexp.MustCompile(`^resource:[A-Za-z0-9_-]{1,128}$`)
 
 type UpscaleSourceFacts struct {
-	Bytes      int64
-	MIME       string
-	Width      int
-	Height     int
-	DurationMs int64
-	FrameRate  float64
+	Bytes           int64
+	MIME            string
+	Width           int
+	Height          int
+	DurationMs      int64
+	FrameRate       float64
+	EffectiveFactor float64
 }
 
 // Preparation uses the existing owner-scoped media reader and gateway upload.
@@ -138,8 +145,21 @@ func prepareUpscaleMetadata(ctx context.Context, input Input) (Input, UpscaleSou
 		_ = rc.Close()
 		return input, UpscaleSourceFacts{}, PreparationUserError{Category: CategoryInputInaccessible, Reason: "本地素材文件无法读取", Action: "请重新导入素材后重试"}
 	}
-	facts, localErr := validateLocalUpscaleFile(ctx, input.Mode, media, rc, file, int64(input.Upscale.Factor), mediaToolVideoMaxBytes(ctx, &input), deliveryLimit)
-	return input, facts, localErr
+	facts, err := validateLocalUpscaleFile(ctx, input.Mode, media, rc, file, int64(input.Upscale.Factor), mediaToolVideoMaxBytes(ctx, &input), deliveryLimit)
+	if err != nil {
+		return input, UpscaleSourceFacts{}, err
+	}
+	if input.Upscale.TargetShortEdge != 0 {
+		factor, err := upscaleFactorForTarget(min(facts.Width, facts.Height), input.Upscale.TargetShortEdge)
+		if err != nil {
+			return input, UpscaleSourceFacts{}, err
+		}
+		options := *input.Upscale
+		options.Factor = factor
+		input.Upscale = &options
+	}
+	facts.EffectiveFactor = input.Upscale.Factor
+	return input, facts, nil
 }
 
 func prepareOwnedUpscaleSource(ctx context.Context, input Input) (Input, error) {
@@ -183,14 +203,10 @@ func validateLocalUpscaleFile(ctx context.Context, kind string, media *Media, rc
 	if err := validateUpscaleVideoFacts(facts); err != nil {
 		return UpscaleSourceFacts{}, err
 	}
-	if media.Width <= 0 || media.Height <= 0 {
-		if w, h := facts.DisplayDimensions(); w > 0 && h > 0 {
-			media.Width, media.Height = w, h
-		}
+	if w, h := facts.DisplayDimensions(); w > 0 && h > 0 {
+		media.Width, media.Height = w, h
 	}
-	if media.DurationMs <= 0 && facts.DurationMs > 0 {
-		media.DurationMs = facts.DurationMs
-	}
+	media.DurationMs = facts.DurationMs
 	if media.Width <= 0 || media.Height <= 0 || media.DurationMs <= 0 {
 		return UpscaleSourceFacts{}, PreparationUserError{Category: CategoryInvalidParams, Reason: "无法读取超分视频的尺寸或时长", Action: "请确认视频完整后重新导入重试"}
 	}
@@ -588,4 +604,25 @@ func restoreMediaSourceAudioFile(ctx context.Context, input Input, outputPath st
 
 func CancelUpscale(ctx context.Context, config Config, id string) error {
 	return managedMediaClient(ctx, config).CancelLegacyUpscale(ctx, id)
+}
+
+// The MPS API selects the smallest output tier covering the requested short
+// edge. Send an in-range factor that lands in the selected tier.
+func upscaleFactorForTarget(source, target int) (float64, error) {
+	var lower int
+	switch target {
+	case 720:
+	case 1080:
+		lower = 720
+	case 1440:
+		lower = 1080
+	case 2160:
+		lower = 1440
+	default:
+		return 0, PreparationUserError{Category: CategoryInvalidParams, Reason: "不支持该视频输出清晰度", Action: "请选择可用的输出档位后重试"}
+	}
+	if source <= 0 || source > target || float64(source)*4 <= float64(lower) {
+		return 0, PreparationUserError{Category: CategoryInvalidParams, Reason: "所选清晰度不适用于原片", Action: "请更换输出档位后重试"}
+	}
+	return min(4, float64(target)/float64(source)), nil
 }

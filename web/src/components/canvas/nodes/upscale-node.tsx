@@ -1,184 +1,211 @@
-import { CanvasCatalogModelPicker } from "@/components/canvas/canvas-catalog-model-picker";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Button, InputNumber, Select, Segmented } from "antd";
-import { Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
+import { useContext, useId, useRef, useState, type CSSProperties } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Button, Select } from "antd";
+import { ArrowUp, LoaderCircle, WandSparkles } from "lucide-react";
 import type { CanvasTheme } from "@/lib/canvas-theme";
-import { createDefaultUpscaleSettings, deriveUpscaleBatchState } from "@/lib/canvas/canvas-upscale";
+import { createDefaultUpscaleSettings, deriveUpscaleBatchState, upscaleParamsForNode, upscaleSourceKey } from "@/lib/canvas/canvas-upscale";
 import { canRecoverUpscaleNode } from "@/lib/canvas/canvas-ai-upscale-task";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { channelHasGenerationCredential, isBuiltinBeefTVChannel, useEffectiveConfig } from "@/stores/use-config-store";
-import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
-import {
-    availableUpscaleModesForMedia,
-    estimateUpscale,
-    getUpscaleCapabilities,
-    isUpscaleMediaSelectionAvailable,
-    normalizeUpscaleMediaSelection,
-    resolveUpscaleCapabilityModel,
-    type UpscaleCapabilities,
-    type UpscaleEstimate,
-    type UpscaleMode,
-} from "@/services/api/media-upscale";
+import { ApiError, getTransportFailureKind } from "@/services/api/request";
+import { estimateUpscale, getUpscaleCapabilities } from "@/services/api/media-upscale";
 import { useCanvasNodeActions } from "../canvas-node-action-context";
 import { CanvasNodeGraphContext, useUpstreamNodes } from "../canvas-node-graph-context";
 
-const modeLabels: Partial<Record<UpscaleMode, string>> = { precision: "保真增强", generative: "细节重建" };
-const batchLabels = { waiting: "等待提交", submitting: "提交中", accepted: "已提交", rejected: "提交失败", unknown: "待确认" };
+const resolutions = [
+    { label: "720P", value: 720 },
+    { label: "1080P", value: 1080 },
+    { label: "2K", value: 1440 },
+    { label: "4K", value: 2160 },
+];
+const videoPreset = "tencent-video-enhance-seedance2";
+const imagePreset = "topaz-standard-v2";
+const mayRetry = (failures: number, error: Error) =>
+    failures < 1 && error instanceof ApiError && (error.retryable || Boolean(getTransportFailureKind(error)));
 
-export function UpscaleNodeContent({ node, theme }: { node: CanvasNodeData; theme: CanvasTheme }) {
+export function UpscaleNodePanel({ node, theme, readOnly = false }: { node: CanvasNodeData; theme: CanvasTheme; readOnly?: boolean }) {
     const actions = useCanvasNodeActions();
     const { getNode } = useContext(CanvasNodeGraphContext);
+    const videoResolutionId = useId();
+    const imageSizeId = useId();
     const upstream = useUpstreamNodes(node.id);
-    const inputs = upstream.filter((item, index) => (item.type === CanvasNodeType.Image || item.type === CanvasNodeType.Video) && upstream.findIndex(other => other.id === item.id) === index);
-    const imageCount = inputs.filter(item => item.type === CanvasNodeType.Image).length;
-    const videoCount = inputs.length - imageCount;
+    const inputs = [...new Map(upstream.filter(item =>
+        (item.type === CanvasNodeType.Image || item.type === CanvasNodeType.Video) &&
+        item.metadata?.status !== "loading" && Boolean(item.metadata?.storageKey || item.metadata?.content),
+    ).map(item => [item.id, item])).values()];
+    const images = inputs.filter(item => item.type === CanvasNodeType.Image);
+    const videos = inputs.filter(item => item.type === CanvasNodeType.Video);
     const config = useEffectiveConfig();
-    const officialConnected = config.channels.some(channel => channel.enabled !== false && isBuiltinBeefTVChannel(channel) && channelHasGenerationCredential(channel));
-    const savedSettings = node.metadata?.upscale || createDefaultUpscaleSettings();
-    const baseSettings = savedSettings.image.mode === "transparent"
-        ? { ...savedSettings, image: { ...savedSettings.image, mode: "precision" as const, model: createDefaultUpscaleSettings().image.model } }
-        : savedSettings;
-    const [capabilities, setCapabilities] = useState<UpscaleCapabilities>();
-    const settings = useMemo(() => ({
-        ...baseSettings,
-        image: normalizeUpscaleMediaSelection(capabilities, "image", baseSettings.image),
-        video: normalizeUpscaleMediaSelection(capabilities, "video", baseSettings.video),
-    }), [baseSettings, capabilities]);
-    const [estimates, setEstimates] = useState<Record<string, UpscaleEstimate>>({});
+    const connected = config.channels.some(channel => channel.enabled !== false && isBuiltinBeefTVChannel(channel) && channelHasGenerationCredential(channel));
+    const capabilities = useQuery({
+        queryKey: ["media-upscale", "capabilities"],
+        queryFn: ({ signal }) => getUpscaleCapabilities(signal),
+        enabled: connected && !readOnly,
+        retry: mayRetry,
+    });
+    const imageMode = capabilities.data?.modes.find(mode => mode.mediaType === "image" && mode.mode === "precision" &&
+        (mode.models.includes(imagePreset) || mode.models.includes("Standard V2")))
+        ?? capabilities.data?.modes.find(mode => mode.mediaType === "image" && mode.mode === "precision" && mode.models.length > 0)
+        ?? capabilities.data?.modes.find(mode => mode.mediaType === "image" && mode.models.length > 0);
+    const videoMode = capabilities.data?.modes.find(mode => mode.mediaType === "video" && mode.mode === "generative" && mode.models.includes(videoPreset))
+        ?? capabilities.data?.modes.find(mode => mode.mediaType === "video" && mode.modelOptions?.some(opt => opt.billingMode === "mps_video_seconds"))
+        ?? capabilities.data?.modes.find(mode => mode.mediaType === "video" && mode.mode === "generative" && mode.models.length > 0)
+        ?? capabilities.data?.modes.find(mode => mode.mediaType === "video" && mode.models.length > 0);
+    const resolvedImageModel = imageMode?.models.includes(imagePreset) ? imagePreset
+        : imageMode?.models.includes("Standard V2") ? "Standard V2"
+        : imageMode?.modelOptions?.[0]?.id || imageMode?.models[0] || "Standard V2";
+    const resolvedVideoModelOption = videoMode?.modelOptions?.find(opt => opt.id === videoPreset)
+        ?? videoMode?.modelOptions?.find(opt => opt.billingMode === "mps_video_seconds")
+        ?? videoMode?.modelOptions?.[0];
+    const resolvedVideoModel = videoMode?.models.includes(videoPreset) ? videoPreset
+        : resolvedVideoModelOption?.id || videoMode?.models[0] || videoPreset;
+    const videoSupportsTargetShortEdge = resolvedVideoModelOption?.billingMode === "mps_video_seconds";
+    const saved = node.metadata?.upscale || createDefaultUpscaleSettings();
+    const defaultTarget = videos.length ? Math.max(720, ...videos.map(video => {
+        const width = video.metadata?.naturalWidth || 0;
+        const height = video.metadata?.naturalHeight || 0;
+        if (!width || !height) return 1080;
+        const desired = Math.round(Math.min(width, height) * saved.scale);
+        return resolutions.find(item => item.value >= desired)?.value ?? 2160;
+    })) : undefined;
+    const settings = {
+        ...saved,
+        channelId: "beeftv",
+        videoTargetShortEdge: videoSupportsTargetShortEdge ? (saved.videoTargetShortEdge ?? defaultTarget) : undefined,
+        video: { mode: videoMode?.mode ?? ("generative" as const), model: resolvedVideoModel },
+        image: {
+            mode: imageMode?.mode ?? ("precision" as const),
+            model: resolvedImageModel,
+            outputFormat: imageMode?.outputFormats.includes("png") ? "png" : (imageMode?.outputFormats[0] || "png"),
+        },
+    };
+    const patch = (change: Partial<typeof settings>) => actions.updateMetadata?.(node.id, { upscale: { ...settings, ...change } });
+    const modelAvailable = (!videos.length || videoMode) && (!images.length || imageMode);
+    const batch = node.metadata?.upscaleBatch;
+    const outputs = (batch?.items || []).flatMap(item => {
+        const output = getNode?.(item.outputNodeId);
+        return output ? [output] : [];
+    });
+    const batchState = deriveUpscaleBatchState(batch, outputs);
+    const resuming = !batchState.canStartNewBatch;
+    const rejected = batch?.items.filter(item => item.status === "rejected" && !item.taskId && !item.detachedResult) ?? [];
+    const canRetryBatch = !batchState.running && rejected.length > 0;
+    const quoteInputs = canRetryBatch
+        ? rejected.map(item => ({ source: getNode?.(item.sourceNodeId), savedParams: item.params }))
+        : inputs.map(source => ({ source, savedParams: undefined }));
+    const prepareResource = actions.prepareUpscaleResource;
+    const quote = useQuery({
+        queryKey: ["media-upscale", "quote", settings, quoteInputs.map(({ source, savedParams }) => [source && upscaleSourceKey(source), savedParams])],
+        queryFn: async ({ signal }) => Promise.all(quoteInputs.map(async ({ source, savedParams }) => {
+            if (!source) throw new Error("找不到原素材，无法估价");
+            if (!prepareResource) throw new Error("暂时无法准备超分素材");
+            const params = savedParams ?? upscaleParamsForNode(settings, source, await prepareResource(source));
+            signal.throwIfAborted();
+            const estimate = await estimateUpscale(params, signal);
+            return { sourceId: source.id, sourceKey: upscaleSourceKey(source), params, reservation: estimate.reservation };
+        })),
+        enabled: !readOnly && connected && Boolean(prepareResource) && quoteInputs.length > 0
+            && (canRetryBatch || (!resuming && Boolean(modelAvailable))),
+        retry: false,
+        staleTime: 30_000,
+    });
     const [notice, setNotice] = useState("");
-    const [estimating, setEstimating] = useState(false);
     const [busy, setBusy] = useState(false);
     const busyRef = useRef(false);
-    const batch = node.metadata?.upscaleBatch;
-    const batchState = deriveUpscaleBatchState(batch, (batch?.items || []).flatMap(item => { const output = getNode?.(item.outputNodeId); return output ? [output] : []; }));
-    const batchButtonLabel = !batch?.items.length ? "开始批量超分"
-        : batchState.running ? "继续 / 查询批次"
-        : batchState.succeeded === batchState.total ? "开始新批次"
-        : batch.items.some(item => item.status === "rejected" && !item.taskId) ? "重试未提交项"
-        : "查询原批次";
-    const channelId = officialConnected ? "beeftv" : "";
-    const patch = (change: Partial<typeof settings>) => actions.updateMetadata?.(node.id, { upscale: { ...settings, channelId, ...change } });
-    useEffect(() => {
-        const controller = new AbortController();
-        void getUpscaleCapabilities(controller.signal).then(value => { if (!controller.signal.aborted) setCapabilities(value); }).catch(cause => { if (!controller.signal.aborted) setNotice(cause instanceof Error ? cause.message : "读取超分能力失败"); });
-        return () => { controller.abort(); };
-    }, []);
-    const resolveCapabilityModel = (mediaType: "image" | "video", mode: UpscaleMode, desired: string) =>
-        resolveUpscaleCapabilityModel(capabilities, mediaType, mode, desired);
-    const hasImageInput = imageCount > 0;
-    const hasVideoInput = videoCount > 0;
-    const hasAvailableMode = Boolean(capabilities?.modes?.length)
-        && (!hasImageInput || isUpscaleMediaSelectionAvailable(capabilities, "image", settings.image))
-        && (!hasVideoInput || isUpscaleMediaSelectionAvailable(capabilities, "video", settings.video))
-        && (hasImageInput || hasVideoInput || isUpscaleMediaSelectionAvailable(capabilities, "image", settings.image) || isUpscaleMediaSelectionAvailable(capabilities, "video", settings.video));
-    const inputKey = inputs.map(item => `${item.id}:${item.type}:${item.metadata?.storageKey || ""}:${item.metadata?.content || ""}`).join("|");
-    const estimateKey = JSON.stringify({ channelId, settings });
-    useEffect(() => {
-        let active = true;
-        setEstimates({});
-        setNotice("");
-        if (!capabilities || !channelId || !inputs.length) return;
-        const timer = window.setTimeout(() => {
-            setEstimating(true);
-            void Promise.all(inputs.map(async input => {
-                const resourceId = ownedResourceIdFromMediaRef(input.metadata?.storageKey, input.metadata?.content) || ownedResourceIdFromMediaRef(undefined, input.metadata?.previewContent);
-                if (!resourceId) return null;
-                const mediaType = input.type === CanvasNodeType.Video ? "video" : "image";
-                const selected = settings[mediaType];
-                const capability = capabilities.modes.find(item => item.mediaType === mediaType && item.mode === selected.mode);
-                const model = resolveCapabilityModel(mediaType, selected.mode, selected.model);
-                if (!capability || !model) return null;
-                const value = await estimateUpscale({ resourceId, channelId, mode: selected.mode, model, scale: capability.fixedScale || settings.scale, ...(mediaType === "image" ? { outputFormat: settings.image.outputFormat || capability.outputFormats[0], enhancementStrength: settings.image.enhancementStrength } : {}) });
-                return [input.id, value] as const;
-            })).then(values => { if (active) setEstimates(Object.fromEntries(values.filter(value => value !== null))); }).catch(cause => { if (active) setNotice(cause instanceof Error ? cause.message : "估价暂不可用，提交前将重新校验"); }).finally(() => { if (active) setEstimating(false); });
-        }, 350);
-        return () => { active = false; window.clearTimeout(timer); setEstimating(false); };
-        // Inputs are identified by their stable media references rather than the graph array identity.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [inputKey, estimateKey, capabilities]);
-    const reservation = useMemo(() => Object.values(estimates).reduce((sum, item) => sum + item.reservation, 0), [estimates]);
-    const quotedCount = useMemo(() => Object.keys(estimates).length, [estimates]);
-    const activeBillingSummary = useMemo(() => {
-        if (!capabilities || !inputs.length) return "";
-        const summaries = new Set<string>();
-        for (const mediaType of (imageCount > 0 && videoCount > 0 ? ["image", "video"] : videoCount > 0 ? ["video"] : ["image"]) as Array<"image" | "video">) {
-            const selected = settings[mediaType];
-            const capability = capabilities.modes.find(item => item.mediaType === mediaType && item.mode === selected.mode);
-            const activeId = resolveCapabilityModel(mediaType, selected.mode, selected.model);
-            const matched = capability?.modelOptions?.find(opt => opt.id === activeId);
-            summaries.add(matched?.billingSummary || "账单核对完成后按实际费用结算，多扣的退回");
-        }
-        return summaries.size === 1 ? [...summaries][0] : "账单核对完成后按实际费用结算，多扣的退回";
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [capabilities, imageCount, inputs.length, settings, videoCount]);
-    const run = async (result?: CanvasNodeData) => {
+    const recoverable = outputs.filter(canRecoverUpscaleNode);
+    const run = async (recover = false) => {
         if (busyRef.current) return;
-        busyRef.current = true; setBusy(true); setNotice("");
+        busyRef.current = true;
+        setBusy(true);
+        setNotice("");
         try {
-            if (result) await actions.recoverUpscaleResult?.(result);
-            else {
-                const nextSettings = {
-                    ...settings,
-                    channelId,
-                    image: { ...settings.image, model: resolveCapabilityModel("image", settings.image.mode, settings.image.model) || settings.image.model },
-                    video: { ...settings.video, model: resolveCapabilityModel("video", settings.video.mode, settings.video.model) || settings.video.model },
-                };
-                patch(nextSettings);
-                await actions.startUpscaleBatch?.({ ...node, metadata: { ...node.metadata, upscale: nextSettings } });
+            if (recover) {
+                for (const output of recoverable) await actions.recoverUpscaleResult?.(output);
+            } else {
+                if (!resuming) patch({});
+                await actions.startUpscaleBatch?.({ ...node, metadata: { ...node.metadata, upscale: settings } }, quote.data);
             }
-        } catch (cause) { setNotice(cause instanceof Error ? cause.message : "处理失败，请查看原任务状态"); }
-        finally { busyRef.current = false; setBusy(false); }
+        } catch (cause) {
+            setNotice(cause instanceof Error ? cause.message : "处理失败，请查看原任务状态");
+            if (!resuming || canRetryBatch) void quote.refetch();
+        } finally {
+            busyRef.current = false;
+            setBusy(false);
+        }
     };
-    const renderMediaSettings = (mediaType: "image" | "video") => {
-        const selected = settings[mediaType];
-        const modes = availableUpscaleModesForMedia(capabilities, mediaType);
-        const capability = modes.find(item => item.mode === selected.mode);
-        const options = capability?.modelOptions?.length
-            ? capability.modelOptions
-            : (capability?.models || []).map(item => ({ id: item, label: item }));
-        const activeModel = resolveCapabilityModel(mediaType, selected.mode, selected.model) || options[0]?.id;
-        return <div className="space-y-3" key={mediaType}>
-            <div className="text-[var(--fs-tiny)] font-medium">{mediaType === "image" ? "图片" : "视频"}</div>
-            <Segmented block aria-label={`${mediaType === "image" ? "图片" : "视频"}超分模式`} value={selected.mode} options={modes.map(item => ({ label: modeLabels[item.mode], value: item.mode }))} onChange={mode => { const next = modes.find(item => item.mode === mode); const firstModel = next?.modelOptions?.[0]?.id || next?.models[0] || ""; patch({ [mediaType]: { ...selected, mode, model: firstModel, ...(mediaType === "image" ? { outputFormat: next?.outputFormats[0] || "png" } : {}) } }); }} />
-            {options.length > 1 ? <CanvasCatalogModelPicker capability={mediaType} label={`${mediaType === "image" ? "图片" : "视频"}增强模型`} value={activeModel} options={options.map(opt => ({ label: opt.label, value: opt.id, provider: "beeftv" }))} onChange={model => patch({ [mediaType]: { ...selected, model } })} /> : null}
-            {mediaType === "image" && capability?.outputFormats.length ? <Select getPopupContainer={trigger => trigger.parentElement || document.body} className="w-full" aria-label="图片输出格式" value={settings.image.outputFormat || capability.outputFormats[0]} options={capability.outputFormats.map(format => ({ label: format.toUpperCase(), value: format }))} onChange={outputFormat => patch({ image: { ...settings.image, outputFormat } })} /> : null}
-            {selected.mode === "generative" ? <p style={{ color: theme.node.muted }}>细节重建可能改变纹理与面部细节。</p> : null}
-        </div>;
-    };
-    return <div className="relative flex h-full w-full min-h-0 min-w-0 flex-col gap-3 p-3 text-[var(--fs-tiny)]" style={{ color: theme.node.text }}>
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
-            <div className="flex items-center gap-3" style={{ color: theme.node.muted }}><ImageIcon className="size-4" /><span>{imageCount} 张图片</span><Video className="ml-2 size-4" /><span>{videoCount} 个视频</span></div>
-            {!inputs.length && !batch?.items.length ? <div className="flex flex-1 items-center justify-center text-center" style={{ color: theme.node.muted }}>从左侧连接图片或视频<br />可一次处理多个素材</div> : <div className="thin-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto" data-canvas-no-drag data-canvas-no-zoom onWheel={event => event.stopPropagation()}>{[
-                ...inputs.map(input => ({ id: input.id, title: input.title || "未命名素材", type: input.type, item: batch?.items.find(item => item.sourceNodeId === input.id) })),
-                ...(batch?.items || []).filter(item => !inputs.some(input => input.id === item.sourceNodeId)).map(item => ({ id: item.sourceNodeId, title: item.sourceTitle, type: item.mediaType === "video" ? CanvasNodeType.Video : CanvasNodeType.Image, item })),
-            ].map(row => {
-                const result = row.item ? getNode?.(row.item.outputNodeId) : undefined;
-                const status = result?.metadata?.taskStatus;
-                const label = !row.item ? "" : status === "succeeded" && result?.metadata?.status !== "error" ? "已完成" : status === "failed" || status === "cancelled" ? "失败" : status === "running" || status === "queued" ? "处理中" : batchLabels[row.item.status];
-                return <div key={row.id} className="flex min-w-0 items-center gap-2">
-                    <span className="shrink-0" style={{ color: theme.node.muted }}>{row.type === CanvasNodeType.Video ? <Video className="size-4" /> : <ImageIcon className="size-4" />}</span>
-                    <span className="min-w-0 flex-1 truncate" title={row.title}>{row.title}</span>
-                    {label ? <span className="w-16 shrink-0 whitespace-nowrap text-right" title={row.item?.error || result?.metadata?.errorDetails} style={{ color: theme.node.muted }}>{label}</span> : null}
-                    {result && canRecoverUpscaleNode(result) ? <Button className="shrink-0" size="small" type="text" disabled={busy} onClick={() => void run(result)}>取回结果</Button> : null}
-                </div>;
-            })}</div>}
-
-        </div>
-        <div className="absolute inset-x-0 top-full z-20 mt-3 w-full space-y-5 rounded-[var(--r-lg)] border p-4 text-[var(--fs-tiny)] shadow-lg" style={{ background: theme.node.panel, borderColor: theme.node.edge }} data-canvas-no-drag data-canvas-no-zoom onPointerDown={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()} onWheel={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
-            <div className="flex items-center justify-between gap-3"><span>超分倍率</span><InputNumber aria-label="超分倍率" min={1} max={4} step={1} precision={0} value={settings.scale} onChange={value => patch({ scale: value || 2 })} /></div>
-            {imageCount > 0 || !videoCount ? renderMediaSettings("image") : null}
-            {videoCount > 0 ? renderMediaSettings("video") : null}
-            {inputs.length > 0 ? <div className="space-y-0.5" style={{ color: theme.node.muted }}>{estimating ? <span className="inline-flex items-center gap-1"><LoaderCircle className="size-3 animate-spin" />估价中</span> : quotedCount ? <>
-                <div>{`预计先扣 ¥${reservation.toFixed(2)}${quotedCount < inputs.length ? "（部分素材）" : ""}`}</div>
-                <div>{activeBillingSummary || "账单核对完成后按实际费用结算，多扣的退回"}</div>
-            </> : "提交前获取费用"}</div> : null}
-            {Object.keys(estimates).length ? <details><summary className="cursor-pointer" style={{ color: theme.node.muted }}>超分后的分辨率</summary><div className="mt-2 space-y-1">{inputs.map(input => { const estimate = estimates[input.id]; return estimate ? <div key={input.id} className="flex gap-2"><span className="min-w-0 flex-1 truncate">{input.title}</span><span className="shrink-0 tabular-nums">{estimate.output.width} × {estimate.output.height}</span></div> : null; })}</div></details> : null}
-            <div className="space-y-3">
-                <CanvasCatalogModelPicker capability="image" label="超分模型" placeholder="暂无可用超分模型" disabled={!officialConnected} value={channelId || undefined} options={officialConnected ? [{ label: "BeefTV超分模型", value: "beeftv", provider: "beeftv" }] : []} onChange={channelId => patch({ channelId })} />
-                {!officialConnected ? <p role="status" style={{ color: theme.node.muted }}>暂无可用超分模型，请连接 BeefTV 内置的官方算力。<a href="#/settings?section=channels" className="ml-1 underline">连接官方算力</a></p> : capabilities && !hasAvailableMode ? <p role="status" style={{ color: theme.node.muted }}>暂无可用超分模型，请刷新模型目录或更换输入素材类型。</p> : null}
+    const imageSize = images.length === 1 ? images[0].metadata : undefined;
+    const imageScales = (imageMode?.scales || [1, 2, 3, 4]).map(value => {
+        if (!imageSize?.naturalWidth || !imageSize.naturalHeight) {
+            return { value, label: ["原始尺寸", "高清", "超清", "最大尺寸"][value - 1] };
+        }
+        const width = imageSize.naturalWidth * value;
+        const height = imageSize.naturalHeight * value;
+        const longEdge = Math.max(width, height);
+        return {
+            value,
+            label: longEdge < 1024 ? `${longEdge} px` : `${Number((longEdge / 1024).toFixed(2))}K`,
+            title: `${width} × ${height}`,
+        };
+    });
+    const actionLabel = !resuming ? (batchState.total ? "开始新批次" : "开始批量超分")
+        : batchState.running ? "继续 / 查询批次" : canRetryBatch ? "重试未提交项" : "查询原批次";
+    const reservation = quote.data?.reduce((sum, item) => sum + item.reservation, 0);
+    const modelError = capabilities.isError || Boolean(capabilities.data && !modelAvailable);
+    const status = (!connected && !readOnly ? "请连接 BeefTV 官方算力" : "")
+        || (!inputs.length ? "从左侧连接图片或视频" : "")
+        || (resuming && !canRetryBatch ? `已完成 ${batchState.succeeded}/${batchState.total}${batchState.failed ? ` · ${batchState.failed} 项失败` : ""}` : "")
+        || (modelError ? "暂时无法加载超分模型" : "")
+        || (capabilities.isFetching ? "正在加载超分模型…" : "")
+        || (quote.isFetching ? "正在估价…" : "")
+        || (quote.error?.message ?? "")
+        || (reservation !== undefined ? `预计先扣 ¥${reservation.toFixed(2)}` : "提交前获取费用");
+    const submitDisabled = busy || !actions.startUpscaleBatch
+        || ((!resuming || canRetryBatch) && (!connected || !quote.data?.length || quote.isFetching || quote.isError))
+        || (!resuming && (!inputs.length || !modelAvailable));
+    const showVideo = videos.length > 0;
+    const statusIsError = notice || quote.isError || modelError;
+    return (
+        <section aria-label="画质提升参数"
+            className="canvas-node-composer canvas-node-composer--libtv canvas-node-composer-type flex flex-col gap-2.5"
+            style={{ background: theme.node.panel, color: theme.node.text, boxShadow: theme.node.shadow,
+                "--canvas-composer-surface": theme.node.panel, "--canvas-composer-control-surface": theme.toolbar.itemHover } as CSSProperties}>
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
+                <span style={{ color: theme.node.muted }}>模型</span>
+                <div className="flex min-w-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium" style={{ background: theme.toolbar.itemHover }}>
+                    <WandSparkles aria-hidden className="size-3.5 shrink-0" />
+                    <span>BeefTV超分模型</span>
+                </div>
+                {showVideo && videoSupportsTargetShortEdge ? <>
+                    <label htmlFor={videoResolutionId} style={{ color: theme.node.muted }}>分辨率</label>
+                    <Select id={videoResolutionId} aria-label="输出清晰度" size="small"
+                        disabled={readOnly || busy || resuming}
+                        options={resolutions.map((resolution, index) => ({ ...resolution, disabled: videos.some(video => {
+                            const short = Math.min(video.metadata?.naturalWidth || 0, video.metadata?.naturalHeight || 0);
+                            return short > 0 && (short > resolution.value || short * 4 <= (resolutions[index - 1]?.value ?? 0));
+                        }) }))}
+                        value={settings.videoTargetShortEdge} onChange={videoTargetShortEdge => patch({ videoTargetShortEdge })} />
+                </> : null}
+                {images.length ? <>
+                    <label htmlFor={imageSizeId} style={{ color: theme.node.muted }}>图片尺寸</label>
+                    <Select id={imageSizeId} aria-label="图片输出尺寸" size="small" value={settings.scale}
+                        options={imageScales} disabled={readOnly || busy || resuming} onChange={scale => patch({ scale })} />
+                </> : null}
             </div>
-            {notice ? <p role="alert" className="break-words" style={{ color: "var(--status-error)" }}>{notice}</p> : null}
-            <Button type="primary" block loading={busy} disabled={!inputs.length || !channelId || !hasAvailableMode || !actions.startUpscaleBatch} onClick={() => void run()}>{batchButtonLabel}</Button>
-        </div>
-    </div>;
+            <footer className="flex min-w-0 items-center justify-end gap-2">
+                <span role={statusIsError ? "alert" : "status"} className="min-w-0 flex-1 break-words tabular-nums" style={{ color: theme.node.muted }}>{notice ? `${notice} · ${status}` : status}</span>
+                {!readOnly && modelError && connected ? <Button size="small" onClick={() => void capabilities.refetch()}>重试加载模型</Button> : null}
+                {!readOnly && quote.isError ? <Button size="small" onClick={() => void quote.refetch()}>重新估价</Button> : null}
+                {!readOnly && recoverable.length ? <Button size="small" disabled={busy} onClick={() => void run(true)}>取回结果</Button> : null}
+                {!readOnly ? <Button type="text" className="canvas-node-composer-submit canvas-node-composer-submit-canvas"
+                    aria-label={actionLabel} title={actionLabel} disabled={submitDisabled} aria-busy={busy || undefined}
+                    style={{ "--canvas-composer-submit-action": submitDisabled ? theme.toolbar.itemHover : theme.node.activeStroke,
+                        "--canvas-composer-submit-action-fg": submitDisabled ? theme.node.faint : theme.canvas.background } as CSSProperties}
+                    onClick={() => void run()}>
+                    <span className="canvas-node-composer-submit-action" aria-hidden>
+                        {busy ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <ArrowUp className="size-3.5" strokeWidth={2.4} />}
+                    </span>
+                </Button> : null}
+            </footer>
+        </section>
+    );
 }
