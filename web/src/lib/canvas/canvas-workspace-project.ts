@@ -83,6 +83,17 @@ export function resolveWorkspaceExportCanvasIds<T extends CanvasWorkspaceProject
     return [...new Set([...resolved, ...unresolved])];
 }
 
+export function resolveCanvasWorkspaceProjectTitle<T extends CanvasWorkspaceProjectRecord & { title?: string }>(
+    canvases: readonly T[],
+    canvasId: string,
+    fallback = "未命名项目",
+): string {
+    const current = canvases.find((canvas) => canvas.id === canvasId);
+    if (!current) return fallback;
+    const root = listCanvasWorkspaceProjectCanvases(canvases, canvasId)[0] || current;
+    return root.title?.trim() || current.title?.trim() || fallback;
+}
+
 function compareCanvasCreationOrder(left: CanvasWorkspaceProjectRecord, right: CanvasWorkspaceProjectRecord) {
     const created = left.createdAt.localeCompare(right.createdAt);
     return created || left.id.localeCompare(right.id);

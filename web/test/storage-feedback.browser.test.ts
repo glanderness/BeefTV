@@ -250,3 +250,31 @@ test("custom single-canvas capacity limit can be customized or set to unlimited"
         await page.close();
     }
 }, 30000);
+for (const width of [1440, 390])
+    for (const dark of [false, true])
+        test(`auto-download directory controls and unavailable state ${width}px dark=${dark}`, async () => {
+            const page = await browser.newPage({ viewport: { width, height: 900 } });
+            const errors: string[] = [];
+            page.on("pageerror", (error) => errors.push(error.message));
+            try {
+                await page.goto(String(server.url) + (dark ? "?dark" : ""));
+                await page.getByText("C:\\Users\\Creator\\Downloads\\BeefTV", { exact: true }).waitFor();
+                await page.getByText("默认下载目录 · 按项目名自动建文件夹", { exact: true }).waitFor();
+                expect(await page.getByRole("button", { name: "恢复默认自动下载目录", exact: true }).count()).toBe(0);
+                await page.getByRole("button", { name: "更改自动下载目录", exact: true }).click();
+                await page.getByText("E:\\BeefTVExports", { exact: true }).waitFor();
+                await page.getByText("自定义目录 · 按项目名自动建文件夹", { exact: true }).waitFor();
+                await page.getByRole("button", { name: "恢复默认自动下载目录", exact: true }).waitFor();
+                expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+                await page.screenshot({ path: import.meta.dir + `/../../output/storage-autodownload-${width}-${dark}.png`, fullPage: true });
+                await page.getByRole("button", { name: "恢复默认自动下载目录", exact: true }).click();
+                await page.getByText("C:\\Users\\Creator\\Downloads\\BeefTV", { exact: true }).waitFor();
+                expect(await page.getByRole("button", { name: "恢复默认自动下载目录", exact: true }).count()).toBe(0);
+                await page.goto(String(server.url) + "?autodownload-missing" + (dark ? "&dark" : ""));
+                await page.getByRole("alert").filter({ hasText: "当前目录不可用，请检查磁盘连接或重新选择" }).waitFor();
+                expect(await page.getByRole("button", { name: "打开自动下载目录", exact: true }).isDisabled()).toBe(true);
+                expect(errors).toEqual([]);
+            } finally {
+                await page.close();
+            }
+        }, 30000);

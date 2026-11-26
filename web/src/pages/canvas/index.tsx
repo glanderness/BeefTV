@@ -15,6 +15,7 @@ import { LibraryCardShell } from "@/components/canvas/library-card-shell";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { canvasExportProgressLabel, exportCanvasProjectsByIds, type CanvasExportProgress } from "@/lib/canvas/canvas-export";
+import { downloadCanvasProjectsMediaByIds } from "@/lib/canvas/canvas-batch-download";
 import { restoreCanvasArchive } from "@/lib/canvas/canvas-archive-restore";
 import { readCanvasLibraryCover } from "@/lib/canvas/canvas-library-cover";
 import { createCanvasLibraryFolder, deleteCanvasLibraryFolder, hydrateCanvasLibraryFolders, persistCanvasFolderCover, renameCanvasLibraryFolder } from "@/lib/canvas/canvas-folder-storage";
@@ -216,6 +217,17 @@ export default function CanvasPage() {
         const ids = resolveWorkspaceExportCanvasIds(localProjects, [project.id]);
         return exportCanvasByIds(ids, `${project.title || brandName}-${ids.length}个画布`);
     };
+    const downloadWorkspaceProjectMedia = (project: CanvasLibrarySummary) => {
+        const ids = resolveWorkspaceExportCanvasIds(localProjects, [project.id]);
+        return downloadCanvasProjectsMediaByIds(
+            ids,
+            async (id) => {
+                const cached = useCanvasStore.getState().openProject(id);
+                return cached && !cached.summaryOnly ? cached : loadCanvasProjectForEditing(id);
+            },
+            message,
+        );
+    };
     const exportFolderProjects = (folder: { id: string; name: string }) => {
         const folderProjectIds = projects.filter((project) => project.folderId === folder.id).map((project) => project.id);
         const ids = resolveWorkspaceExportCanvasIds(localProjects, folderProjectIds);
@@ -367,6 +379,7 @@ export default function CanvasPage() {
                                     }
                                 }}
                                 onDuplicate={() => duplicateCanvasProject(project)}
+                                onDownloadMedia={() => { void downloadWorkspaceProjectMedia(project); }}
                                 onExport={() => exportWorkspaceProject(project)}
                                 onDelete={() => {
                                     setDeleteIds([project.id]);

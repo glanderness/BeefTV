@@ -8,6 +8,7 @@ import {
     batchDownloadCanvasMediaNodes,
     buildBatchDownloadFilename,
     collectDownloadableMediaNodes,
+    downloadCanvasProjectsMediaByIds,
     runCanvasBatchDownloadWithFeedback,
 } from "./canvas-batch-download";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -581,5 +582,99 @@ describe("canvas-batch-download", () => {
             }),
         );
         assert.equal(canvasMenuMarkup.includes("批量下载素材 (2)"), true);
+    });
+
+    test("downloadCanvasProjectsMediaByIds aggregates media across canvases, handles empty projects, and guards concurrency", async () => {
+        const logs: string[] = [];
+        const msg = {
+            loading: (cfg: { key: string; content: string }) => logs.push(`loading:${cfg.content}`),
+            destroy: (key?: string) => logs.push(`destroy:${key ?? ""}`),
+            info: (content: string) => logs.push(`info:${content}`),
+            success: (content: string | { content: string }) => logs.push(`success:${typeof content === "string" ? content : content.content}`),
+            warning: (content: string | { content: string }) => logs.push(`warning:${typeof content === "string" ? content : content.content}`),
+            error: (content: string | { content: string }) => logs.push(`error:${typeof content === "string" ? content : content.content}`),
+        };
+
+        // Empty project reports info without opening save dialog.
+        let saveCalled = false;
+        const emptyResult = await downloadCanvasProjectsMediaByIds(
+            ["c-empty"],
+            async () => ({ nodes: [makeNode({ id: "t1", type: CanvasNodeType.Text, metadata: { content: "hello" } })] }),
+            msg,
+            {
+                saveNativeBatch: async () => {
+                    saveCalled = true;
+                    return { saved: 0, failed: 0 };
+                },
+            },
+        );
+        assert.equal(emptyResult, null);
+        assert.equal(saveCalled, false);
+        assert.equal(logs.some((entry) => entry === "info:当前项目暂无可下载的图片、视频或音频素材"), true);
+
+        // Multi-canvas aggregation downloads only valid media nodes and blocks concurrent re-entry while loading.
+        let releaseFirstLoad!: () => void;
+        const firstLoadGate = new Promise<void>((resolve) => {
+            releaseFirstLoad = resolve;
+        });
+        const downloadedNames: string[] = [];
+        const projects: Record<string, CanvasNodeData[]> = {
+            "c-1": [
+                makeNode({ id: "img-1", type: CanvasNodeType.Image, title: "首帧", metadata: { storageKey: "resource:r1", content: "/api/resources/r1/file", mimeType: "image/png" } }),
+                makeNode({ id: "txt-1", type: CanvasNodeType.Text, metadata: { content: "ignored" } }),
+            ],
+            "c-2": [
+                makeNode({ id: "vid-1", type: CanvasNodeType.Video, title: "镜头一", metadata: { storageKey: "resource:r2", content: "/api/resources/r2/file", mimeType: "video/mp4" } }),
+            ],
+        };
+
+        const run1 = downloadCanvasProjectsMediaByIds(
+            ["c-1", "c-2", "c-1"],
+            async (id) => {
+                if (id === "c-1") await firstLoadGate;
+                return { nodes: projects[id] };
+            },
+            msg,
+            {
+                loadResourceBlob: async () => new Blob(["ok"], { type: "application/octet-stream" }),
+                triggerDownload: (_href, filename) => downloadedNames.push(filename),
+                staggerMs: 0,
+            },
+        );
+
+        const run2 = await downloadCanvasProjectsMediaByIds(
+            ["c-1"],
+            async () => ({ nodes: projects["c-1"] }),
+            msg,
+        );
+        assert.equal(run2, null);
+        assert.equal(logs.some((entry) => entry === "info:正在批量下载中，请稍候完成"), true);
+
+        releaseFirstLoad();
+        const outcome = await run1;
+        assert.equal(outcome?.downloaded, 2);
+        assert.equal(outcome?.failed, 0);
+        assert.deepEqual(downloadedNames, ["01_首帧.png", "02_镜头一.mp4"]);
+
+        // Load error must surface via message.error instead of looking like an empty project.
+        const errLogs: string[] = [];
+        const errMsg = {
+            loading: (cfg: { key: string; content: string }) => errLogs.push(`loading:${cfg.content}`),
+            destroy: (key?: string) => errLogs.push(`destroy:${key ?? ""}`),
+            info: (content: string) => errLogs.push(`info:${content}`),
+            success: (content: string | { content: string }) => errLogs.push(`success:${typeof content === "string" ? content : content.content}`),
+            warning: (content: string | { content: string }) => errLogs.push(`warning:${typeof content === "string" ? content : content.content}`),
+            error: (content: string | { content: string }) => errLogs.push(`error:${typeof content === "string" ? content : content.content}`),
+        };
+        const failedLoad = await downloadCanvasProjectsMediaByIds(
+            ["c-broken"],
+            async () => {
+                throw new Error("画布读取失败（后端不可达）");
+            },
+            errMsg,
+        );
+        assert.equal(failedLoad, null);
+        assert.equal(errLogs.some((entry) => entry === "error:画布读取失败（后端不可达）"), true);
+        assert.equal(errLogs.some((entry) => entry.startsWith("info:当前项目暂无")), false);
     });
 });

@@ -18,6 +18,7 @@ import {
     setAutoDownloadGeneratedMedia,
     triggerAutoDownloadForCompletedTask,
 } from "@/lib/auto-download-preference";
+import { resolveCanvasWorkspaceProjectTitle } from "@/lib/canvas/canvas-workspace-project";
 
 function createMemoryStorage(): Storage {
     const store = new Map<string, string>();
@@ -152,6 +153,98 @@ describe("auto-download-preference", () => {
                 mimeType: "audio/wav",
             }),
         ).toBe("生成音频_audio99.wav");
+    });
+
+    it("uses native DesktopApp.SaveAutoDownloadedMedia with projectName inside Wails desktop shell", async () => {
+        setAutoDownloadGeneratedMedia(true);
+        const nativeCalls: Array<{ fileName: string; resourceId: string; projectName: string }> = [];
+        Object.assign(window, {
+            location: { protocol: "wails:", hostname: "wails.localhost" },
+            go: {
+                main: {
+                    DesktopApp: {
+                        SaveAutoDownloadedMedia: async (fileName: string, resourceId: string, projectName: string) => {
+                            nativeCalls.push({ fileName, resourceId, projectName });
+                            return {
+                                directory: `/Users/demo/Downloads/BeefTV/${projectName}`,
+                                savedPath: `/Users/demo/Downloads/BeefTV/${projectName}/${fileName}`,
+                            };
+                        },
+                    },
+                },
+            },
+        });
+
+        const ok = await triggerAutoDownloadForCompletedTask({
+            taskId: "task-native-1",
+            url: "/api/resources/res-native-99/file",
+            storageKey: "resource:res-native-99",
+            title: "第一镜：雨夜街角",
+            projectName: "赛博短剧",
+            mediaType: "video",
+            mimeType: "video/mp4",
+        });
+
+        expect(ok).toBe(true);
+        expect(nativeCalls).toEqual([
+            {
+                fileName: "第一镜：雨夜街角_native-1.mp4",
+                resourceId: "res-native-99",
+                projectName: "赛博短剧",
+            },
+        ]);
+        expect(hasTaskBeenAutoDownloaded("task-native-1")).toBe(true);
+    });
+
+    it("rolls back taskId and notifies onError when native auto-download fails", async () => {
+        setAutoDownloadGeneratedMedia(true);
+        const errors: string[] = [];
+        Object.assign(window, {
+            location: { protocol: "wails:", hostname: "wails.localhost" },
+            go: {
+                main: {
+                    DesktopApp: {
+                        SaveAutoDownloadedMedia: async () => {
+                            throw new Error("自动下载目录当前不可用，请检查磁盘连接");
+                        },
+                    },
+                },
+            },
+        });
+
+        const ok = await triggerAutoDownloadForCompletedTask({
+            taskId: "task-native-fail",
+            url: "/api/resources/res-native-100/file",
+            storageKey: "resource:res-native-100",
+            title: "分镜二",
+            projectName: "赛博短剧",
+            mediaType: "image",
+            mimeType: "image/png",
+            onError: (err) => {
+                errors.push(err instanceof Error ? err.message : String(err));
+            },
+        });
+
+        expect(ok).toBe(false);
+        expect(hasTaskBeenAutoDownloaded("task-native-fail")).toBe(false);
+        expect(errors).toEqual(["自动下载目录当前不可用，请检查磁盘连接"]);
+    });
+
+    it("resolves workspace root project title for secondary canvases in the same project", () => {
+        const canvases = [
+            { id: "proj-root", title: "雨夜侦探", createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" },
+            { id: "canvas-2", workspaceProjectId: "proj-root", title: "画布 2", createdAt: "2026-11-02T00:00:00Z", updatedAt: "2026-11-02T00:00:00Z" },
+        ];
+        expect(resolveCanvasWorkspaceProjectTitle(canvases, "proj-root")).toBe("雨夜侦探");
+        expect(resolveCanvasWorkspaceProjectTitle(canvases, "canvas-2")).toBe("雨夜侦探");
+        expect(resolveCanvasWorkspaceProjectTitle(canvases, "missing-id")).toBe("未命名项目");
+
+        // When the original root canvas has been deleted, align with project library root ordering (earliest remaining canvas).
+        const orphaned = [
+            { id: "canvas-3", workspaceProjectId: "deleted-root", title: "画布 3", createdAt: "2026-11-03T00:00:00Z", updatedAt: "2026-11-03T00:00:00Z" },
+            { id: "canvas-2", workspaceProjectId: "deleted-root", title: "首集分镜", createdAt: "2026-11-02T00:00:00Z", updatedAt: "2026-11-02T00:00:00Z" },
+        ];
+        expect(resolveCanvasWorkspaceProjectTitle(orphaned, "canvas-3")).toBe("首集分镜");
     });
 });
 

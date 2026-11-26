@@ -17,6 +17,13 @@ document.body.style.color="var(--foreground)";
 const initial = { dataDir: "C:\\Users\\Creator\\AppData\\Roaming\\BeefTV", usedBytes: 1024 ** 3, freeBytes: 40 * 1024 ** 3 };
 let usage = JSON.parse(localStorage.getItem("fixture-usage") || JSON.stringify(initial));
 if (params.has("cleanup-error")) usage = { ...initial, dataDir: "D:\\BeefTV", previousDir: initial.dataDir, previousBytes: initial.usedBytes };
+const defaultAutoDownloadDir = "C:\\Users\\Creator\\Downloads\\BeefTV";
+let autoDownloadState: { directory: string; defaultDirectory: string; customDirectory?: string; available: boolean } = {
+    directory: params.has("custom-autodownload") ? "E:\\BeefTVExports" : defaultAutoDownloadDir,
+    defaultDirectory: defaultAutoDownloadDir,
+    ...(params.has("custom-autodownload") ? { customDirectory: "E:\\BeefTVExports" } : {}),
+    available: !params.has("autodownload-missing"),
+};
 const config = { enabled: params.has("auto"), endpoint: params.has("auto") ? "https://s3.example.com" : "", bucket: params.has("auto") ? "example-media" : "", region: "auto", accessKeyId: params.has("auto") ? "example-access" : "", publicBaseURL: params.has("auto") ? "https://media.example.com" : "", hasSecret: params.has("auto") };
 window.go = {
     main: {
@@ -24,6 +31,29 @@ window.go = {
             StartupState: async () => ({ state: "ready", baseURL: "http://127.0.0.1:9999/api", launchToken: "fixture" }),
             StorageSettings: async () => usage,
             ChooseStorageDirectory: async () => "D:\\BeefTV",
+            AutoDownloadSettings: async () => ({ ...autoDownloadState }),
+            ChooseAutoDownloadDirectory: async () => {
+                autoDownloadState = {
+                    directory: "E:\\BeefTVExports",
+                    defaultDirectory: defaultAutoDownloadDir,
+                    customDirectory: "E:\\BeefTVExports",
+                    available: true,
+                };
+                return { ...autoDownloadState };
+            },
+            ResetAutoDownloadDirectory: async () => {
+                autoDownloadState = {
+                    directory: defaultAutoDownloadDir,
+                    defaultDirectory: defaultAutoDownloadDir,
+                    available: true,
+                };
+                return { ...autoDownloadState };
+            },
+            OpenAutoDownloadDirectory: async () => undefined,
+            SaveAutoDownloadedMedia: async (fileName, _resourceID, projectName) => ({
+                directory: `${autoDownloadState.directory}\\${projectName || "未命名项目"}`,
+                savedPath: `${autoDownloadState.directory}\\${projectName || "未命名项目"}\\${fileName}`,
+            }),
             MigrateStorage: async (path) => {
                 if (params.has("migration-error")) throw new Error("迁移未完成，原数据已保留，但工作区未能重新打开。请重启 BeefTV\n\nopen C:\\private\\data: fixture failure");
                 usage = { ...usage, dataDir: path, previousDir: initial.dataDir, previousBytes: initial.usedBytes };

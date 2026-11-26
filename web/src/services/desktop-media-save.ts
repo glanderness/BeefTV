@@ -22,6 +22,7 @@ export function isWailsNativeShell() {
         typeof window.go?.main?.DesktopApp?.SaveOwnedMedia === "function" ||
         typeof window.go?.main?.DesktopApp?.SaveOwnedMediaBatch === "function" ||
         typeof window.go?.main?.DesktopApp?.ChooseOwnedMediaBatchDirectory === "function" ||
+        typeof window.go?.main?.DesktopApp?.SaveAutoDownloadedMedia === "function" ||
         typeof window.go?.main?.DesktopApp?.SaveOwnedArtifact === "function"
     );
 }
@@ -160,6 +161,31 @@ export async function downloadBrowserMediaSafely(options: {
     }
     saveAs(browserUrl, fileName);
     return "saved";
+}
+
+/**
+ * Silent auto-download entry point: uses native Go disk streaming in desktop
+ * shells (avoiding WKWebView broken `saveAs(blob)` and base64 memory bloat),
+ * falling back to browser download when running on hosted web.
+ */
+export async function saveAutoDownloadedMedia(options: {
+    fileName: string;
+    resourceId?: string;
+    browserUrl?: string;
+    projectName?: string;
+    loadResourceBlob?: (storageKey: string) => Promise<Blob | null>;
+}): Promise<"saved"> {
+    const fileName = sanitizeDownloadFileName(options.fileName);
+    const browserUrl = options.browserUrl?.trim() || "";
+    const resourceId = options.resourceId?.trim() || ownedResourceIdFromMediaRef(undefined, browserUrl);
+    if (isWailsNativeShell()) {
+        const nativeSave = typeof window === "undefined" ? undefined : window.go?.main?.DesktopApp?.SaveAutoDownloadedMedia;
+        if (!nativeSave) throw new Error("当前桌面端暂不支持原生自动下载");
+        if (!resourceId) throw new Error("没有可自动保存的本机文件");
+        await nativeSave(fileName, resourceId, options.projectName?.trim() || "");
+        return "saved";
+    }
+    return downloadBrowserMediaSafely({ ...options, fileName, resourceId, browserUrl });
 }
 
 export async function downloadOwnedOrBrowserMedia(options: { fileName: string; resourceId?: string; browserUrl?: string }): Promise<OwnedMediaSaveResult> {
