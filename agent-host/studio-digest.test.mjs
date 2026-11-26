@@ -217,7 +217,7 @@ describe('normalizeSystemHeaderMessages & withCurrentStudio', () => {
     ];
     expect(pruneHistoricalToolImages(interruptedThenNextTurn)[2].content[1]).toEqual({
       type: 'text',
-      text: '[历史媒体预览图已省略，如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
+      text: '[此前已展示过的历史媒体预览图已在后续步骤折叠以节省上下文；如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
     });
 
     // 一旦助手已读完图片并开始调用 canvas_node_configure，后续步骤不再重复上传旧 toolResult 的 base64
@@ -232,16 +232,50 @@ describe('normalizeSystemHeaderMessages & withCurrentStudio', () => {
     const projectedAfterWrite = withCurrentStudio(afterCanvasConfigure, '现场摘要');
     expect(projectedAfterWrite[2].content[1]).toEqual({
       type: 'text',
-      text: '[历史媒体预览图已省略，如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
+      text: '[此前已展示过的历史媒体预览图已在后续步骤折叠以节省上下文；如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
     });
     expect(projectedAfterWrite[3].content[1]).toEqual({
       type: 'text',
-      text: '[历史媒体预览图已省略，如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
+      text: '[此前已展示过的历史媒体预览图已在后续步骤折叠以节省上下文；如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
     });
     // 小尺寸图标/占位图（<16KB）保持原样以维持前缀缓存一致
     expect(projectedAfterWrite[2].content[2]).toEqual(tinyPart);
     // 原数组不发生原地修改（保证持久层不变）
     expect(freshBatch[2].content[1]).toEqual(imgPart('BASE64_1'));
+
+    // 扫描版 PDF（file_read pdf-images）在同轮继续读另一份文本或调用 file_export 后仍保持可见（避免 KV-cache 破坏与模型误判幻觉）；
+    // 进入下一轮用户消息（或新一批扫描页大图）后才折叠，且占位提示准确引导 file_read 而非 media_inspect
+    const scannedPdfBatch = [
+      { role: 'user', content: [{ type: 'text', text: '读取扫描件并导出 Markdown' }] },
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'f1', name: 'file_read', arguments: { resourceId: 'pdf-1' } }] },
+      {
+        role: 'toolResult',
+        toolCallId: 'f1',
+        toolName: 'file_read',
+        content: [{ type: 'text', text: '{"op":"file.read","result":{"format":"pdf-images"}}' }, imgPart('SCAN_PAGE_1')],
+      },
+    ];
+    const duringSecondTextRead = [
+      ...scannedPdfBatch,
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'f2', name: 'file_read', arguments: { resourceId: 'notes-md' } }] },
+      { role: 'toolResult', toolCallId: 'f2', toolName: 'file_read', content: [{ type: 'text', text: '{"op":"file.read","result":{"content":"补充说明"}}' }] },
+    ];
+    expect(pruneHistoricalToolImages(duringSecondTextRead)[2].content[1]).toEqual(imgPart('SCAN_PAGE_1'));
+    const afterFileExportSameTurn = [
+      ...scannedPdfBatch,
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'f3', name: 'file_export', arguments: { fileName: 'brief.md' } }] },
+      { role: 'toolResult', toolCallId: 'f3', toolName: 'file_export', content: [{ type: 'text', text: '{"op":"file.export"}' }] },
+    ];
+    expect(pruneHistoricalToolImages(afterFileExportSameTurn)[2].content[1]).toEqual(imgPart('SCAN_PAGE_1'));
+    const nextTurnAfterFileExport = [
+      ...afterFileExportSameTurn,
+      { role: 'assistant', content: [{ type: 'text', text: '已导出 brief.md' }] },
+      { role: 'user', content: [{ type: 'text', text: '继续下一步' }] },
+    ];
+    expect(pruneHistoricalToolImages(nextTurnAfterFileExport)[2].content[1]).toEqual({
+      type: 'text',
+      text: '[此前已展示过的文档扫描页画面已在后续步骤折叠以节省上下文；你此前据此读取并记录的内容仍然有效，如需再次查看请重新调用 file_read]',
+    });
 
     // 跨轮进入新用户消息并读取新一批视频帧时，旧轮图片被裁剪、新轮刚读出的视频帧保留
     const nextTurnWithNewFrames = [
