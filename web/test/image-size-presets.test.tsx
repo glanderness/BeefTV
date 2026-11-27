@@ -97,11 +97,17 @@ describe("统一图片分辨率与宽高比", () => {
         expect(imagePresetForRatio("2k", "34:22").ratio).toBe("17:11");
     });
 
-    test("三档预设与任意合理比例都满足像素范围", () => {
+    test("三档预设与任意合理比例都满足像素范围，且 2K 预设不超过 2048x2048 像素", () => {
+        expect(imagePresetForRatio("2k", "16:9").size).toBe("2560x1440");
+        expect(imagePresetForRatio("2k", "9:16").size).toBe("1440x2560");
+        expect(imagePresetForRatio("2k", "21:9").size).toBe("3024x1296");
         for (const tier of IMAGE_RESOLUTIONS)
             for (const ratio of [...IMAGE_RATIOS, "17:11", "21:8", "42:18", "3:1", "1:3", "99999:99998"]) {
                 const preset = imagePresetForRatio(tier, ratio);
                 expect(() => validateImageSize(preset.width, preset.height, true)).not.toThrow();
+                if (tier === "2k") {
+                    expect(preset.width * preset.height).toBeLessThanOrEqual(2048 * 2048);
+                }
             }
         for (const ratio of ["0:9", "4:1", "1:4", "NaN:1", "1.5:1", "999999999:1"]) {
             expect(() => imagePresetForRatio("1k", ratio)).toThrow();

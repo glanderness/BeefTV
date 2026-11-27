@@ -290,11 +290,9 @@ export function CanvasScriptNodeContent({
                         style={{ "--tw-ring-color": theme.node.muted } as CSSProperties}
                         onMouseDown={(event) => event.stopPropagation()}
                         onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            setMoreMenuOpen(true);
-                        }}
+                        onClick={(event) => event.stopPropagation()}
                         aria-label="更多操作"
+                        aria-expanded={moreMenuOpen}
                     >
                         <MoreHorizontal className="size-3.5" />
                     </button>

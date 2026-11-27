@@ -9,6 +9,7 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { defaultImageParamsForModel, initialMaskEditConfig, modelCompatibilityError } from "@/lib/model-selection";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
+import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 
 export type CanvasImageMaskEditPayload = {
     prompt: string;
@@ -38,20 +39,25 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
     const [mode, setMode] = useState<DrawMode>("paint");
     const [error, setError] = useState("");
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const [generationConfig, setGenerationConfig] = useState<AiConfig>(() => initialMaskEditConfig(config));
+    const [generationConfig, setGenerationConfig] = useState<AiConfig>(() => initialMaskEditConfig(config, useCreationPreferencesStore.getState().preferences.maskEditModel));
     const [isSubmitting, setIsSubmitting] = useState(false);
     const theme = canvasThemes[useActiveTheme()];
     const compatibilityError = modelCompatibilityError(generationConfig, generationConfig.model, editRequirements);
     const selectedImage = modelCapabilityConfigFor(generationConfig, generationConfig.model).image;
     const fixedOutputs = selectedImage?.fixedOutputs;
     const capabilityNotice = selectedImage?.references.maxImages === 0 ? "当前模型配置仅支持文生图，不支持图片重绘" : "";
+    const handleModelChange = (model: string) => {
+        useCreationPreferencesStore.getState().rememberMaskEditModel(model);
+        setError("");
+        setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }));
+    };
 
     useEffect(() => {
         setPrompt(""); setBrushSize(defaultBrushSize); setMode("paint"); setError(""); setSettingsOpen(false);
         clearCanvas(maskCanvasRef.current); clearCanvas(previewCanvasRef.current);
     }, [imageDimensions.height, imageDimensions.width]);
     useEffect(() => {
-        const keydown = (event: KeyboardEvent) => { if (event.key === "Escape") settingsOpen ? setSettingsOpen(false) : onCancel(); };
+        const keydown = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) settingsOpen ? setSettingsOpen(false) : onCancel(); };
         window.addEventListener("keydown", keydown);
         return () => window.removeEventListener("keydown", keydown);
     }, [onCancel, settingsOpen]);
@@ -106,15 +112,17 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
             <ToolButton title="重置蒙版" theme={theme} onClick={resetMask}><RotateCcw /></ToolButton>
         </div>
 
-        <div data-canvas-live-scale data-canvas-no-zoom="true" className="absolute left-1/2 top-[calc(100%+14px)] flex w-[min(520px,90vw)] items-center gap-1.5 rounded-2xl border p-1.5 shadow-2xl backdrop-blur-xl" style={{ ...barStyle, transform: screenTransform, transformOrigin: "center top" }}>
+        <div data-canvas-live-scale data-canvas-no-zoom="true" className="absolute left-1/2 top-[calc(100%+14px)] flex w-[min(640px,92vw)] items-center gap-1.5 rounded-2xl border p-1.5 shadow-2xl backdrop-blur-xl" style={{ ...barStyle, transform: screenTransform, transformOrigin: "center top" }}>
             <div className="relative min-w-0 flex-1">
                 <input aria-label="局部重绘要求" type="text" value={prompt} placeholder="描述选中区域需要如何修改…" onChange={(event) => { setPrompt(event.target.value); setError(""); }} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") void submit(); }} className="block h-9 w-full rounded-xl border px-3 text-sm outline-none placeholder:opacity-50" style={{ background: theme.toolbar.itemHover, borderColor: theme.node.stroke, color: theme.node.text }} />
                 {error || compatibilityError || capabilityNotice ? <div role="status" className="absolute left-1 top-[calc(100%+8px)] whitespace-nowrap rounded-lg border px-2 py-1 text-xs font-medium shadow-lg" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.accent.danger }}>{error || compatibilityError || capabilityNotice}</div> : null}
             </div>
+            <div className="w-40 min-w-0 shrink-0" data-mask-edit-model-selector>
+                <ModelPicker variant="canvas" config={generationConfig} value={generationConfig.imageModel || generationConfig.model} capability="image" requirements={editRequirements} fullWidth className="text-xs" onChange={handleModelChange} />
+            </div>
             <div className="relative">
                 <button type="button" aria-label="局部重绘设置" title="局部重绘设置" onClick={() => setSettingsOpen((value) => !value)} className="grid size-9 place-items-center rounded-xl transition hover:opacity-85" style={{ background: settingsOpen ? theme.toolbar.activeBg : "transparent", color: settingsOpen ? theme.toolbar.activeText : theme.toolbar.item }}><Settings2 className="size-4" /></button>
                 {settingsOpen ? <div className="absolute bottom-11 right-0 w-80 space-y-3 rounded-2xl border p-3 shadow-2xl" style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()}>
-                    <ModelPicker variant="canvas" config={generationConfig} value={generationConfig.imageModel || generationConfig.model} capability="image" requirements={editRequirements} fullWidth onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }))} />
                     <ImageSettingsPanel config={generationConfig} showTitle={false} showCount={false} className="space-y-3" theme={theme} onConfigChange={(key, value) => setGenerationConfig((current) => ({ ...current, [key]: value }))} />
                     {fixedOutputs ? <div className="text-xs" style={{ color: theme.node.muted }}>每次生成 {fixedOutputs} 张</div> : null}
                 </div> : null}

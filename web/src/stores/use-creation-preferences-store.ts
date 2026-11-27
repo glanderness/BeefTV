@@ -41,6 +41,7 @@ export type CreationComposerPreferences = {
     promptFontSize?: number;
     mode?: CreationModePreference;
     image?: CreationImagePreferences;
+    maskEditModel?: string;
     video?: CreationVideoPreferences;
     providers?: Partial<Record<ModelCapability | "transcription", string>>;
     videoReferenceMode?: CanvasVideoReferenceMode;
@@ -56,6 +57,7 @@ type CreationPreferencesStore = {
     rememberMode: (mode: CreationModePreference) => void;
     rememberPromptFontSize: (fontSize: number) => void;
     rememberImageSettings: (settings: CreationImagePreferences) => void;
+    rememberMaskEditModel: (model: string) => void;
     rememberModelProvider: (capability: ModelCapability | "transcription", providerId: string) => void;
     rememberVideoReferenceMode: (mode: CanvasVideoReferenceMode) => void;
     confirmVideoSettings: (config: AiConfig, h3Options?: VideoGenerationControls) => void;
@@ -158,6 +160,7 @@ export function normalizeCreationComposerPreferences(value: unknown): CreationCo
         ...(typeof raw.promptFontSize === "number" && Number.isFinite(raw.promptFontSize) ? { promptFontSize: normalizePromptFontSize(raw.promptFontSize) } : {}),
         ...(raw.mode === "text" || raw.mode === "image" || raw.mode === "video" ? { mode: raw.mode } : {}),
         ...(image ? { image } : {}),
+        ...(nonEmptyString(raw.maskEditModel) ? { maskEditModel: raw.maskEditModel.trim() } : {}),
         ...(video ? { video } : {}),
         ...(raw.videoReferenceMode === "all" || raw.videoReferenceMode === "frames" ? { videoReferenceMode: raw.videoReferenceMode } : {}),
         ...(Object.keys(providers).length ? { providers } : {}),
@@ -183,6 +186,11 @@ export const useCreationPreferencesStore = create<CreationPreferencesStore>()(
                 if (Number.isFinite(fontSize)) set((state) => ({ preferences: { ...state.preferences, promptFontSize: normalizePromptFontSize(fontSize) } }));
             },
             rememberImageSettings: (settings) => set((state) => ({ preferences: { ...state.preferences, image: { ...state.preferences.image, ...settings } } })),
+            rememberMaskEditModel: (model) => {
+                const clean = model.trim();
+                if (!clean) return;
+                set((state) => ({ preferences: { ...state.preferences, maskEditModel: clean } }));
+            },
             rememberModelProvider: (capability, providerId) => set(({ preferences }) => ({
                 preferences: { ...preferences, providers: { ...preferences.providers, [capability]: providerId } },
             })),

@@ -1,8 +1,9 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button, Input } from "antd";
 import { ArrowRight, Check, Maximize2, Minus, Pencil, Plus, Trash2 } from "lucide-react";
 import { isTextEditableTarget } from "@/lib/backspace-navigation-guard";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { canvasWheelIntent, wheelDeltaToPixels } from "@/lib/canvas/canvas-wheel";
 import { getNodeIcon } from "@/lib/canvas/node-registry";
 import { workflowFitViewport, workflowEditorPositions, workflowOperationId } from "@/lib/canvas/workflow-editor";
 import type { WorkflowDefinition, WorkflowNode, WorkflowOperation } from "@/services/api/canvas-workflows";
@@ -24,8 +25,12 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
     const [preview, setPreview] = useState<{ id: string; x: number; y: number }>();
     const [renaming, setRenaming] = useState<{ id: string; title: string }>();
     const [linkPoint, setLinkPoint] = useState<{ x: number; y: number }>();
+    const [panning, setPanning] = useState(false);
+    const [spacePressed, setSpacePressed] = useState(false);
+    const spacePressedRef = useRef(false);
+    const wheelGesture = useRef<{ intent: "pan" | "zoom"; at: number; modifiers: number } | null>(null);
     const linkGesture = useRef<{ source: string; x: number; y: number; moved: boolean } | undefined>(undefined);
-    const gesture = useRef<{ id?: string; x: number; y: number; initialX: number; initialY: number } | undefined>(undefined);
+    const gesture = useRef<{ id?: string; pointerId: number; x: number; y: number; initialX: number; initialY: number } | undefined>(undefined);
     const navigated = useRef(false);
     const positions = workflowEditorPositions(definition);
     if (preview) positions[preview.id] = preview;
@@ -48,10 +53,14 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
         return () => observer.disconnect();
     }, []);
     const previousIds = useRef(new Set(definition.nodes.map(node => node.id)));
+    const previousSelected = useRef(selected);
     useLayoutEffect(() => {
         const added = definition.nodes.some(node => !previousIds.current.has(node.id));
         previousIds.current = new Set(definition.nodes.map(node => node.id));
+        const selectionChanged = selected !== previousSelected.current;
+        previousSelected.current = selected;
         if (added) { latestFit.current(); return; }
+        if (!selectionChanged) return;
         const rect = container.current?.getBoundingClientRect(), position = selected && positions[selected];
         const node = definition.nodes.find(n => n.id === selected);
         if (!rect || !position || !node) return;
@@ -59,12 +68,73 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
         if (x < 24 || y < 48 || x + WIDTH * view.k > rect.width - 24 || y + cardHeight(operationFor(node)) * view.k > rect.height - 48) {
             setView(v => ({ ...v, x: rect.width / 2 - (position.x + WIDTH / 2) * v.k, y: rect.height / 2 - (position.y + cardHeight(operationFor(node)) / 2) * v.k }));
         }
-        // A newly added or searched node must be visible; panning stays under user control.
+        // A newly added or newly selected node must be visible; editing the already-selected node preserves the viewport.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selected, definition.nodes]);
     useLayoutEffect(() => { latestFit.current(); }, [libraryOpen]);
+    useEffect(() => {
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.code !== "Space" || event.metaKey || event.ctrlKey || event.altKey) return;
+            if (isTextEditableTarget(event.target)) return;
+            if (event.target instanceof Element && event.target.closest("input,textarea,select,button,[contenteditable='true'],[role='combobox'],[role='listbox'],[role='menu'],[role='option'],[role='checkbox'],[role='switch']")) return;
+            event.preventDefault();
+            spacePressedRef.current = true;
+            setSpacePressed(true);
+        };
+        const handleKeyUp = (event: KeyboardEvent) => {
+            if (event.code !== "Space") return;
+            spacePressedRef.current = false;
+            setSpacePressed(false);
+        };
+        const handleBlur = () => {
+            spacePressedRef.current = false;
+            setSpacePressed(false);
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        window.addEventListener("keyup", handleKeyUp);
+        window.addEventListener("blur", handleBlur);
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+            window.removeEventListener("keyup", handleKeyUp);
+            window.removeEventListener("blur", handleBlur);
+        };
+    }, []);
+    useEffect(() => {
+        const element = container.current;
+        if (!element) return;
+        const handleWheel = (event: WheelEvent) => {
+            event.preventDefault();
+            event.stopPropagation();
+            navigated.current = true;
+            const deltaX = wheelDeltaToPixels(event.deltaX, event.deltaMode);
+            const deltaY = wheelDeltaToPixels(event.deltaY, event.deltaMode);
+            const isPinchZoom = event.ctrlKey || event.metaKey;
+            const now = performance.now();
+            const modifiers = Number(isPinchZoom) * 2 + Number(event.shiftKey);
+            const previous = wheelGesture.current?.modifiers === modifiers ? wheelGesture.current : null;
+            const intent = canvasWheelIntent(event, previous, now, "auto");
+            wheelGesture.current = { intent, at: now, modifiers };
+            if (intent === "pan") {
+                const panX = event.shiftKey && Math.abs(deltaX) < 1 ? deltaY : deltaX;
+                const panY = event.shiftKey && Math.abs(deltaX) < 1 ? 0 : deltaY;
+                setView(old => ({ ...old, x: old.x - panX, y: old.y - panY }));
+                return;
+            }
+            const rect = element.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            const zoomDelta = isPinchZoom && event.deltaMode === 0 && Math.abs(deltaY) < 40 ? 24 : 72;
+            const factor = Math.pow(1.1, -deltaY / zoomDelta);
+            setView(old => {
+                const k = Math.max(.25, Math.min(1.8, old.k * factor));
+                return { x: x - (x - old.x) * k / old.k, y: y - (y - old.y) * k / old.k, k };
+            });
+        };
+        element.addEventListener("wheel", handleWheel, { passive: false });
+        return () => element.removeEventListener("wheel", handleWheel);
+    }, []);
     return <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden" data-canvas-no-zoom style={{ backgroundColor: theme.canvas.background }}>
-        <div ref={container} className="absolute inset-0 touch-none outline-none" role="region" tabIndex={0} aria-label="工作流节点图"
+        <div ref={container} data-workflow-panning={panning ? "true" : undefined} data-workflow-space-pressed={spacePressed ? "true" : undefined} className={`absolute inset-0 select-none touch-none outline-none ${panning ? "cursor-grabbing" : "cursor-grab"}`} role="region" tabIndex={0} aria-label="工作流节点图"
             onKeyDown={event => {
                 if (isTextEditableTarget(event.target) || event.nativeEvent.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
                 if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); linkGesture.current = undefined; setLinkPoint(undefined); onCancelConnection(); return; }
@@ -74,8 +144,20 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                 }
             }}
             style={{ backgroundImage: `radial-gradient(${theme.canvas.dot} 1px, transparent 1px)`, backgroundSize: `${32 * view.k}px ${32 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` }}
-            onWheel={event => { navigated.current = true; event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); const x = event.clientX - rect.left, y = event.clientY - rect.top; setView(old => { const k = Math.max(.25, Math.min(1.8, old.k * (event.deltaY < 0 ? 1.1 : .9))); return { x: x - (x - old.x) * k / old.k, y: y - (y - old.y) * k / old.k, k }; }); }}
-            onPointerDown={event => { if (event.button !== 0 || (event.target as Element).closest("button,input,[data-workflow-editor-node]")) return; onCancelConnection(); setLinkPoint(undefined); navigated.current = true; event.currentTarget.setPointerCapture(event.pointerId); gesture.current = { x: event.clientX, y: event.clientY, initialX: view.x, initialY: view.y }; }}
+            onMouseDown={event => { if (event.button === 1) event.preventDefault(); }}
+            onAuxClick={event => { if (event.button === 1) event.preventDefault(); }}
+            onPointerDown={event => {
+                const target = event.target instanceof Element ? event.target : null;
+                const isMiddlePan = event.button === 1;
+                const isSpacePan = event.button === 0 && spacePressedRef.current && !isTextEditableTarget(event.target);
+                const isBlankPan = event.button === 0 && !target?.closest("button,input,[data-workflow-editor-node]");
+                if (!isMiddlePan && !isSpacePan && !isBlankPan) return;
+                event.preventDefault();
+                onCancelConnection(); setLinkPoint(undefined); navigated.current = true;
+                event.currentTarget.setPointerCapture(event.pointerId);
+                setPanning(true);
+                gesture.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, initialX: view.x, initialY: view.y };
+            }}
             onPointerMove={event => {
                 const link = linkGesture.current;
                 if (link || connecting) {
@@ -84,9 +166,13 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                     if (link && Math.hypot(event.clientX - link.x, event.clientY - link.y) > 4) link.moved = true;
                     if (link) return;
                 }
-                const g = gesture.current; if (!g) return; const dx = event.clientX - g.x, dy = event.clientY - g.y; if (g.id) setPreview({ id: g.id, x: g.initialX + dx / view.k, y: g.initialY + dy / view.k }); else setView(old => ({ ...old, x: g.initialX + dx, y: g.initialY + dy }));
+                const g = gesture.current; if (!g || g.pointerId !== event.pointerId) return;
+                const dx = event.clientX - g.x, dy = event.clientY - g.y;
+                if (g.id) setPreview({ id: g.id, x: g.initialX + dx / view.k, y: g.initialY + dy / view.k });
+                else setView(old => ({ ...old, x: g.initialX + dx, y: g.initialY + dy }));
             }}
             onPointerUp={event => {
+                if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
                 const link = linkGesture.current;
                 if (link) {
                     linkGesture.current = undefined;
@@ -98,14 +184,19 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                         else onCancelConnection();
                         setLinkPoint(undefined);
                     }
-                } else if (gesture.current?.id) {
+                } else if (gesture.current?.pointerId === event.pointerId) {
                     const g = gesture.current;
-                    onMove(g.id!, { x: g.initialX + (event.clientX - g.x) / view.k, y: g.initialY + (event.clientY - g.y) / view.k });
+                    if (g.id) onMove(g.id, { x: g.initialX + (event.clientX - g.x) / view.k, y: g.initialY + (event.clientY - g.y) / view.k });
+                    gesture.current = undefined; setPreview(undefined); setPanning(false);
+                    return;
                 }
-                gesture.current = undefined; setPreview(undefined);
+                gesture.current = undefined; setPreview(undefined); setPanning(false);
             }}
-            onPointerCancel={() => { linkGesture.current = undefined; setLinkPoint(undefined); onCancelConnection(); gesture.current = undefined; setPreview(undefined); }}>
-            <div className="absolute inset-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
+            onPointerCancel={event => {
+                if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                linkGesture.current = undefined; setLinkPoint(undefined); onCancelConnection(); gesture.current = undefined; setPreview(undefined); setPanning(false);
+            }}>
+            <div data-workflow-editor-viewport className="absolute inset-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
                 <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1" aria-label="工作流连线">
                     {connecting && positions[connecting] && linkPoint ? (() => {
                         const from = positions[connecting], node = definition.nodes.find(n => n.id === connecting);
@@ -124,7 +215,7 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                             <path d={d} fill="none" stroke={theme.node.muted} strokeWidth="1.5" />
                             <path d={d} fill="none" stroke="transparent" strokeWidth="18" className="pointer-events-auto cursor-pointer"
                                 role="button" tabIndex={0} aria-disabled={readOnly} aria-label={`删除连线：${source?.title}到${target?.title}`}
-                                onPointerDown={event => event.stopPropagation()} onClick={() => { if (!readOnly) onRemoveEdge(index); }}
+                                onPointerDown={event => { if (event.button === 0 && !spacePressedRef.current) event.stopPropagation(); }} onClick={() => { if (!readOnly && !spacePressedRef.current) onRemoveEdge(index); }}
                                 onKeyDown={event => {
                                     if (!["Enter", "Delete", "Backspace"].includes(event.key)) return;
                                     event.preventDefault();
@@ -137,12 +228,12 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                 {definition.nodes.map(node => {
                     const position = positions[node.id], operation = operationFor(node), output = definition.outputNodeIds.includes(node.id);
                     return <div key={node.id} data-workflow-editor-node={node.id} className="absolute rounded-xl" style={{ left: position.x, top: position.y, width: WIDTH, height: cardHeight(operation), boxShadow: theme.node.shadow, outline: selected === node.id ? `2px solid ${theme.node.activeStroke}` : undefined }}
-                        onClick={event => { if (connecting && !(event.target as Element).closest("button,input")) { event.stopPropagation(); onInput(node.id, ""); } }}
-                        onPointerDown={event => { if (event.button !== 0 || (event.target as Element).closest("button,input")) return; event.stopPropagation(); if (connecting) return; navigated.current = true; onSelect(node.id); container.current?.focus({ preventScroll: true }); if (readOnly) return; container.current?.setPointerCapture(event.pointerId); gesture.current = { id: node.id, x: event.clientX, y: event.clientY, initialX: position.x, initialY: position.y }; }}>
+                        onClick={event => { if (connecting && !spacePressedRef.current && !(event.target as Element).closest("button,input")) { event.stopPropagation(); onInput(node.id, ""); } }}
+                        onPointerDown={event => { if (event.button !== 0 || spacePressedRef.current || (event.target as Element).closest("button,input")) return; event.preventDefault(); event.stopPropagation(); if (connecting) return; navigated.current = true; onSelect(node.id); container.current?.focus({ preventScroll: true }); if (readOnly) return; container.current?.setPointerCapture(event.pointerId); gesture.current = { id: node.id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, initialX: position.x, initialY: position.y }; }}>
                         <div className="flex h-16 flex-col justify-center gap-1 rounded-t-xl px-4" style={{ background: theme.node.fill, color: theme.node.label }}>
                         <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
                             {renaming?.id === node.id ? <Input autoFocus aria-label={`重命名工作流节点：${node.title}`} maxLength={100} value={renaming.title} onChange={event => setRenaming({ id: node.id, title: event.target.value })} onPressEnter={event => event.currentTarget.blur()} onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setRenaming(undefined); } }} onBlur={() => { if (renaming.title.trim() && renaming.title.trim() !== node.title) onRename(node.id, renaming.title.trim()); setRenaming(undefined); }} /> : <>
-                                <div role="button" tabIndex={0} className="flex min-w-0 flex-1 cursor-grab items-center gap-2 active:cursor-grabbing" onClick={() => { onSelect(node.id); container.current?.focus({ preventScroll: true }); }} onKeyDown={event => { if (event.key === "Enter") { onSelect(node.id); container.current?.focus({ preventScroll: true }); } }} title={node.title}><span className="shrink-0 [&_svg]:size-5">{getNodeIcon(node.mediaType)}</span><span className="truncate">{node.title}</span>{output ? <span className="flex shrink-0 items-center gap-1 text-xs font-normal text-muted-foreground"><Check className="size-3" />最终输出</span> : null}</div>
+                                <div role="button" tabIndex={0} className="flex min-w-0 flex-1 cursor-grab items-center gap-2 active:cursor-grabbing" onClick={() => { if (spacePressedRef.current) return; onSelect(node.id); container.current?.focus({ preventScroll: true }); }} onKeyDown={event => { if (event.key === "Enter") { onSelect(node.id); container.current?.focus({ preventScroll: true }); } }} title={node.title}><span className="shrink-0 [&_svg]:size-5">{getNodeIcon(node.mediaType)}</span><span className="truncate">{node.title}</span>{output ? <span className="flex shrink-0 items-center gap-1 text-xs font-normal text-muted-foreground"><Check className="size-3" />最终输出</span> : null}</div>
                                 {!readOnly ? <button type="button" className="shrink-0 rounded p-1 text-muted-foreground hover:bg-[var(--surface-hover)] hover:text-foreground" aria-label={`重命名${node.title}`} title="重命名" onClick={() => { onSelect(node.id); setRenaming({ id: node.id, title: node.title }); }}><Pencil className="size-3.5" /></button> : null}
                                 {!readOnly ? <button type="button" className="shrink-0 rounded p-1 text-muted-foreground hover:bg-[var(--surface-hover)] hover:text-destructive focus-visible:outline focus-visible:outline-1" aria-label={`删除工作流节点：${node.title}`} title="删除节点（Delete / Backspace）" onClick={() => onDelete(node.id)}><Trash2 className="size-3.5" /></button> : null}
                             </>}
@@ -160,7 +251,7 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                             </div>
                         {operation?.inputs.map((port, index) => <button key={port.id} type="button" data-workflow-input={node.id} data-workflow-port={port.id} disabled={readOnly} className="absolute -left-3 grid size-6 place-items-center rounded-full" style={{ top: portCenter() - 12 + index * 42, background: theme.node.fill, color: connecting ? theme.node.activeStroke : theme.node.muted }} aria-label={`连接到${node.title}：${port.label}`} title={port.label} onClick={() => onInput(node.id, port.id)}><span className="size-2.5 rounded-full border-2 border-current" /></button>)}
                         <button type="button" disabled={readOnly} className="absolute -right-3 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-full" style={{ background: theme.node.fill, color: connecting === node.id ? theme.node.activeStroke : theme.node.muted }} aria-label={`从${node.title}连接`} title="拖动到输入端口连接，也可点击后选择输入" onPointerDown={event => {
-                            if (readOnly || event.button !== 0) return;
+                            if (readOnly || event.button !== 0 || spacePressedRef.current) return;
                             event.preventDefault(); event.stopPropagation();
                             onCancelConnection(); onOutput(node.id);
                             container.current?.focus({ preventScroll: true });
@@ -171,6 +262,7 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                     </div>;
                 })}
             </div>
+            <div aria-hidden className="absolute inset-0 cursor-grabbing" style={{ pointerEvents: panning ? "auto" : "none" }} />
         </div>
         {!definition.nodes.length ? <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">点击“添加”，选择素材或处理步骤</p> : null}
         <div className="absolute bottom-3 right-3 flex items-center gap-1 rounded-xl bg-[var(--surface-card)] p-1.5 shadow-lg">

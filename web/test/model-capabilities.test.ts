@@ -3,7 +3,7 @@ import test from "node:test";
 
 // Bun 直接执行 TypeScript 测试时需要保留扩展名；生产 tsconfig 不包含 test/。
 import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeVideoValue, videoDurationAllowed, videoSupportsTaskTypeConstraints } from "../src/lib/model-capabilities.ts";
-import { initialMaskEditConfig, modelCompatibilityError, normalizeMaskEditQuality, normalizeMaskEditSize, resolveMaskEditModel } from "../src/lib/model-selection.ts";
+import { initialMaskEditConfig, modelCompatibilityError, normalizeMaskEditQuality, normalizeMaskEditSize, resolveMaskEditModel, resolvePreferredMaskEditModel } from "../src/lib/model-selection.ts";
 import type { AiConfig } from "../src/stores/use-config-store.ts";
 import { seedanceTaskOptions, seedanceOmniTaskType } from "../src/lib/seedance-task-constraints.ts";
 
@@ -292,4 +292,42 @@ test("mask edit model selection ignores text models and normalizes quality/size 
     assert.equal(normalizeMaskEditQuality("medium", "1024x1024", ["1k", "2k", "4k"], "1k"), "2k");
     assert.equal(normalizeMaskEditSize("1440x1440", ["1:1", "1024x1024"], "1:1", true), "1440x1440");
     assert.equal(normalizeMaskEditSize("1440x1440", ["1:1", "1024x1024"], "1:1", false), "1:1");
+});
+
+test("mask edit uses valid remembered model preference and falls back when unavailable or incompatible", () => {
+    const config = {
+        model: "ch::gpt-image-2",
+        imageModel: "ch::gpt-image-2",
+        size: "1:1",
+        quality: "low",
+        count: "1",
+        models: ["ch::gpt-image-2", "ch::doubao-seedream-5-0-260128", "ch::moss-image-sft"],
+        imageModels: ["ch::gpt-image-2", "ch::doubao-seedream-5-0-260128", "ch::moss-image-sft"],
+        channels: [{
+            id: "ch",
+            name: "Custom",
+            baseUrl: "https://api.example.com",
+            apiKey: "key",
+            apiFormat: "openai",
+            interfaceType: "openai-image",
+            models: ["gpt-image-2", "doubao-seedream-5-0-260128", "moss-image-sft"],
+        }],
+    } as AiConfig;
+
+    // Remembered valid image-edit model overrides node model
+    assert.equal(resolvePreferredMaskEditModel(config, "ch::doubao-seedream-5-0-260128"), "ch::doubao-seedream-5-0-260128");
+    const preferred = initialMaskEditConfig(config, "ch::doubao-seedream-5-0-260128");
+    assert.equal(preferred.model, "ch::doubao-seedream-5-0-260128");
+    assert.equal(preferred.imageModel, "ch::doubao-seedream-5-0-260128");
+
+    // Removed/unavailable remembered model falls back cleanly to node/default model
+    assert.equal(resolvePreferredMaskEditModel(config, "removed::seedream"), "");
+    const fallbackUnavailable = initialMaskEditConfig(config, "removed::seedream");
+    assert.equal(fallbackUnavailable.model, "ch::gpt-image-2");
+    assert.equal(fallbackUnavailable.imageModel, "ch::gpt-image-2");
+
+    // Text-only remembered model (maxImages === 0) falls back cleanly to node/default model
+    assert.equal(resolvePreferredMaskEditModel(config, "ch::moss-image-sft"), "");
+    const fallbackIncompatible = initialMaskEditConfig(config, "ch::moss-image-sft");
+    assert.equal(fallbackIncompatible.model, "ch::gpt-image-2");
 });

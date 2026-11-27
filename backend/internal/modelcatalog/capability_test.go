@@ -2,6 +2,7 @@ package modelcatalog
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -36,6 +37,8 @@ func TestServerImageCapabilitiesOwnFileLimitWithoutModelOrHostExceptions(t *test
 
 func TestDefaultPixelPresetsSatisfyImageGenerationConstraints(t *testing.T) {
 	count := 0
+	twoKCount := 0
+	const max2KPixels = 2048 * 2048
 	for _, size := range defaultImageSizeValues() {
 		if !strings.Contains(size, "x") {
 			continue
@@ -44,9 +47,37 @@ func TestDefaultPixelPresetsSatisfyImageGenerationConstraints(t *testing.T) {
 		if err := validateGPTImage2CustomSize(size); err != nil {
 			t.Errorf("default pixel preset %q: %v", size, err)
 		}
+		if normalizeImagePriceQuality("", size) == "2k" {
+			twoKCount++
+			parts := strings.Split(size, "x")
+			w, errW := strconv.Atoi(parts[0])
+			h, errH := strconv.Atoi(parts[1])
+			if errW != nil || errH != nil || w*h > max2KPixels {
+				t.Errorf("default 2K preset %q exceeds %d pixels (%d)", size, max2KPixels, w*h)
+			}
+		}
 	}
 	if count != 30 {
 		t.Fatalf("expected all 30 pixel presets, got %d", count)
+	}
+	if twoKCount != 10 {
+		t.Fatalf("expected 10 default 2K presets, got %d", twoKCount)
+	}
+	for _, want := range []string{"2560x1440", "1440x2560", "3024x1296"} {
+		if !containsCapabilityString(defaultImageSizeValues(), want) {
+			t.Errorf("defaultImageSizeValues() missing %q", want)
+		}
+	}
+	for _, legacy := range []string{"2752x1536", "1536x2752", "3136x1344"} {
+		if containsCapabilityString(defaultImageSizeValues(), legacy) {
+			t.Errorf("defaultImageSizeValues() should not emit >2048^2 legacy preset %q", legacy)
+		}
+		if got := normalizeImagePriceQuality("", legacy); got != "2k" {
+			t.Errorf("legacy preset %q tier = %q, want 2k", legacy, got)
+		}
+		if err := validateGPTImage2CustomSize(legacy); err != nil {
+			t.Errorf("legacy preset %q rejected by custom size validation: %v", legacy, err)
+		}
 	}
 }
 

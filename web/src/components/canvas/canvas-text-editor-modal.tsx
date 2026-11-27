@@ -238,7 +238,7 @@ function TextEditorToolbar({ editor }: { editor: Editor | null }) {
                 placement="bottom"
                 content={<div className="flex w-72 gap-2"><Input size="small" value={linkValue} placeholder="https://example.com" onChange={(event) => setLinkValue(event.target.value)} onPressEnter={applyLink} /><Button size="small" type="primary" onClick={applyLink}>应用</Button></div>}
             >
-                <span><EditorToolButton label="插入链接" active={Boolean(editor?.isActive("link"))} onClick={() => setLinkOpen(true)}><Link2 /></EditorToolButton></span>
+                <span><EditorToolButton label="插入链接" active={Boolean(editor?.isActive("link"))}><Link2 /></EditorToolButton></span>
             </Popover>
             <ToolbarDivider />
             <Tooltip title="文字颜色">
@@ -276,7 +276,7 @@ function TextEditorToolbar({ editor }: { editor: Editor | null }) {
     );
 }
 
-function EditorToolButton({ label, active = false, children, onClick }: { label: string; active?: boolean; children: ReactNode; onClick: () => void }) {
+function EditorToolButton({ label, active = false, children, onClick }: { label: string; active?: boolean; children: ReactNode; onClick?: () => void }) {
     const theme = canvasThemes[useActiveTheme()];
     return (
         <Tooltip title={label}>

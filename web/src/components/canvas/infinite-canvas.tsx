@@ -7,7 +7,7 @@ import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { applyCanvasLiveViewport, subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { ViewportTransform } from "@/types/canvas";
-import { canvasWheelIntent, type CanvasWheelBehavior } from "@/lib/canvas/canvas-wheel";
+import { canvasWheelIntent, wheelDeltaToPixels, type CanvasWheelBehavior } from "@/lib/canvas/canvas-wheel";
 
 type InfiniteCanvasProps = {
     interactive?: boolean;
@@ -530,12 +530,6 @@ function CanvasGrid({ appearance, mode }: { appearance?: CanvasAppearance; mode:
             }}
         />
     );
-}
-
-function wheelDeltaToPixels(delta: number, deltaMode: number) {
-    if (deltaMode === 1) return delta * 16;
-    if (deltaMode === 2) return delta * 720;
-    return delta;
 }
 
 function clampScale(scale: number) {
