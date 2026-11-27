@@ -62,7 +62,7 @@ func BeefTVVideoContract(model string) (VideoContract, bool) {
 }
 
 // HostedBeefTVVideoProfile overlays the official video route onto a stored
-// profile only when the channel talks to beeftv.app. Custom
+// profile only when the channel talks to an official BeefTV origin (beeftv.cn or legacy beeftv.app). Custom
 // gateways keep their configured capability even if the model name matches.
 func HostedBeefTVVideoProfile(baseURL, model string) (capability, protocol string, ok bool) {
 	if !IsBeefTVEndpoint(baseURL) {

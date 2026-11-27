@@ -76,7 +76,7 @@ export function networkProxyDescription(status: NetworkProxyStatus | null, loadi
         return loading ? "正在读取网络代理设置…" : "管理 BeefTV 与内置助手是否跟随系统代理。";
     }
     if (status.mode === "direct") {
-        return "BeefTV 与内置助手均直连，不经过系统代理。若代理软件开启了 TUN 虚拟网卡，需在代理规则中放行 beeftv.app 或对应模型地址。";
+        return "BeefTV 与内置助手均直连，不经过系统代理。若代理软件开启了 TUN 虚拟网卡，需在代理规则中放行 beeftv.cn / beeftv.app 或对应模型地址。";
     }
     if (status.autoConfigOnly) {
         return "系统当前使用自动代理脚本，BeefTV 暂按直连处理；如需明确关闭代理，可切为「不使用代理」。";
