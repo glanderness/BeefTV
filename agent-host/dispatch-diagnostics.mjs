@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { sanitizeRawStopReason } from './model-transport-error.mjs';
+import { STREAM_NO_FINISH_REASON, sanitizeRawStopReason } from './model-transport-error.mjs';
 
 const safe = value => typeof value === 'string' && /^[A-Za-z0-9_-][A-Za-z0-9._:@-]{0,159}$/.test(value)
   && !/secret|token|password|bearer|api.?key|sk-|:\/\//i.test(value) ? value : undefined;
@@ -35,7 +35,7 @@ export function classifyModelFetchError(error) {
   if (name === 'AbortError' || /\baborted\b/i.test(message)) return 'aborted';
   if (/idle timeout/i.test(message)) return 'stream_idle_timeout';
   if (/upstream stream ended before first response/i.test(message)) return 'upstream_eof_before_first_byte';
-  if (/ended without (?:a )?finish[_ ]reason/i.test(message)) return 'stream_ended_without_finish_reason';
+  if (STREAM_NO_FINISH_REASON.test(message)) return 'stream_ended_without_finish_reason';
   if (/unexpected\s+eof|ended before|ended without|other side closed|premature close|\bterminated\b|socket/i.test(message)) return 'network_eof';
   if (/fetch failed|ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|reset|tls|ssl/i.test(message)) return 'network_error';
   return 'model_error';

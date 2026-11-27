@@ -4,6 +4,7 @@
 import { section } from '@earendil-works/pi-durable';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
+import { buildStreamErrorAssistant, forwardModelEventStream } from './model-transport-error.mjs';
 
 const fail = (reason) => Object.assign(new Error(reason), { reason });
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -255,13 +256,11 @@ export function guardSkillModelRequests(models, validate, onFailure) {
           await validate(model,context,options?.signal);
           admitted=true;
           const source=fn.call(provider,model,context,options);
-          for await(const event of source)events.push(event);
-          events.end(await source.result());
+          await forwardModelEventStream(source,events,model,options,{fallbackReason:'skill_context_unavailable'});
         } catch(error) {
           if(!admitted)await onFailure?.(error);
-          events.push({type:'error',reason:'error',error:{role:'assistant',content:[],api:model.api,provider:model.provider,model:model.id,
-            usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},
-            stopReason:'error',errorMessage:error?.reason || error?.message || 'skill_context_unavailable',timestamp:Date.now()}});
+          const terminal=buildStreamErrorAssistant(model,null,error,options,'skill_context_unavailable');
+          events.push({type:'error',reason:terminal.stopReason,error:terminal});
           events.end();
         }
       })();

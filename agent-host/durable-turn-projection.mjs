@@ -198,14 +198,14 @@ const PUBLIC_TURN_ERROR_TEXT = {
   provider_error: '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。',
   model_network_error: '无法连接模型服务。若开启了系统代理，可在「通用设置 → 网络代理」切为不使用代理后重试；已完成的改动会保留。',
   turn_interrupted: '上一轮执行中断，请核对已落地的改动。',
-  partial_output_stream_interrupted: '模型输出中途中断，已保留已生成内容，可点击继续处理',
-  model_output_truncated: '回复达到长度上限被截断，已保留现有内容，可点击继续处理',
-  model_content_filtered: '上游模型触发了安全审核拦截，请调整措辞后重试',
-  stream_ended_without_finish_reason: '模型回复中途异常结束，未返回完成标记。已完成的改动会保留，可点击继续处理',
-  upstream_eof_before_first_byte: '模型服务连接在返回首字节前中断。已完成的改动会保留，可点击继续处理',
-  stream_idle_timeout: '模型输出长时间无响应，连接已超时中断。已完成的改动会保留，可点击继续处理',
-  provider_rate_limited: '模型服务当前请求较多（触发限流），请稍后点击继续处理',
-  provider_unavailable: '模型服务暂时繁忙或不可用，已完成的改动会保留，请稍后点击继续处理',
+  partial_output_stream_interrupted: '模型输出中途中断，已保留已生成内容，可点击继续处理。',
+  model_output_truncated: '回复达到长度上限被截断，已保留现有内容，可点击继续处理。',
+  model_content_filtered: '上游模型触发了安全审核拦截，请调整措辞后重试。',
+  stream_ended_without_finish_reason: '模型回复中途异常结束，未返回完成标记。已完成的改动会保留，可点击继续处理。',
+  upstream_eof_before_first_byte: '模型服务连接在返回首字节前中断。已完成的改动会保留，可点击继续处理。',
+  stream_idle_timeout: '模型输出长时间无响应，连接已超时中断。已完成的改动会保留，可点击继续处理。',
+  provider_rate_limited: '模型服务当前请求较多（触发限流），请稍后点击继续处理。',
+  provider_unavailable: '模型服务暂时繁忙或不可用，已完成的改动会保留，请稍后点击继续处理。',
 };
 
 export function publicDurableTurn(active, running = false) {
@@ -257,13 +257,12 @@ export function durableCompletion(settled, assistant, budgetFailure, stopped = f
     const partialReply = interrupted
       ? interruptedReply
       : (replyText !== undefined ? replyText : extractAssistantText(assistant));
-    const effectiveRawStop = rawStopReason || (errorReason === 'model_content_filtered' ? 'content_filter' : undefined);
     return withRawStop({
       reply: preservePartial ? partialReply : '',
       cancelled: false,
       error: detail,
       errorReason,
-    }, effectiveRawStop);
+    });
   }
   if (assistant?.stopReason === 'length') {
     return withRawStop({
@@ -277,13 +276,12 @@ export function durableCompletion(settled, assistant, budgetFailure, stopped = f
     const detail = assistant?.errorMessage || 'agent_answer_missing';
     const errorReason = classifyModelFailureReason(detail, assistant) || 'provider_error';
     const preservePartial = errorReason === PARTIAL_OUTPUT_STREAM_INTERRUPTED;
-    const effectiveRawStop = rawStopReason || (errorReason === 'model_content_filtered' ? 'content_filter' : undefined);
     return withRawStop({
       reply: preservePartial ? (replyText !== undefined ? replyText : extractAssistantText(assistant)) : '',
       cancelled: false,
       error: detail,
       errorReason,
-    }, effectiveRawStop);
+    });
   }
   return withRawStop({
     reply: text,

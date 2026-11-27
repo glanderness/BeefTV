@@ -4,7 +4,9 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {ModelRuntime} from '@earendil-works/pi-coding-agent';
+import {createAssistantMessageEventStream} from '@earendil-works/pi-ai';
 import {createModels} from '@earendil-works/pi-ai/models';
 import {isRetryableAssistantError} from '@earendil-works/pi-ai/utils/retry';
 import {Harness, LiveDoc} from '@earendil-works/pi-durable';
@@ -14,7 +16,7 @@ import {createDurableTurnBudget} from './durable-turn-budget.mjs';
 import {spendModelRequest, budgetError} from './request-budget.mjs';
 import {fetchModelWithProgressIdle, DEFAULT_MODEL_STREAM_IDLE_MS} from './model-stream-idle.mjs';
 import {createDispatchDiagnostics} from './dispatch-diagnostics.mjs';
-import {PARTIAL_OUTPUT_STREAM_INTERRUPTED, hasProducedContent} from './model-transport-error.mjs';
+import {PARTIAL_OUTPUT_STREAM_INTERRUPTED, classifyModelFailureReason, hasProducedContent} from './model-transport-error.mjs';
 
 const EOF_MESSAGE = 'upstream stream ended before first response: eof';
 const sse = value => `data: ${JSON.stringify(value)}\n\n`;
@@ -55,7 +57,7 @@ async function fixture(t, respond, {settings = {}, maxRequests = 0, idleTimeoutM
       cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}}]});
   const models = createModels();
   models.setProvider(runtime.getProvider('fixture'));
-  const makeStore = (overrideSettings = settings) => createDurableSessionStore({sessionRoot: path.join(directory, 'sessions'), workspaceRoot: path.join(directory, 'workspace'),
+  const makeStore = (overrideSettings = settings, extra = {}) => createDurableSessionStore({sessionRoot: path.join(directory, 'sessions'), workspaceRoot: path.join(directory, 'workspace'),
     getModels: () => models, getModelRef: () => ({provider: 'fixture', modelId: 'fixture'}), settings: overrideSettings, dispatchDiagnostics,
     buildTools: () => [{name: 'canvas_nodes_create', label: 'canvas.nodes.create', description: 'Synthetic local write',
       parameters: {type: 'object', properties: {}}, execute: async id => {
@@ -63,7 +65,8 @@ async function fixture(t, respond, {settings = {}, maxRequests = 0, idleTimeoutM
         return {content: [{type: 'text', text: 'one completed synthetic write'}]};
       }}],
     authorizeTurn: async ({turnId}) => ({turnId, canvasId: 'canvas', permissionMode: 'canvas', open: true}),
-    completeTurn: async () => {}});
+    completeTurn: async () => {},
+    ...extra});
   store = makeStore();
   const entry = await store.ensureSession('canvas');
   const transport = idleTimeoutMs === undefined ? realFetch : (input, options) =>
@@ -80,9 +83,9 @@ async function fixture(t, respond, {settings = {}, maxRequests = 0, idleTimeoutM
     content: 'write once then summarize', userText: 'write once then summarize', revisionBefore: 1}) : null;
   return {store, entry, submission, requests, toolCalls, ledgerPath, directory,
     readLedger: () => fs.existsSync(ledgerPath) ? fs.readFileSync(ledgerPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [],
-    reopenStore: async (overrideSettings = settings) => {
+    reopenStore: async (overrideSettings = settings, extra = {}) => {
       await store.disposeAll();
-      store = makeStore(overrideSettings);
+      store = makeStore(overrideSettings, extra);
       return store;
     },
     reopenHistory: async () => {
@@ -230,8 +233,10 @@ test('scenario 1: pre-first-byte EOF and HTTP 502 retry at most twice (never 9x)
 });
 
 test('scenario 2: quota/billing HTTP 429 triggers 0 retries under single-layer retry policy', {timeout: 15000}, async t => {
+  assert.equal(isRetryableAssistantError({stopReason: 'error', errorMessage: 'model_error'}), false);
   for (const [label, body] of [
     ['insufficient_quota', {error: {message: 'You exceeded your current quota, please check your plan and billing details.', type: 'insufficient_quota', code: 'insufficient_quota'}}],
+    ['insufficient_balance', {error: {message: 'Insufficient balance'}}],
     ['billing', {error: {message: 'billing account disabled due to unpaid balance'}}],
     ['monthly_limit', {error: {message: 'Monthly usage limit reached for your plan'}}],
   ]) {
@@ -244,12 +249,14 @@ test('scenario 2: quota/billing HTTP 429 triggers 0 retries under single-layer r
     assert.equal(f.requests.length, 1, `${label} HTTP 429 must trigger 0 retries`);
     assert.equal(events.filter(event => event.type === 'auto_retry_start').length, 0);
     assert.equal(record.errorReason, 'model_error', `${label} must not misclassify as transient provider_rate_limited`);
+    assert(f.readLedger().some(row => row.reason === 'model_error'), `${label} must record sanitized diagnostics`);
   }
 });
 
-test('scenario 3: 13k thinking/text tokens closing with usage.output=0 and no finish_reason triggers 0 retries and preserves partial text', {timeout: 15000}, async t => {
+test('scenario 3: 13k thinking/text tokens and signature-only reasoning_details closing with usage.output=0 trigger 0 retries', {timeout: 15000}, async t => {
   assert.equal(isRetryableAssistantError({stopReason: 'error', errorMessage: PARTIAL_OUTPUT_STREAM_INTERRUPTED}), false);
   assert.equal(hasProducedContent({content: [{type: 'thinking', thinking: 'x'}], usage: {output: 0}}), true);
+  assert.equal(hasProducedContent({content: [{type: 'thinking', thinking: '', thinkingSignature: 'encrypted-sig'}], usage: {output: 0}}), true);
   assert.equal(hasProducedContent({content: [], usage: {output: 0}}), false);
 
   const bigThinking = '深度分镜推理。'.repeat(2000); // >13k chars
@@ -269,14 +276,73 @@ test('scenario 3: 13k thinking/text tokens closing with usage.output=0 and no fi
   assert.equal(record.rawStopReason, 'error');
   const pub = publicDurableTurn(record);
   assert.equal(pub.reply, partialReply);
-  assert.equal(pub.error, '模型输出中途中断，已保留已生成内容，可点击继续处理');
+  assert.equal(pub.error, '模型输出中途中断，已保留已生成内容，可点击继续处理。');
   const ledger = f.readLedger();
   assert(ledger.some(row => row.reason === 'stream_ended_without_finish_reason'), 'original sanitized reason recorded');
   assert(ledger.some(row => row.reason === PARTIAL_OUTPUT_STREAM_INTERRUPTED), 'guard trigger recorded');
   const history = await f.reopenHistory();
   assert.equal(history.turns[0].errorReason, PARTIAL_OUTPUT_STREAM_INTERRUPTED);
   assert.equal(history.turns[0].reply, partialReply);
-  assert.equal(history.turns[0].error, '模型输出中途中断，已保留已生成内容，可点击继续处理');
+  assert.equal(history.turns[0].error, '模型输出中途中断，已保留已生成内容，可点击继续处理。');
+
+  // 3b. Encrypted/signature-only reasoning_details with usage.output === 0 and no finish_reason triggers 0 retries
+  const encFix = await fixture(t, ({frame, res}) => {
+    frame({role: 'assistant', reasoning_details: [{type: 'reasoning.encrypted', id: 'rs_enc_1', data: 'ciphertext-blob'}]});
+    res.end('data: [DONE]\n\n');
+  }, {reasoning: true, settings: {retry: {enabled: true, maxRetries: 2, baseDelayMs: 10, maxAgentDelayMs: 100}}});
+  const encRec = await encFix.store.wait(encFix.entry, encFix.submission);
+  assert.equal(encFix.requests.length, 1, 'encrypted reasoning_details must trigger 0 retries');
+  assert.equal(encRec.errorReason, PARTIAL_OUTPUT_STREAM_INTERRUPTED);
+
+  // 3c. Mid-stream thrown transport error (e.g. terminated / fetch failed) preserves partial deltas and triggers 0 retries
+  for (const thrownMsg of ['terminated', 'fetch failed']) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-stream-throw-'));
+    t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+    let calls = 0;
+    const fakeModel = {id: 'fixture', name: 'fixture', api: 'openai-completions', provider: 'fixture', reasoning: true,
+      input: ['text'], contextWindow: 200000, maxTokens: 1024, cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}};
+    const streamWithThrow = () => {
+      calls += 1;
+      const eventsStream = createAssistantMessageEventStream();
+      const partial = {role: 'assistant', content: [], api: fakeModel.api, provider: fakeModel.provider, model: fakeModel.id,
+        usage: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0}},
+        stopReason: 'pending', timestamp: Date.now()};
+      const iterable = {
+        async *[Symbol.asyncIterator]() {
+          partial.content.push({type: 'thinking', thinking: '先行思考草稿'});
+          yield {type: 'thinking_delta', contentIndex: 0, delta: '先行思考草稿', partial};
+          partial.content.push({type: 'text', text: '中断前已流出的半截正文'});
+          yield {type: 'text_delta', contentIndex: 1, delta: '中断前已流出的半截正文', partial};
+          throw new Error(thrownMsg);
+        },
+        result: () => eventsStream.result(),
+      };
+      return iterable;
+    };
+    const throwRuntime = await ModelRuntime.create({authPath: path.join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false});
+    throwRuntime.registerProvider('fixture', {api: 'openai-completions', apiKey: 'fixture', baseUrl: 'http://127.0.0.1:1/v1',
+      models: [{id: 'fixture', name: 'fixture', reasoning: true, input: ['text'], contextWindow: 200000, maxTokens: 1024,
+        cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}}]});
+    const baseProvider = throwRuntime.getProvider('fixture');
+    const throwingModels = createModels();
+    throwingModels.setProvider({...baseProvider, stream: streamWithThrow, streamSimple: streamWithThrow});
+    const throwStore = createDurableSessionStore({
+      sessionRoot: path.join(dir, 'sessions'), workspaceRoot: path.join(dir, 'workspace'),
+      getModels: () => throwingModels, getModelRef: () => ({provider: 'fixture', modelId: 'fixture'}),
+      settings: {retry: {enabled: true, maxRetries: 2, baseDelayMs: 10, maxAgentDelayMs: 100}},
+      buildTools: () => [],
+      authorizeTurn: async ({turnId}) => ({turnId, canvasId: 'canvas', permissionMode: 'canvas', open: true}),
+      completeTurn: async () => {},
+    });
+    t.after(() => throwStore.disposeAll());
+    const throwEntry = await throwStore.ensureSession('canvas');
+    const throwSub = await throwStore.submit(throwEntry, {turnId: 'throw-turn', requestId: 'throw-req', permissionMode: 'canvas',
+      content: 'stream then throw', userText: 'stream then throw', revisionBefore: 1});
+    const throwRec = await throwStore.wait(throwEntry, throwSub);
+    assert.equal(calls, 1, `thrown "${thrownMsg}" after partial deltas must trigger 0 retries`);
+    assert.equal(throwRec.errorReason, PARTIAL_OUTPUT_STREAM_INTERRUPTED);
+    assert.equal(throwRec.reply, '中断前已流出的半截正文');
+  }
 });
 
 test('scenario 4: crash-restart interrupted() -> convertPartial -> attempt>1 triggers 0 duplicate requests while continue and compaction remain unblocked', {timeout: 30000}, async t => {
@@ -340,6 +406,10 @@ test('scenario 4: crash-restart interrupted() -> convertPartial -> attempt>1 tri
   }
 
   // Simulate true unclean crash & restart: close old store, restore pre-close SQLite snapshot, reopen!
+  // Also simulate a beforeRequest exception during recovery (authorizeTurn throws once on the crashed turn)
+  // to prove Path B stays fail-closed via Pi's options.onPayload invariant rather than preparedRequests.
+  let failBeforeRequest = false;
+  let recoveryAuthThrows = 0;
   await f.store.disposeAll();
   fs.rmSync(sessionsDir, {recursive: true, force: true});
   fs.cpSync(crashBackupDir, sessionsDir, {recursive: true});
@@ -347,18 +417,31 @@ test('scenario 4: crash-restart interrupted() -> convertPartial -> attempt>1 tri
     retry: {enabled: true, maxRetries: 2, baseDelayMs: 120, maxAgentDelayMs: 300},
     progress: {partialIntervalMs: 10, persistWithinMs: 20},
     compaction: {enabled: true, keepRecentTokens: 1, reserveTokens: 2048, backgroundTokens: 0},
+  }, {
+    authorizeTurn: async ({turnId}) => {
+      if (failBeforeRequest && turnId === 'transport-turn') {
+        recoveryAuthThrows += 1;
+        throw new Error('transient beforeRequest failure during recovery');
+      }
+      return {turnId, canvasId: 'canvas', permissionMode: 'canvas', open: true};
+    },
   });
   const reopened = await store2.ensureSession('canvas');
   const recoveredSub = await store2.recover(reopened);
   assert.ok(recoveredSub, 'interrupted turn must be recovered');
+  failBeforeRequest = true;
   const crashEvents = [];
   const crashRecord = await store2.wait(reopened, recoveredSub, {onEvent: event => crashEvents.push(event)});
   assert(crashEvents.some(event => event.type === 'auto_retry_start' || (event.type === 'snapshot' && event.generation?.retry)),
     'unclean crash must exercise Pi interrupted() -> retry -> attempt > 1');
-  assert.equal(f.requests.length, 1, 'Path B must trigger 0 duplicate upstream requests on attempt > 1');
+  assert(recoveryAuthThrows >= 1, 'beforeRequest must have thrown during recovery');
+  assert.equal(f.requests.length, 1, 'Path B must trigger 0 duplicate upstream requests on attempt > 1 even when beforeRequest throws');
   assert.equal(crashRecord.errorReason, PARTIAL_OUTPUT_STREAM_INTERRUPTED);
   assert.equal(crashRecord.rawStopReason, 'aborted');
   assert.equal(crashRecord.reply, partialText, 'partial text from convertPartial must be preserved');
+  const crashLedgerRows = f.readLedger().filter(row => row.reason === PARTIAL_OUTPUT_STREAM_INTERRUPTED);
+  assert.equal(crashLedgerRows.length, 1, 'Path B must write exactly 1 deduplicated model.outcome row');
+  assert.equal(crashLedgerRows[0].rawStopReason, 'aborted');
 
   // (a1) User-initiated explicit follow-up message after interrupted partial MUST NOT be blocked
   const continueSub = await store2.submit(reopened, {
@@ -425,10 +508,10 @@ test('scenario 6: stopReason=length and content_filter map accurately without le
   assert.equal(lenRec.rawStopReason, 'length');
   assert.equal(lenRec.reply, '很长的剧本写到一半被截断');
   const lenPub = publicDurableTurn(lenRec);
-  assert.equal(lenPub.error, '回复达到长度上限被截断，已保留现有内容，可点击继续处理');
+  assert.equal(lenPub.error, '回复达到长度上限被截断，已保留现有内容，可点击继续处理。');
   assert.equal(lenPub.rawStopReason, 'length');
 
-  // 6b. content_filter -> model_content_filtered, rawStopReason='content_filter', 0 retries, no raw leak
+  // 6b. content_filter (provider finish_reason) -> model_content_filtered, rawStopReason='content_filter', 0 retries, no raw leak
   const cfFix = await fixture(t, ({frame, res}) => {
     frame({role: 'assistant', content: 'partial before filter https://secret.invalid?api_key=leak'});
     frame({}, 'content_filter');
@@ -440,14 +523,41 @@ test('scenario 6: stopReason=length and content_filter map accurately without le
   assert.equal(cfRec.rawStopReason, 'content_filter');
   assert.equal(cfRec.reply, '');
   const cfPub = publicDurableTurn(cfRec);
-  assert.equal(cfPub.error, '上游模型触发了安全审核拦截，请调整措辞后重试');
+  assert.equal(cfPub.error, '上游模型触发了安全审核拦截，请调整措辞后重试。');
   assert.equal(cfPub.rawStopReason, 'content_filter');
   assert(!JSON.stringify(cfPub).includes('secret.invalid'));
   assert(!JSON.stringify(cfPub).includes('api_key=leak'));
   const cfLedger = cfFix.readLedger();
   assert(cfLedger.some(row => row.reason === 'model_content_filtered' && row.rawStopReason === 'content_filter'));
 
-  // 6c. Even when settled.detail is omitted, durableCompletion falls back to assistant.errorMessage without losing specific codes.
+  // 6c. errorMessage-only content_filter (no provider finish_reason) must assign rawStopReason='content_filter'
+  // onto the persisted SQLite message so durableCompletion, dispatch ledger, and Go SQLite reader all agree.
+  const cfMsgFix = await fixture(t, ({res}) => {
+    res.end(sse({error: {message: 'Provider stopped with: SAFETY policy https://internal.invalid?token=secret'}}));
+  }, {settings: {retry: {enabled: true, maxRetries: 2, baseDelayMs: 10, maxAgentDelayMs: 100}}});
+  const cfMsgRec = await cfMsgFix.store.wait(cfMsgFix.entry, cfMsgFix.submission);
+  assert.equal(cfMsgFix.requests.length, 1, 'errorMessage-only content filter must trigger 0 retries');
+  assert.equal(cfMsgRec.errorReason, 'model_content_filtered');
+  assert.equal(cfMsgRec.rawStopReason, 'content_filter');
+  assert(cfMsgFix.readLedger().some(row => row.reason === 'model_content_filtered' && row.rawStopReason === 'content_filter'));
+  const sqliteFiles = fs.readdirSync(path.join(cfMsgFix.directory, 'sessions'), {recursive: true})
+    .filter(name => String(name).endsWith('.sqlite'));
+  assert.equal(sqliteFiles.length, 1);
+  const db = new DatabaseSync(path.join(cfMsgFix.directory, 'sessions', String(sqliteFiles[0])), {readOnly: true});
+  try {
+    const persisted = db.prepare(`SELECT json_extract(m.value, '$.rawStopReason') AS rawStopReason, json_extract(m.value, '$.errorMessage') AS errorMessage FROM entries e, json_each(e.record, '$.model') m WHERE json_extract(m.value, '$.role') = 'assistant'`).all();
+    assert(persisted.some(row => row.rawStopReason === 'content_filter' && row.errorMessage === 'model_content_filtered'),
+      `expected content_filter persisted in SQLite, got ${JSON.stringify(persisted)}`);
+  } finally {
+    db.close();
+  }
+
+  // 6d. Anthropic & OpenAI Responses no-finish-reason variants classify to stream_ended_without_finish_reason.
+  assert.equal(classifyModelFailureReason('Anthropic stream ended without a stop reason'), 'stream_ended_without_finish_reason');
+  assert.equal(classifyModelFailureReason('Anthropic stream ended before message_stop'), 'stream_ended_without_finish_reason');
+  assert.equal(classifyModelFailureReason('OpenAI Responses stream ended before a terminal response event'), 'stream_ended_without_finish_reason');
+
+  // 6e. Even when settled.detail is omitted, durableCompletion falls back to assistant.errorMessage without losing specific codes.
   const withoutDetail = durableCompletion(
     {status: 'unanswered', reason: 'model_error'},
     {role: 'assistant', stopReason: 'error', errorMessage: 'Stream ended without finish_reason', content: []},
@@ -481,21 +591,21 @@ test('delayed headers beyond idle allowance and normal tool continuation both su
   assert.equal(events.filter(event => event.type === 'auto_retry_start').length, 0);
 });
 
-for (const [label, message] of [
-  ['authentication', '401 Unauthorized: invalid API key'],
-  ['quota', `insufficient_quota: ${EOF_MESSAGE}`],
-  ['balance', `insufficient balance: ${EOF_MESSAGE}`],
-  ['billing', `billing account disabled: ${EOF_MESSAGE}`],
-  ['request budget', 'turn_request_budget_exhausted'],
-  ['tool budget', 'turn_tool_step_budget_exhausted'],
-  ['context overflow', 'context length exceeded'],
-  ['unclassified EOF', 'unexpected EOF'],
-  ['content parse EOF', 'EOF while decoding JSON'],
+for (const [label, message, expectedDetail] of [
+  ['authentication', '401 Unauthorized: invalid API key', '401 Unauthorized: invalid API key'],
+  ['quota', `insufficient_quota: ${EOF_MESSAGE}`, 'model_error'],
+  ['balance', `insufficient balance: ${EOF_MESSAGE}`, 'model_error'],
+  ['billing', `billing account disabled: ${EOF_MESSAGE}`, 'model_error'],
+  ['request budget', 'turn_request_budget_exhausted', 'turn_request_budget_exhausted'],
+  ['tool budget', 'turn_tool_step_budget_exhausted', 'turn_tool_step_budget_exhausted'],
+  ['context overflow', 'context length exceeded', 'context length exceeded'],
+  ['unclassified EOF', 'unexpected EOF', 'unexpected EOF'],
+  ['content parse EOF', 'EOF while decoding JSON', 'EOF while decoding JSON'],
 ]) test(`${label} remains terminal without new retries`, {timeout: 15000}, async t => {
   const f = await fixture(t, ({res}) => res.end(sse({error: {message}})));
   const events = [];
   const record = await f.store.wait(f.entry, f.submission, {onEvent: event => {events.push(event);}});
-  assert.equal(record.error, message);
+  assert.equal(record.error, expectedDetail);
   assert.equal(record.errorReason, 'model_error');
   assert.equal(f.requests.length, 1);
   assert.equal(events.filter(event => event.type === 'auto_retry_start').length, 0);

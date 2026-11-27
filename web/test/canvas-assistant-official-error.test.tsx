@@ -77,7 +77,7 @@ test("stream interruption, truncation, content filter and transport reasons rend
         <CanvasAssistantTurnView turn={partialTurn} handledProposals={new Set()} onLocate={() => {}} onUndo={() => {}} onRunProposal={() => {}} onDismissProposal={() => {}} onContinue={() => {}} />,
     );
     expect(partialHtml).toContain("已生成的半截分镜内容");
-    expect(partialHtml).toContain("模型输出中途中断，已保留已生成内容，可点击继续处理");
+    expect(partialHtml).toContain("模型输出中途中断，已保留已生成内容，可点击继续处理。");
     expect(partialHtml).toContain("继续处理");
     expect(assistantTurnCanContinue("partial_output_stream_interrupted")).toBe(true);
 
@@ -86,7 +86,7 @@ test("stream interruption, truncation, content filter and transport reasons rend
         <CanvasAssistantTurnView turn={truncatedTurn} handledProposals={new Set()} onLocate={() => {}} onUndo={() => {}} onRunProposal={() => {}} onDismissProposal={() => {}} onContinue={() => {}} />,
     );
     expect(truncatedHtml).toContain("达到长度上限前的现有内容");
-    expect(truncatedHtml).toContain("回复达到长度上限被截断，已保留现有内容，可点击继续处理");
+    expect(truncatedHtml).toContain("回复达到长度上限被截断，已保留现有内容，可点击继续处理。");
     expect(truncatedHtml).toContain("继续处理");
     expect(assistantTurnCanContinue("model_output_truncated")).toBe(true);
 
@@ -94,7 +94,7 @@ test("stream interruption, truncation, content filter and transport reasons rend
     const filteredHtml = renderToStaticMarkup(
         <CanvasAssistantTurnView turn={filteredTurn} handledProposals={new Set()} onLocate={() => {}} onUndo={() => {}} onRunProposal={() => {}} onDismissProposal={() => {}} onContinue={() => {}} />,
     );
-    expect(filteredHtml).toContain("上游模型触发了安全审核拦截，请调整措辞后重试");
+    expect(filteredHtml).toContain("上游模型触发了安全审核拦截，请调整措辞后重试。");
     expect(filteredHtml).not.toContain(">继续处理<");
     expect(assistantTurnCanContinue("model_content_filtered")).toBe(false);
 

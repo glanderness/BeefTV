@@ -44,6 +44,9 @@ test('model outcome classification and ledger keep only allowlisted machine code
   assert.equal(classifyModelFetchError(new Error('Model stream idle timeout: no text for 95000 ms')), 'stream_idle_timeout');
   assert.equal(classifyModelFetchError(new Error('upstream stream ended before first response: unexpected EOF')), 'upstream_eof_before_first_byte');
   assert.equal(classifyModelFetchError(new Error('Stream ended without finish_reason')), 'stream_ended_without_finish_reason');
+  assert.equal(classifyModelFetchError(new Error('Anthropic stream ended without a stop reason')), 'stream_ended_without_finish_reason');
+  assert.equal(classifyModelFetchError(new Error('Anthropic stream ended before message_stop')), 'stream_ended_without_finish_reason');
+  assert.equal(classifyModelFetchError(new Error('OpenAI Responses stream ended before a terminal response event')), 'stream_ended_without_finish_reason');
   assert.equal(classifyModelFetchError(Object.assign(new Error('aborted'), { name: 'AbortError' })), 'aborted');
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'outcome-evidence-'));
