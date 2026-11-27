@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { isTextEditableTarget } from "@/lib/backspace-navigation-guard";
 import type { TimelineProject } from "@/types/timeline";
 
 const MAX_TIMELINE_HISTORY = 50;
@@ -13,13 +14,6 @@ type HistoryState = {
 function withComputedDuration(project: TimelineProject): TimelineProject {
     const endMs = project.clips.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
     return { ...project, durationMs: Math.max(endMs, 1_000) };
-}
-
-function isEditableKeyboardTarget(target: EventTarget | null): boolean {
-    if (!(target instanceof HTMLElement)) return false;
-    if (target.isContentEditable) return true;
-    const tag = target.tagName;
-    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
 /**
@@ -94,8 +88,9 @@ export function useTimelineDraftHistory(initial: () => TimelineProject, open: bo
     useEffect(() => {
         if (!open) return;
         const onKeyDown = (event: KeyboardEvent) => {
+            if (event.defaultPrevented || event.isComposing) return;
             if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
-            if (isEditableKeyboardTarget(event.target)) return;
+            if (isTextEditableTarget(event.target)) return;
             const key = event.key.toLowerCase();
             if (key === "z" && !event.shiftKey) {
                 event.preventDefault();

@@ -117,6 +117,28 @@ describe("timeline output presets and native render eligibility", () => {
             }],
         };
         expect(canUseNativeTimelineRender("canvas-1", dataUrlDraft, [])).toBe(false);
+
+        const hiddenDataUrlDraft: TimelineProject = {
+            version: 2,
+            durationMs: 3000,
+            tracks: [
+                { id: "v1", kind: "video", label: "视频 1", order: 0 },
+                { id: "v2", kind: "video", label: "隐藏轨", order: 1, visible: false },
+            ],
+            clips: [
+                { id: "c1", kind: "video", nodeId: "n-video", trackId: "v1", startMs: 0, durationMs: 2000 },
+                {
+                    id: "c-hidden-inline",
+                    kind: "video",
+                    nodeId: "inline-hidden",
+                    trackId: "v2",
+                    startMs: 0,
+                    durationMs: 2000,
+                    directMedia: { id: "d2", kind: "video", title: "hidden", content: "data:video/mp4;base64,AA==" },
+                },
+            ],
+        };
+        expect(canUseNativeTimelineRender("canvas-1", hiddenDataUrlDraft, nodes)).toBe(false);
     });
 
     test("shouldFallbackToBrowserWasm falls back only when native local executor is unavailable", () => {
@@ -131,7 +153,7 @@ describe("timeline output presets and native render eligibility", () => {
         expect(shouldFallbackToBrowserWasm(new DOMException("Aborted", "AbortError"))).toBe(false);
     });
 
-    test("buildBrowserRenderSources maps MIME extensions for PNG image, M4A audio, and MP4 video", () => {
+    test("buildBrowserRenderSources maps MIME extensions for PNG image, M4A/OGG audio, and MP4/AVI video", () => {
         const draft: TimelineProject = {
             version: 2,
             durationMs: 5000,
@@ -141,12 +163,14 @@ describe("timeline output presets and native render eligibility", () => {
             ],
             clips: [
                 { id: "c1", kind: "video", nodeId: "v", trackId: "v1", startMs: 0, durationMs: 2000, directMedia: { id: "v", kind: "video", title: "v", storageKey: "resource:rv", mimeType: "video/mp4" } },
-                { id: "c2", kind: "image", nodeId: "i", trackId: "v1", startMs: 2000, durationMs: 3000, directMedia: { id: "i", kind: "image", title: "i", storageKey: "resource:ri", mimeType: "image/png" } },
-                { id: "c3", kind: "audio", nodeId: "a", trackId: "a1", startMs: 0, durationMs: 5000, directMedia: { id: "a", kind: "audio", title: "a", storageKey: "resource:ra", mimeType: "audio/mp4" } },
+                { id: "c2", kind: "image", nodeId: "i", trackId: "v1", startMs: 2000, durationMs: 1500, directMedia: { id: "i", kind: "image", title: "i", storageKey: "resource:ri", mimeType: "image/png" } },
+                { id: "c3", kind: "video", nodeId: "avi", trackId: "v1", startMs: 3500, durationMs: 1500, directMedia: { id: "avi", kind: "video", title: "avi", storageKey: "resource:ravi", mimeType: "video/x-msvideo" } },
+                { id: "c4", kind: "audio", nodeId: "a", trackId: "a1", startMs: 0, durationMs: 2500, directMedia: { id: "a", kind: "audio", title: "a", storageKey: "resource:ra", mimeType: "audio/mp4" } },
+                { id: "c5", kind: "audio", nodeId: "ogg", trackId: "a1", startMs: 2500, durationMs: 2500, directMedia: { id: "ogg", kind: "audio", title: "ogg", storageKey: "resource:rogg", mimeType: "application/ogg" } },
             ],
         };
         const sources = buildBrowserRenderSources(draft, []);
-        expect(sources.map((s) => s.fileName)).toEqual(["input-0.mp4", "input-1.png", "input-2.m4a"]);
+        expect(sources.map((s) => s.fileName)).toEqual(["input-0.mp4", "input-1.png", "input-2.avi", "input-3.m4a", "input-4.ogg"]);
     });
 
     test("runOwnedTimelineRender forwards options and resolves canonical task outputs resourceId", async () => {
@@ -191,6 +215,60 @@ describe("timeline output presets and native render eligibility", () => {
                 expect(result.resourceId).toBe("res-output-9x16");
                 expect(capturedBody?.projectId).toBe("canvas-9x16");
                 expect(capturedBody?.options).toEqual({ width: 1080, height: 1920, fps: 24, burnSubtitles: false });
+            });
+        } finally {
+            setActiveUserScope(previousScope);
+        }
+    });
+
+    test("runOwnedTimelineRender cancels newly created task if session aborts during create", async () => {
+        const previousScope = getActiveUserScope();
+        setActiveUserScope("owner-abort");
+        const cancelledPaths: string[] = [];
+        let markCancelled!: () => void;
+        const cancelObserved = new Promise<void>((resolve) => {
+            markCancelled = resolve;
+        });
+        let liveProjectId = "canvas-abort";
+        const controller = new AbortController();
+        try {
+            await withAdapter(async (config) => {
+                if (config.url === "/timeline/renders") {
+                    liveProjectId = "canvas-other";
+                    return envelope({
+                        id: "task-abort-window",
+                        type: "timeline_render",
+                        status: "queued",
+                        prompt: "时间线渲染",
+                        attempts: 0,
+                        createdAt: "2026-11-28T00:00:00.000Z",
+                        updatedAt: "2026-11-28T00:00:00.000Z",
+                    });
+                }
+                if (config.url === "/tasks/task-abort-window/cancel") {
+                    cancelledPaths.push(config.url);
+                    markCancelled();
+                    return envelope({ id: "task-abort-window", status: "cancelled" });
+                }
+                throw new Error(`unexpected ${config.url}`);
+            }, async () => {
+                const session = beginLocalExecutorSession("canvas-abort", {
+                    controller,
+                    getLiveProjectId: () => liveProjectId,
+                });
+                let createdCalled = false;
+                await expect(runOwnedTimelineRender({
+                    session,
+                    projectId: "canvas-abort",
+                    timeline: { version: 2, tracks: [], clips: [], durationMs: 2000 },
+                    clientOperationId: "op-abort",
+                    onCreated: () => {
+                        createdCalled = true;
+                    },
+                })).rejects.toMatchObject({ name: "AbortError" });
+                await cancelObserved;
+                expect(createdCalled).toBe(false);
+                expect(cancelledPaths).toEqual(["/tasks/task-abort-window/cancel"]);
             });
         } finally {
             setActiveUserScope(previousScope);

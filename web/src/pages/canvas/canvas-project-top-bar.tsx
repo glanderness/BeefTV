@@ -445,7 +445,7 @@ export function CanvasTopBar({
                         <CanvasTopBarTooltip label="时间线">
                             <Button
                                 type="text"
-                                className="canvas-topbar-action canvas-topbar-timeline-button w-9 min-w-9 rounded-xl p-0"
+                                className="canvas-topbar-action canvas-topbar-timeline-button w-10 min-w-10 rounded-xl p-0"
                                 style={{ color: theme.node.text, background: timelineOpen ? theme.toolbar.activeBg : undefined }}
                                 aria-pressed={timelineOpen}
                                 aria-label="时间线"

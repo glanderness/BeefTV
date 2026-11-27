@@ -407,6 +407,8 @@ func extensionForMIME(raw string) string {
 		return ".webm"
 	case "video/x-matroska", "video/matroska":
 		return ".mkv"
+	case "video/x-msvideo", "video/avi":
+		return ".avi"
 	case "audio/mpeg", "audio/mp3":
 		return ".mp3"
 	case "audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave":
@@ -445,6 +447,9 @@ func sniffMediaExtension(head []byte, planKind string) string {
 		}
 		if bytes.Equal(head[8:12], []byte("WAVE")) {
 			return ".wav"
+		}
+		if bytes.Equal(head[8:12], []byte("AVI ")) {
+			return ".avi"
 		}
 	}
 	if len(head) >= 4 && bytes.Equal(head[:4], []byte("fLaC")) {

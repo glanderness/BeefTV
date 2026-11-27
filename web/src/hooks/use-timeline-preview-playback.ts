@@ -217,7 +217,6 @@ class TimelinePreviewPlayback {
         const shouldPlay = active && (clip.kind === "video" || !muted) && this.running && this.prepared();
         element.muted = muted;
         const gain = timelinePreviewGain(clip, this.position);
-        if ((clip.volume ?? 1) > 1 && shouldPlay) { this.fail("当前音量超过预览范围，请将片段音量调至 100% 以内后试听。"); return; }
         element.volume = clamp(gain, 0, 1);
         // A source can finish between throttled animation frames. Let the
         // clock reach its clip boundary without seeking and replaying the tail.

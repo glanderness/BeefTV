@@ -329,8 +329,9 @@ test("CanvasTimelineDialog 空画布直达：上传图文音、9:16 预设、音
         expect(await videoHideBtn.getAttribute("aria-pressed")).toBe("true");
         expect(await page.locator('[data-timeline-track-row="video-1"]').getAttribute("data-track-hidden")).toBe("true");
 
-        // 弹窗内局部撤销/重做（Cmd/Ctrl+Z 撤销隐藏轨道，工具栏重做与再次撤销）
-        await page.locator(".canvas-timeline-toolbar").click({ position: { x: 4, y: 4 } });
+        // 弹窗内局部撤销/重做（聚焦音量滑块时 Cmd/Ctrl+Z 仍应撤销隐藏轨道，工具栏重做与再次撤销）
+        await page.locator('[data-timeline-clip-kind="audio"]').click();
+        await page.locator('input[type="range"][aria-label="片段音量滑块"]').focus();
         const undoModifier = process.platform === "darwin" ? "Meta+z" : "Control+z";
         await page.keyboard.press(undoModifier);
         expect(await videoHideBtn.getAttribute("aria-pressed")).toBe("false");

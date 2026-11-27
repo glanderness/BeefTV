@@ -287,11 +287,11 @@ func primaryNodeResourceID(node map[string]any, allIDs map[string]bool) (string,
 }
 
 func mediaKindFromMIME(mimeType string) string {
-	normalized := strings.ToLower(strings.TrimSpace(mimeType))
+	normalized := strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType, ";", 2)[0]))
 	switch {
 	case strings.HasPrefix(normalized, "video/"):
 		return editing.KindVideo
-	case strings.HasPrefix(normalized, "audio/"):
+	case strings.HasPrefix(normalized, "audio/"), normalized == "application/ogg":
 		return editing.KindAudio
 	case strings.HasPrefix(normalized, "image/"):
 		return editing.KindImage

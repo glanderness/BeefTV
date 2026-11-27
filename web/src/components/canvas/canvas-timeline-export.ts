@@ -35,16 +35,16 @@ function clipHasBackendResource(clip: TimelineClip, nodes: CanvasNodeData[]): bo
     );
 }
 
-/** 仅当存在画布/项目 ID 且所有可见媒体片段均有后端资源归属时，优先走 Go 原生 ffmpeg 渲染。 */
+/** 仅当存在画布/项目 ID、存在可见媒体片段，且全部非字幕片段均有后端资源归属（与后端 Resolve 对齐）时，优先走 Go 原生 ffmpeg 渲染。 */
 export function canUseNativeTimelineRender(
     projectId: string | undefined,
     draft: TimelineProject,
     nodes: CanvasNodeData[],
 ): boolean {
     if (!projectId?.trim()) return false;
-    const mediaClips = getVisibleMediaClips(draft);
-    if (!mediaClips.length) return false;
-    return mediaClips.every((clip) => clipHasBackendResource(clip, nodes));
+    if (!getVisibleMediaClips(draft).length) return false;
+    const allMediaClips = draft.clips.filter((clip) => clip.kind !== "subtitle");
+    return allMediaClips.length > 0 && allMediaClips.every((clip) => clipHasBackendResource(clip, nodes));
 }
 
 /** 仅在本地执行器明确不可用或离线/浏览器单机模式下回退 ffmpeg.wasm，绝不吞掉真实校验/渲染错误。 */
@@ -71,6 +71,8 @@ function extensionForClipSource(clip: TimelineClip, sourceNode?: CanvasNodeData)
         "video/x-m4v": ".m4v",
         "video/webm": ".webm",
         "video/x-matroska": ".mkv",
+        "video/x-msvideo": ".avi",
+        "video/avi": ".avi",
         "audio/mpeg": ".mp3",
         "audio/mp3": ".mp3",
         "audio/wav": ".wav",
@@ -80,6 +82,7 @@ function extensionForClipSource(clip: TimelineClip, sourceNode?: CanvasNodeData)
         "audio/aac": ".aac",
         "audio/flac": ".flac",
         "audio/ogg": ".ogg",
+        "application/ogg": ".ogg",
         "audio/opus": ".opus",
     };
     if (map[mime]) return map[mime];
@@ -159,6 +162,10 @@ export async function executeTimelineRender(params: {
                 intervalMs: 1000,
                 onCreated: (task) => {
                     createdTaskId = task.id;
+                    if (controller.signal.aborted) {
+                        void cancelGenerationTask(task.id).catch(() => undefined);
+                        return;
+                    }
                     onProgress(Math.max(5, task.progress || 5), task.stage || "时间线渲染任务已进入队列");
                 },
                 onTaskUpdate: (task) => {

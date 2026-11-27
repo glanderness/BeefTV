@@ -139,3 +139,51 @@ func TestResolveRejectsForeignNodeAndAllowsUnsavedOwnedDirectMediaInRenderMode(t
 		t.Fatalf("err = %v, want permission denied node_not_in_canvas", err)
 	}
 }
+
+func TestResolveAcceptsApplicationOggAsAudio(t *testing.T) {
+	doc := map[string]any{"nodes": []any{}}
+	lookup := stubLookup{
+		resources: map[string]*model.Resource{
+			"owner:res-ogg":  {ID: "res-ogg", MimeType: "application/ogg", DurationMs: 3000, Status: model.ResourceStatusReady},
+			"owner:res-opus": {ID: "res-opus", MimeType: "application/ogg; codecs=opus", DurationMs: 2500, Status: model.ResourceStatusReady},
+		},
+	}
+	project := editing.Project{
+		Version:    2,
+		DurationMs: 5500,
+		Tracks:     []editing.Track{{ID: "a1", Kind: editing.KindAudio}},
+		Clips: []editing.Clip{
+			{
+				ID:          "c-ogg",
+				Kind:        editing.KindAudio,
+				NodeID:      "timeline-media-ogg",
+				TrackID:     "a1",
+				StartMs:     0,
+				DurationMs:  3000,
+				Volume:      1,
+				DirectMedia: &editing.DirectMedia{ID: "ogg", Kind: editing.KindAudio, StorageKey: "resource:res-ogg"},
+			},
+			{
+				ID:          "c-opus",
+				Kind:        editing.KindAudio,
+				NodeID:      "timeline-media-opus",
+				TrackID:     "a1",
+				StartMs:     3000,
+				DurationMs:  2500,
+				Volume:      1,
+				DirectMedia: &editing.DirectMedia{ID: "opus", Kind: editing.KindAudio, StorageKey: "resource:res-opus"},
+			},
+		},
+	}
+
+	sources, err := Resolve("owner", doc, &project, Ports{Resources: lookup}, Options{})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if project.Clips[0].DirectMedia.Kind != editing.KindAudio || project.Clips[1].DirectMedia.Kind != editing.KindAudio {
+		t.Fatalf("resolved kinds = (%q, %q), want audio", project.Clips[0].DirectMedia.Kind, project.Clips[1].DirectMedia.Kind)
+	}
+	if _, err := editing.Compile(project, sources, editing.Options{}); err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+}

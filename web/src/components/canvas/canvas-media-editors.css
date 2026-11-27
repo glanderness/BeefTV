@@ -184,10 +184,6 @@
     padding: 16px 20px;
     background: var(--editor-bg) !important;
 }
-.canvas-timeline-dialog .canvas-timeline-preview-monitor {
-    width: 300px;
-    height: 168px;
-}
 .canvas-timeline-dialog .canvas-timeline-inspector-controls {
     display: flex;
     align-items: center;

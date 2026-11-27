@@ -39,6 +39,7 @@ function Harness() {
         gap: () => setClips(previous => previous.map(clip => clip.kind === "video" ? { ...clip, startMs: 1600, durationMs: 800 } : clip)),
         mute: (value: boolean) => setTracks(previous => previous.map(track => track.id === "voice" ? { ...track, muted: value } : track)),
         muteVideo: (value: boolean) => setTracks(previous => previous.map(track => track.id === "video" ? { ...track, muted: value } : track)),
+        setVolume: (value: number) => setClips(previous => previous.map(clip => clip.id === "video" || clip.id === "voice" ? { ...clip, volume: value } : clip)),
         hide: (value: boolean) => setTracks(previous => previous.map(track => track.id === "music" ? { ...track, visible: !value } : track)),
         removeVoice: () => setClips(previous => previous.filter(clip => clip.id !== "voice")),
         snapshot: () => ({ playing, playhead, error, audio: audioElements.map(audio => ({ src: audio.getAttribute("src"), currentTime: audio.currentTime, paused: audio.paused, muted: audio.muted, volume: audio.volume, readyState: audio.readyState, error: audio.error?.code || null })) }),

@@ -28,6 +28,8 @@ func TestExtensionForMIMEAndSniffing(t *testing.T) {
 		"video/x-m4v":             ".m4v",
 		"video/webm":              ".webm",
 		"video/x-matroska":        ".mkv",
+		"video/x-msvideo":         ".avi",
+		"video/avi":               ".avi",
 		"audio/mpeg":              ".mp3",
 		"audio/wav":               ".wav",
 		"audio/x-wav":             ".wav",
@@ -56,6 +58,9 @@ func TestExtensionForMIMEAndSniffing(t *testing.T) {
 	}
 	if got := materializedSourceExtension("", []byte("OggS\x00\x02OpusHead"), KindAudio); got != ".opus" {
 		t.Fatalf("sniff Opus = %q, want .opus", got)
+	}
+	if got := materializedSourceExtension("", []byte("RIFF\x24\x00\x00\x00AVI "), KindVideo); got != ".avi" {
+		t.Fatalf("sniff AVI = %q, want .avi", got)
 	}
 	if got := materializedSourceExtension("", []byte("unknown-bytes"), KindVideo); got != ".mp4" {
 		t.Fatalf("fallback video = %q, want .mp4", got)

@@ -7,6 +7,7 @@ import {
     TIMELINE_OUTPUT_PRESETS,
     applyOutputPreset,
     getOutputPresetKey,
+    resolveEffectiveOutputOptions,
     type TimelineOutputPresetKey,
 } from "@/lib/timeline/timeline-output-presets";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -34,8 +35,6 @@ type CanvasTimelinePreviewProps = {
     onUpdateOutput?: (next: TimelineProject["output"]) => void;
 };
 
-const PREVIEW_WIDTH = 300;
-const PREVIEW_HEIGHT = 168;
 const EMPTY_TRACKS: TimelineTrack[] = [];
 
 /**
@@ -60,9 +59,13 @@ export function CanvasTimelinePreview({
     const [resolvedImage, setResolvedImage] = useState({ key: "", url: "" });
     const [playbackError, setPlaybackError] = useState("");
     const [subtitleImage, setSubtitleImage] = useState<{ key: string; url?: string; error?: string } | null>(null);
-    // Omitted output fields use the same defaults as Go's editing.NormalizeOptions.
-    const outputWidth = output?.width || 1920;
-    const outputHeight = output?.height || 1080;
+    // 复用统一输出规格解析：显式预设直接透传，「自适应首素材」时按首个可见素材尺寸预览，缺省回退 1920×1080。
+    const effectiveOutput = useMemo(
+        () => resolveEffectiveOutputOptions({ version: 2, tracks, clips, durationMs: 0, output }, nodes),
+        [clips, nodes, output, tracks],
+    );
+    const outputWidth = effectiveOutput.width || 1920;
+    const outputHeight = effectiveOutput.height || 1080;
     const visibleTracks = useMemo(() => new Map(tracks.map(track => [track.id, track.visible !== false])), [tracks]);
     const visualClips = useMemo(
         () => clips.filter((clip) => (clip.kind === "video" || clip.kind === "image") && visibleTracks.get(clip.trackId) !== false).sort((a, b) => a.startMs - b.startMs),
@@ -161,13 +164,11 @@ export function CanvasTimelinePreview({
 
     const previewDisplay = useMemo(() => {
         const ratio = outputWidth / outputHeight;
-        let width = PREVIEW_WIDTH;
-        let height = width / ratio;
-        if (height > PREVIEW_HEIGHT) {
-            height = PREVIEW_HEIGHT;
-            width = Math.round(height * ratio);
-        }
-        return { width: Math.round(width), height: Math.round(height) };
+        const inverse = outputHeight / outputWidth;
+        return {
+            width: `min(100cqw, calc(100cqh * ${ratio}))`,
+            height: `min(100cqh, calc(100cqw * ${inverse}))`,
+        };
     }, [outputWidth, outputHeight]);
 
     const presetKey = getOutputPresetKey(output);
@@ -187,7 +188,7 @@ export function CanvasTimelinePreview({
         <div className="canvas-timeline-preview flex items-center gap-3 border-b px-4 py-2" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>
             <div
                 className="canvas-timeline-preview-monitor relative grid shrink-0 place-items-center overflow-hidden rounded-lg bg-black"
-                style={{ width: "var(--timeline-preview-w, 300px)", height: "var(--timeline-preview-h, 168px)" }}
+                style={{ width: "var(--timeline-preview-w, 300px)", height: "var(--timeline-preview-h, 168px)", containerType: "size" }}
                 data-canvas-no-zoom
             >
                 {videoUrl && activeVideoClip ? (
