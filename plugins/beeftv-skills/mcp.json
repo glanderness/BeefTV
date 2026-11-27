@@ -3,7 +3,7 @@
   "mcpServers": {
     "beeftv-skills": {
       "type": "streamable-http",
-      "url": "https://beeftv.app/api/beeftv/skillhub/v1/mcp"
+      "url": "https://beeftv.cn/api/beeftv/skillhub/v1/mcp"
     }
   }
 }

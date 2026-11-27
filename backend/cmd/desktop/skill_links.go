@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"infinite-canvas/backend/internal/channelurl"
 	"infinite-canvas/backend/internal/skillhub"
 )
 
@@ -63,7 +64,7 @@ func validSkillWebsite(raw string) bool {
 	if err != nil || u.User != nil || u.Fragment != "" || len(raw) > 2048 || strings.Contains(u.Path, "\\") || path.Clean(u.Path) != u.Path || (u.Path != "/skills" && !strings.HasPrefix(u.Path, "/skills/")) {
 		return false
 	}
-	if u.Scheme == "https" && u.Host == "beeftv.app" {
+	if u.Scheme == "https" && channelurl.IsBeefTVHost(u.Host) {
 		return true
 	}
 	// Loopback is the existing SkillHub integration fixture transport.

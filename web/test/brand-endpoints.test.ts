@@ -4,12 +4,13 @@ import { beefTVConnectionLabel } from "../src/services/api/beeftv-connection";
 import { channelRequest } from "../src/services/api/custom-channel-relay";
 
 test("both brands retain strict managed endpoint recognition and relay credentials", () => {
-    const baseUrl = "https://beeftv.app";
-    expect(isBeefTVEndpoint(baseUrl + "/v1")).toBe(true);
-    const request = channelRequest({baseUrl, apiKey: "", apiFormat: "openai", credentialRef: "beeftv"}, baseUrl + "/v1/models");
-    expect(request.url).toContain("/ai/custom");
-    expect(JSON.stringify(request)).not.toContain("Bearer ");
-    for (const invalidUrl of ["https://legacy-enterprise.example.com", "http://beeftv.app", "https://beeftv.app:444", "https://beeftv.app.evil.test", "https://user@beeftv.app", "https://evil.test/beeftv.app"]) {
+    for (const baseUrl of ["https://beeftv.cn", "https://beeftv.app"]) {
+        expect(isBeefTVEndpoint(baseUrl + "/v1")).toBe(true);
+        const request = channelRequest({baseUrl, apiKey: "", apiFormat: "openai", credentialRef: "beeftv"}, baseUrl + "/v1/models");
+        expect(request.url).toContain("/ai/custom");
+        expect(JSON.stringify(request)).not.toContain("Bearer ");
+    }
+    for (const invalidUrl of ["https://legacy-enterprise.example.com", "http://beeftv.cn", "http://beeftv.app", "https://beeftv.cn:444", "https://beeftv.app:444", "https://beeftv.cn.evil.test", "https://beeftv.app.evil.test", "https://user@beeftv.cn", "https://user@beeftv.app", "https://evil.test/beeftv.cn", "https://evil.test/beeftv.app"]) {
         expect(isBeefTVEndpoint(invalidUrl)).toBe(false);
     }
 });

@@ -105,6 +105,9 @@ func TestValidateReturnedBaseURLRequiresCanonicalV1(t *testing.T) {
 func TestIsManagedBaseURL(t *testing.T) {
 	t.Setenv(TestOriginEnv, "")
 	for _, managed := range []string{
+		"https://beeftv.cn/v1",
+		"https://BEEFTV.CN:443/v1",
+		"https://api.beeftv.cn/v1",
 		"https://beeftv.app/v1",
 		"https://BEEFTV.APP:443/v1",
 		"https://api.beeftv.app/v1",

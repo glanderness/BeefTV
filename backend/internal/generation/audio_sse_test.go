@@ -67,7 +67,7 @@ func TestRunMusicNormalizesOldFormatAndSendsSSE(t *testing.T) {
 
 func TestMusicSSEEndpointUsesExactProductionOrExplicitLoopback(t *testing.T) {
 	t.Setenv("BEEFTV_ENTERPRISE_TEST_ORIGIN", "http://127.0.0.1:33419")
-	for _, endpoint := range []string{"https://beeftv.app", "https://beeftv.app/v1", "http://127.0.0.1:33419/v1"} {
+	for _, endpoint := range []string{"https://beeftv.cn", "https://beeftv.cn/v1", "https://beeftv.app", "https://beeftv.app/v1", "http://127.0.0.1:33419/v1"} {
 		if !isBeefTVHostFromURL(endpoint) {
 			t.Errorf("rejected endpoint %s", endpoint)
 		}

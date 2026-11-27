@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"infinite-canvas/backend/internal/channelurl"
 	"infinite-canvas/backend/internal/privatefile"
 	"infinite-canvas/backend/internal/skillhub"
 )
@@ -49,7 +50,7 @@ func loadState(name, market string, allowNew bool) (*publishingState, error) {
 	if err = json.Unmarshal(data, &state); err != nil {
 		return nil, fail("invalid_state_file", "投稿状态文件无效")
 	}
-	if state.Market != market {
+	if state.Market != market && !channelurl.SameOfficialSkillHubEndpoint(state.Market, market) {
 		return nil, fail("market_mismatch", "这份授权属于其他市场，请使用对应状态文件")
 	}
 	if state.SubmissionID != "" && !skillhub.ResourceID.MatchString(state.SubmissionID) {

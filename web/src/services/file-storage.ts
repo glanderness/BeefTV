@@ -7,6 +7,7 @@ import { resolveEmbeddedAssetUrl } from "@/lib/embedded-runtime";
 import { canUseLoopbackMediaTicket, resolveResourceMediaStream } from "@/services/media-asset-url";
 import { uploadImage, type UploadedImage } from "@/services/image-storage";
 import { createChannelTransport } from "@/services/api/channel-transport";
+import { isManagedGatewayEndpoint } from "@/lib/channel-url";
 import { useConfigStore } from "@/stores/use-config-store";
 import { cacheResourceObjectUrl, getCachedResourceBlob, getCachedResourceObjectUrl, primeResourceBlobCache } from "@/services/resource-blob-cache";
 import { cleanupLocalMedia, deleteLocalMedia, getLocalMediaBlob, resolveLocalMediaUrl, saveLocalMedia, setLocalMediaBlob } from "@/services/local-media-repository";
@@ -175,7 +176,7 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "", option
 // resulting local/blob resource. This also makes old canvases self-healing.
 const externalMediaInflight = new Map<string, Promise<string>>();
 async function materializeExternalMedia(url: string) {
-    if (!/^https?:\/\//i.test(url) || !/beeftv\.app/i.test(url)) return url;
+    if (!/^https:\/\//i.test(url) || !isManagedGatewayEndpoint(url)) return url;
     const existing = externalMediaInflight.get(url);
     if (existing) return existing;
     const pending = (async () => {

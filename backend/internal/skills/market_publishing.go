@@ -155,7 +155,7 @@ func (s *Service) preparePublicationBundle(user, id, canvas string, meta skillhu
 		if meta.SourceURL == "" {
 			meta.SourceURL = source.SourceURL
 			if meta.SourceURL == "" {
-				meta.SourceURL = "https://beeftv.app/skills/" + source.SkillID + "?release=" + source.ReleaseID
+				meta.SourceURL = "https://beeftv.cn/skills/" + source.SkillID + "?release=" + source.ReleaseID
 			}
 		}
 		if meta.Requirements == nil {

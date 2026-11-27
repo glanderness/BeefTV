@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const DefaultURL = "https://beeftv.app/api/beeftv/skillhub/v1"
+const DefaultURL = "https://beeftv.cn/api/beeftv/skillhub/v1"
 const MaxArchiveBytes = 100 << 20
 const MaxPackageBytes = 200 << 20
 const MaxNameRunes = 80

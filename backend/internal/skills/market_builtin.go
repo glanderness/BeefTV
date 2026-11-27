@@ -69,7 +69,7 @@ func (s *Service) builtinMarketReleases() ([]skillhub.Release, map[string]*model
 				Name:         skill.Name,
 				Description:  skill.Description,
 				License:      "CC0-1.0",
-				SourceURL:    "https://beeftv.app",
+				SourceURL:    "https://beeftv.cn",
 				VersionLabel: versionLabel,
 				Requirements: []string{},
 				Showcase:     []skillhub.Showcase{},

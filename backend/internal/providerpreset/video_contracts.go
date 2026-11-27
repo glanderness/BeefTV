@@ -3,6 +3,7 @@ package providerpreset
 import (
 	_ "embed"
 	"encoding/json"
+	"infinite-canvas/backend/internal/channelurl"
 	"net/url"
 	"strings"
 )
@@ -45,7 +46,7 @@ var videoContracts = func() []VideoContract {
 
 func IsBeefTVEndpoint(baseURL string) bool {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
-	return err == nil && u.Scheme == "https" && strings.EqualFold(u.Hostname(), "beeftv.app") && u.User == nil && (u.Port() == "" || u.Port() == "443")
+	return err == nil && u.Scheme == "https" && channelurl.IsBeefTVHost(u.Hostname()) && u.User == nil && (u.Port() == "" || u.Port() == "443")
 }
 
 func BeefTVVideoContract(model string) (VideoContract, bool) {
@@ -61,7 +62,7 @@ func BeefTVVideoContract(model string) (VideoContract, bool) {
 }
 
 // HostedBeefTVVideoProfile overlays the official video route onto a stored
-// profile only when the channel talks to beeftv.app. Custom
+// profile only when the channel talks to an official BeefTV origin (beeftv.cn or legacy beeftv.app). Custom
 // gateways keep their configured capability even if the model name matches.
 func HostedBeefTVVideoProfile(baseURL, model string) (capability, protocol string, ok bool) {
 	if !IsBeefTVEndpoint(baseURL) {

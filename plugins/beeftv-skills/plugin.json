@@ -3,8 +3,8 @@
   "name": "beeftv-skills",
   "version": "0.1.0",
   "description": "配合 BeefTV 桌面版操作画布，查找适用的技能，并协助整理和投稿创作方法。",
-  "author": { "name": "BeefTV", "url": "https://beeftv.app" },
-  "homepage": "https://beeftv.app",
+  "author": { "name": "BeefTV", "url": "https://beeftv.cn" },
+  "homepage": "https://beeftv.cn",
   "repository": "https://github.com/glanderness/BeefTV",
   "license": "MIT",
   "skills": "./skills/",
@@ -17,7 +17,7 @@
         "longDescription": "接入 BeefTV 桌面版后按它的工作方法读写画布；查找、读取和安装 BeefTV 市场的技能；帮作者整理创作方法、准备草稿，确认预览后发布。",
         "developerName": "BeefTV",
         "category": "Productivity",
-        "websiteURL": "https://beeftv.app",
+        "websiteURL": "https://beeftv.cn",
         "capabilities": ["Read"],
         "defaultPrompt": ["找一个适合把剧本拆成分镜的技能。", "帮我把这个创作方法整理成技能并准备投稿。"]
       }

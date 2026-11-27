@@ -542,7 +542,7 @@ test("social links show matching tooltips above the icons without changing their
         const officialX = page.getByRole("link", { name: "打开官方X账号" });
         const github = page.getByRole("link", { name: "打开 BeefTV GitHub 仓库" });
         for (const [link, label, href] of [
-            [website, "BeefTV 官网", "https://beeftv.app/"],
+            [website, "BeefTV 官网", "https://beeftv.cn/"],
             [github, "点点 star", "https://github.com/glanderness/BeefTV"],
             [officialX, "官方X账号", "https://x.com/beefnoode"],
         ] as const) {

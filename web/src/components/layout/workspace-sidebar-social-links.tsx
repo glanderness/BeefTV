@@ -101,7 +101,7 @@ export function WorkspaceSidebarSocialLinks({ collapsed, onExpand }: { collapsed
                     <ArrowLeft aria-hidden="true" strokeWidth={1.8} />
                 </button>
                 <WorkspaceSidebarTooltip title="BeefTV 官网">
-                    <a className="app-workspace-social-action" href="https://beeftv.app/" target="_blank" rel="noopener noreferrer" aria-label="打开 BeefTV 官网" onClick={openWebsite}>
+                    <a className="app-workspace-social-action" href="https://beeftv.cn/" target="_blank" rel="noopener noreferrer" aria-label="打开 BeefTV 官网" onClick={openWebsite}>
                         <Globe aria-hidden="true" />
                     </a>
                 </WorkspaceSidebarTooltip>

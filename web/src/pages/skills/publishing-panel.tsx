@@ -54,7 +54,7 @@ export function SkillPublishingPanel({ planId, renderHeader }: PublishingPanelPr
     const currentSubmission = current ? undefined : currentRow?.submission;
     const keyword = query.trim().toLocaleLowerCase();
     const visiblePublications = publications.filter(item => `${item.metadata.name} ${item.metadata.description} ${publicationStatus(item.status)}`.toLocaleLowerCase().includes(keyword));
-    const website = auth.websiteUrl || "https://beeftv.app/skills";
+    const website = auth.websiteUrl || "https://beeftv.cn/skills";
     const replace = (next: PublishPlan) => { setPlans(items => [next, ...items.filter(item => item.planId !== next.planId)]); setSelected(next.planId); setConfirmed(false); setParams({ tab: "publish", planId: next.planId }); };
     const reload = useCallback(() => setRevision(value => value + 1), []);
     useEffect(() => {

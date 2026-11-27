@@ -23,9 +23,9 @@
 </p>
 
 <p align="center">
-  <a href="https://beeftv.app/"><img src="assets/readme/button-website.svg" width="180" alt="Visit the BeefTV website"></a>
+  <a href="https://beeftv.cn/"><img src="assets/readme/button-website.svg" width="180" alt="Visit the BeefTV website"></a>
   <a href="https://github.com/glanderness/BeefTV/releases/latest"><img src="assets/readme/button-download.svg" width="175" alt="Download BeefTV desktop app"></a>
-  <a href="https://beeftv.app/assets/beeftv-wecom-qr.png"><img src="assets/readme/button-community.svg" width="185" alt="Scan to join the BeefTV community"></a>
+  <a href="https://beeftv.cn/assets/beeftv-wecom-qr.png"><img src="assets/readme/button-community.svg" width="185" alt="Scan to join the BeefTV community"></a>
   <a href="https://x.com/beefnoode"><img src="assets/readme/button-x.svg" width="180" alt="Follow @beefnoode on X"></a>
 </p>
 
