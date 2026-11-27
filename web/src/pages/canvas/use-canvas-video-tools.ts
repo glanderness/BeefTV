@@ -524,11 +524,11 @@ export function useCanvasVideoTools({
         if (!inlineTrimRunningRef.current) setInlineVideoEditor(null);
     }, []);
 
-    const confirmInlineVideoTrim = useCallback(async (node: CanvasNodeData, requestedRange: InlineVideoTrimRange) => {
+    const confirmInlineVideoTrim = useCallback(async (node: CanvasNodeData, requestedRange: InlineVideoTrimRange, probedDurationMs?: number) => {
         const operation = beginMediaOperation();
         if (!operation.isCurrent()) return;
         if (inlineTrimRunningRef.current || !node.metadata?.content) return;
-        const sourceDurationMs = Math.max(100, node.metadata.durationMs || requestedRange.endMs);
+        const sourceDurationMs = Math.max(100, probedDurationMs || node.metadata.durationMs || requestedRange.endMs);
         const range = normalizeInlineVideoTrimRange(requestedRange, sourceDurationMs);
         inlineTrimRunningRef.current = true;
         setInlineTrimRunning(true);
