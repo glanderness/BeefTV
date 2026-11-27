@@ -554,7 +554,7 @@ export function createDurableSessionStore({
 
       const delivery = await deliverDurableSignal(entry.harness, { durableTaskId, signal, key, value }, CTX);
       if (!delivery.ok) {
-        if (ownership === 'mounted-cold' && sessions.get(cleanCanvasId) === entry && !isEntryBusy(entry)) {
+        if (ownership === 'mounted-cold' && sessions.get(cleanCanvasId) === entry) {
           sessions.delete(cleanCanvasId);
           entry.disposed = true;
           await entry.harness.close(CTX).catch(() => {});
@@ -584,6 +584,7 @@ export function createDurableSessionStore({
           }
         }
       } else if (!entry.detachedSignalDrain) {
+        entry.pendingDetachedClose = false;
         entry.detachedSignalDrain = (async () => {
           try {
             if (submission && !entry.submissionWaiters?.has(submission.id)) {
@@ -594,12 +595,24 @@ export function createDurableSessionStore({
           } catch {
             // Detached background wake settles best-effort; SQLite retains authoritative state.
           } finally {
-            entry.detachedSignalDrain = null;
-            if (detachedEntries.get(dKey) === entry && sessions.get(cleanCanvasId) !== entry) {
-              detachedEntries.delete(dKey);
-              entry.disposed = true;
-              await entry.harness.close(CTX).catch(() => {});
-            }
+            await lock(cleanCanvasId, async () => {
+              entry.detachedSignalDrain = null;
+              if (
+                detachedEntries.get(dKey) === entry &&
+                sessions.get(cleanCanvasId) !== entry &&
+                !entry.running &&
+                !(entry.waiters > 0) &&
+                !(entry.submissionWaiters?.size > 0)
+              ) {
+                if ((entry.borrowedCount || 0) > 0) {
+                  entry.pendingDetachedClose = true;
+                  return;
+                }
+                detachedEntries.delete(dKey);
+                entry.disposed = true;
+                await entry.harness.close(CTX).catch(() => {});
+              }
+            }).catch(() => {});
           }
         })();
       }

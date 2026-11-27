@@ -212,6 +212,15 @@ func registerAssistantRuntimeRoutes(r gin.IRouter, svc assistantRuntimeRouteServ
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("任务等待参数无效"))
 			return
 		}
+		if !host.HasSignalEndpoint() {
+			ok(c, map[string]any{
+				"registered":    false,
+				"reason":        "signal_endpoint_unavailable",
+				"durableTaskId": body.DurableTaskID,
+				"taskIds":       body.TaskIDs,
+			})
+			return
+		}
 		if err := host.TaskWaits().Register(assistantruntime.TaskWaitSubscription{
 			UserID:        user.ID,
 			CanvasID:      strings.TrimSpace(body.CanvasID),

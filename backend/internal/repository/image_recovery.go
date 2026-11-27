@@ -130,6 +130,7 @@ func (r *Repository) FinishFailedImageRecovery(task model.Task, outcome *string,
 	if result.RowsAffected != 1 {
 		return ErrTaskStateConflict
 	}
+	r.notifyTaskChanged(task.ID)
 	return nil
 }
 

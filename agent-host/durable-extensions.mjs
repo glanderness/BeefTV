@@ -82,10 +82,10 @@ export function createDurableSkillController({ skills, state, update, lock, offi
     return context;
   }
 
-  async function resolveActiveSkills(entry, signal) {
-    const context = await readSkillContext(entry);
+  async function resolveActiveSkills(entry, signal, turnId = entry.turn.turnId) {
+    const context = await readSkillContext(entry, turnId);
     return activeSkillProjection({ context, signal,
-      readVersion: (pin, readSignal) => skills.readVersion(entry, pin, readSignal, entry.turn.turnId) });
+      readVersion: (pin, readSignal) => skills.readVersion(entry, pin, readSignal, turnId) });
   }
 
   async function resetPendingScope(entry, context) {
@@ -340,7 +340,7 @@ export async function installDurableExtensions({
         execute: async (args, api, context) => {
           if (entry.generation.aborted) throw fail('aborted');
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
-          if (entry.generation.pendingInput?.state === 'pending') throw fail('supplement_preparation_pending');
+          if (entry.generation.pendingInput?.state === 'pending' && !api.checkpoint?.businessTaskWait) throw fail('supplement_preparation_pending');
           await authorization(entry, entry.turn.turnId);
           try {
             const proposalCount = entry.turn.proposals.length;
@@ -690,13 +690,12 @@ export async function installDurableExtensions({
             }
           }
         }
+        if (!cont.planTouchedInTurn || !cont.toolCalledSinceYield) return;
         const prompt = planContinuation(doc?.plan, {
           continuations: cont.planContinuations || 0,
           maxContinuations: maxPlanContinuations,
         });
         if (!prompt) return;
-        const canContinue = cont.toolCalledSinceYield || (cont.planContinuations || 0) === 0;
-        if (!canContinue) return;
         await mutateTurnContinuation(entry, (draft) => {
           draft.planContinuations = (draft.planContinuations || 0) + 1;
           draft.toolCalledSinceYield = false;

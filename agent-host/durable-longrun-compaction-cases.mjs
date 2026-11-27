@@ -13,6 +13,8 @@ import { BACKGROUND_CONTEXT as CTX } from '@earendil-works/chord/context';
 import { CompactionEntry, UsageDoc } from '@earendil-works/pi-durable';
 import { createDurableSessionStore } from './durable-session-owner.mjs';
 import { readTurnContinuation } from './durable-signals.mjs';
+import { handleEventsRoute } from './events-route.mjs';
+import { deterministicFollowUpTurnId, deterministicWakeTurnId, resolvePreservedPermissionMode } from './durable-followup.mjs';
 import { fixtureSkillContext } from './test-support/skill-context-fixture.mjs';
 
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `beeftv-longrun-${name}-`));
@@ -151,14 +153,15 @@ test('Flow 4: TurnContinuationDoc survives host restart without resetting planCo
     const finalCont = await readTurnContinuation(restored, CTX);
     assert.equal(finalCont.planContinuations, 2);
 
+    // Unrelated plain-text Q&A turn when a stale unfinished plan exists:
+    // Because plan_update was NOT touched in Turn 2 (planTouchedInTurn === false), onYield MUST trigger 0 extra continuations!
     phase = 'turn-2';
     callIndex = 0;
-    const sub2 = await store.submit(restored, { turnId: 'turn-plan-2', requestId: 'req-plan-2', content: '继续' });
+    const sub2 = await store.submit(restored, { turnId: 'turn-plan-2', requestId: 'req-plan-2', content: '请问这片子的背景音乐适合什么风格？' });
     const rec2 = await store.wait(restored, sub2);
     assert.equal(rec2.error, null);
     const turn2Payloads = payloads.filter((p) => p.phase === 'turn-2');
-    assert.equal(turn2Payloads.length, 2, 'cross-turn wakeup must continue once when persisted plan still has doing/todo');
-    assert.match(userTextOf(turn2Payloads[1].body), /计划还没做完/);
+    assert.equal(turn2Payloads.length, 1, 'unrelated text-only turn with stale unfinished plan must trigger 0 extra LLM continuations');
   } finally {
     release3.resolve();
     await store?.disposeAll();
@@ -214,19 +217,32 @@ test('Flow 5: CompactionTask.beforeCompact preserves creative anchors, increment
   const models = await createMockModels(dir, baseUrl);
   const skillContexts = fixtureSkillContext(dir);
 
+  const closedTurnIds = new Set();
+  const readContextTurnIds = [];
+
   const store = createDurableSessionStore({
     sessionRoot: path.join(dir, 'sessions'),
     workspaceRoot: path.join(dir, 'workspace'),
     getModels: () => models,
     getModelRef: () => ({ provider: 'beeftv', modelId: 'studio-test' }),
     buildTools: () => [],
-    authorizeTurn: async () => ({ open: true, canvasId: 'canvas-studio-99', permissionMode: 'canvas' }),
+    authorizeTurn: async ({ turnId }) => {
+      if (closedTurnIds.has(turnId)) throw Object.assign(new Error('turn_not_open'), { reason: 'turn_not_open' });
+      return { open: true, canvasId: 'canvas-studio-99', permissionMode: 'canvas' };
+    },
     settings: {
       retry: { maxRetries: 0 },
       compaction: { enabled: false, keepRecentTokens: 100, reserveTokens: 2048, backgroundTokens: 0 },
     },
     skills: {
       ...skillContexts,
+      readContext: async (entry, turnId) => {
+        readContextTurnIds.push(turnId);
+        if (turnId && closedTurnIds.has(turnId)) {
+          throw Object.assign(new Error('turn_not_open'), { reason: 'turn_not_open' });
+        }
+        return skillContexts.readContext(entry);
+      },
       readVersion: async (_entry, pin) => ({
         pin,
         name: '短剧资产分批',
@@ -247,22 +263,26 @@ test('Flow 5: CompactionTask.beforeCompact preserves creative anchors, increment
       '确认角色服装与镜头景别约束。' + '镜头细节。'.repeat(120),
       '准备进入第三镜头合成。' + '对白细节。'.repeat(120),
     ].entries()) {
+      const turnId = `compact-turn-${idx + 1}`;
       const sub = await store.submit(entry, {
-        turnId: `compact-turn-${idx + 1}`,
+        turnId,
         requestId: `compact-req-${idx + 1}`,
         content: text,
         userText: text,
         skills: idx === 0 ? [batchesPin] : [],
       });
       assert.equal((await store.wait(entry, sub)).error, null);
+      closedTurnIds.add(turnId);
     }
 
     const usageBefore = await entry.harness.snapshot(UsageDoc, entry.root.id, CTX);
     const totalBefore = usageBefore?.models?.['beeftv/studio-test']?.totalTokens || 0;
+    const readCountBeforeCompact = readContextTurnIds.length;
 
-    // 5a: Happy path through production CompactionTask.beforeCompact
+    // 5a: Happy path through production CompactionTask.beforeCompact (idle compaction must pass turnId='' to readContext, not closed compact-turn-3!)
     const res1 = await store.compactSession('canvas-studio-99', { sessionId: entry.sessionId });
     assert.equal(res1.compacted, true);
+    assert(readContextTurnIds.slice(readCountBeforeCompact).includes(''), 'idle beforeCompact must query fresh skill context with empty turnId');
     assert.equal(capturedSummaryBodies.length, 1);
     assert.equal(capturedSummaryBodies[0].isCreativeBeforeCompact, true, 'production beforeCompact must handle compaction');
     const promptSent = JSON.stringify(capturedSummaryBodies[0].body.messages);
@@ -311,4 +331,85 @@ test('Flow 5: CompactionTask.beforeCompact preserves creative anchors, increment
     await new Promise((resolve) => server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// Flow 6: events-route & durable-followup edge contracts
+test('Flow 6: events-route falls back to recordEvent on submitFollowUpEvent failure, isolates session_busy turnId, and enforces permissionMode priority', async () => {
+  // 1) permissionMode strictness matrix: active wins over explicit default; idle respects explicit downgrade.
+  assert.equal(
+    resolvePreservedPermissionMode({ busy: true }, { active: { permissionMode: 'full-access' }, lastPermissionMode: 'canvas' }, 'canvas'),
+    'full-access',
+  );
+  assert.equal(
+    resolvePreservedPermissionMode({ busy: false, permissionMode: 'full-access' }, { active: null, lastPermissionMode: 'full-access' }, 'canvas'),
+    'canvas',
+  );
+  assert.equal(
+    resolvePreservedPermissionMode({ busy: false, permissionMode: 'full-access' }, { active: null, lastPermissionMode: 'full-access' }, ''),
+    'full-access',
+  );
+
+  // 2) Distinct followUp turnId when idle attempt opened & finalized wakeTurnId and hit session_busy race.
+  const idleTurnId = deterministicWakeTurnId('c-race', 'req-race', '');
+  const followUpTurnId = deterministicFollowUpTurnId('c-race', 'req-race', '', idleTurnId);
+  assert.notEqual(followUpTurnId, idleTurnId);
+  const explicitSameTurnId = deterministicFollowUpTurnId('c-race', 'req-race', 'aabbccdd1122', 'aabbccdd1122');
+  assert.notEqual(explicitSameTurnId, 'aabbccdd1122');
+
+  const makeReq = (payload) => {
+    const raw = Buffer.from(JSON.stringify(payload), 'utf8');
+    return {
+      async *[Symbol.asyncIterator]() { yield raw; },
+    };
+  };
+  const makeRes = () => {
+    const out = { status: 0, body: '' };
+    return {
+      out,
+      writeHead(status) { out.status = status; },
+      end(body) { out.body = String(body || ''); },
+    };
+  };
+
+  // 3) submitFollowUpEvent throws -> falls back cleanly to durable.recordEvent (202, event never lost!).
+  let recordedFallback = null;
+  let capturedFollowUpArgs = null;
+  const res1 = makeRes();
+  await handleEventsRoute(makeReq({
+    canvasId: 'c-fallback',
+    kind: 'task_completed',
+    requestId: 'req-fb-1',
+    turnId: 'aabbccdd0011',
+    message: '后台任务已完成',
+  }), res1, {
+    durable: {
+      ensureCurrentSession: async () => ({ canvasId: 'c-fallback', sessionId: 'durable:11111111-1111-1111-1111-111111111111' }),
+      busyState: async () => ({ busy: false }),
+      resolvedPermissionMode: async () => 'full-access',
+      submit: async () => { throw Object.assign(new Error('session_busy'), { reason: 'session_busy' }); },
+      submitFollowUpEvent: async (_entry, payload) => {
+        capturedFollowUpArgs = payload;
+        throw new Error('storage_locked_transient');
+      },
+      recordEvent: async (canvasId, evt) => {
+        recordedFallback = { canvasId, evt };
+        return { accepted: true, recorded: true };
+      },
+    },
+    ops: {
+      descriptors: new Map([['x', {}]]),
+      opsRequest: async () => ({}),
+    },
+    currentId: () => 'durable:11111111-1111-1111-1111-111111111111',
+    followDurable: () => {},
+    getProviderReason: () => '',
+    readOnlyMode: false,
+    modelApi: 'openai-completions',
+    modelId: 'studio-test',
+  });
+  assert.equal(capturedFollowUpArgs.excludedTurnId, 'aabbccdd0011', 'idle finalized turnId must be passed as excludedTurnId');
+  assert.equal(res1.out.status, 202);
+  assert.equal(JSON.parse(res1.out.body).recorded, true);
+  assert.equal(recordedFallback?.canvasId, 'c-fallback');
+  assert.equal(recordedFallback?.evt?.kind, 'task_completed');
 });

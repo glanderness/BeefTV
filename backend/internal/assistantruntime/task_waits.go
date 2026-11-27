@@ -18,8 +18,10 @@ import (
 
 const (
 	defaultBusinessTaskSignal   = "business_task_settled"
-	defaultTaskWaitPollInterval = 500 * time.Millisecond
+	defaultTaskWaitPollInterval = 5 * time.Second
 	defaultSignalDispatchWait   = 10 * time.Second
+	defaultRetryBackoffBase     = 500 * time.Millisecond
+	defaultRetryBackoffMax      = 30 * time.Second
 	taskWaitMaxAge              = 24 * time.Hour
 	taskWaitsFileName           = "assistant-task-waits.json"
 )
@@ -49,6 +51,12 @@ type TaskWaitEvaluation struct {
 // a terminal wait state ready to wake a parked ToolPark task.
 type TaskWaitEvaluator func(ctx context.Context, userID, taskID string) (TaskWaitEvaluation, error)
 
+type subControl struct {
+	epoch  uint64
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
 // TaskWaitRegistry stores active parked-tool wait subscriptions (optionally
 // persisted under DataDir) and dispatches POST /signals to agent-host as soon
 // as subscribed business tasks settle, fail, or cancel.
@@ -58,9 +66,15 @@ type TaskWaitRegistry struct {
 	notifyCh        chan struct{}
 	mu              sync.Mutex
 	subs            map[string]TaskWaitSubscription
+	subCtrl         map[string]*subControl
+	nextEpoch       uint64
+	retryFailures   map[string]int
+	nextAttemptAt   map[string]time.Time
 	evaluator       TaskWaitEvaluator
 	pollInterval    time.Duration
 	dispatchTimeout time.Duration
+	backoffBase     time.Duration
+	backoffMax      time.Duration
 	closed          bool
 	paused          bool
 	watching        bool
@@ -78,8 +92,16 @@ func newTaskWaitRegistry(host *Host, dataDir string) *TaskWaitRegistry {
 		filePath:        filePath,
 		notifyCh:        make(chan struct{}, 1),
 		subs:            map[string]TaskWaitSubscription{},
+		subCtrl:         map[string]*subControl{},
+		retryFailures:   map[string]int{},
+		nextAttemptAt:   map[string]time.Time{},
 		pollInterval:    defaultTaskWaitPollInterval,
 		dispatchTimeout: defaultSignalDispatchWait,
+		backoffBase:     defaultRetryBackoffBase,
+		backoffMax:      defaultRetryBackoffMax,
+		// Start paused so Go server boot does not run idle SQLite polling before
+		// agent-host is actually started or registers a live wait.
+		paused: true,
 	}
 	reg.load()
 	return reg
@@ -103,12 +125,42 @@ func normalizeTaskIDs(ids []string) []string {
 	return out
 }
 
+func (r *TaskWaitRegistry) ensureControlLocked(key string) *subControl {
+	if ctrl := r.subCtrl[key]; ctrl != nil {
+		return ctrl
+	}
+	r.nextEpoch++
+	ctx, cancel := context.WithCancel(context.Background())
+	ctrl := &subControl{epoch: r.nextEpoch, ctx: ctx, cancel: cancel}
+	r.subCtrl[key] = ctrl
+	return ctrl
+}
+
+func (r *TaskWaitRegistry) removeLocked(key string) {
+	delete(r.subs, key)
+	delete(r.retryFailures, key)
+	delete(r.nextAttemptAt, key)
+	if ctrl := r.subCtrl[key]; ctrl != nil {
+		ctrl.cancel()
+		delete(r.subCtrl, key)
+	}
+}
+
 func (r *TaskWaitRegistry) SetPollInterval(interval time.Duration) {
 	if r == nil || interval <= 0 {
 		return
 	}
 	r.mu.Lock()
 	r.pollInterval = interval
+	r.mu.Unlock()
+}
+
+func (r *TaskWaitRegistry) SetBackoffBase(base time.Duration) {
+	if r == nil || base <= 0 {
+		return
+	}
+	r.mu.Lock()
+	r.backoffBase = base
 	r.mu.Unlock()
 }
 
@@ -163,7 +215,10 @@ func (r *TaskWaitRegistry) Register(sub TaskWaitSubscription) error {
 		}
 		sub.DeliveredTaskIDs = normalizeTaskIDs(sub.DeliveredTaskIDs)
 		r.subs[key] = sub
+		r.ensureControlLocked(key)
 	}
+	delete(r.retryFailures, key)
+	delete(r.nextAttemptAt, key)
 	r.paused = false
 	r.saveLocked()
 	r.startWatcherLocked()
@@ -173,7 +228,8 @@ func (r *TaskWaitRegistry) Register(sub TaskWaitSubscription) error {
 }
 
 // Cancel removes either a specific parked tool wait (when durableTaskID > 0) or
-// all waits belonging to (canvasID, sessionID) when durableTaskID == 0.
+// all waits belonging to (canvasID, sessionID) when durableTaskID == 0,
+// immediately aborting any in-flight POST /signals for cancelled subscriptions.
 func (r *TaskWaitRegistry) Cancel(canvasID, sessionID string, durableTaskID int64) {
 	if r == nil {
 		return
@@ -185,13 +241,13 @@ func (r *TaskWaitRegistry) Cancel(canvasID, sessionID string, durableTaskID int6
 	if durableTaskID > 0 {
 		key := taskWaitKey(canvasID, sessionID, durableTaskID)
 		if _, ok := r.subs[key]; ok {
-			delete(r.subs, key)
+			r.removeLocked(key)
 			changed = true
 		}
 	} else if canvasID != "" || sessionID != "" {
 		for key, sub := range r.subs {
 			if (canvasID == "" || sub.CanvasID == canvasID) && (sessionID == "" || sub.SessionID == sessionID) {
-				delete(r.subs, key)
+				r.removeLocked(key)
 				changed = true
 			}
 		}
@@ -206,7 +262,7 @@ func (r *TaskWaitRegistry) Cancel(canvasID, sessionID string, durableTaskID int6
 }
 
 // NotifyTaskChanged wakes the watcher immediately when a business task reaches
-// a new state (completion, failure, or cancellation).
+// a new state (completion, failure, cancellation, or materialization delivery).
 func (r *TaskWaitRegistry) NotifyTaskChanged(taskID string) {
 	if r == nil {
 		return
@@ -273,6 +329,10 @@ func (r *TaskWaitRegistry) Resume() {
 		return
 	}
 	r.paused = false
+	for key := range r.subs {
+		delete(r.retryFailures, key)
+		delete(r.nextAttemptAt, key)
+	}
 	r.startWatcherLocked()
 	r.mu.Unlock()
 	r.signalWake()
@@ -306,6 +366,9 @@ func (r *TaskWaitRegistry) Stop() {
 	r.paused = true
 	cancel := r.cancelWatch
 	done := r.watchDone
+	for _, ctrl := range r.subCtrl {
+		ctrl.cancel()
+	}
 	r.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -350,11 +413,8 @@ func (r *TaskWaitRegistry) watchLoop(ctx context.Context, done chan struct{}, in
 		close(done)
 	}()
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
 	for {
-		r.sweep(ctx)
+		nextWait := r.sweep(ctx)
 		r.mu.Lock()
 		shouldExit := r.closed || r.paused || r.evaluator == nil || len(r.subs) == 0
 		if shouldExit && r.watchDone == done {
@@ -364,28 +424,54 @@ func (r *TaskWaitRegistry) watchLoop(ctx context.Context, done chan struct{}, in
 			r.mu.Unlock()
 			return
 		}
+		waitFor := r.pollInterval
+		if waitFor <= 0 {
+			waitFor = interval
+		}
+		if nextWait > 0 && nextWait < waitFor {
+			waitFor = nextWait
+		}
 		r.mu.Unlock()
 
+		timer := time.NewTimer(waitFor)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
 		case <-r.notifyCh:
-		case <-ticker.C:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timer.C:
 		}
 	}
 }
 
 type pendingSignalCheck struct {
 	key     string
+	epoch   uint64
+	subCtx  context.Context
 	sub     TaskWaitSubscription
 	taskIDs []string
 }
 
-func (r *TaskWaitRegistry) sweep(ctx context.Context) {
+func (r *TaskWaitRegistry) isCurrentEpoch(key string, epoch uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ctrl := r.subCtrl[key]
+	_, exists := r.subs[key]
+	return exists && ctrl != nil && ctrl.epoch == epoch
+}
+
+func (r *TaskWaitRegistry) sweep(ctx context.Context) time.Duration {
 	if ctx.Err() != nil {
-		return
+		return 0
 	}
 	now := time.Now().UTC()
+	var earliestRetry time.Time
 	r.mu.Lock()
 	eval := r.evaluator
 	timeout := r.dispatchTimeout
@@ -396,7 +482,7 @@ func (r *TaskWaitRegistry) sweep(ctx context.Context) {
 	checks := make([]pendingSignalCheck, 0, len(r.subs))
 	for key, sub := range r.subs {
 		if createdAt, err := time.Parse(time.RFC3339Nano, sub.CreatedAt); err == nil && now.Sub(createdAt) > taskWaitMaxAge {
-			delete(r.subs, key)
+			r.removeLocked(key)
 			pruned = true
 			continue
 		}
@@ -411,61 +497,106 @@ func (r *TaskWaitRegistry) sweep(ctx context.Context) {
 			}
 		}
 		if len(pending) == 0 {
-			delete(r.subs, key)
+			r.removeLocked(key)
 			pruned = true
 			continue
 		}
-		checks = append(checks, pendingSignalCheck{key: key, sub: sub, taskIDs: pending})
+		if nextAt, ok := r.nextAttemptAt[key]; ok && now.Before(nextAt) {
+			if earliestRetry.IsZero() || nextAt.Before(earliestRetry) {
+				earliestRetry = nextAt
+			}
+			continue
+		}
+		ctrl := r.ensureControlLocked(key)
+		checks = append(checks, pendingSignalCheck{
+			key:     key,
+			epoch:   ctrl.epoch,
+			subCtx:  ctrl.ctx,
+			sub:     sub,
+			taskIDs: pending,
+		})
 	}
 	if pruned {
 		r.saveLocked()
 	}
 	r.mu.Unlock()
 
-	if eval == nil || len(checks) == 0 {
-		return
-	}
-
-	for _, item := range checks {
-		if ctx.Err() != nil {
-			return
-		}
-		for _, taskID := range item.taskIDs {
+	if eval != nil && len(checks) > 0 {
+		for _, item := range checks {
 			if ctx.Err() != nil {
-				return
+				return 0
 			}
-			result, err := eval(ctx, item.sub.UserID, taskID)
-			if err != nil {
-				continue
-			}
-			payload := result.Payload
-			if result.NotFound {
-				payload = map[string]any{
-					"taskId": taskID,
-					"status": "failed",
-					"state":  "failed",
-					"reason": "task_not_found",
+			for _, taskID := range item.taskIDs {
+				if ctx.Err() != nil {
+					return 0
 				}
-			} else if !result.Settled {
-				continue
-			}
-			if payload == nil {
-				payload = map[string]any{"taskId": taskID}
-			}
+				if item.subCtx.Err() != nil || !r.isCurrentEpoch(item.key, item.epoch) {
+					goto nextSub
+				}
+				callCtx, callCancel := context.WithCancel(ctx)
+				stopSubWatch := context.AfterFunc(item.subCtx, callCancel)
+				result, err := eval(callCtx, item.sub.UserID, taskID)
+				if err != nil {
+					stopSubWatch()
+					callCancel()
+					continue
+				}
+				payload := result.Payload
+				if result.NotFound {
+					payload = map[string]any{
+						"taskId": taskID,
+						"status": "failed",
+						"state":  "failed",
+						"reason": "task_not_found",
+					}
+				} else if !result.Settled {
+					stopSubWatch()
+					callCancel()
+					continue
+				}
+				if payload == nil {
+					payload = map[string]any{"taskId": taskID}
+				}
 
-			outcome := r.dispatchSignal(ctx, timeout, item.sub, taskID, payload)
-			switch outcome {
-			case signalDelivered:
-				r.markDelivered(item.key, taskID)
-			case signalDropSubscription:
-				r.dropSubscription(item.key)
-				goto nextSub
-			case signalRetryLater:
-				// Leave subscription intact for retry once agent-host is reachable again.
+				// Final epoch check right before HTTP dispatch so Cancel cannot be raced.
+				if item.subCtx.Err() != nil || !r.isCurrentEpoch(item.key, item.epoch) {
+					stopSubWatch()
+					callCancel()
+					goto nextSub
+				}
+				outcome := r.dispatchSignal(callCtx, timeout, item.sub, taskID, payload)
+				stopSubWatch()
+				callCancel()
+
+				if item.subCtx.Err() != nil {
+					goto nextSub
+				}
+				switch outcome {
+				case signalDelivered:
+					r.markDelivered(item.key, item.epoch, taskID)
+				case signalDropSubscription:
+					r.dropSubscription(item.key, item.epoch)
+					goto nextSub
+				case signalRetryLater:
+					if nextAt := r.recordRetryFailure(item.key, item.epoch, time.Now().UTC()); !nextAt.IsZero() {
+						if earliestRetry.IsZero() || nextAt.Before(earliestRetry) {
+							earliestRetry = nextAt
+						}
+					}
+					goto nextSub
+				}
 			}
+		nextSub:
 		}
-	nextSub:
 	}
+
+	if earliestRetry.IsZero() {
+		return 0
+	}
+	if wait := time.Until(earliestRetry); wait > 0 {
+		return wait
+	}
+	return time.Millisecond
 }
 
 type signalDispatchOutcome int
@@ -476,6 +607,20 @@ const (
 	signalDropSubscription
 )
 
+func isPermanentSignalHTTPStatus(code int) bool {
+	switch code {
+	case http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusNotFound,
+		http.StatusConflict,
+		http.StatusUnprocessableEntity:
+		return true
+	default:
+		return false
+	}
+}
+
 func (r *TaskWaitRegistry) dispatchSignal(
 	ctx context.Context,
 	timeout time.Duration,
@@ -483,7 +628,7 @@ func (r *TaskWaitRegistry) dispatchSignal(
 	taskID string,
 	value map[string]any,
 ) signalDispatchOutcome {
-	if r.host == nil {
+	if r.host == nil || ctx.Err() != nil {
 		return signalRetryLater
 	}
 	body, err := json.Marshal(map[string]any{
@@ -509,23 +654,73 @@ func (r *TaskWaitRegistry) dispatchSignal(
 		return signalRetryLater
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var parsed struct {
+			OK     *bool  `json:"ok"`
+			Result string `json:"result"`
+		}
+		if json.Unmarshal(respBody, &parsed) == nil {
+			res := strings.ToLower(strings.TrimSpace(parsed.Result))
+			if res == "closed" || res == "not_found" || (parsed.OK != nil && !*parsed.OK) {
+				return signalDropSubscription
+			}
+		}
 		return signalDelivered
 	}
-	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest {
+	if isPermanentSignalHTTPStatus(resp.StatusCode) {
 		return signalDropSubscription
 	}
+	// Retry only transient 408 / 429 / 5xx (and unexpected non-permanent responses).
 	return signalRetryLater
 }
 
-func (r *TaskWaitRegistry) markDelivered(key, taskID string) {
+func (r *TaskWaitRegistry) recordRetryFailure(key string, epoch uint64, now time.Time) time.Time {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	ctrl := r.subCtrl[key]
+	if ctrl == nil || ctrl.epoch != epoch {
+		return time.Time{}
+	}
+	if _, ok := r.subs[key]; !ok {
+		return time.Time{}
+	}
+	failures := r.retryFailures[key] + 1
+	r.retryFailures[key] = failures
+	base := r.backoffBase
+	if base <= 0 {
+		base = defaultRetryBackoffBase
+	}
+	capDelay := r.backoffMax
+	if capDelay <= 0 {
+		capDelay = defaultRetryBackoffMax
+	}
+	shift := failures - 1
+	if shift > 10 {
+		shift = 10
+	}
+	delay := base << shift
+	if delay <= 0 || delay > capDelay {
+		delay = capDelay
+	}
+	nextAt := now.Add(delay)
+	r.nextAttemptAt[key] = nextAt
+	return nextAt
+}
+
+func (r *TaskWaitRegistry) markDelivered(key string, epoch uint64, taskID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ctrl := r.subCtrl[key]
+	if ctrl == nil || ctrl.epoch != epoch {
+		return
+	}
 	sub, ok := r.subs[key]
 	if !ok {
 		return
 	}
+	delete(r.retryFailures, key)
+	delete(r.nextAttemptAt, key)
 	sub.DeliveredTaskIDs = normalizeTaskIDs(append(sub.DeliveredTaskIDs, taskID))
 	delivered := make(map[string]bool, len(sub.DeliveredTaskIDs))
 	for _, id := range sub.DeliveredTaskIDs {
@@ -539,20 +734,24 @@ func (r *TaskWaitRegistry) markDelivered(key, taskID string) {
 		}
 	}
 	if allDone {
-		delete(r.subs, key)
+		r.removeLocked(key)
 	} else {
 		r.subs[key] = sub
 	}
 	r.saveLocked()
 }
 
-func (r *TaskWaitRegistry) dropSubscription(key string) {
+func (r *TaskWaitRegistry) dropSubscription(key string, epoch uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	ctrl := r.subCtrl[key]
+	if ctrl == nil || ctrl.epoch != epoch {
+		return
+	}
 	if _, ok := r.subs[key]; !ok {
 		return
 	}
-	delete(r.subs, key)
+	r.removeLocked(key)
 	r.saveLocked()
 }
 
@@ -583,7 +782,9 @@ func (r *TaskWaitRegistry) load() {
 		if createdAt, parseErr := time.Parse(time.RFC3339Nano, item.CreatedAt); parseErr == nil && now.Sub(createdAt) > taskWaitMaxAge {
 			continue
 		}
-		r.subs[taskWaitKey(item.CanvasID, item.SessionID, item.DurableTaskID)] = item
+		key := taskWaitKey(item.CanvasID, item.SessionID, item.DurableTaskID)
+		r.subs[key] = item
+		r.ensureControlLocked(key)
 	}
 }
 

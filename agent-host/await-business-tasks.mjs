@@ -1,9 +1,7 @@
-import { setTimeout as delay } from 'node:timers/promises';
 import { BusinessTaskSettled } from './durable-signals.mjs';
 
 const DEFAULT_AWAIT_IDLE_TIMEOUT_MS = 60 * 60 * 1000;
-const DEFAULT_TASK_WAIT_SLICE_MS = 5000;
-const DEFAULT_PARK_RECONCILE_MS = 30_000;
+const DEFAULT_PARK_RECONCILE_MS = 2_000;
 const DEFAULT_BINDING_RETRY_MS = 1000;
 
 export function isToolPark(value) {
@@ -11,7 +9,7 @@ export function isToolPark(value) {
 }
 
 function taskPhase(task) {
-  return typeof task?.outcome?.phase === 'string' ? task.outcome.phase : '';
+  return typeof task?.outcome?.phase === 'string' ? task.outcome.phase.toLowerCase() : '';
 }
 
 function isResultStateReady(task) {
@@ -20,8 +18,14 @@ function isResultStateReady(task) {
   return normalized === 'ready' || normalized === 'succeeded';
 }
 
+function hasAuthoritativeWaitState(task) {
+  return typeof task?.state === 'string' && task.state.length > 0;
+}
+
 function isTaskTerminalFailure(task) {
-  if (task?.state === 'failed') return task?.reason !== 'materialization_failed';
+  if (hasAuthoritativeWaitState(task)) {
+    return task.state === 'failed' && task.reason !== 'materialization_failed';
+  }
   if (task?.status === 'cancelled') return true;
   const phase = taskPhase(task);
   if (phase === 'retrievable' || phase === 'fetching' || phase === 'running') return false;
@@ -29,7 +33,9 @@ function isTaskTerminalFailure(task) {
 }
 
 function isTaskSaved(task) {
-  if (task?.state === 'completed') return true;
+  if (hasAuthoritativeWaitState(task)) {
+    return task.state === 'completed';
+  }
   if (task?.status !== 'succeeded') return false;
   const phase = taskPhase(task);
   if (phase && phase !== 'ready') return false;
@@ -38,11 +44,15 @@ function isTaskSaved(task) {
 }
 
 function isTaskMaterializationFailed(task) {
-  if (task?.state === 'failed' && task?.reason === 'materialization_failed') return true;
+  if (hasAuthoritativeWaitState(task)) {
+    return task.state === 'failed' && task.reason === 'materialization_failed';
+  }
   if (task?.status !== 'succeeded') return false;
   const phase = taskPhase(task);
   if (phase === 'failed') return true;
-  if (typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_permanent') return true;
+  const resultState = typeof task?.resultState === 'string' ? task.resultState.toLowerCase() : '';
+  if (resultState === 'failed_permanent') return true;
+  if (resultState === 'failed_retryable') return false;
   if (phase === 'fetching' || phase === 'retrievable') return false;
   return Boolean(
     task.outputs?.length &&
@@ -75,21 +85,19 @@ function isCanvasBound(canvas, nodeIds, taskIds) {
   );
 }
 
-async function fetchTasksSnapshot(ids, { opsRequest, turnId, signal, preferTaskWait, timeoutMs }) {
+async function fetchTasksSnapshot(ids, { opsRequest, turnId, signal, preferTaskWait }) {
   let tasks;
   let waitResult = null;
-  let waitedOnServer = false;
   let nextPreferTaskWait = preferTaskWait;
 
   if (nextPreferTaskWait) {
     try {
-      const response = await opsRequest('POST', '/ops/task.wait', { params: { taskIds: ids, timeoutMs } }, signal, turnId);
+      const response = await opsRequest('POST', '/ops/task.wait', { params: { taskIds: ids, timeoutMs: 0 } }, signal, turnId);
       if (!Array.isArray(response?.result?.tasks) || response.result.observationFailed) {
         throw new Error('task_observation_unavailable');
       }
       waitResult = response.result;
       tasks = response.result.tasks.map(normalizeObservedTask);
-      waitedOnServer = true;
     } catch (waitErr) {
       if (signal?.aborted) throw waitErr;
       if (waitErr?.reason === 'unknown_operation' || waitErr?.reason === 'scope_denied') {
@@ -108,10 +116,10 @@ async function fetchTasksSnapshot(ids, { opsRequest, turnId, signal, preferTaskW
     }));
   }
 
-  return { tasks, waitResult, waitedOnServer, preferTaskWait: nextPreferTaskWait };
+  return { tasks, waitResult, preferTaskWait: nextPreferTaskWait };
 }
 
-function evaluateTaskBatch(ids, tasks, observedById, waitResult, { rendering, nodeIds }) {
+export function evaluateTaskBatch(ids, tasks, observedById, waitResult, { rendering = false, nodeIds } = {}) {
   const currentById = new Map();
   for (const task of tasks) {
     if (task?.id) {
@@ -165,8 +173,9 @@ async function registerTaskWaitIdempotently(ids, { durableApi, durableContext, o
     taskIds: ids,
   };
   try {
-    await opsRequest('POST', '/assistant/runtime/task-waits', registration, signal, turnId);
-    const saved = await durableApi.memo(memoKey, { registered: true, taskIds: ids, registeredAt: now }, durableContext);
+    const response = await opsRequest('POST', '/assistant/runtime/task-waits', registration, signal, turnId);
+    const isRegistered = response?.registered !== false;
+    const saved = await durableApi.memo(memoKey, { registered: isRegistered, taskIds: ids, registeredAt: now }, durableContext);
     return Boolean(saved?.registered);
   } catch (error) {
     if (signal?.aborted) throw error;
@@ -177,15 +186,16 @@ async function registerTaskWaitIdempotently(ids, { durableApi, durableContext, o
   }
 }
 
-async function buildSleepSignals(pendingIds, durableApi, durableContext) {
+async function buildSleepSignals(pendingIds, consumedSet, durableApi, durableContext) {
   const sleepSignals = [];
   for (const id of pendingIds) {
-    // 严格遵守 Pi signals.js checkSleep 契约：已过期（expired）或已投递/已消费的 key 绝不再入 sleep.signals，
-    // 避免触发 invalid_park。
+    // 严格遵守 Pi signals.js checkSleep 契约：
+    // - 已消费（consumedSet）或已过期（expired）的 key 绝不再入 sleep.signals，避免 invalid_park；
+    // - 若信号在停泊前已投递（state && 'value' in state 且未消费），仍应纳入 sleep.signals，让 Pi 立即唤醒消费，绝不吞掉。
+    if (consumedSet.has(id)) continue;
     const state = await durableApi.readSignal(BusinessTaskSettled, id, durableContext);
-    if (state === undefined) {
-      sleepSignals.push(BusinessTaskSettled.key(id));
-    }
+    if (state && 'expired' in state) continue;
+    sleepSignals.push(BusinessTaskSettled.key(id));
   }
   return sleepSignals;
 }
@@ -205,26 +215,30 @@ export async function cancelBusinessTaskWait(checkpoint, { opsRequest, turnId, c
   }
 }
 
-// Durable ToolPark 等待实现：无阻塞轮询循环，检查一次后即交出执行槽进入 sleeping，
-// 由 Go POST /signals 实时唤醒，until 作为兜底对账定时器，并支持 cancel() 清理订阅。
-async function awaitBusinessTasksParked(data, {
+// Pi 1.6.0 原生 Durable ToolPark 业务任务等待：
+// 单次观察后交出执行槽进入 sleeping，由 Go POST /signals 实时唤醒（不提前在 30s 过期信号键）；
+// 仅当 Go 等待登记不可用时退回纯定时器 until 轮询（不挂 signals），每次非停泊退出均显式取消 Go 等待订阅。
+export async function awaitBusinessTasks(data, {
   opsRequest,
   turnId,
   signal,
   canvasId,
-  sessionId,
-  rendering,
+  sessionId = '',
+  rendering = false,
   onProgress,
-  useTaskWait,
-  maxIdleWaitMs,
-  reconcileIntervalMs,
-  bindingRetryMs,
-  durableApi,
-  durableContext,
+  useTaskWait = false,
+  maxIdleWaitMs = DEFAULT_AWAIT_IDLE_TIMEOUT_MS,
+  reconcileIntervalMs = DEFAULT_PARK_RECONCILE_MS,
+  bindingRetryMs = DEFAULT_BINDING_RETRY_MS,
+  durableApi = null,
+  durableContext = null,
 }) {
   const result = data?.result;
   const ids = result?.taskIds || (result?.taskId ? [result.taskId] : []);
   if (!ids.length) return data;
+  if (!durableApi || !durableContext) {
+    throw new Error('durable_tool_park_required: awaitBusinessTasks 需要 Durable ToolPark 上下文');
+  }
 
   const now = durableApi.now();
   const prev = durableApi.checkpoint?.businessTaskWait || null;
@@ -232,7 +246,12 @@ async function awaitBusinessTasksParked(data, {
   let lastSavedCount = Number.isFinite(prev?.lastSavedCount) ? prev.lastSavedCount : 0;
   let preferTaskWait = prev?.preferTaskWait !== undefined ? Boolean(prev.preferTaskWait) : Boolean(useTaskWait);
   let previousProgress = typeof prev?.lastProgressKey === 'string' ? prev.lastProgressKey : '';
+  let registered = Boolean(prev?.registered);
   const observedById = new Map(Object.entries(prev?.observedById || {}));
+  const consumedSet = new Set(Array.isArray(prev?.consumedSignalKeys) ? prev.consumedSignalKeys : []);
+  if (durableApi.wake?.reason === 'signal' && typeof durableApi.wake?.key === 'string' && durableApi.wake.key) {
+    consumedSet.add(durableApi.wake.key);
+  }
   const resolvedCanvasId = canvasId || prev?.canvasId || result?.canvasId || '';
   const resolvedSessionId = sessionId || prev?.sessionId || '';
 
@@ -244,53 +263,24 @@ async function awaitBusinessTasksParked(data, {
     previousProgress = serialized;
   };
 
-  // 读取本任务上每个待等业务任务的信号状态（既用于消费结果，也用于过滤过期/已消费 key 防 invalid_park）。
-  let anySignalDelivered = false;
-  for (const id of ids) {
-    const sigState = await durableApi.readSignal(BusinessTaskSettled, id, durableContext);
-    if (sigState && 'value' in sigState) {
-      anySignalDelivered = true;
-    }
-  }
-
-  // 提前唤醒保护（例如重启/扩展变动触发 gatedCall 或未到 until 且无新信号到达）：
-  // 不重复注册（api.memo 幂等），核对过期状态后安全续睡原 until。
-  const prevUntil = Number.isFinite(prev?.until) ? prev.until : undefined;
-  const wakeReason = durableApi.wake?.reason;
-  const isEarlyWakeWithoutSignal = Boolean(
-    prev &&
-    !wakeReason &&
-    !anySignalDelivered &&
-    prevUntil !== undefined &&
-    now < prevUntil,
-  );
-  if (isEarlyWakeWithoutSignal) {
-    const registered = await registerTaskWaitIdempotently(ids, {
-      durableApi,
-      durableContext,
+  const cleanupRegistration = async () => {
+    if (!registered) return;
+    registered = false;
+    await cancelBusinessTaskWait({
+      businessTaskWait: {
+        canvasId: resolvedCanvasId,
+        sessionId: resolvedSessionId,
+        durableTaskId: durableApi.taskId,
+        ids,
+      },
+    }, {
       opsRequest,
       turnId,
-      signal,
       canvasId: resolvedCanvasId,
       sessionId: resolvedSessionId,
-      now,
-    });
-    const pendingIds = Array.isArray(prev.pendingIds) && prev.pendingIds.length ? prev.pendingIds : ids;
-    const sleepSignals = prev.waitingForBinding ? [] : await buildSleepSignals(pendingIds, durableApi, durableContext);
-    return {
-      sleep: {
-        ...(sleepSignals.length > 0 ? { signals: sleepSignals } : {}),
-        until: prevUntil,
-        checkpoint: {
-          businessTaskWait: {
-            ...prev,
-            registered,
-            lastProgressKey: previousProgress,
-          },
-        },
-      },
-    };
-  }
+      signal,
+    }).catch(() => {});
+  };
 
   try {
     signal?.throwIfAborted();
@@ -299,7 +289,6 @@ async function awaitBusinessTasksParked(data, {
       turnId,
       signal,
       preferTaskWait,
-      timeoutMs: 0,
     });
     preferTaskWait = fetched.preferTaskWait;
 
@@ -312,6 +301,7 @@ async function awaitBusinessTasksParked(data, {
       deadline = now + maxIdleWaitMs;
     }
     if (evaluated.failed && evaluated.settled) {
+      await cleanupRegistration();
       return {
         ...data,
         result: {
@@ -323,6 +313,7 @@ async function awaitBusinessTasksParked(data, {
       };
     }
     if (evaluated.settled && !evaluated.ready) {
+      await cleanupRegistration();
       return {
         ...data,
         result: {
@@ -336,6 +327,7 @@ async function awaitBusinessTasksParked(data, {
     }
 
     if (evaluated.ready) {
+      await cleanupRegistration();
       let boundRevision;
       if (result.nodeIds?.length) {
         const response = await opsRequest('POST', '/ops/canvas.get', { params: { canvasId: resolvedCanvasId } }, signal, turnId);
@@ -362,8 +354,9 @@ async function awaitBusinessTasksParked(data, {
                   until: nextUntil,
                   lastSavedCount,
                   preferTaskWait,
-                  registered: Boolean(prev?.registered),
+                  registered: false,
                   waitingForBinding: true,
+                  consumedSignalKeys: [...consumedSet],
                   lastProgressKey: previousProgress,
                   observedById: Object.fromEntries(observedById.entries()),
                 },
@@ -379,11 +372,12 @@ async function awaitBusinessTasksParked(data, {
     }
 
     if (now >= deadline) {
+      await cleanupRegistration();
       return { ...data, result: { ...result, status: 'pending', note: '原任务仍在处理中，保留任务ID；请查询原任务，不能重复提交' } };
     }
 
     await emitProgress(evaluated.stage, evaluated.saved, { parked: true, taskIds: evaluated.pendingIds });
-    const registered = await registerTaskWaitIdempotently(ids, {
+    registered = await registerTaskWaitIdempotently(ids, {
       durableApi,
       durableContext,
       opsRequest,
@@ -393,11 +387,18 @@ async function awaitBusinessTasksParked(data, {
       sessionId: resolvedSessionId,
       now,
     });
-    const sleepSignals = await buildSleepSignals(evaluated.pendingIds, durableApi, durableContext);
-    const nextUntil = Math.min(deadline, Math.max(now + 1, now + reconcileIntervalMs));
+    const sleepSignals = registered
+      ? await buildSleepSignals(evaluated.pendingIds, consumedSet, durableApi, durableContext)
+      : [];
+    // 已登记 Go 信号订阅且有可用信号键时，until 设为整段 deadline（避免在 30s 处触发 sleepWake 将信号键永久标为 expired）；
+    // 仅在未登记或无可用信号键时退回纯定时器轮询（不附带 signals）。
+    const useSignals = registered && sleepSignals.length > 0;
+    const nextUntil = useSignals
+      ? Math.max(now + 1, deadline)
+      : Math.min(deadline, Math.max(now + 1, now + reconcileIntervalMs));
     return {
       sleep: {
-        ...(sleepSignals.length > 0 ? { signals: sleepSignals } : {}),
+        ...(useSignals ? { signals: sleepSignals } : {}),
         until: nextUntil,
         checkpoint: {
           businessTaskWait: {
@@ -413,6 +414,7 @@ async function awaitBusinessTasksParked(data, {
             preferTaskWait,
             registered,
             waitingForBinding: false,
+            consumedSignalKeys: [...consumedSet],
             lastProgressKey: previousProgress,
             observedById: Object.fromEntries(observedById.entries()),
           },
@@ -421,134 +423,9 @@ async function awaitBusinessTasksParked(data, {
     };
   } catch (error) {
     if (signal?.aborted) throw error;
+    await cleanupRegistration();
     try { await emitProgress('observation_unavailable'); }
     catch { signal?.throwIfAborted(); }
     return { ...data, result: { ...result, status: 'pending', observationFailed: true, note: '原任务已受理，暂时无法读取进度；请按返回的任务ID查询，不要重新提交' } };
   }
-}
-
-// 业务任务等待入口：
-// - 在 Durable ToolTask 运行时内（传入 durableApi）严格走官方 ToolPark（零阻塞挂起 + 信号唤醒 + until 对账）；
-// - 非 Durable 独立调用方（如单测或离线桥接调用）保持原有兼容轮询路径。
-export async function awaitBusinessTasks(data, {
-  opsRequest,
-  turnId,
-  signal,
-  canvasId,
-  sessionId = '',
-  intervalMs = 1000,
-  rendering = false,
-  onProgress,
-  useTaskWait = false,
-  taskWaitSliceMs = DEFAULT_TASK_WAIT_SLICE_MS,
-  maxIdleWaitMs = DEFAULT_AWAIT_IDLE_TIMEOUT_MS,
-  reconcileIntervalMs = DEFAULT_PARK_RECONCILE_MS,
-  bindingRetryMs = DEFAULT_BINDING_RETRY_MS,
-  durableApi = null,
-  durableContext = null,
-}) {
-  if (durableApi && durableContext) {
-    return awaitBusinessTasksParked(data, {
-      opsRequest,
-      turnId,
-      signal,
-      canvasId,
-      sessionId,
-      rendering,
-      onProgress,
-      useTaskWait,
-      maxIdleWaitMs,
-      reconcileIntervalMs,
-      bindingRetryMs,
-      durableApi,
-      durableContext,
-    });
-  }
-
-  const result = data?.result;
-  const ids = result?.taskIds || (result?.taskId ? [result.taskId] : []);
-  if (!ids.length) return data;
-  let previousProgress;
-  const progress = async (stage, saved = 0) => {
-    const value = { stage, saved, total: ids.length };
-    const serialized = JSON.stringify(value);
-    if (serialized === previousProgress) return;
-    await onProgress?.(value);
-    previousProgress = serialized;
-  };
-  let preferTaskWait = Boolean(useTaskWait);
-  let lastSavedCount = 0;
-  let deadline = Date.now() + maxIdleWaitMs;
-  const observedById = new Map();
-  try {
-    while (Date.now() < deadline) {
-      signal?.throwIfAborted();
-      const remainingMs = Math.max(0, deadline - Date.now());
-      const timeoutMs = Math.min(25000, Math.max(0, Math.min(taskWaitSliceMs, remainingMs)));
-      const fetched = await fetchTasksSnapshot(ids, {
-        opsRequest,
-        turnId,
-        signal,
-        preferTaskWait,
-        timeoutMs,
-      });
-      preferTaskWait = fetched.preferTaskWait;
-      const evaluated = evaluateTaskBatch(ids, fetched.tasks, observedById, fetched.waitResult, {
-        rendering,
-        nodeIds: result.nodeIds,
-      });
-      if (evaluated.saved > lastSavedCount) {
-        lastSavedCount = evaluated.saved;
-        deadline = Date.now() + maxIdleWaitMs;
-      }
-      if (evaluated.failed && evaluated.settled) {
-        return {
-          ...data,
-          result: {
-            ...result,
-            status: evaluated.failed.status,
-            tasks: evaluated.progressTasks,
-            taskError: evaluated.failed.error || '素材任务未成功，保留原任务，不重复生成',
-          },
-        };
-      }
-      if (evaluated.settled && !evaluated.ready) {
-        return {
-          ...data,
-          result: {
-            ...result,
-            status: 'incomplete',
-            tasks: evaluated.progressTasks,
-            materializationFailed: true,
-            note: '生成结果尚未保存成功；保留原任务，只恢复原结果的保存，不能重新生成。',
-          },
-        };
-      }
-      await progress(evaluated.stage, evaluated.saved);
-      if (evaluated.ready) {
-        let boundRevision;
-        if (result.nodeIds?.length) {
-          const response = await opsRequest('POST', '/ops/canvas.get', { params: { canvasId } }, signal, turnId);
-          const canvas = response?.result?.canvas;
-          if (!canvas || typeof canvas !== 'object') throw new Error('canvas_observation_unavailable');
-          if (!isCanvasBound(canvas, result.nodeIds, ids)) {
-            await delay(intervalMs, undefined, { signal });
-            continue;
-          }
-          if (Number.isSafeInteger(canvas.revision) && canvas.revision > 0) boundRevision = canvas.revision;
-        }
-        const revision = boundRevision === undefined ? {} : { revision: boundRevision };
-        return { ...data, ...revision, result: { ...result, ...revision, status: 'succeeded', tasks: evaluated.progressTasks } };
-      }
-      if (!fetched.waitedOnServer) {
-        await delay(intervalMs, undefined, { signal });
-      }
-    }
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    try { await progress('observation_unavailable'); }
-    catch { signal?.throwIfAborted(); }
-    return { ...data, result: { ...result, status: 'pending', observationFailed: true, note: '原任务已受理，暂时无法读取进度；请按返回的任务ID查询，不要重新提交' } };
-  }
-  return { ...data, result: { ...result, status: 'pending', note: '原任务仍在处理中，保留任务ID；请查询原任务，不能重复提交' } };
 }

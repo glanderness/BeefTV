@@ -143,19 +143,20 @@ export async function deliverDurableSignal(harness, { durableTaskId, signal, key
     deliveries.push({ durableTaskId: taskId, result });
   }
 
-  if (deliveries.length === 1 && deliveries[0].result === 'not_found') {
-    return { ok: false, status: 404, error: 'signal_target_not_found', reason: 'signal_target_not_found', result: 'not_found' };
+  if (deliveries.every((item) => item.result === 'not_found')) {
+    return { ok: false, status: 404, error: 'signal_target_not_found', reason: 'signal_target_not_found', result: 'not_found', deliveries };
   }
-  if (deliveries.length === 1 && deliveries[0].result === 'invalid') {
-    return { ok: false, status: 400, error: 'invalid_signal_value', reason: 'invalid_signal_value', result: 'invalid' };
+  if (deliveries.every((item) => item.result === 'invalid')) {
+    return { ok: false, status: 400, error: 'invalid_signal_value', reason: 'invalid_signal_value', result: 'invalid', deliveries };
   }
+  const primary = deliveries.find((item) => item.result === 'delivered' || item.result === 'duplicate') || deliveries[0];
   return {
     ok: true,
     status: 200,
     signal: token.name,
     key: cleanKey,
-    durableTaskId: deliveries[0].durableTaskId,
-    result: deliveries[0].result,
+    durableTaskId: primary.durableTaskId,
+    result: primary.result,
     deliveries,
   };
 }

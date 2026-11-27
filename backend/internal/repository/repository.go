@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -41,9 +42,40 @@ var ErrCanvasRevisionConflict = errors.New("canvas revision changed")
 
 var ErrAssetExpectedStatusMismatch = errors.New("asset expected status mismatch")
 
+type taskChangeHub struct {
+	mu sync.RWMutex
+	fn func(taskID string)
+}
+
 type Repository struct {
 	db            *gorm.DB
 	singleProcess bool
+	taskHooks     *taskChangeHub
+}
+
+func (r *Repository) SetOnTaskChanged(fn func(taskID string)) {
+	if r == nil || r.taskHooks == nil {
+		return
+	}
+	r.taskHooks.mu.Lock()
+	r.taskHooks.fn = fn
+	r.taskHooks.mu.Unlock()
+}
+
+func (r *Repository) notifyTaskChanged(taskID string) {
+	if r == nil || r.taskHooks == nil {
+		return
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return
+	}
+	r.taskHooks.mu.RLock()
+	fn := r.taskHooks.fn
+	r.taskHooks.mu.RUnlock()
+	if fn != nil {
+		fn(taskID)
+	}
 }
 
 func (r *Repository) SetSingleProcess(enabled bool) {
@@ -92,11 +124,11 @@ type UserStorageUsage struct {
 }
 
 func New(db *gorm.DB) *Repository {
-	return &Repository{db: db}
+	return &Repository{db: db, taskHooks: &taskChangeHub{}}
 }
 
 func (r *Repository) WithContext(ctx context.Context) *Repository {
-	return &Repository{db: r.db.WithContext(ctx), singleProcess: r.SingleProcess()}
+	return &Repository{db: r.db.WithContext(ctx), singleProcess: r.SingleProcess(), taskHooks: r.taskHooks}
 }
 
 func (r *Repository) Transaction(fn func(*Repository) error) error {

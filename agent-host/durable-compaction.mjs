@@ -192,7 +192,8 @@ export function createCreativeCompactionExtension({ entry, state, skills, resolv
         let activeResources = [];
         if (skills && typeof resolveActiveSkills === 'function') {
           try {
-            const projection = await resolveActiveSkills(entry, api.signal || context.abortSignal);
+            const skillTurnId = entry.busy ? (entry.turn?.turnId || '') : '';
+            const projection = await resolveActiveSkills(entry, api.signal || context.abortSignal, skillTurnId);
             activeResources = projection?.resources || [];
           } catch {
             // 压缩时技能上下文读取不可用则降级使用已记录的 loadedSkills 指针，绝不阻塞压缩。

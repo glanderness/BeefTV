@@ -37,9 +37,15 @@ const SKILL_SCRIPT_REQUEST_TIMEOUT_MS = (SKILL_SCRIPT_MAX_TIMEOUT_SEC + 15) * 10
 const canvasMutation = descriptor => descriptor.id.startsWith('canvas.') &&
   (!descriptor.readOnly || descriptor.id === 'canvas.generation.propose');
 
-function assertToolGeneration(generation, descriptor, signal, turn) {
+function assertToolGeneration(generation, descriptor, signal, turn, { resumingParked = false } = {}) {
   if (generation.aborted || signal?.aborted) throw new Error('aborted');
   if (generation.permissionMode === 'read-only' && (!descriptor.readOnly || descriptor.id === 'canvas.generation.propose' || descriptor.id === 'skill.script.run')) throw new Error('scope_denied: 本轮助手只能读取');
+  if (resumingParked) {
+    if (generation.pendingInputError) {
+      throw new Error('turn_intent_changed: 已收到新的要求，先读取新要求再修改');
+    }
+    return;
+  }
   if (canvasMutation(descriptor)) {
     if (turn.studioReadAvailable === false) throw new Error('canvas_snapshot_unavailable: 无法读取当前画布，已暂停写入，请先恢复现场读取');
     if (turn.canvasContextChanged) throw new Error('canvas_context_changed: 画布已变化，同批剩余写入已暂停；先依据最新现场重新决策，不要重放旧操作');
@@ -211,7 +217,8 @@ export function createOperationBridge({
         : {}),
       execute: async (toolCallId, args, signal, api = {}) => {
         const parkedWait = PARKABLE_TASK_OPS.has(descriptor.id) ? api.durableApi?.checkpoint?.businessTaskWait : null;
-        try { assertToolGeneration(generation, descriptor, signal, turn); }
+        const resumingParked = Boolean(parkedWait);
+        try { assertToolGeneration(generation, descriptor, signal, turn, { resumingParked }); }
         catch (error) {
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: args || {}, isError: true, error: error.message });
           throw error;
@@ -302,7 +309,7 @@ export function createOperationBridge({
           // Persist the first wire revision before Go can commit. A resumed
           // tool must reuse that revision, even after this turn's chain advances.
           if (chainWrite && generation.persistEffects) await generation.persistEffects();
-          assertToolGeneration(generation, descriptor, signal, turn);
+          assertToolGeneration(generation, descriptor, signal, turn, { resumingParked });
           let data = parkedWait?.submittedData
             ? parkedWait.submittedData
             : await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);

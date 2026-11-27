@@ -20,7 +20,7 @@ func (r *Repository) UpsertGenerationDelivery(items []GenerationDeliveryItem) er
 	if len(items) == 0 {
 		return nil
 	}
-	return r.Transaction(func(tx *Repository) error {
+	err := r.Transaction(func(tx *Repository) error {
 		for _, item := range items {
 			if err := tx.CommitOwnedGenerationDelivery(item); err != nil {
 				return err
@@ -28,6 +28,16 @@ func (r *Repository) UpsertGenerationDelivery(items []GenerationDeliveryItem) er
 		}
 		return nil
 	})
+	if err == nil {
+		seen := make(map[string]bool, len(items))
+		for _, item := range items {
+			if id := item.Result.TaskID; id != "" && !seen[id] {
+				seen[id] = true
+				r.notifyTaskChanged(id)
+			}
+		}
+	}
+	return err
 }
 
 func (r *Repository) CommitOwnedGenerationDelivery(item GenerationDeliveryItem) error {

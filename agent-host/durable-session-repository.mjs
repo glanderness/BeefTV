@@ -248,7 +248,28 @@ export function createDurableSessionRepository({
     if (cached?.sessionId === sessionId) return fn(cached, true);
     const borrowKey = `${canvasId}\0${sessionId}`;
     const detached = detachedEntries.get(borrowKey);
-    if (detached) return fn(detached, false);
+    if (detached) {
+      detached.borrowedCount = (detached.borrowedCount || 0) + 1;
+      try {
+        return await fn(detached, false);
+      } finally {
+        detached.borrowedCount = Math.max(0, (detached.borrowedCount || 1) - 1);
+        if (
+          detached.borrowedCount === 0 &&
+          detached.pendingDetachedClose &&
+          detachedEntries.get(borrowKey) === detached &&
+          sessions.get(canvasId) !== detached &&
+          !detached.detachedSignalDrain &&
+          !detached.running &&
+          !(detached.waiters > 0) &&
+          !(detached.submissionWaiters?.size > 0)
+        ) {
+          detachedEntries.delete(borrowKey);
+          detached.disposed = true;
+          await detached.harness.close(CTX).catch(() => {});
+        }
+      }
+    }
     if (!readOnly) {
       const entry = await open(canvasId, sessionId, { readOnly: false });
       try {
@@ -693,6 +714,16 @@ export function createDurableSessionRepository({
       if (!isDurableSessionId(sessionId) || !hasSession(canvasId, sessionId)) throw fail('session_not_found');
       const current = sessions.get(canvasId);
       if (isEntryBusy(current)) throw fail('session_busy');
+      const detachedKey = `${canvasId}\0${sessionId}`;
+      const detached = detachedEntries.get(detachedKey);
+      if (detached) {
+        if (isEntryBusy(detached) || detached.detachedSignalDrain || (detached.borrowedCount || 0) > 0) {
+          throw fail('session_busy');
+        }
+        detachedEntries.delete(detachedKey);
+        detached.disposed = true;
+        await detached.harness.close(CTX);
+      }
       const uuid = idPattern.exec(sessionId)[1];
       const dir = durableDirectory(canvasId);
       if (current?.sessionId === sessionId) {

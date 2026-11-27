@@ -3,6 +3,7 @@ package assistantruntime
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -112,16 +113,23 @@ func TestTaskWaitRegistryPersistsAndDispatchesSignalOnSettleAndCancel(t *testing
 		t.Fatalf("expected persisted subscription to reload across restart, got %+v", subs)
 	}
 
+	var evalCalls atomic.Int32
 	var statesMu sync.Mutex
 	states := map[string]TaskWaitEvaluation{
 		"task-1": {Settled: false},
 		"task-2": {Settled: false},
 	}
 	host2.ConfigureTaskWaitEvaluator(func(_ context.Context, _ string, taskID string) (TaskWaitEvaluation, error) {
+		evalCalls.Add(1)
 		statesMu.Lock()
 		defer statesMu.Unlock()
 		return states[taskID], nil
 	})
+	// Registry starts paused on boot so Go does not poll SQLite before agent-host starts.
+	time.Sleep(45 * time.Millisecond)
+	if got := evalCalls.Load(); got != 0 {
+		t.Fatalf("expected 0 evaluator calls while paused before host starts, got %d", got)
+	}
 	host2.TestingUseOwnedEndpoint(server.URL, nonce, "fp-1")
 
 	time.Sleep(40 * time.Millisecond)
@@ -184,35 +192,49 @@ func TestTaskWaitRegistryPersistsAndDispatchesSignalOnSettleAndCancel(t *testing
 	}
 }
 
-func TestTaskWaitRegistryRetriesOnTransient5xxAndDropsOn404(t *testing.T) {
+func TestTaskWaitRegistryRetriesOnTransient5xxAndDropsPermanentErrors(t *testing.T) {
 	const hostToken = "retry-token"
 	const nonce = "retry-nonce"
 
 	var retryAttempts atomic.Int32
 	var notFoundAttempts atomic.Int32
+	var forbiddenAttempts atomic.Int32
+	var conflictAttempts atomic.Int32
+	var closedAttempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var sig capturedSignal
 		if err := json.NewDecoder(r.Body).Decode(&sig); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if sig.Key == "task-retry" {
+		switch sig.Key {
+		case "task-retry":
 			if retryAttempts.Add(1) <= 2 {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				_, _ = w.Write([]byte(`{"error":"host_restarting"}`))
 				return
 			}
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"ok":true}`))
-			return
-		}
-		if sig.Key == "task-missing-target" {
+			_, _ = w.Write([]byte(`{"ok":true,"result":"delivered"}`))
+		case "task-missing-target":
 			notFoundAttempts.Add(1)
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"signal_target_not_found"}`))
-			return
+		case "task-forbidden":
+			forbiddenAttempts.Add(1)
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"forbidden"}`))
+		case "task-conflict":
+			conflictAttempts.Add(1)
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":"conflict"}`))
+		case "task-closed-2xx":
+			closedAttempts.Add(1)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true,"result":"closed"}`))
+		default:
+			w.WriteHeader(http.StatusOK)
 		}
-		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
@@ -221,7 +243,8 @@ func TestTaskWaitRegistryRetriesOnTransient5xxAndDropsOn404(t *testing.T) {
 		HostToken: func() string { return hostToken },
 	})
 	defer func() { _ = host.StopContext(context.Background()) }()
-	host.TaskWaits().SetPollInterval(15 * time.Millisecond)
+	host.TaskWaits().SetPollInterval(5 * time.Second)
+	host.TaskWaits().SetBackoffBase(15 * time.Millisecond)
 	host.ConfigureTaskWaitEvaluator(func(_ context.Context, _ string, taskID string) (TaskWaitEvaluation, error) {
 		return TaskWaitEvaluation{
 			Settled: true,
@@ -230,31 +253,104 @@ func TestTaskWaitRegistryRetriesOnTransient5xxAndDropsOn404(t *testing.T) {
 	})
 	host.TestingUseOwnedEndpoint(server.URL, nonce, "fp-retry")
 
-	if err := host.TaskWaits().Register(TaskWaitSubscription{
-		UserID:        "u1",
-		CanvasID:      "c1",
-		SessionID:     "durable:s1",
-		DurableTaskID: 11,
-		TaskIDs:       []string{"task-retry"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := host.TaskWaits().Register(TaskWaitSubscription{
-		UserID:        "u1",
-		CanvasID:      "c1",
-		SessionID:     "durable:s1",
-		DurableTaskID: 12,
-		TaskIDs:       []string{"task-missing-target"},
-	}); err != nil {
-		t.Fatal(err)
+	for idx, taskID := range []string{
+		"task-retry",
+		"task-missing-target",
+		"task-forbidden",
+		"task-conflict",
+		"task-closed-2xx",
+	} {
+		if err := host.TaskWaits().Register(TaskWaitSubscription{
+			UserID:        "u1",
+			CanvasID:      "c1",
+			SessionID:     "durable:s1",
+			DurableTaskID: int64(11 + idx),
+			TaskIDs:       []string{taskID},
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	waitForCondition(t, 2*time.Second, func() bool {
 		return retryAttempts.Load() >= 3 && len(host.TaskWaits().List()) == 0
-	}, "expected retry subscription to succeed after 503s and 404 target to be dropped")
+	}, "expected retry subscription to succeed with backoff and all permanent errors (403/404/409/2xx closed) to be dropped")
 
 	if got := notFoundAttempts.Load(); got != 1 {
 		t.Fatalf("expected 404 target to be dropped after 1 attempt, got %d", got)
+	}
+	if got := forbiddenAttempts.Load(); got != 1 {
+		t.Fatalf("expected 403 target to be dropped after 1 attempt, got %d", got)
+	}
+	if got := conflictAttempts.Load(); got != 1 {
+		t.Fatalf("expected 409 target to be dropped after 1 attempt, got %d", got)
+	}
+	if got := closedAttempts.Load(); got != 1 {
+		t.Fatalf("expected 2xx result=closed target to be dropped after 1 attempt, got %d", got)
+	}
+}
+
+func TestTaskWaitRegistryCancelAbortsInFlightDispatchWithoutRace(t *testing.T) {
+	started := make(chan struct{}, 1)
+	clientCancelled := make(chan struct{}, 1)
+	releaseServer := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Drain body so net/http starts background read and observes client disconnect.
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		select {
+		case <-r.Context().Done():
+			select {
+			case clientCancelled <- struct{}{}:
+			default:
+			}
+		case <-releaseServer:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+	defer close(releaseServer)
+
+	host := New(Options{
+		DataDir:   t.TempDir(),
+		HostToken: func() string { return "tok" },
+	})
+	defer func() { _ = host.StopContext(context.Background()) }()
+	host.TaskWaits().SetPollInterval(15 * time.Millisecond)
+	host.ConfigureTaskWaitEvaluator(func(_ context.Context, _ string, taskID string) (TaskWaitEvaluation, error) {
+		return TaskWaitEvaluation{Settled: true, Payload: map[string]any{"taskId": taskID, "state": "completed"}}, nil
+	})
+	host.TestingUseOwnedEndpoint(server.URL, "nonce", "fp-race")
+
+	if err := host.TaskWaits().Register(TaskWaitSubscription{
+		UserID:        "u1",
+		CanvasID:      "c1",
+		SessionID:     "durable:s-race",
+		DurableTaskID: 501,
+		TaskIDs:       []string{"task-blocked"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for in-flight POST /signals")
+	}
+
+	// Cancel concurrently while POST /signals is blocked -> must immediately cancel HTTP request & drop subscription.
+	host.TaskWaits().Cancel("c1", "durable:s-race", 501)
+
+	select {
+	case <-clientCancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected Cancel to abort the blocked in-flight POST /signals request")
+	}
+	if len(host.TaskWaits().List()) != 0 {
+		t.Fatalf("expected 0 remaining waits after concurrent Cancel")
 	}
 }
 

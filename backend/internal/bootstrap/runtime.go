@@ -228,9 +228,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		_ = agentconnect.RetryStaleOneClickCredentials(agentops.NewClientRegistry(svc.DataDir()), svc.DataDir())
 	}
 	assistantHost := assistantruntime.New(assistantruntime.OptionsFromService(svc))
-	if taskService != nil {
-		taskService.SetOnTaskChanged(assistantHost.NotifyTaskChanged)
-	}
+	repo.SetOnTaskChanged(assistantHost.NotifyTaskChanged)
 	svc.SetAssistantContinuationSubmitter(canvasHandler.AssistantContinuationSubmitter(svc, assistantHost))
 	api := router.Group("/api")
 	status := newSystemStatus(db, svc, true)

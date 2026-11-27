@@ -54,6 +54,7 @@ export async function handleEventsRoute(req, res, {
 
       const wakeBusy = (await durable.busyState(canvasId)).busy;
       let shouldQueueFollowUp = wakeBusy;
+      let finalizedIdleTurnId = '';
 
       if (!wakeBusy) {
         const turnId = deterministicWakeTurnId(canvasId, requestId, body.turnId);
@@ -88,9 +89,11 @@ export async function handleEventsRoute(req, res, {
             return;
           }
           await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}).catch(() => null);
+          finalizedIdleTurnId = turnId;
         } catch (error) {
           if (openedTurn) {
             await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}).catch(() => null);
+            finalizedIdleTurnId = turnId;
           }
           if (error?.reason === 'session_busy') {
             shouldQueueFollowUp = true;
@@ -99,28 +102,33 @@ export async function handleEventsRoute(req, res, {
       }
 
       if (shouldQueueFollowUp && typeof durable.submitFollowUpEvent === 'function') {
-        const queued = await durable.submitFollowUpEvent(entry, {
-          kind: cleanKind,
-          requestId,
-          turnId: body.turnId,
-          content,
-          userText,
-          revisionBefore,
-          permissionMode,
-          eventData: body.data && typeof body.data === 'object' ? body.data : {},
-        });
-        respond(res, 202, {
-          accepted: true,
-          woken: true,
-          queued: queued.status === 'queued',
-          mode: 'followUp',
-          sessionId: queued.sessionId,
-          turnId: queued.turnId,
-          requestId: queued.requestId,
-          submissionId: queued.submission.id,
-          permissionMode: queued.permissionMode,
-        });
-        return;
+        try {
+          const queued = await durable.submitFollowUpEvent(entry, {
+            kind: cleanKind,
+            requestId,
+            turnId: body.turnId,
+            excludedTurnId: finalizedIdleTurnId,
+            content,
+            userText,
+            revisionBefore,
+            permissionMode,
+            eventData: body.data && typeof body.data === 'object' ? body.data : {},
+          });
+          respond(res, 202, {
+            accepted: true,
+            woken: true,
+            queued: queued.status === 'queued',
+            mode: 'followUp',
+            sessionId: queued.sessionId,
+            turnId: queued.turnId,
+            requestId: queued.requestId,
+            submissionId: queued.submission.id,
+            permissionMode: queued.permissionMode,
+          });
+          return;
+        } catch (error) {
+          console.error(`agent-host: followUp 入队失败，回退 recordEvent ${error?.reason || error?.message || error}`);
+        }
       }
     }
   }

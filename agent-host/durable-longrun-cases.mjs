@@ -255,7 +255,7 @@ test('Flows 1 & 2: ToolPark streams tool_parked + heartbeat, survives /chat disc
     BEEFTV_AGENT_TASK_RECONCILE_MS: '60000',
   };
 
-  let host1, host2;
+  let host1, host2, host3;
   try {
     host1 = await startHostProcess(hostEnv);
     const headers = { 'Content-Type': 'application/json', 'X-Beeftv-Agent-Token': hostToken };
@@ -323,30 +323,11 @@ test('Flows 1 & 2: ToolPark streams tool_parked + heartbeat, survives /chat disc
     assert.deepEqual(hist1.active.parkedTools[0].taskIds, [taskId]);
 
     // Simulate full agent-host process restart: stop Process 1, boot Process 2 on the same dataDir.
-    // Do NOT open the session before POST /signals -> tests cold-start closed-session delivery!
+    // Send the VALID POST /signals FIRST before ANY other request to genuinely prove cold-start closed-session delivery!
     await host1.stop();
     host1 = null;
     host2 = await startHostProcess(hostEnv);
 
-    // Auth guard: missing host token must return 403.
-    const unauthRes = await fetch(`${host2.baseUrl}/signals`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ canvasId: 'canvas-1', sessionId, durableTaskId, signal: 'business_task_settled', key: taskId, value: {} }),
-    });
-    assert.equal(unauthRes.status, 403);
-
-    // Explicit wrong durableTaskId must return 404 { error: 'signal_target_not_found' }.
-    const missingTargetRes = await fetch(`${host2.baseUrl}/signals`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ canvasId: 'canvas-1', sessionId, durableTaskId: 999999, signal: 'business_task_settled', key: taskId, value: { status: 'succeeded' } }),
-    });
-    assert.equal(missingTargetRes.status, 404);
-    const missingBody = await missingTargetRes.json();
-    assert.equal(missingBody.error, 'signal_target_not_found');
-
-    // Now mark task settled on Go and deliver valid signal to Process 2 (session is cold/closed in memory!).
     taskSettled = true;
     const sigRes = await fetch(`${host2.baseUrl}/signals`, {
       method: 'POST',
@@ -378,9 +359,40 @@ test('Flows 1 & 2: ToolPark streams tool_parked + heartbeat, survives /chat disc
     assert.equal(finalHistory.turns[0].error, null);
     assert(completedTurns.includes('turnpark0001'), 'Go completeTurn must be acknowledged after cold signal wakeup');
     assert.equal(secondModelPrompt.length, 1);
+
+    // Cold-start auth & 404 leak check on a fresh Process 3:
+    // 1) Missing host token -> 403;
+    // 2) Wrong durableTaskId on a cold closed session -> 404 signal_target_not_found,
+    //    leaving ZERO stale mounted/busy harness so /health is idle and /history opens cleanly!
+    await host2.stop();
+    host2 = null;
+    host3 = await startHostProcess(hostEnv);
+
+    const unauthRes = await fetch(`${host3.baseUrl}/signals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canvasId: 'canvas-1', sessionId, durableTaskId, signal: 'business_task_settled', key: taskId, value: {} }),
+    });
+    assert.equal(unauthRes.status, 403);
+
+    const missingTargetRes = await fetch(`${host3.baseUrl}/signals`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ canvasId: 'canvas-1', sessionId, durableTaskId: 999999, signal: 'business_task_settled', key: taskId, value: { status: 'succeeded' } }),
+    });
+    assert.equal(missingTargetRes.status, 404);
+    const missingBody = await missingTargetRes.json();
+    assert.equal(missingBody.error, 'signal_target_not_found');
+
+    const health3 = await (await fetch(`${host3.baseUrl}/health`, { headers })).json();
+    assert.equal(health3.busy, false, 'failed cold-start 404 signal must not leak a busy mounted session');
+    const hist3Res = await fetch(`${host3.baseUrl}/history?canvasId=canvas-1&sessionId=${encodeURIComponent(sessionId)}`, { headers });
+    assert.equal(hist3Res.status, 200);
+    assert.equal((await hist3Res.json()).turns?.length, 1);
   } finally {
     await host1?.stop();
     await host2?.stop();
+    await host3?.stop();
     mockBackend.closeAllConnections();
     await new Promise((resolve) => mockBackend.close(resolve));
     fs.rmSync(dataDir, { recursive: true, force: true });
@@ -428,7 +440,7 @@ test('Flow 1b: gatedCall early wakeup keeps api.memo idempotent, until reconcile
     if (url.startsWith('/v1/chat/completions')) {
       modelStep += 1;
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      if (modelStep === 1 || modelStep === 3 || modelStep === 4) {
+      if (modelStep === 1 || modelStep === 3 || modelStep === 4 || modelStep === 6) {
         sseChunk(res, {
           role: 'assistant',
           tool_calls: [{ index: 0, id: `c-${modelStep}`, type: 'function', function: { name: 'canvas_generation_submit', arguments: JSON.stringify({ proposalId: `p-${modelStep}` }) } }],
@@ -506,16 +518,25 @@ test('Flow 1b: gatedCall early wakeup keeps api.memo idempotent, until reconcile
     store = await openStore();
     const reopened = await store.ensureSession('c1', sessionId);
     const recovered = await store.recover(reopened);
-    // Let at least two 250ms until safety-net reconciles fire while still running -> must NOT hit invalid_park!
-    await new Promise((r) => setTimeout(r, 600));
-    assert.equal(registerCount, 1, 'api.memo must keep wait registration strictly idempotent across reopen/until wakes');
-    assert.equal(submitCount, 1, 'submit must not be re-executed on until reconcile');
+    // Wait longer than reconcileIntervalMs (250ms) -> registered signal wait keeps until=deadline so signal key NEVER expires early!
+    await new Promise((r) => setTimeout(r, 350));
+    assert.equal(registerCount, 1, 'api.memo must keep wait registration strictly idempotent across reopen');
+    assert.equal(submitCount, 1, 'submit must not be re-executed on reopen');
     taskState = 'succeeded';
+    const deliv1 = await store.deliverSignal('c1', reopened.sessionId, {
+      signal: 'business_task_settled',
+      key: 't-1',
+      value: { taskId: 't-1', status: 'succeeded', state: 'completed', reason: 'saved' },
+    });
+    assert.equal(deliv1.ok, true, 'signal key must stay alive past reconcileIntervalMs when registered');
+    assert.equal(deliv1.result, 'delivered');
     const record1 = await store.wait(reopened, recovered);
-    assert.equal(record1.error, null, 're-sleeping after expired until signal must never hit invalid_park');
+    assert.equal(record1.error, null);
     assert.equal(record1.reply, 'done-2');
+    assert(cancelledWaits.length >= 1, 'non-park completion exit must cancel Go wait subscription');
 
     // Part B: Park a second task, then call store.stop() -> cancel() hook must post /assistant/runtime/task-waits/cancel!
+    const cancelsBeforeStop = cancelledWaits.length;
     taskState = 'running';
     const sub2 = await store.submit(reopened, { turnId: 'turn-cancel', requestId: 'req-cancel', content: 'submit 2' });
     const wait2 = store.wait(reopened, sub2);
@@ -528,9 +549,10 @@ test('Flow 1b: gatedCall early wakeup keeps api.memo idempotent, until reconcile
     await store.stop(reopened, 'req-cancel');
     const rec2 = await wait2;
     assert.equal(rec2.cancelled, true);
-    await waitFor(() => cancelledWaits.length >= 1, 3000);
-    assert.equal(cancelledWaits[0].canvasId, 'c1');
-    assert.deepEqual(cancelledWaits[0].taskIds, ['t-2']);
+    await waitFor(() => cancelledWaits.length > cancelsBeforeStop, 3000);
+    assert.equal(cancelledWaits.at(-1).canvasId, 'c1');
+    assert.deepEqual(cancelledWaits.at(-1).taskIds, ['t-2']);
+
     // Part C: Omitting durableTaskId falls back to harness.inspect() scanning sleeping pi.tool tasks by { signal, key }.
     taskState = 'running';
     const sub3 = await store.submit(reopened, { turnId: 'turn-fallback-sig', requestId: 'req-fallback-sig', content: 'submit 3' });
@@ -551,6 +573,31 @@ test('Flow 1b: gatedCall early wakeup keeps api.memo idempotent, until reconcile
     assert.equal(fallbackDeliv.result, 'delivered');
     const rec3 = await wait3;
     assert.equal(rec3.error, null);
+
+    // Part D (Fix 6): /steer (supplement) + canvasContextChanged arriving while parked must NOT discard paid task result!
+    taskState = 'running';
+    const sub4 = await store.submit(reopened, { turnId: 'turn-steer-park', requestId: 'req-steer-park', content: 'submit 4' });
+    const wait4 = store.wait(reopened, sub4);
+    wait4.catch(() => {});
+    await waitFor(async () => {
+      if (registerCount < 4) return false;
+      const hist = await store.history('c1', reopened.sessionId);
+      return hist.active?.parked === true;
+    }, 5000);
+    // Inject /steer supplement while parked (advances intentEpoch > modelEpoch) + mark canvasContextChanged.
+    await store.supplement(reopened, { requestId: 'steer-while-parked', content: '顺便微调一下色调', input: { message: '顺便微调一下色调' } });
+    reopened.turn.canvasContextChanged = true;
+    taskState = 'succeeded';
+    const deliv4 = await store.deliverSignal('c1', reopened.sessionId, {
+      signal: 'business_task_settled',
+      key: 't-4',
+      value: { taskId: 't-4', status: 'succeeded', state: 'completed', reason: 'saved' },
+    });
+    assert.equal(deliv4.ok, true);
+    const rec4 = await wait4;
+    assert.equal(rec4.error, null);
+    assert.equal(submitCount, 4, 'resumed parked tool after /steer must not re-submit');
+    assert(!rec4.toolCalls.some((c) => c.tool === 'canvas.generation.submit' && c.isError), 'resumed parked tool after /steer must NOT fail with turn_intent_changed');
   } finally {
     await store?.disposeAll();
     server.closeAllConnections();
@@ -699,7 +746,8 @@ test('Flow 3: busy full-access session queues /events via whenBusy:followUp and 
 
     await turn1Entered.promise;
 
-    // While Run 1 is busy, deliver task_completed via /events WITHOUT explicit permissionMode.
+    // While Run 1 is busy in full-access, deliver task_completed WITH explicit default permissionMode:'canvas'.
+    // Active doc.active.permissionMode ('full-access') MUST win unconditionally (no downgrade!).
     const evtRes = await fetch(`${host.baseUrl}/events`, {
       method: 'POST',
       headers,
@@ -707,6 +755,7 @@ test('Flow 3: busy full-access session queues /events via whenBusy:followUp and 
         canvasId: 'canvas-fa',
         kind: 'task_completed',
         requestId: 'evt-bg-1',
+        permissionMode: 'canvas',
         message: '后台生图任务 task-bg-1 已完成，请立刻继续。',
       }),
     });
@@ -714,7 +763,7 @@ test('Flow 3: busy full-access session queues /events via whenBusy:followUp and 
     const evtBody = await evtRes.json();
     assert.equal(evtBody.queued, true, 'busy /events must queue followUp instead of passive recordEvent');
     assert.equal(evtBody.mode, 'followUp');
-    assert.equal(evtBody.permissionMode, 'full-access', 'busy followUp must preserve full-access without downgrading to canvas');
+    assert.equal(evtBody.permissionMode, 'full-access', 'busy followUp must preserve active full-access even when payload carries default canvas');
 
     // Release Run 1 and wait for BOTH Run 1 and follow-up Run 2 to settle!
     releaseTurn1.resolve();
@@ -736,6 +785,28 @@ test('Flow 3: busy full-access session queues /events via whenBusy:followUp and 
     assert.equal(history.turns[1].reply, '后台完成事件已处理完毕。');
     assert.equal(history.turns[1].error, null);
     assert(history.turns[1].toolCalls.some((c) => c.tool === 'workspace.write_probe' && !c.isError), 'full-access tool succeeded in follow-up turn');
+
+    // Idle session after full-access turns receiving explicit permissionMode:'canvas' MUST respect 'canvas' (no stale escalation!).
+    const idleEvtRes = await fetch(`${host.baseUrl}/events`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        canvasId: 'canvas-fa',
+        kind: 'task_completed',
+        requestId: 'evt-idle-canvas',
+        permissionMode: 'canvas',
+        message: '空闲期显式指定 canvas 权限的事件。',
+      }),
+    });
+    assert.equal(idleEvtRes.status, 202);
+    const idleEvtBody = await idleEvtRes.json();
+    assert.equal(idleEvtBody.permissionMode, 'canvas', 'idle /events with explicit canvas must not escalate to stale full-access');
+    await waitFor(async () => {
+      const r = await fetch(`${host.baseUrl}/history?canvasId=canvas-fa`, { headers });
+      const data = await r.json();
+      return !data.active && data.turns?.length === 3 ? data : null;
+    }, 15000);
+    assert.equal(openedTurns[1].permissionMode, 'canvas');
   } finally {
     releaseTurn1.resolve();
     await host?.stop();

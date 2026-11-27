@@ -13,15 +13,24 @@ const CTX = BACKGROUND_CONTEXT;
 const VALID_MODES = new Set(['read-only', 'canvas', 'full-access']);
 
 export function resolvePreservedPermissionMode(entry, doc, explicitMode = '') {
-  const candidates = [
-    explicitMode,
-    doc?.active?.permissionMode,
-    entry?.input?.permissionMode,
-    entry?.permissionMode,
-    entry?.generation?.permissionMode,
-    doc?.lastPermissionMode,
-    doc?.turns?.at(-1)?.permissionMode,
-  ];
+  const isActive = Boolean(doc?.active || entry?.busy || entry?.running);
+  const candidates = isActive
+    ? [
+        doc?.active?.permissionMode,
+        entry?.input?.permissionMode,
+        entry?.permissionMode,
+        entry?.generation?.permissionMode,
+        explicitMode,
+        doc?.lastPermissionMode,
+        doc?.turns?.at(-1)?.permissionMode,
+      ]
+    : [
+        explicitMode,
+        entry?.permissionMode,
+        entry?.generation?.permissionMode,
+        doc?.lastPermissionMode,
+        doc?.turns?.at(-1)?.permissionMode,
+      ];
   for (const mode of candidates) {
     if (typeof mode === 'string' && VALID_MODES.has(mode)) return mode;
   }
@@ -34,6 +43,13 @@ export function deterministicWakeTurnId(canvasId, requestId, rawTurnId = '') {
   return crypto.createHash('sha256').update(`wake:${canvasId}:${requestId}`).digest('hex').slice(0, 24);
 }
 
+export function deterministicFollowUpTurnId(canvasId, requestId, rawTurnId = '', excludedTurnId = '') {
+  const cleanRaw = String(rawTurnId || '').trim().toLowerCase();
+  const excluded = String(excludedTurnId || '').trim().toLowerCase();
+  if (/^[0-9a-f]{8,64}$/.test(cleanRaw) && cleanRaw !== excluded) return cleanRaw;
+  return crypto.createHash('sha256').update(`followup:${canvasId}:${requestId}`).digest('hex').slice(0, 24);
+}
+
 export async function enqueueFollowUpEvent({
   entry,
   lock,
@@ -42,6 +58,7 @@ export async function enqueueFollowUpEvent({
   kind,
   requestId,
   turnId,
+  excludedTurnId = '',
   content,
   userText,
   revisionBefore = 0,
@@ -53,7 +70,7 @@ export async function enqueueFollowUpEvent({
   const followUpRequestId = `event:${requestId}`;
   const doc = await state(entry);
   const preservedMode = resolvePreservedPermissionMode(entry, doc, permissionMode);
-  const followUpTurnId = deterministicWakeTurnId(entry.canvasId, requestId, turnId);
+  const followUpTurnId = deterministicFollowUpTurnId(entry.canvasId, requestId, turnId, excludedTurnId);
   const cleanUserText = String(userText || '').trim();
   const createdAt = new Date().toISOString();
   const wakeMeta = {
@@ -78,29 +95,37 @@ export async function enqueueFollowUpEvent({
     },
   }, CTX);
 
+  const status = await submission.status(CTX).catch(() => null);
+  const alreadyTerminal = status?.status === 'done' || status?.status === 'unanswered';
   await lock(entry.canvasId, async () => {
     await update(entry, (current) => {
-      const queued = Array.isArray(current.queuedFollowUps) ? current.queuedFollowUps : [];
-      if (!queued.some((item) => item.submissionId === submission.id || item.requestId === followUpRequestId)) {
-        current.queuedFollowUps = [...queued, {
-          submissionId: submission.id,
-          requestId: followUpRequestId,
-          turnId: followUpTurnId,
-          permissionMode: preservedMode,
-          userText: cleanUserText,
-          revisionBefore: Number(revisionBefore || 0),
-          kind: cleanKind,
-          content,
-          createdAt,
-        }];
+      const alreadyOwnedOrDone = alreadyTerminal
+        || current.active?.submissionId === submission.id
+        || (Array.isArray(current.turns) && current.turns.some((t) => t.submissionId === submission.id));
+      if (!alreadyOwnedOrDone) {
+        const queued = Array.isArray(current.queuedFollowUps) ? current.queuedFollowUps : [];
+        if (!queued.some((item) => item.submissionId === submission.id || item.requestId === followUpRequestId)) {
+          current.queuedFollowUps = [...queued, {
+            submissionId: submission.id,
+            requestId: followUpRequestId,
+            turnId: followUpTurnId,
+            permissionMode: preservedMode,
+            userText: cleanUserText,
+            revisionBefore: Number(revisionBefore || 0),
+            kind: cleanKind,
+            content,
+            createdAt,
+          }];
+        }
       }
-      current.lastPermissionMode = preservedMode;
+      if (!current.active) {
+        current.lastPermissionMode = preservedMode;
+      }
     });
   });
 
   // 竞态兜底：若上一轮在检查 busy 与 submit 之间刚好结束，Pi 会直接 placed 启动新 Run，
   // 此时如果尚未有观察者绑定该提交，立即挂上 onFollowUpStarted 以便终态回写。
-  const status = await submission.status(CTX).catch(() => null);
   if (status?.status === 'placed' && !entry.submissionWaiters?.has(submission.id)) {
     onFollowUpStarted?.(entry, submission);
   }
@@ -159,15 +184,17 @@ export function createRunTurnHandoff({
       await entry.submissionWaiters.get(oldSubmissionId).catch(() => {});
     }
 
-    // 2. 若旧 active 在重启或无观察者场景下尚未结算，先完成旧回合两阶段收口。
+    // 2. 若旧 active 在重启或无观察者场景下尚未结算，必须先完成旧回合两阶段收口；
+    //    严禁静默吞掉结算失败并覆盖 doc.active（否则会丢弃上一轮未确认的终态）。
     const postWaitDoc = await state(entry);
-    if (
-      postWaitDoc?.active &&
-      postWaitDoc.active.submissionId != null &&
-      !runInputs.includes(postWaitDoc.active.submissionId) &&
-      typeof settleTurnWithConfirmation === 'function'
-    ) {
-      await settleTurnWithConfirmation(entry, postWaitDoc.active.requestId, { confirmCommittedResult: true }).catch(() => {});
+    if (postWaitDoc?.active && postWaitDoc.active.submissionId != null && !runInputs.includes(postWaitDoc.active.submissionId)) {
+      if (typeof settleTurnWithConfirmation !== 'function') {
+        throw Object.assign(new Error('previous_turn_not_settled'), { reason: 'previous_turn_not_settled' });
+      }
+      const settled = await settleTurnWithConfirmation(entry, postWaitDoc.active.requestId, { confirmCommittedResult: true });
+      if (!settled?.settled) {
+        throw Object.assign(new Error('previous_turn_not_settled'), { reason: 'previous_turn_not_settled' });
+      }
     }
 
     // 3. 在画布锁内为新 followUp Run 向 Go 申请新 turnId（保留原 permissionMode）并原子绑定 doc.active。
@@ -177,6 +204,9 @@ export function createRunTurnHandoff({
       const doc = await state(entry);
       if (doc?.active && doc.active.submissionId != null && runInputs.includes(doc.active.submissionId)) {
         return;
+      }
+      if (doc?.active) {
+        throw Object.assign(new Error('previous_turn_not_settled'), { reason: 'previous_turn_not_settled' });
       }
 
       const queued = Array.isArray(doc?.queuedFollowUps) ? doc.queuedFollowUps : [];
@@ -200,7 +230,7 @@ export function createRunTurnHandoff({
         queuedItem?.permissionMode || entryData?.permissionMode || '',
       );
       const nextRequestId = String(queuedItem?.requestId || entryData?.requestId || `followup:${followUpSubId}`);
-      const nextTurnId = deterministicWakeTurnId(
+      const nextTurnId = deterministicFollowUpTurnId(
         entry.canvasId,
         nextRequestId,
         queuedItem?.turnId || entryData?.turnId || '',

@@ -168,3 +168,34 @@ func TestAssistantRuntimeTaskWaitsRouteAuthAndSignalDispatch(t *testing.T) {
 		t.Fatalf("expected 0 remaining waits after cancel, got %+v", env.assistantHost.TaskWaits().List())
 	}
 }
+
+func TestAssistantRuntimeTaskWaitsReportsUnavailableWithoutOwnedEndpoint(t *testing.T) {
+	env := newAssistantTestEnv(t, nil)
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18090/api/assistant/runtime/task-waits",
+		strings.NewReader(`{"canvasId":"assistant-canvas","sessionId":"durable:s1","durableTaskId":55,"signal":"business_task_settled","taskIds":["task-no-endpoint"]}`))
+	req.Host = "127.0.0.1:18090"
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Beeftv-Agent-Token", assistantTestHostToken)
+	rec := httptest.NewRecorder()
+	env.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 without owned endpoint, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Code int `json:"code"`
+		Data struct {
+			Registered bool   `json:"registered"`
+			Reason     string `json:"reason"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v (%s)", err, rec.Body.String())
+	}
+	if envelope.Code != 0 || envelope.Data.Registered || envelope.Data.Reason != "signal_endpoint_unavailable" {
+		t.Fatalf("expected registered=false signal_endpoint_unavailable, got %+v", envelope)
+	}
+	if len(env.assistantHost.TaskWaits().List()) != 0 {
+		t.Fatalf("expected no wait stored without owned endpoint, got %+v", env.assistantHost.TaskWaits().List())
+	}
+}
