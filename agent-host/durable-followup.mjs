@@ -24,13 +24,7 @@ export function resolvePreservedPermissionMode(entry, doc, explicitMode = '') {
         doc?.lastPermissionMode,
         doc?.turns?.at(-1)?.permissionMode,
       ]
-    : [
-        explicitMode,
-        entry?.permissionMode,
-        entry?.generation?.permissionMode,
-        doc?.lastPermissionMode,
-        doc?.turns?.at(-1)?.permissionMode,
-      ];
+    : [explicitMode];
   for (const mode of candidates) {
     if (typeof mode === 'string' && VALID_MODES.has(mode)) return mode;
   }

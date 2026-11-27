@@ -786,27 +786,49 @@ test('Flow 3: busy full-access session queues /events via whenBusy:followUp and 
     assert.equal(history.turns[1].error, null);
     assert(history.turns[1].toolCalls.some((c) => c.tool === 'workspace.write_probe' && !c.isError), 'full-access tool succeeded in follow-up turn');
 
-    // Idle session after full-access turns receiving explicit permissionMode:'canvas' MUST respect 'canvas' (no stale escalation!).
-    const idleEvtRes = await fetch(`${host.baseUrl}/events`, {
+    // Idle session immediately after full-access turns receiving /events with NO permissionMode
+    // MUST default safely to 'canvas' (NEVER inherit stale 'full-access' from previous settled turns!).
+    const idleNoModeRes = await fetch(`${host.baseUrl}/events`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         canvasId: 'canvas-fa',
-        kind: 'task_completed',
-        requestId: 'evt-idle-canvas',
-        permissionMode: 'canvas',
-        message: '空闲期显式指定 canvas 权限的事件。',
+        kind: 'skill_script_completed',
+        requestId: 'evt-idle-no-mode',
+        message: '空闲期未携带 permissionMode 的脚本完成事件。',
       }),
     });
-    assert.equal(idleEvtRes.status, 202);
-    const idleEvtBody = await idleEvtRes.json();
-    assert.equal(idleEvtBody.permissionMode, 'canvas', 'idle /events with explicit canvas must not escalate to stale full-access');
+    assert.equal(idleNoModeRes.status, 202);
+    const idleNoModeBody = await idleNoModeRes.json();
+    assert.equal(idleNoModeBody.permissionMode, 'canvas', 'idle /events without permissionMode must default safely to canvas, not stale full-access');
     await waitFor(async () => {
       const r = await fetch(`${host.baseUrl}/history?canvasId=canvas-fa`, { headers });
       const data = await r.json();
       return !data.active && data.turns?.length === 3 ? data : null;
     }, 15000);
-    assert.equal(openedTurns[1].permissionMode, 'canvas');
+    assert.equal(openedTurns[1].permissionMode, 'canvas', 'Go turn opened for idle /events without permissionMode must be canvas');
+
+    // Idle session receiving an explicit valid permissionMode ('read-only') MUST honor it.
+    const idleExplicitRes = await fetch(`${host.baseUrl}/events`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        canvasId: 'canvas-fa',
+        kind: 'task_completed',
+        requestId: 'evt-idle-readonly',
+        permissionMode: 'read-only',
+        message: '空闲期显式指定 read-only 权限的事件。',
+      }),
+    });
+    assert.equal(idleExplicitRes.status, 202);
+    const idleExplicitBody = await idleExplicitRes.json();
+    assert.equal(idleExplicitBody.permissionMode, 'read-only', 'idle /events with explicit permissionMode must honor explicit mode');
+    await waitFor(async () => {
+      const r = await fetch(`${host.baseUrl}/history?canvasId=canvas-fa`, { headers });
+      const data = await r.json();
+      return !data.active && data.turns?.length === 4 ? data : null;
+    }, 15000);
+    assert.equal(openedTurns[2].permissionMode, 'read-only');
   } finally {
     releaseTurn1.resolve();
     await host?.stop();

@@ -47,7 +47,7 @@ export async function handleEventsRoute(req, res, {
       }];
       const permissionMode = typeof durable.resolvedPermissionMode === 'function'
         ? await durable.resolvedPermissionMode(entry, body.permissionMode)
-        : (body.permissionMode || entry.permissionMode || entry.generation?.permissionMode || 'canvas');
+        : (body.permissionMode || 'canvas');
       if (ops.descriptors?.size === 0 && typeof ensureDescriptorsLoaded === 'function') {
         await Promise.resolve(ensureDescriptorsLoaded()).catch(() => {});
       }
@@ -111,7 +111,7 @@ export async function handleEventsRoute(req, res, {
             content,
             userText,
             revisionBefore,
-            permissionMode,
+            permissionMode: body.permissionMode,
             eventData: body.data && typeof body.data === 'object' ? body.data : {},
           });
           respond(res, 202, {

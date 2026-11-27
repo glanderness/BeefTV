@@ -335,7 +335,7 @@ test('Flow 5: CompactionTask.beforeCompact preserves creative anchors, increment
 
 // Flow 6: events-route & durable-followup edge contracts
 test('Flow 6: events-route falls back to recordEvent on submitFollowUpEvent failure, isolates session_busy turnId, and enforces permissionMode priority', async () => {
-  // 1) permissionMode strictness matrix: active wins over explicit default; idle respects explicit downgrade.
+  // 1) permissionMode strictness matrix: active wins over explicit default; idle respects explicit valid mode and defaults to canvas without inheriting stale full-access.
   assert.equal(
     resolvePreservedPermissionMode({ busy: true }, { active: { permissionMode: 'full-access' }, lastPermissionMode: 'canvas' }, 'canvas'),
     'full-access',
@@ -345,8 +345,12 @@ test('Flow 6: events-route falls back to recordEvent on submitFollowUpEvent fail
     'canvas',
   );
   assert.equal(
-    resolvePreservedPermissionMode({ busy: false, permissionMode: 'full-access' }, { active: null, lastPermissionMode: 'full-access' }, ''),
-    'full-access',
+    resolvePreservedPermissionMode({ busy: false, permissionMode: 'full-access' }, { active: null, lastPermissionMode: 'full-access', turns: [{ permissionMode: 'full-access' }] }, ''),
+    'canvas',
+  );
+  assert.equal(
+    resolvePreservedPermissionMode({ busy: false, permissionMode: 'full-access' }, { active: null, lastPermissionMode: 'full-access' }, 'read-only'),
+    'read-only',
   );
 
   // 2) Distinct followUp turnId when idle attempt opened & finalized wakeTurnId and hit session_busy race.

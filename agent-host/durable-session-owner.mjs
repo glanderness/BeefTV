@@ -541,6 +541,7 @@ export function createDurableSessionStore({
         ownership = 'mounted';
       } else if (detachedEntries.has(dKey)) {
         entry = detachedEntries.get(dKey);
+        entry.pendingDetachedClose = false;
         ownership = 'detached';
       } else if (!mounted) {
         entry = await open(cleanCanvasId, cleanSessionId, { readOnly: false });
