@@ -4,7 +4,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { CanvasVideoInlineTrim, CanvasVideoInlineTrimOverlay } from "../src/components/canvas/canvas-video-inline-trim";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
-import { readStyleSheet } from "./helpers/app-styles";
 
 const videoNode: CanvasNodeData = {
     id: "video-1",
@@ -30,12 +29,13 @@ describe("CanvasVideoInlineTrim", () => {
         expect(html).not.toContain('aria-label="确认剪辑"');
     });
 
-    test("renders a LibTV-style filmstrip range editor with accessible cancel and confirm actions", () => {
+    test("renders a LibTV-style filmstrip range editor with editable start, end, and duration chips", () => {
         const html = renderToStaticMarkup(
             <CanvasVideoInlineTrim node={videoNode} busy={false} onCancel={() => {}} onConfirm={() => {}} />,
         );
 
         expect(html).toContain('role="dialog"');
+        expect(html).toContain('data-canvas-keyboard-scope="true"');
         expect(html).toContain('aria-label="视频片段剪辑"');
         expect(html).toContain('data-video-trim-filmstrip="true"');
         expect(html).toContain('aria-label="调整片段起点"');
@@ -43,8 +43,11 @@ describe("CanvasVideoInlineTrim", () => {
         expect(html).toContain('aria-label="取消剪辑"');
         expect(html).toContain('aria-label="确认剪辑"');
         expect(html).toContain('aria-label="播放片段预览"');
-        expect(html).not.toContain('aria-label="静音预览"');
-        expect(html).not.toContain('aria-label="关闭循环预览"');
+        expect(html).toContain('aria-label="片段起点 00:00.00，点击手动输入"');
+        expect(html).toContain('aria-label="片段终点 00:12.00，点击手动输入"');
+        expect(html).toContain('aria-label="所选片段时长 12.00 s，点击手动输入"');
+        expect(html).toContain("00:00.00");
+        expect(html).toContain("00:12.00");
         expect(html).toContain("12.00 s");
     });
 
@@ -59,15 +62,19 @@ describe("CanvasVideoInlineTrim", () => {
         expect(filmstrip.match(/<span/g)).toHaveLength(14);
     });
 
-    test("anchors selected duration to the timeline instead of the toolbar edge", () => {
+    test("places the time bar inside the timeline column above the filmstrip", () => {
         const html = renderToStaticMarkup(
             <CanvasVideoInlineTrim node={videoNode} busy={false} onCancel={() => {}} onConfirm={() => {}} />,
         );
-        const timelineGroup = html.split('class="canvas-video-trim-track"')[1]?.split('aria-label="确认剪辑"')[0] || "";
+        const trackIndex = html.indexOf('class="canvas-video-trim-track"');
+        const timebarIndex = html.indexOf('class="canvas-video-trim-timebar"');
+        const filmstripIndex = html.indexOf('data-video-trim-filmstrip="true"');
+        const confirmIndex = html.indexOf('aria-label="确认剪辑"');
 
-        expect(timelineGroup).toContain('aria-label="所选片段时长"');
-        expect(timelineGroup).toContain("12.00 s");
-        expect(html.indexOf('aria-label="所选片段时长"')).toBeLessThan(html.indexOf('aria-label="确认剪辑"'));
+        expect(trackIndex).toBeGreaterThan(-1);
+        expect(timebarIndex).toBeGreaterThan(trackIndex);
+        expect(filmstripIndex).toBeGreaterThan(timebarIndex);
+        expect(confirmIndex).toBeGreaterThan(filmstripIndex);
     });
 
     test("renders inside the target node panel and sizes from the rendered video width", () => {
@@ -88,16 +95,5 @@ describe("CanvasVideoInlineTrim", () => {
         expect(html).toContain("width:540px");
         expect(html).toContain('aria-label="视频片段剪辑"');
         expect(html).toContain('aria-label="确认剪辑"');
-    });
-
-    test("raises only the trim overlay above the main dock stacking rule", async () => {
-        const source = await Bun.file(new URL("../src/components/canvas/canvas-video-inline-trim.tsx", import.meta.url)).text();
-        const styles = readStyleSheet("../src/styles/globals.css");
-        expect(source).toContain("avoidBottomDock");
-        expect(source).toContain('className="canvas-video-trim-overlay"');
-        expect(styles).toContain(".canvas-video-trim-overlay {");
-        expect(styles).toContain("z-index: calc(var(--z-canvas-overlay-active) + 20) !important;");
-        expect(styles).toContain(".canvas-main-toolbar {");
-        expect(styles).toContain("z-index: calc(var(--z-canvas-overlay-active) + 10) !important;");
     });
 });

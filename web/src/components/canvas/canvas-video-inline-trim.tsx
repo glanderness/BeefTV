@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
-import { Check, Film, LoaderCircle, Pause, Play, X } from "lucide-react";
+import { Check, LoaderCircle, Pause, Play, X } from "lucide-react";
 
 import { CanvasNodePanelOverlay } from "@/components/canvas/canvas-workspace-overlays";
 import {
+    INLINE_VIDEO_TRIM_FINE_DRAG_FACTOR,
     INLINE_VIDEO_TRIM_MIN_MS,
+    formatInlineVideoTrimDuration,
+    formatInlineVideoTrimDurationInput,
+    formatInlineVideoTrimPoint,
+    inlineVideoTrimKeyboardStepMs,
     moveInlineVideoTrimRange,
     normalizeInlineVideoTrimRange,
-    placeInlineVideoTrimDuration,
+    parseInlineVideoTrimTimeMs,
+    snapInlineVideoTrimHandleMs,
+    updateInlineVideoTrimDuration,
+    updateInlineVideoTrimEnd,
+    updateInlineVideoTrimStart,
     type InlineVideoTrimRange,
 } from "@/lib/canvas/canvas-video-inline-trim";
 import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
@@ -21,7 +30,7 @@ type CanvasVideoInlineTrimProps = {
     busy: boolean;
     onCancel: () => void;
 } & (
-    | { onConfirm: (range: InlineVideoTrimRange) => void; onRetake?: never }
+    | { onConfirm: (range: InlineVideoTrimRange, durationMs?: number) => void; onRetake?: never }
     | { onRetake: (range: InlineVideoTrimRange, durationMs: number, prompt: string) => void; onConfirm?: never }
 );
 
@@ -35,11 +44,19 @@ type CanvasVideoInlineTrimOverlayProps = CanvasVideoInlineTrimProps & {
 type DragSession = {
     kind: "start" | "end" | "range";
     pointerId: number;
-    clientX: number;
-    range: InlineVideoTrimRange;
+    lastClientX: number;
+    wasFineDrag: boolean;
+    rawStartMs: number;
+    rawEndMs: number;
+    lastCommittedRange: InlineVideoTrimRange;
+    baseRange: InlineVideoTrimRange;
+    accumulatedDeltaMs: number;
 };
 
+type EditableTimeField = "start" | "end" | "duration";
+
 const FRAME_COUNT = 14;
+export const CANVAS_VIDEO_TRIM_PANEL_HEIGHT = 104;
 export const CANVAS_VIDEO_RETAKE_PANEL_HEIGHT = 128;
 
 export function CanvasVideoInlineTrimOverlay({ viewport, containerRef, dragOffset, isDragging = false, ...editor }: CanvasVideoInlineTrimOverlayProps) {
@@ -51,7 +68,7 @@ export function CanvasVideoInlineTrimOverlay({ viewport, containerRef, dragOffse
             panelMinWidth={editor.onRetake ? 440 : 520}
             panelMaxWidth={editor.onRetake ? 660 : 920}
             panelWidthScale={1.5}
-            panelHeight={editor.onRetake ? CANVAS_VIDEO_RETAKE_PANEL_HEIGHT : 82}
+            panelHeight={editor.onRetake ? CANVAS_VIDEO_RETAKE_PANEL_HEIGHT : CANVAS_VIDEO_TRIM_PANEL_HEIGHT}
             allowOverflow
             keepBelowNode
             avoidBottomDock
@@ -67,17 +84,23 @@ export function CanvasVideoInlineTrimOverlay({ viewport, containerRef, dragOffse
 export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetake }: CanvasVideoInlineTrimProps) {
     const retake = Boolean(onRetake);
     const timelineRef = useRef<HTMLDivElement>(null);
-    const durationRef = useRef<HTMLOutputElement>(null);
     const dragRef = useRef<DragSession | null>(null);
     const retakePreviewRef = useRef<HTMLVideoElement>(null);
+    const userAdjustedRef = useRef(false);
+    const skipBlurCommitRef = useRef(false);
+    const restoreFocusFieldRef = useRef<EditableTimeField | null>(null);
+    const chipRefs = useRef<Partial<Record<EditableTimeField, HTMLButtonElement | null>>>({});
+    const timeInputRef = useRef<HTMLInputElement>(null);
     const [instruction, setInstruction] = useState("");
     const [videoUrl, setVideoUrl] = useState(node.metadata?.content || "");
     const [durationMs, setDurationMs] = useState(Math.max(0, node.metadata?.durationMs || 0));
     const [range, setRange] = useState<InlineVideoTrimRange>(() => ({ startMs: 0, endMs: Math.max(INLINE_VIDEO_TRIM_MIN_MS, node.metadata?.durationMs || INLINE_VIDEO_TRIM_MIN_MS) }));
     const [frames, setFrames] = useState<string[]>([]);
     const [frameStatus, setFrameStatus] = useState<"loading" | "ready" | "unavailable">("loading");
-    const [trackMetrics, setTrackMetrics] = useState({ width: 0, labelWidth: 0 });
     const [playing, setPlaying] = useState(false);
+    const [snappedEdge, setSnappedEdge] = useState<"start" | "end" | null>(null);
+    const [editingField, setEditingField] = useState<EditableTimeField | null>(null);
+    const [draftValue, setDraftValue] = useState("");
 
     useEffect(() => {
         let cancelled = false;
@@ -94,6 +117,9 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
 
     useEffect(() => {
         const nextDuration = node.metadata?.durationMs || (retake ? 0 : INLINE_VIDEO_TRIM_MIN_MS);
+        userAdjustedRef.current = false;
+        setEditingField(null);
+        setSnappedEdge(null);
         setDurationMs(nextDuration);
         setRange({ startMs: 0, endMs: nextDuration });
     }, [node.id, node.metadata?.durationMs, retake]);
@@ -118,7 +144,12 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
             }
             const nextDuration = Math.round(seconds * 1000);
             setDurationMs(nextDuration);
-            setRange((current) => normalizeInlineVideoTrimRange(current.endMs <= INLINE_VIDEO_TRIM_MIN_MS ? { startMs: 0, endMs: nextDuration } : current, nextDuration));
+            setRange((current) => normalizeInlineVideoTrimRange(
+                !userAdjustedRef.current || current.endMs <= INLINE_VIDEO_TRIM_MIN_MS
+                    ? { startMs: 0, endMs: nextDuration }
+                    : current,
+                nextDuration,
+            ));
             const canvas = document.createElement("canvas");
             canvas.width = 144;
             canvas.height = 82;
@@ -170,29 +201,22 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
     }, [node.id, retake]);
 
     useEffect(() => {
-        const timeline = timelineRef.current;
-        const label = durationRef.current;
-        if (!timeline || !label) return;
-        const measure = () => {
-            const width = timeline.getBoundingClientRect().width;
-            const labelWidth = label.getBoundingClientRect().width;
-            setTrackMetrics((current) => current.width === width && current.labelWidth === labelWidth ? current : { width, labelWidth });
-        };
-        measure();
-        if (typeof ResizeObserver === "undefined") {
-            window.addEventListener("resize", measure);
-            return () => window.removeEventListener("resize", measure);
+        if (editingField) {
+            const input = timeInputRef.current;
+            if (!input) return;
+            input.focus();
+            input.select();
+            return;
         }
-        const observer = new ResizeObserver(measure);
-        observer.observe(timeline);
-        observer.observe(label);
-        return () => observer.disconnect();
-    }, []);
+        const restoreTarget = restoreFocusFieldRef.current;
+        if (!restoreTarget) return;
+        restoreFocusFieldRef.current = null;
+        chipRefs.current[restoreTarget]?.focus();
+    }, [editingField]);
 
     const startPercent = durationMs ? (range.startMs / durationMs) * 100 : 0;
     const endPercent = durationMs ? (range.endMs / durationMs) * 100 : 100;
     const selectedDuration = Math.max(0, range.endMs - range.startMs);
-    const durationPlacement = placeInlineVideoTrimDuration(trackMetrics.width, startPercent, endPercent, trackMetrics.labelWidth);
     const fallbackFrame = canvasNodeVideoPreviewUrl(node);
     const visibleFrames = useMemo(() => Array.from({ length: FRAME_COUNT }, (_, index) => frames[index] || frames[0] || fallbackFrame), [fallbackFrame, frames]);
     const showFrameStatus = !visibleFrames.some(Boolean);
@@ -202,11 +226,95 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
         if (preview?.readyState) preview.currentTime = Math.max(0, timeMs) / 1000;
     };
 
+    const applyRange = (next: InlineVideoTrimRange, previewEdge: "start" | "end") => {
+        userAdjustedRef.current = true;
+        setRange(next);
+        seekPreview(previewEdge === "end" ? next.endMs : next.startMs);
+    };
+
+    const formatFieldDraft = (field: EditableTimeField, activeRange: InlineVideoTrimRange) => {
+        if (field === "start") return formatInlineVideoTrimPoint(activeRange.startMs);
+        if (field === "end") return formatInlineVideoTrimPoint(activeRange.endMs);
+        return formatInlineVideoTrimDurationInput(Math.max(0, activeRange.endMs - activeRange.startMs));
+    };
+
+    const applyFieldMs = (field: EditableTimeField, targetMs: number): InlineVideoTrimRange => {
+        if (field === "start") return updateInlineVideoTrimStart(range, targetMs, durationMs);
+        if (field === "end") return updateInlineVideoTrimEnd(range, targetMs, durationMs);
+        return updateInlineVideoTrimDuration(range, targetMs, durationMs);
+    };
+
+    const openFieldEdit = (field: EditableTimeField) => {
+        if (busy || !durationMs) return;
+        skipBlurCommitRef.current = false;
+        setEditingField(field);
+        setDraftValue(formatFieldDraft(field, range));
+    };
+
+    const commitFieldEdit = (field: EditableTimeField, raw: string) => {
+        const parsedMs = parseInlineVideoTrimTimeMs(raw);
+        setEditingField(null);
+        if (parsedMs === null || !durationMs) return;
+        const next = applyFieldMs(field, parsedMs);
+        applyRange(next, field === "start" ? "start" : "end");
+    };
+
+    const handleFieldBlur = (field: EditableTimeField) => {
+        if (skipBlurCommitRef.current) {
+            skipBlurCommitRef.current = false;
+            return;
+        }
+        commitFieldEdit(field, draftValue);
+    };
+
+    const handleFieldKeyDown = (field: EditableTimeField, event: KeyboardEvent<HTMLInputElement>) => {
+        event.stopPropagation();
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.key === "Enter") {
+            event.preventDefault();
+            skipBlurCommitRef.current = true;
+            restoreFocusFieldRef.current = field;
+            commitFieldEdit(field, draftValue);
+            return;
+        }
+        if (event.key === "Escape") {
+            event.preventDefault();
+            skipBlurCommitRef.current = true;
+            restoreFocusFieldRef.current = field;
+            setEditingField(null);
+            return;
+        }
+        if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+            event.preventDefault();
+            if (!durationMs) return;
+            const step = inlineVideoTrimKeyboardStepMs(event) * (event.key === "ArrowUp" ? 1 : -1);
+            const currentMs = parseInlineVideoTrimTimeMs(draftValue) ?? (
+                field === "start" ? range.startMs : field === "end" ? range.endMs : selectedDuration
+            );
+            const next = applyFieldMs(field, Math.max(0, currentMs + step));
+            applyRange(next, field === "start" ? "start" : "end");
+            setDraftValue(formatFieldDraft(field, next));
+        }
+    };
+
     const beginDrag = (kind: DragSession["kind"], event: ReactPointerEvent<HTMLElement>) => {
         if (busy || !durationMs) return;
         event.preventDefault();
         event.stopPropagation();
-        dragRef.current = { kind, pointerId: event.pointerId, clientX: event.clientX, range };
+        skipBlurCommitRef.current = true;
+        setEditingField(null);
+        setSnappedEdge(null);
+        dragRef.current = {
+            kind,
+            pointerId: event.pointerId,
+            lastClientX: event.clientX,
+            wasFineDrag: event.shiftKey,
+            rawStartMs: range.startMs,
+            rawEndMs: range.endMs,
+            lastCommittedRange: range,
+            baseRange: range,
+            accumulatedDeltaMs: 0,
+        };
         event.currentTarget.setPointerCapture(event.pointerId);
     };
 
@@ -214,32 +322,63 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
         const session = dragRef.current;
         const timeline = timelineRef.current;
         if (!session || session.pointerId !== event.pointerId || !timeline || !durationMs) return;
-        const deltaMs = ((event.clientX - session.clientX) / Math.max(1, timeline.getBoundingClientRect().width)) * durationMs;
+        const trackWidth = Math.max(1, timeline.getBoundingClientRect().width);
+        const stepPx = event.clientX - session.lastClientX;
+        session.lastClientX = event.clientX;
+        if (event.shiftKey !== session.wasFineDrag) {
+            session.wasFineDrag = event.shiftKey;
+            session.rawStartMs = session.lastCommittedRange.startMs;
+            session.rawEndMs = session.lastCommittedRange.endMs;
+            session.baseRange = session.lastCommittedRange;
+            session.accumulatedDeltaMs = 0;
+        }
+        const scale = event.shiftKey ? INLINE_VIDEO_TRIM_FINE_DRAG_FACTOR : 1;
+        const stepMs = (stepPx / trackWidth) * durationMs * scale;
+        const disableSnap = event.shiftKey || event.altKey;
+
         let next: InlineVideoTrimRange;
-        if (session.kind === "range") next = moveInlineVideoTrimRange(session.range, deltaMs, durationMs);
-        else if (session.kind === "start") next = normalizeInlineVideoTrimRange({ startMs: Math.min(session.range.endMs - INLINE_VIDEO_TRIM_MIN_MS, session.range.startMs + deltaMs), endMs: session.range.endMs }, durationMs);
-        else next = normalizeInlineVideoTrimRange({ startMs: session.range.startMs, endMs: Math.max(session.range.startMs + INLINE_VIDEO_TRIM_MIN_MS, session.range.endMs + deltaMs) }, durationMs);
-        setRange(next);
-        seekPreview(session.kind === "end" ? next.endMs : next.startMs);
+        if (session.kind === "range") {
+            const minDelta = -session.baseRange.startMs;
+            const maxDelta = Math.max(0, durationMs - session.baseRange.endMs);
+            session.accumulatedDeltaMs = Math.min(maxDelta, Math.max(minDelta, session.accumulatedDeltaMs + stepMs));
+            next = moveInlineVideoTrimRange(session.baseRange, session.accumulatedDeltaMs, durationMs);
+            setSnappedEdge(null);
+        } else if (session.kind === "start") {
+            const limitMax = session.rawEndMs - INLINE_VIDEO_TRIM_MIN_MS;
+            session.rawStartMs = Math.min(limitMax, Math.max(0, session.rawStartMs + stepMs));
+            const snap = snapInlineVideoTrimHandleMs("start", session.rawStartMs, session.rawEndMs, durationMs, trackWidth, { disableSnap });
+            const startMs = Math.min(limitMax, snap.valueMs);
+            next = normalizeInlineVideoTrimRange({ startMs, endMs: session.rawEndMs }, durationMs);
+            setSnappedEdge(snap.snapped && startMs === snap.valueMs ? "start" : null);
+        } else {
+            const limitMin = session.rawStartMs + INLINE_VIDEO_TRIM_MIN_MS;
+            session.rawEndMs = Math.min(durationMs, Math.max(limitMin, session.rawEndMs + stepMs));
+            const snap = snapInlineVideoTrimHandleMs("end", session.rawEndMs, session.rawStartMs, durationMs, trackWidth, { disableSnap });
+            const endMs = Math.max(limitMin, snap.valueMs);
+            next = normalizeInlineVideoTrimRange({ startMs: session.rawStartMs, endMs }, durationMs);
+            setSnappedEdge(snap.snapped && endMs === snap.valueMs ? "end" : null);
+        }
+        session.lastCommittedRange = next;
+        applyRange(next, session.kind === "end" ? "end" : "start");
     };
 
     const endDrag = (event: ReactPointerEvent<HTMLElement>) => {
         const session = dragRef.current;
         if (!session || session.pointerId !== event.pointerId) return;
         dragRef.current = null;
+        setSnappedEdge(null);
         if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     };
 
-    const adjustRetakeRange = (edge: "start" | "end", event: KeyboardEvent<HTMLButtonElement>) => {
-        if (!retake || busy || !durationMs || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+    const adjustHandleRange = (edge: "start" | "end", event: KeyboardEvent<HTMLButtonElement>) => {
+        if (busy || !durationMs || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
         event.preventDefault();
         event.stopPropagation();
-        const delta = (event.shiftKey ? 1000 : 100) * (event.key === "ArrowLeft" ? -1 : 1);
+        const delta = inlineVideoTrimKeyboardStepMs(event) * (event.key === "ArrowLeft" ? -1 : 1);
         const next = normalizeInlineVideoTrimRange(edge === "start"
             ? { ...range, startMs: Math.min(range.startMs + delta, range.endMs - INLINE_VIDEO_TRIM_MIN_MS) }
             : { ...range, endMs: Math.max(range.endMs + delta, range.startMs + INLINE_VIDEO_TRIM_MIN_MS) }, durationMs);
-        setRange(next);
-        seekPreview(edge === "start" ? next.startMs : next.endMs);
+        applyRange(next, edge);
     };
 
     const togglePlayback = () => {
@@ -253,6 +392,76 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
         if (preview.currentTime * 1000 < range.startMs || preview.currentTime * 1000 >= range.endMs) preview.currentTime = range.startMs / 1000;
         preview.muted = false;
         void preview.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+    };
+
+    const handleConfirm = () => {
+        if (!onConfirm || busy || !durationMs) return;
+        let finalRange = range;
+        if (editingField) {
+            const parsedMs = parseInlineVideoTrimTimeMs(draftValue);
+            skipBlurCommitRef.current = true;
+            setEditingField(null);
+            if (parsedMs !== null) {
+                finalRange = applyFieldMs(editingField, parsedMs);
+                userAdjustedRef.current = true;
+                setRange(finalRange);
+            }
+        }
+        onConfirm(finalRange, durationMs);
+    };
+
+    const renderTimeField = (field: EditableTimeField) => {
+        const isEditing = editingField === field;
+        const displayValue = field === "start"
+            ? formatInlineVideoTrimPoint(range.startMs)
+            : field === "end"
+                ? formatInlineVideoTrimPoint(range.endMs)
+                : formatInlineVideoTrimDuration(selectedDuration);
+        const isSnapped = (field === "start" && snappedEdge === "start") || (field === "end" && snappedEdge === "end");
+        const inputAriaLabel = field === "start" ? "输入片段起点时间" : field === "end" ? "输入片段终点时间" : "输入片段时长（秒）";
+        const triggerAriaLabel = field === "start"
+            ? `片段起点 ${displayValue}，点击手动输入`
+            : field === "end"
+                ? `片段终点 ${displayValue}，点击手动输入`
+                : `所选片段时长 ${displayValue}，点击手动输入`;
+        const triggerTitle = field === "duration"
+            ? "点击输入时长（秒），如 30 或 29.5"
+            : "点击输入时间，如 30 或 00:30.00";
+
+        if (isEditing) {
+            return (
+                <label className={`canvas-video-trim-time-chip is-editing${field === "duration" ? " is-duration" : ""}`}>
+                    {field === "duration" ? <span className="canvas-video-trim-time-prefix">时长</span> : null}
+                    <input
+                        ref={timeInputRef}
+                        type="text"
+                        inputMode="decimal"
+                        aria-label={inputAriaLabel}
+                        className="canvas-video-trim-time-input"
+                        value={draftValue}
+                        onChange={(event) => setDraftValue(event.target.value)}
+                        onKeyDown={(event) => handleFieldKeyDown(field, event)}
+                        onBlur={() => handleFieldBlur(field)}
+                    />
+                    {field === "duration" ? <span className="canvas-video-trim-time-unit" aria-hidden>s</span> : null}
+                </label>
+            );
+        }
+
+        return (
+            <button
+                ref={(element) => { chipRefs.current[field] = element; }}
+                type="button"
+                className={`canvas-video-trim-time-chip${field === "duration" ? " is-duration" : ""}${isSnapped ? " is-snapped" : ""}`}
+                aria-label={triggerAriaLabel}
+                title={triggerTitle}
+                disabled={busy || !durationMs}
+                onClick={() => openFieldEdit(field)}
+            >
+                {field === "duration" ? <span className="canvas-video-trim-time-prefix">时长</span> : null}
+                <span className="canvas-video-trim-time-value">{displayValue}</span>
+            </button>
+        );
     };
 
     const cancelButton = (
@@ -270,13 +479,26 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
                     </output>
                     {cancelButton}
                 </div>
-            ) : null}
-            <div className="canvas-video-trim-timeline" ref={timelineRef} data-video-trim-filmstrip="true">
-                <div className="canvas-video-trim-frames" aria-hidden>
-                    {visibleFrames.map((frame, index) => <span key={index} style={frame ? { backgroundImage: `url(${JSON.stringify(frame)})` } : undefined} />)}
+            ) : (
+                <div className="canvas-video-trim-timebar" role="group" aria-label="剪辑时间与时长">
+                    <div className="canvas-video-trim-endpoints">
+                        {renderTimeField("start")}
+                        <span className="canvas-video-trim-dash" aria-hidden>—</span>
+                        {renderTimeField("end")}
+                    </div>
+                    <div className="canvas-video-trim-duration-group">
+                        {renderTimeField("duration")}
+                    </div>
                 </div>
-                <div className="canvas-video-trim-dim is-before" style={{ width: `${startPercent}%` }} aria-hidden />
-                <div className="canvas-video-trim-dim is-after" style={{ left: `${endPercent}%` }} aria-hidden />
+            )}
+            <div className="canvas-video-trim-timeline" ref={timelineRef} data-video-trim-filmstrip="true">
+                <div className="canvas-video-trim-strip" aria-hidden>
+                    <div className="canvas-video-trim-frames">
+                        {visibleFrames.map((frame, index) => <span key={index} style={frame ? { backgroundImage: `url(${JSON.stringify(frame)})` } : undefined} />)}
+                    </div>
+                    <div className="canvas-video-trim-dim is-before" style={{ width: `${startPercent}%` }} />
+                    <div className="canvas-video-trim-dim is-after" style={{ left: `${endPercent}%` }} />
+                </div>
                 <button
                     type="button"
                     className="canvas-video-trim-selection"
@@ -286,14 +508,14 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
                     onPointerMove={continueDrag}
                     onPointerUp={endDrag}
                     onPointerCancel={endDrag}
-                >
-                </button>
+                />
                 <button
                     type="button"
-                    className="canvas-video-trim-handle is-start"
+                    className={`canvas-video-trim-handle is-start${snappedEdge === "start" ? " is-snapped" : ""}`}
                     aria-label="调整片段起点"
+                    title="拖动调整起点（Shift 精细拖动，←/→ 微调）"
                     style={{ left: `${startPercent}%` }}
-                    onKeyDown={(event) => adjustRetakeRange("start", event)}
+                    onKeyDown={(event) => adjustHandleRange("start", event)}
                     onPointerDown={(event) => beginDrag("start", event)}
                     onPointerMove={continueDrag}
                     onPointerUp={endDrag}
@@ -301,10 +523,11 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
                 ><span /></button>
                 <button
                     type="button"
-                    className="canvas-video-trim-handle is-end"
+                    className={`canvas-video-trim-handle is-end${snappedEdge === "end" ? " is-snapped" : ""}`}
                     aria-label="调整片段终点"
+                    title="拖动调整终点（Shift 精细拖动，←/→ 微调）"
                     style={{ left: `${endPercent}%` }}
-                    onKeyDown={(event) => adjustRetakeRange("end", event)}
+                    onKeyDown={(event) => adjustHandleRange("end", event)}
                     onPointerDown={(event) => beginDrag("end", event)}
                     onPointerMove={continueDrag}
                     onPointerUp={endDrag}
@@ -312,14 +535,6 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
                 ><span /></button>
                 {showFrameStatus ? <span className="canvas-video-trim-frame-status" role="status">{frameStatus === "unavailable" ? "缩略图不可用" : "正在读取缩略图"}</span> : null}
             </div>
-            {!retake ? (
-                <output
-                    ref={durationRef}
-                    className={`canvas-video-trim-duration${durationPlacement.floating ? " is-floating" : ""}`}
-                    style={{ left: trackMetrics.width ? `${durationPlacement.left}px` : `${(startPercent + endPercent) / 2}%` }}
-                    aria-label="所选片段时长"
-                >{formatTrimDuration(selectedDuration)}</output>
-            ) : null}
         </div>
     );
 
@@ -329,6 +544,7 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
             aria-label={retake ? "片段重拍" : "视频片段剪辑"}
             aria-modal="false"
             className={retake ? "canvas-video-retake-panel" : "canvas-video-inline-trim"}
+            data-canvas-keyboard-scope
             data-canvas-no-zoom
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
@@ -355,12 +571,20 @@ export function CanvasVideoInlineTrim({ node, busy, onCancel, onConfirm, onRetak
                 </>
             ) : (
                 <>
-                    {cancelButton}
-                    <span className="canvas-video-trim-separator" aria-hidden />
-                    {playbackButton}
-                    <Film className="canvas-video-trim-film-icon" aria-hidden />
+                    <div className="canvas-video-trim-leading">
+                        {cancelButton}
+                        <span className="canvas-video-trim-separator" aria-hidden />
+                        {playbackButton}
+                    </div>
                     {track}
-                    <button type="button" className="canvas-video-trim-confirm" aria-label="确认剪辑" disabled={busy || !durationMs} onClick={() => onConfirm?.(range)}>{busy ? <LoaderCircle className="animate-spin" /> : <Check />}</button>
+                    <button
+                        type="button"
+                        className="canvas-video-trim-confirm"
+                        aria-label="确认剪辑"
+                        disabled={busy || !durationMs}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={handleConfirm}
+                    >{busy ? <LoaderCircle className="animate-spin" /> : <Check />}</button>
                 </>
             )}
         </section>
@@ -384,8 +608,4 @@ function waitForMediaEvent(element: HTMLMediaElement, eventName: "loadedmetadata
         element.addEventListener(eventName, onReady, { once: true });
         element.addEventListener("error", onError, { once: true });
     });
-}
-
-function formatTrimDuration(durationMs: number) {
-    return `${(Math.max(0, durationMs) / 1000).toFixed(2)} s`;
 }

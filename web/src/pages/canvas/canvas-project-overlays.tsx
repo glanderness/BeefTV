@@ -427,7 +427,7 @@ export function CanvasProjectStageOverlays(props: CanvasProjectStageOverlaysProp
                         onRetake: (range, durationMs, prompt) => {
                             if (generation.generateVideoRetake(inlineVideoEditorNode, range, durationMs, prompt)) closeInlineVideoTrim();
                         },
-                    } : { onConfirm: (range) => void confirmInlineVideoTrim(inlineVideoEditorNode, range) })}
+                    } : { onConfirm: (range, durationMs) => void confirmInlineVideoTrim(inlineVideoEditorNode, range, durationMs) })}
                 />
             ) : null}
         </>
