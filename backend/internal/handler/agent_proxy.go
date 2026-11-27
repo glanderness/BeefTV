@@ -115,7 +115,7 @@ func readAssistantBodyLimit[T any](c *gin.Context, shape T, maxBytes int64) ([]b
 // 页面只发业务消息，宿主凭据由后端注入；宿主不可用时返回明确状态而不是空回复。
 func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *agentops.ClientRegistry, ui *uiSessionStore, host *assistantruntime.Host) {
 	client := assistantChatClient(host, assistantChatHeaderTimeout)
-	registerAssistantRuntimeRoutes(r, svc)
+	registerAssistantRuntimeRoutes(r, svc, host)
 
 	guard := func(c *gin.Context, requireWrite bool) bool {
 		// 与 /agent-ops 完全相同的来源校验：Host/RemoteAddr/Origin 都必须是本机且同源。
@@ -471,6 +471,9 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 		}
 		_ = operations.RevokeSessionScriptAllows(svc.Database(), c.GetString("agentUserId"), canvasID, sessionID)
 		svc.SkillsDomain().CancelScriptRuns(canvasID, sessionID, "")
+		if host != nil && host.TaskWaits() != nil {
+			host.TaskWaits().Cancel(canvasID, sessionID, 0)
+		}
 		body, _ := json.Marshal(map[string]string{"canvasId": canvasID, "sessionId": sessionID})
 		hostJSON(c, http.MethodDelete, "/sessions", body)
 	})

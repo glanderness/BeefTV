@@ -35,6 +35,7 @@ type Options struct {
 type Host struct {
 	opts               Options
 	proc               *supervisor
+	taskWaits          *TaskWaitRegistry
 	lifecycleOnce      sync.Once
 	lifecycle          chan struct{}
 	startControlMu     sync.Mutex
@@ -50,8 +51,35 @@ type Host struct {
 
 func New(opts Options) *Host {
 	h := &Host{opts: opts, proc: &supervisor{}}
+	h.taskWaits = newTaskWaitRegistry(h, opts.DataDir)
 	_ = h.lifecycleChan()
 	return h
+}
+
+// TaskWaits returns this Host's persisted parked-tool wait registry.
+func (h *Host) TaskWaits() *TaskWaitRegistry {
+	if h == nil {
+		return nil
+	}
+	return h.taskWaits
+}
+
+// ConfigureTaskWaitEvaluator connects domain task inspection to this Host's
+// parked-tool signal dispatcher.
+func (h *Host) ConfigureTaskWaitEvaluator(eval TaskWaitEvaluator) {
+	if h == nil || h.taskWaits == nil {
+		return
+	}
+	h.taskWaits.ConfigureEvaluator(eval)
+}
+
+// NotifyTaskChanged immediately wakes the parked-tool signal dispatcher when a
+// business task settles, fails, or is cancelled.
+func (h *Host) NotifyTaskChanged(taskID string) {
+	if h == nil || h.taskWaits == nil {
+		return
+	}
+	h.taskWaits.NotifyTaskChanged(taskID)
 }
 
 func (h *Host) lifecycleChan() chan struct{} {
@@ -274,6 +302,9 @@ func (h *Host) TestingUseOwnedEndpoint(baseURL, nonce, fingerprint string) {
 		return
 	}
 	h.proc.testingUseEndpoint(baseURL, nonce, fingerprint)
+	if h.taskWaits != nil {
+		h.taskWaits.Resume()
+	}
 }
 
 // Start 在应用启动时按本机配置拉起内置宿主。
@@ -412,6 +443,9 @@ func (h *Host) Stop() error {
 	}
 	_ = h.lockLifecycle(context.Background())
 	defer h.unlockLifecycle()
+	if h.taskWaits != nil {
+		h.taskWaits.Pause()
+	}
 	err := h.proc.stop()
 	h.proc.clearFailure()
 	return err
@@ -428,6 +462,9 @@ func (h *Host) StopContext(ctx context.Context) error {
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if h.taskWaits != nil {
+		h.taskWaits.Stop()
 	}
 	done := h.markClosedAndCancelStart()
 	if done != nil {
@@ -602,7 +639,7 @@ func (h *Host) startOwned(ctx context.Context, config HostConfig, provider assis
 		return invalidArg("host_stopping", "应用正在退出，不能启动助手宿主")
 	}
 	opsPipe := h.opsPipePath()
-	return h.proc.startOwned(ctx, config, provider.Fingerprint(), h.readyTimeout(), func(port int, nonce, listenFD, listenPipe string) ([]string, string) {
+	err := h.proc.startOwned(ctx, config, provider.Fingerprint(), h.readyTimeout(), func(port int, nonce, listenFD, listenPipe string) ([]string, string) {
 		return h.buildEnvWithProxyFingerprint(provider, childPin{
 			Port:       port,
 			Nonce:      nonce,
@@ -614,6 +651,10 @@ func (h *Host) startOwned(ctx context.Context, config HostConfig, provider assis
 			DesktopTok: desktopToken,
 		})
 	}, h.hostToken())
+	if err == nil && h.taskWaits != nil {
+		h.taskWaits.Resume()
+	}
+	return err
 }
 
 const asyncStartFailureCooldown = 15 * time.Second

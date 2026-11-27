@@ -5,6 +5,7 @@ import { resetTurnAccumulator } from './canvas-turn.mjs';
 import { skillsToLoad } from './skill-resource.mjs';
 import { publicPlan } from './plan.mjs';
 import { prependStudioChanges, supplementContent } from './durable-extensions.mjs';
+import { resetTurnContinuation } from './durable-signals.mjs';
 import { isTerminalSubmissionStatus, rollbackSupplementsInDoc } from './durable-detached-reconciler.mjs';
 import {
   hasLiveLocalOwner,
@@ -180,11 +181,8 @@ export function createDurableTurnAdmission({
             pendingInputError: null,
             skillContextFailure: null,
             preparedRequests: new Set(),
-            planTouchedInTurn: false,
-            toolCalledSinceYield: false,
-            planContinuations: 0,
-            unboundReminderSent: false,
           });
+          await resetTurnContinuation(entry, admittedInput.turnId, CTX);
           entry.submittedRequest = null;
           entry.lifecycle = null;
           entry.turnProjection = null;
@@ -207,6 +205,7 @@ export function createDurableTurnAdmission({
               ...(publicPlan(doc.plan) ? { plan: publicPlan(doc.plan) } : {}),
               ...((expansion.records.length || studioDiff) ? { submittedContent } : {}),
             };
+            doc.lastPermissionMode = admittedInput.permissionMode;
             if (expansion.records.length) doc.loadedSkills = [...(doc.loadedSkills || []), ...expansion.records];
           });
         }

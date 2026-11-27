@@ -1,6 +1,7 @@
 package task
 
 import (
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/kernel"
@@ -11,8 +12,31 @@ import (
 // NewService is the domain constructor; it does not require every port.
 // Operations fail closed when a collaborator needed on that path is missing.
 type Service struct {
-	store Store
-	deps  Dependencies
+	store          Store
+	deps           Dependencies
+	notifyMu       sync.RWMutex
+	onTaskChanged  func(taskID string)
+}
+
+func (s *Service) SetOnTaskChanged(fn func(taskID string)) {
+	if s == nil {
+		return
+	}
+	s.notifyMu.Lock()
+	s.onTaskChanged = fn
+	s.notifyMu.Unlock()
+}
+
+func (s *Service) notifyTaskChanged(taskID string) {
+	if s == nil {
+		return
+	}
+	s.notifyMu.RLock()
+	fn := s.onTaskChanged
+	s.notifyMu.RUnlock()
+	if fn != nil {
+		fn(taskID)
+	}
 }
 
 func NewService(store Store, deps Dependencies) *Service {

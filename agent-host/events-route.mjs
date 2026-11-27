@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { isDurableSessionId } from './durable-session-owner.mjs';
+import { deterministicWakeTurnId } from './durable-followup.mjs';
 import { turnContextPrefix, toolCallCapabilityContext } from './canvas-turn.mjs';
 import { mediaCapabilityContext } from './media-content.mjs';
 import { MAX_EVENTS_BODY_BYTES, readJsonBody, respond } from './http-utils.mjs';
@@ -35,55 +36,91 @@ export async function handleEventsRoute(req, res, {
     (!requestedSessionId || requestedSessionId === currentSessionId)
   ) {
     const entry = await durable.ensureCurrentSession(canvasId, currentSessionId).catch(() => null);
-    const wakeBusy = entry ? (await durable.busyState(canvasId)).busy : true;
-    if (entry && !wakeBusy) {
+    if (entry) {
       const requestId = String(body.requestId || crypto.randomUUID()).trim();
-      const rawTurnId = String(body.turnId || '').trim().toLowerCase();
-      const turnId = /^[0-9a-f]{8,64}$/.test(rawTurnId)
-        ? rawTurnId
-        : crypto.createHash('sha256').update(`wake:${canvasId}:${requestId}`).digest('hex').slice(0, 24);
-      let openedTurn = false;
-      try {
-        if (ops.descriptors?.size === 0 && typeof ensureDescriptorsLoaded === 'function') {
-          await Promise.resolve(ensureDescriptorsLoaded()).catch(() => {});
-        }
-        await ops.opsRequest('POST', '/assistant/runtime/turns', {
-          turnId,
-          canvasId,
-          permissionMode: 'canvas',
-          sessionId: entry.sessionId,
-        });
-        openedTurn = true;
-        const wakeText = `<canvas_event kind="${cleanKind}">\n${message}\n</canvas_event>`;
-        const content = [{
-          type: 'text',
-          text: `${turnContextPrefix({ canvasId })}\n${mediaCapabilityContext({ api: modelApi, modelId })}\n${toolCallCapabilityContext({ api: modelApi, modelId })}\n${wakeText}`,
-        }];
-        const submission = await durable.submit(entry, {
-          turnId,
-          requestId: `event:${requestId}`,
-          content,
-          userText: String(body.userText || message).trim() || message,
-          revisionBefore: Number(body.revisionBefore || 0),
-          permissionMode: 'canvas',
-        }, {
-          onSubmitted: (sub) => { followDurable(entry, sub); },
-        });
-        if (submission) {
-          respond(res, 202, {
-            accepted: true,
-            woken: true,
+      const userText = String(body.userText || message).trim() || message;
+      const revisionBefore = Number(body.revisionBefore || 0);
+      const wakeText = `<canvas_event kind="${cleanKind}">\n${message}\n</canvas_event>`;
+      const content = [{
+        type: 'text',
+        text: `${turnContextPrefix({ canvasId })}\n${mediaCapabilityContext({ api: modelApi, modelId })}\n${toolCallCapabilityContext({ api: modelApi, modelId })}\n${wakeText}`,
+      }];
+      const permissionMode = typeof durable.resolvedPermissionMode === 'function'
+        ? await durable.resolvedPermissionMode(entry, body.permissionMode)
+        : (body.permissionMode || entry.permissionMode || entry.generation?.permissionMode || 'canvas');
+      if (ops.descriptors?.size === 0 && typeof ensureDescriptorsLoaded === 'function') {
+        await Promise.resolve(ensureDescriptorsLoaded()).catch(() => {});
+      }
+
+      const wakeBusy = (await durable.busyState(canvasId)).busy;
+      let shouldQueueFollowUp = wakeBusy;
+
+      if (!wakeBusy) {
+        const turnId = deterministicWakeTurnId(canvasId, requestId, body.turnId);
+        let openedTurn = false;
+        try {
+          await ops.opsRequest('POST', '/assistant/runtime/turns', {
+            turnId,
+            canvasId,
+            permissionMode,
             sessionId: entry.sessionId,
+          });
+          openedTurn = true;
+          const submission = await durable.submit(entry, {
             turnId,
             requestId: `event:${requestId}`,
+            content,
+            userText,
+            revisionBefore,
+            permissionMode,
+          }, {
+            onSubmitted: (sub) => { followDurable(entry, sub); },
           });
-          return;
-        }
-        await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}).catch(() => null);
-      } catch {
-        if (openedTurn) {
+          if (submission) {
+            respond(res, 202, {
+              accepted: true,
+              woken: true,
+              sessionId: entry.sessionId,
+              turnId,
+              requestId: `event:${requestId}`,
+              permissionMode,
+            });
+            return;
+          }
           await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}).catch(() => null);
+        } catch (error) {
+          if (openedTurn) {
+            await ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}).catch(() => null);
+          }
+          if (error?.reason === 'session_busy') {
+            shouldQueueFollowUp = true;
+          }
         }
+      }
+
+      if (shouldQueueFollowUp && typeof durable.submitFollowUpEvent === 'function') {
+        const queued = await durable.submitFollowUpEvent(entry, {
+          kind: cleanKind,
+          requestId,
+          turnId: body.turnId,
+          content,
+          userText,
+          revisionBefore,
+          permissionMode,
+          eventData: body.data && typeof body.data === 'object' ? body.data : {},
+        });
+        respond(res, 202, {
+          accepted: true,
+          woken: true,
+          queued: queued.status === 'queued',
+          mode: 'followUp',
+          sessionId: queued.sessionId,
+          turnId: queued.turnId,
+          requestId: queued.requestId,
+          submissionId: queued.submission.id,
+          permissionMode: queued.permissionMode,
+        });
+        return;
       }
     }
   }

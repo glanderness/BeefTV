@@ -10,7 +10,7 @@ import { budgetError, spendToolStep } from './request-budget.mjs';
 import { mediaToolResult, mediaFacts, mediaEvidence } from './media-content.mjs';
 import { canvasReadView, canvasNodesGetView, CANVAS_READ_VIEW_SCHEMA } from './canvas-read-view.mjs';
 import { canvasWriteView, canvasWriteViewDescription } from './canvas-write-view.mjs';
-import { awaitBusinessTasks } from './await-business-tasks.mjs';
+import { awaitBusinessTasks, cancelBusinessTaskWait, isToolPark } from './await-business-tasks.mjs';
 import { timelineDeliveryTool } from './timeline-delivery.mjs';
 import { SKILL_PAGE_MAX_LINES, renderSkillPage } from './skill-resource.mjs';
 
@@ -119,6 +119,8 @@ export function createOperationBridge({
   turnBudgetContext,
   mediaModel = { api: '', modelId: '' },
   nativePartStore,
+  reconcileIntervalMs = Number(process.env.BEEFTV_AGENT_TASK_RECONCILE_MS || 0) || undefined,
+  bindingRetryMs = Number(process.env.BEEFTV_AGENT_BINDING_RETRY_MS || 0) || undefined,
 }) {
   const descriptors = new Map();
   const resolvedOpsPipe = String(opsPipe || '').trim();
@@ -179,6 +181,7 @@ export function createOperationBridge({
 
   function buildTools(canvasId, log, generation, turn, identityPrefix) {
     const mode = generation.permissionMode || 'canvas';
+    const PARKABLE_TASK_OPS = new Set(['canvas.generation.submit', 'canvas.generation.regenerate', 'canvas.timeline.render']);
     const tools = [...descriptors.entries()].filter(([,d]) =>
       d.id !== 'skill.get' &&
       d.id !== 'task.wait' &&
@@ -193,18 +196,34 @@ export function createOperationBridge({
       description: descriptor.summary + canvasWriteViewDescription(descriptor.id),
       parameters: scopedSchema(descriptor.params, mode !== 'canvas' || descriptor.id === 'canvas.get' || descriptor.id === 'canvas.nodes.get', descriptor.id),
       ...(descriptor.readOnly ? {} : { executionMode: 'sequential' }),
+      ...(PARKABLE_TASK_OPS.has(descriptor.id)
+        ? {
+            cancel: async (_args, cancelApi, cancelContext) => {
+              await cancelBusinessTaskWait(cancelApi?.checkpoint, {
+                opsRequest,
+                turnId: turn.turnId,
+                canvasId,
+                sessionId: identityPrefix,
+                signal: cancelContext?.abortSignal,
+              });
+            },
+          }
+        : {}),
       execute: async (toolCallId, args, signal, api = {}) => {
+        const parkedWait = PARKABLE_TASK_OPS.has(descriptor.id) ? api.durableApi?.checkpoint?.businessTaskWait : null;
         try { assertToolGeneration(generation, descriptor, signal, turn); }
         catch (error) {
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: args || {}, isError: true, error: error.message });
           throw error;
         }
-        const budget = turnBudgetContext.getStore();
-        const step = spendToolStep(budget);
-        if (!step.allowed) {
-          if (budget) budget.failure = step;
-          log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: args || {}, isError: true, error: step.message });
-          throw budgetError(step);
+        if (!parkedWait) {
+          const budget = turnBudgetContext.getStore();
+          const step = spendToolStep(budget);
+          if (!step.allowed) {
+            if (budget) budget.failure = step;
+            log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: args || {}, isError: true, error: step.message });
+            throw budgetError(step);
+          }
         }
         const params = { ...(args || {}) };
         const readView = descriptor.id === 'canvas.get' ? params.readView : undefined;
@@ -284,7 +303,9 @@ export function createOperationBridge({
           // tool must reuse that revision, even after this turn's chain advances.
           if (chainWrite && generation.persistEffects) await generation.persistEffects();
           assertToolGeneration(generation, descriptor, signal, turn);
-          let data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
+          let data = parkedWait?.submittedData
+            ? parkedWait.submittedData
+            : await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
           if (descriptor.id === 'skill.file' && typeof data?.result?.content === 'string') {
             const paged = renderSkillPage(data.result.content, {
               pagination: data.result.pagination,
@@ -328,10 +349,22 @@ export function createOperationBridge({
               data = { ...data, result: { ...data.result, content: data.result.content + footer } };
             }
           }
-          if (descriptor.id === 'canvas.generation.submit' || descriptor.id === 'canvas.generation.regenerate' || descriptor.id === 'canvas.timeline.render') {
-            data = await awaitBusinessTasks(data, { opsRequest, turnId: turn.turnId, signal, canvasId: params.canvasId,
-              rendering: descriptor.id === 'canvas.timeline.render', onProgress: api.reportProgress,
-              useTaskWait: descriptors.has('task_wait') });
+          if (PARKABLE_TASK_OPS.has(descriptor.id)) {
+            data = await awaitBusinessTasks(data, {
+              opsRequest,
+              turnId: turn.turnId,
+              signal,
+              canvasId: params.canvasId,
+              sessionId: identityPrefix,
+              rendering: descriptor.id === 'canvas.timeline.render',
+              onProgress: api.reportProgress,
+              useTaskWait: descriptors.has('task_wait'),
+              ...(reconcileIntervalMs ? { reconcileIntervalMs } : {}),
+              ...(bindingRetryMs ? { bindingRetryMs } : {}),
+              durableApi: api.durableApi || null,
+              durableContext: api.durableContext || null,
+            });
+            if (isToolPark(data)) return data;
           }
           // A replay can recover the receipt lost between business commit and
           // the durable checkpoint. Only our persisted request may advance

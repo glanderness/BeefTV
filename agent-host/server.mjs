@@ -10,6 +10,7 @@ import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isCorruptSessionArtifactError, isDurableSessionId, publicDurableTurn, TRANSIENT_UNRESUMABLE_REASONS } from './durable-session-owner.mjs';
 import { createDurableTurnProjection } from './durable-turn-projection.mjs';
+import { attachParkedStreamHeartbeat, handleSignalsRoute, updateParkedToolsState } from './durable-signals.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
 import { parseHostBaseUrlEnv, parseHostHeadersEnv, providerRegistration, providerUnavailableReason,
   turnContextPrefix, unflushedSessionHistory, toolCallCapabilityContext } from './canvas-turn.mjs';
@@ -66,6 +67,10 @@ const MAX_REQUESTS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_REQUESTS_PER_T
 const MAX_TOOL_STEPS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN || 0);
 const LIFETIME_REQUEST_BUDGET = Number(process.env.BEEFTV_AGENT_TOTAL_REQUEST_BUDGET || 0);
 const READ_ONLY_MODE = process.env.BEEFTV_AGENT_READ_ONLY === '1';
+const RAW_PARKED_HEARTBEAT_MS = Number(process.env.BEEFTV_AGENT_PARKED_HEARTBEAT_MS || 0);
+const PARKED_HEARTBEAT_MS = Number.isFinite(RAW_PARKED_HEARTBEAT_MS) && RAW_PARKED_HEARTBEAT_MS > 0
+  ? Math.trunc(RAW_PARKED_HEARTBEAT_MS)
+  : 15_000;
 const PROVIDER_ID = 'beeftv';
 
 for (const [name, value] of Object.entries({ BEEFTV_AGENT_HOST_TOKEN: HOST_TOKEN,
@@ -252,7 +257,7 @@ const durable = createDurableSessionStore({
     const provider = modelRuntime?.getProvider(PROVIDER_ID);
     if (!provider) return models;
     const budgeted = fn => (...args) => {
-      if (entry.compacting && !entry.busy) {
+      if ((entry.compacting || entry.compactingHookCount > 0) && !entry.busy) {
         const compactBudget = {
           sessionId: entry.sessionId,
           canvasId: entry.canvasId,
@@ -307,6 +312,19 @@ const durable = createDurableSessionStore({
     if (state.canvasId !== canvasId) throw Object.assign(new Error('turn_not_open'), {reason:'turn_not_open', details:state});
     return state;
   },
+  openTurn: ({ turnId, canvasId, permissionMode, sessionId }) => ops.opsRequest('POST', '/assistant/runtime/turns', {
+    turnId,
+    canvasId,
+    permissionMode,
+    sessionId,
+  }),
+  onFollowUpStarted: (entry, submission) => {
+    if (entry.running && entry.runningSubmissionId !== submission.id) {
+      void entry.running.catch(() => {}).then(() => followDurable(entry, submission));
+    } else {
+      followDurable(entry, submission);
+    }
+  },
   completeTurn: ({turnId}) => ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}),
   runWithBudget: (entry, fn) => {
     if (!entry.budget) entry.budget = createDurableTurnBudget(entry,{maxRequests:MAX_REQUESTS_PER_TURN,maxToolSteps:MAX_TOOL_STEPS_PER_TURN});
@@ -335,6 +353,7 @@ function ownsSession(canvasId, sessionId) {
 }
 function emitDurable(entry, event) {
   // History reads restore this progress. It lives in memory only; the official task persists itself.
+  updateParkedToolsState(entry, event);
   const events = durableStreamEvents(event, entry.lifecycle);
   entry.lifecycle = durableLifecycleState(entry.lifecycle, event);
   if (event.type === 'plan') entry.livePlan = event.plan;
@@ -346,6 +365,8 @@ function followDurable(entry, submission) {
     const observedTurnId = entry.turn.turnId || entry.input?.turnId || null;
     entry.listeners = new Set();
     entry.lifecycle = null;
+    entry.parkedTools = [];
+    entry.runningSubmissionId = submission?.id ?? null;
     entry.turnProjection = createDurableTurnProjection();
     entry.turnProjectionTurnId = observedTurnId;
     entry.livePlan = entry.turn.plan ?? null;
@@ -358,7 +379,9 @@ function followDurable(entry, submission) {
       .finally(()=>{
         ready.resolve();
         entry.running=null;
+        entry.runningSubmissionId=null;
         entry.lifecycle=null;
+        entry.parkedTools=[];
         if (entry.turnProjectionTurnId === observedTurnId) entry.turnProjectionTurnId = null;
       });
     // Observers may disconnect; the official task and its completion persist.
@@ -614,6 +637,10 @@ const server = http.createServer(async (req, res) => {
         }
         const ownsProjection = Boolean(isMounted && value.active && entry.turnProjectionTurnId && value.active.turnId === entry.turnProjectionTurnId);
         if (ownsProjection && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
+        if (ownsProjection && entry.parkedTools?.length > 0 && !value.active.parkedTools?.length) {
+          value.active.parked = true;
+          value.active.parkedTools = [...entry.parkedTools];
+        }
         if (ownsProjection && entry.turnProjection?.initialized) value.active.streamed = entry.turnProjection.text;
         // 重开面板时正在进行的这一轮也要能看到已收到的思考，与实时流同形。
         // 投影初始化之后思考是权威值：清空后必须写空数组，轮询才能撤掉上一次读到的旧思考；
@@ -770,6 +797,10 @@ const server = http.createServer(async (req, res) => {
       respond(res, 200, result);
       return;
     }
+    if (req.method === 'POST' && url.pathname === '/signals') {
+      await handleSignalsRoute(req, res, { durable, ops, ensureDescriptorsLoaded, followDurable });
+      return;
+    }
     if (req.method === 'POST' && url.pathname === '/events') {
       await handleEventsRoute(req, res, {
         durable,
@@ -836,10 +867,14 @@ const server = http.createServer(async (req, res) => {
       if (entry.turnProjection.reasoning.length) listener({ type: 'reasoning_snapshot', segments: entry.turnProjection.reasoning });
       listener({ type: 'plan', plan: entry.livePlan });
       if (entry.lifecycle) listener(entry.lifecycle);
+      for (const parked of entry.parkedTools || []) {
+        listener({ type: 'tool_parked', ...parked });
+      }
+      const detach = attachParkedStreamHeartbeat(res, entry, { turnId, intervalMs: PARKED_HEARTBEAT_MS, listener });
       try {
         const record = await result;
         if (!res.destroyed) { sendLine(res,{...publicDurableTurn(record),type:'turn_end',persistence:entry.persistence,sessionId:entry.sessionId}); res.end(); }
-      } finally { entry.listeners.delete(listener); }
+      } finally { detach(); }
       return;
     }
     respond(res, 404, { code: 404, reason: 'not_found' });

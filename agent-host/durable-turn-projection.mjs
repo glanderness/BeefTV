@@ -307,20 +307,77 @@ export function durableRetryReason(message) {
 
 const retryLifecycle = (attempt, error) => ({ type: 'lifecycle', phase: 'retry', attempt, reason: durableRetryReason(error) });
 
+export function extractParkedToolMeta(slot) {
+  if (!slot || typeof slot !== 'object') return null;
+  const progress = slot.details?.beeftvProgress;
+  const taskIds = Array.isArray(progress?.taskIds)
+    ? progress.taskIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
+    : [];
+  const meta = {
+    toolCallId: slot.callId,
+    toolName: slot.name,
+    ...(Number.isSafeInteger(slot.taskId) ? { durableTaskId: slot.taskId } : {}),
+    taskIds,
+  };
+  if (typeof progress?.stage === 'string' && progress.stage) meta.stage = progress.stage;
+  if (Number.isSafeInteger(progress?.saved) && progress.saved >= 0) meta.saved = progress.saved;
+  if (Number.isSafeInteger(progress?.total) && progress.total > 0) meta.total = progress.total;
+  return meta;
+}
+
+export function extractParkedToolsFromLive(live) {
+  if (!live || typeof live !== 'object') return [];
+  const slots = [...(live.nestedTools || []), ...(live.tools || [])];
+  const out = [];
+  for (const slot of slots) {
+    if (slot?.status !== 'sleeping') continue;
+    const meta = extractParkedToolMeta(slot);
+    if (meta) out.push(meta);
+  }
+  return out;
+}
+
+function parkedToolEvent(meta) {
+  return {
+    type: 'tool_parked',
+    toolCallId: meta.toolCallId,
+    toolName: meta.toolName,
+    ...(meta.durableTaskId !== undefined ? { durableTaskId: meta.durableTaskId } : {}),
+    taskIds: Array.isArray(meta.taskIds) ? meta.taskIds : [],
+    ...(meta.stage ? { stage: meta.stage } : {}),
+    ...(meta.saved !== undefined ? { saved: meta.saved } : {}),
+    ...(meta.total !== undefined ? { total: meta.total } : {}),
+  };
+}
+
+function parkedLifecycleFromEvent(event) {
+  const details = event?.stage ? { beeftvProgress: { stage: event.stage, saved: event.saved, total: event.total } } : null;
+  const business = details ? businessLifecycle(event.toolName, details) : null;
+  if (business) return { ...business, parked: true };
+  return { type: 'lifecycle', phase: 'tool', toolName: event.toolName, parked: true };
+}
+
 function snapshotLifecycle(event) {
   const live = event.docs?.['pi.live'] || event;
   const compaction = (live.compactions || []).find((item) => item.blocking);
   if (compaction) return { type: 'lifecycle', phase: 'compaction', taskId: compaction.taskId };
   if (live.generation?.retry) return retryLifecycle(live.generation.attempt, live.generation.retry.error);
   for (const slot of [...(live.nestedTools || []), ...(live.tools || [])]) {
-    if (slot.status !== 'running') continue;
+    if (slot.status !== 'running' && slot.status !== 'sleeping') continue;
     const progress = businessLifecycle(slot.name, slot.details);
-    if (progress) return progress;
+    if (progress) return slot.status === 'sleeping' ? { ...progress, parked: true } : progress;
   }
-  const nestedTool = (live.nestedTools || []).find((slot) => slot.status === 'running');
-  if (nestedTool) return { type: 'lifecycle', phase: 'tool', toolName: nestedTool.name };
-  const tool = (live.tools || []).find((slot) => slot.status === 'running');
-  return tool ? { type: 'lifecycle', phase: 'tool', toolName: tool.name } : null;
+  const nestedTool = (live.nestedTools || []).find((slot) => slot.status === 'running' || slot.status === 'sleeping');
+  if (nestedTool) {
+    return nestedTool.status === 'sleeping'
+      ? { type: 'lifecycle', phase: 'tool', toolName: nestedTool.name, parked: true }
+      : { type: 'lifecycle', phase: 'tool', toolName: nestedTool.name };
+  }
+  const tool = (live.tools || []).find((slot) => slot.status === 'running' || slot.status === 'sleeping');
+  if (!tool) return null;
+  return tool.status === 'sleeping'
+    ? { type: 'lifecycle', phase: 'tool', toolName: tool.name, parked: true }
+    : { type: 'lifecycle', phase: 'tool', toolName: tool.name };
 }
 
 // Official Durable events -> host lifecycle/plan lines. Visible text is projected separately.
@@ -328,6 +385,7 @@ export function durableStreamEvents(event, current = null) {
   switch (event?.type) {
     case 'plan': return [{ type: 'plan', plan: event.plan }];
     case 'tool_execution_start': return [{ type: 'lifecycle', phase: 'tool', toolName: event.toolName }];
+    case 'tool_parked': return [parkedToolEvent(event)];
     case 'tool_execution_update': {
       const progress = businessLifecycle(event.toolName, event.details);
       return progress ? [progress] : [];
@@ -343,7 +401,12 @@ export function durableStreamEvents(event, current = null) {
       ? [{ type: 'lifecycle', phase: 'compaction_end', success: !event.error }] : [];
     case 'auto_retry_start': return [retryLifecycle(event.attempt, event.errorMessage)];
     case 'auto_retry_end': return [{ type: 'lifecycle', phase: 'retry_end', attempt: event.attempt }];
-    case 'snapshot': { const progress = snapshotLifecycle(event); return progress ? [progress] : []; }
+    case 'snapshot': {
+      const live = event.docs?.['pi.live'] || event;
+      const progress = snapshotLifecycle(event);
+      const parked = extractParkedToolsFromLive(live).map(parkedToolEvent);
+      return [...(progress ? [progress] : []), ...parked];
+    }
     default: return [];
   }
 }
@@ -353,6 +416,7 @@ export function durableLifecycleState(current, event) {
   switch (event?.type) {
     case 'snapshot': return snapshotLifecycle(event);
     case 'auto_retry_start': case 'tool_execution_start': return durableStreamEvents(event)[0];
+    case 'tool_parked': return parkedLifecycleFromEvent(event);
     case 'tool_execution_update': return durableStreamEvents(event)[0] || current;
     case 'compaction_start': return durableStreamEvents(event, current)[0] || current;
     case 'compaction_end': return durableStreamEvents(event, current).length ? null : current;

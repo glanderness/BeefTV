@@ -3,11 +3,16 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistantruntime"
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 )
 
@@ -17,11 +22,35 @@ type assistantRuntimeRouteService interface {
 	RegisterAssistantNativeSource(ctx context.Context, userID, currentTurnID, originTurnID, sessionID string, source operations.MediaSource) error
 	RevalidateAssistantNativeSource(ctx context.Context, userID, currentTurnID, originTurnID, sessionID string, source operations.MediaSource) (any, error)
 	BeginAssistantTurn(userID, canvasID, turnID string, input app.AssistantTurnInput) (int64, error)
+	Task(userID, id string) (*model.Task, error)
 }
 
 // Runtime lifecycle is a host capability, never a model-discoverable operation.
-func registerAssistantRuntimeRoutes(r gin.IRouter, svc assistantRuntimeRouteService) {
+func registerAssistantRuntimeRoutes(r gin.IRouter, svc assistantRuntimeRouteService, host *assistantruntime.Host) {
 	registerAssistantRuntimeSkillContextRoutes(r, svc)
+	if host != nil && !isNilService(svc) {
+		host.ConfigureTaskWaitEvaluator(func(_ context.Context, userID, taskID string) (assistantruntime.TaskWaitEvaluation, error) {
+			task, err := svc.Task(userID, taskID)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return assistantruntime.TaskWaitEvaluation{NotFound: true}, nil
+				}
+				var appErr *app.AppError
+				if errors.As(err, &appErr) && appErr.Status == http.StatusNotFound {
+					return assistantruntime.TaskWaitEvaluation{NotFound: true}, nil
+				}
+				return assistantruntime.TaskWaitEvaluation{}, err
+			}
+			if task == nil {
+				return assistantruntime.TaskWaitEvaluation{NotFound: true}, nil
+			}
+			eval := operations.EvaluateTaskWaitSignal(*task)
+			return assistantruntime.TaskWaitEvaluation{
+				Settled: eval.Settled,
+				Payload: eval.Payload,
+			}, nil
+		})
+	}
 	handle := func(c *gin.Context) {
 		if !isLoopbackRequest(c.Request) || !isAssistantHostRequest(c, svc) {
 			fail(c, http.StatusForbidden, app.Forbidden("仅内置助手宿主可以恢复或结束任务"))
@@ -151,6 +180,80 @@ func registerAssistantRuntimeRoutes(r gin.IRouter, svc assistantRuntimeRouteServ
 			return
 		}
 		ok(c, state)
+	})
+	r.POST("/assistant/runtime/task-waits", func(c *gin.Context) {
+		if !isLoopbackRequest(c.Request) || !isAssistantHostRequest(c, svc) {
+			fail(c, http.StatusForbidden, app.Forbidden("仅内置助手宿主可以登记任务等待"))
+			return
+		}
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if host == nil || host.TaskWaits() == nil {
+			fail(c, http.StatusServiceUnavailable, app.BadAuthRequest("内置助手宿主未就绪"))
+			return
+		}
+		var body struct {
+			CanvasID      string   `json:"canvasId"`
+			SessionID     string   `json:"sessionId"`
+			DurableTaskID int64    `json:"durableTaskId"`
+			Signal        string   `json:"signal"`
+			TaskIDs       []string `json:"taskIds"`
+		}
+		decoder := json.NewDecoder(io.LimitReader(c.Request.Body, 16384))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&body) != nil ||
+			strings.TrimSpace(body.CanvasID) == "" ||
+			strings.TrimSpace(body.SessionID) == "" ||
+			body.DurableTaskID <= 0 ||
+			len(body.TaskIDs) == 0 {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("任务等待参数无效"))
+			return
+		}
+		if err := host.TaskWaits().Register(assistantruntime.TaskWaitSubscription{
+			UserID:        user.ID,
+			CanvasID:      strings.TrimSpace(body.CanvasID),
+			SessionID:     strings.TrimSpace(body.SessionID),
+			DurableTaskID: body.DurableTaskID,
+			Signal:        strings.TrimSpace(body.Signal),
+			TaskIDs:       body.TaskIDs,
+		}); err != nil {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest(err.Error()))
+			return
+		}
+		ok(c, map[string]any{
+			"registered":    true,
+			"durableTaskId": body.DurableTaskID,
+			"taskIds":       body.TaskIDs,
+		})
+	})
+	r.POST("/assistant/runtime/task-waits/cancel", func(c *gin.Context) {
+		if !isLoopbackRequest(c.Request) || !isAssistantHostRequest(c, svc) {
+			fail(c, http.StatusForbidden, app.Forbidden("仅内置助手宿主可以取消任务等待"))
+			return
+		}
+		if _, err := currentUser(c, svc); err != nil {
+			failService(c, err)
+			return
+		}
+		var body struct {
+			CanvasID      string   `json:"canvasId"`
+			SessionID     string   `json:"sessionId"`
+			DurableTaskID int64    `json:"durableTaskId"`
+			TaskIDs       []string `json:"taskIds"`
+		}
+		decoder := json.NewDecoder(io.LimitReader(c.Request.Body, 16384))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&body) != nil {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("取消任务等待参数无效"))
+			return
+		}
+		if host != nil && host.TaskWaits() != nil {
+			host.TaskWaits().Cancel(strings.TrimSpace(body.CanvasID), strings.TrimSpace(body.SessionID), body.DurableTaskID)
+		}
+		ok(c, map[string]any{"cancelled": true})
 	})
 	r.GET("/assistant/runtime/turns/:turnId", handle)
 	r.POST("/assistant/runtime/turns/:turnId/complete", handle)

@@ -199,6 +199,7 @@ func (s *Service) Cancel(ctx context.Context, userID, id string) (*model.Task, e
 	task.Error = "任务已取消"
 	task.CompletedAt = &now
 	s.deps.Runtime.StopLocalWait(task.ID)
+	s.notifyTaskChanged(task.ID)
 
 	if s.deps.TextReplay != nil {
 		if err := s.deps.TextReplay.Finalize(task.ID, model.TaskStatusCancelled); err != nil {
