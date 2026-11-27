@@ -43,6 +43,9 @@ export async function handleEventsRoute(req, res, {
         : crypto.createHash('sha256').update(`wake:${canvasId}:${requestId}`).digest('hex').slice(0, 24);
       let openedTurn = false;
       try {
+        if (ops.descriptors?.size === 0 && typeof ops.ensureDescriptorsLoaded === 'function') {
+          await ops.ensureDescriptorsLoaded().catch(() => {});
+        }
         await ops.opsRequest('POST', '/assistant/runtime/turns', {
           turnId,
           canvasId,

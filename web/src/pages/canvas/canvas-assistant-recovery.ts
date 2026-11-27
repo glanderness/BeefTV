@@ -159,8 +159,13 @@ export function resolveAssistantStatusPollError(
     reason: AgentHostStatus["reason"],
     consecutiveErrors: number,
 ): AgentHostStatus {
-    if (!reason && prev && (prev.available || isAssistantTransientReason(prev.reason)) && consecutiveErrors < 2) {
-        return prev;
+    if (!reason && consecutiveErrors < 2) {
+        if (prev === null) {
+            return { available: false, reason: "host_starting" };
+        }
+        if (prev.available || isAssistantTransientReason(prev.reason)) {
+            return prev;
+        }
     }
     return { available: false, ...(reason ? { reason } : {}) };
 }

@@ -13,53 +13,85 @@ export function useAssistantHostStatus(open: boolean) {
     const statusRef = useRef(status);
     statusRef.current = status;
 
-    const fastPoll = isAssistantTransientReason(status?.reason);
+    const consecutiveErrorsRef = useRef(0);
+    const rescheduleRef = useRef<(() => void) | null>(null);
+
     useEffect(() => {
-        if (!open) return;
+        if (!open) {
+            consecutiveErrorsRef.current = 0;
+            rescheduleRef.current = null;
+            return;
+        }
         let cancelled = false;
         let inFlight = false;
-        let consecutiveErrors = 0;
+        let timer: ReturnType<typeof setTimeout> | null = null;
         let activeController: AbortController | null = null;
+        const clearTimer = () => {
+            if (timer !== null) {
+                clearTimeout(timer);
+                timer = null;
+            }
+        };
+        const scheduleNext = (nextStatus: AgentHostStatus | null) => {
+            if (cancelled) return;
+            clearTimer();
+            const delay = isAssistantTransientReason(nextStatus?.reason) ? 2000 : 15000;
+            timer = setTimeout(refresh, delay);
+        };
         const refresh = () => {
             if (cancelled || inFlight) return;
+            clearTimer();
             inFlight = true;
             const controller = new AbortController();
             activeController = controller;
+            let settledStatus: AgentHostStatus | null = statusRef.current;
             getAgentHostStatus({ signal: controller.signal })
                 .then((value) => {
                     if (cancelled) return;
-                    consecutiveErrors = 0;
+                    consecutiveErrorsRef.current = 0;
+                    settledStatus = value;
+                    statusRef.current = value;
                     setStatus(value);
                 })
                 .catch((error) => {
                     if (cancelled) return;
                     if (error instanceof DOMException && error.name === "AbortError") return;
-                    consecutiveErrors += 1;
+                    consecutiveErrorsRef.current += 1;
                     const reason = error instanceof ApiError ? error.reason : undefined;
-                    setStatus((prev) => resolveAssistantStatusPollError(prev, reason, consecutiveErrors));
+                    settledStatus = resolveAssistantStatusPollError(statusRef.current, reason, consecutiveErrorsRef.current);
+                    statusRef.current = settledStatus;
+                    setStatus(settledStatus);
                 })
                 .finally(() => {
                     inFlight = false;
                     if (activeController === controller) activeController = null;
+                    scheduleNext(settledStatus);
                 });
         };
+        rescheduleRef.current = () => scheduleNext(statusRef.current);
         refresh();
-        const timer = setInterval(refresh, fastPoll ? 2000 : 15000);
         return () => {
             cancelled = true;
+            rescheduleRef.current = null;
             activeController?.abort();
-            clearInterval(timer);
+            clearTimer();
         };
-    }, [open, fastPoll]);
+    }, [open]);
 
     const restartHost = useCallback(async () => {
         setStatusBusy(true);
         try {
             await restartAgentHost();
             const nextStatus = await getAgentHostStatus();
+            consecutiveErrorsRef.current = 0;
+            statusRef.current = nextStatus;
             setStatus(nextStatus);
+            rescheduleRef.current?.();
         } catch {
-            setStatus({ available: false, reason: "host_start_failed" });
+            const failed: AgentHostStatus = { available: false, reason: "host_start_failed" };
+            statusRef.current = failed;
+            setStatus(failed);
+            rescheduleRef.current?.();
         } finally {
             setStatusBusy(false);
         }

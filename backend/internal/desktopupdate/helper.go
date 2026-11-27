@@ -30,6 +30,7 @@ var (
 type HelperRequest struct {
 	DataDir           string `json:"dataDir,omitempty"`
 	WebViewProfileDir string `json:"webViewProfileDir,omitempty"`
+	TargetVersion     string `json:"targetVersion,omitempty"`
 	Schema            int    `json:"schema"`
 	ParentPID         int    `json:"parentPid"`
 	Platform          string `json:"platform"`

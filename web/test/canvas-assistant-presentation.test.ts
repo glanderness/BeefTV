@@ -62,6 +62,18 @@ describe("助手不可用原因映射成一句用户语加一个出路", () => {
         }
     });
 
+    test("页面无权限或桌面连接失效都给出明确中文提示和重试入口", () => {
+        const forbidden = assistantStatusNotice("forbidden");
+        expect(forbidden.text).not.toBe(ASSISTANT_UNAVAILABLE_FALLBACK);
+        expect(forbidden.text).toContain("重新打开画布");
+        expect(forbidden.action).toBe("retry");
+
+        const tokenRequired = assistantStatusNotice("desktop_token_required");
+        expect(tokenRequired.text).not.toBe(ASSISTANT_UNAVAILABLE_FALLBACK);
+        expect(tokenRequired.text).toContain("桌面端连接已失效");
+        expect(tokenRequired.action).toBe("retry");
+    });
+
     test("原因缺失或还不认识时走兜底，不显示原始值", () => {
         for (const reason of [undefined, "", "something_new_from_backend"]) {
             const notice = assistantStatusNotice(reason);

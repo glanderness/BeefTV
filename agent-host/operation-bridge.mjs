@@ -157,12 +157,24 @@ export function createOperationBridge({
     return envelope.data;
   }
 
+  let descriptorLoadPromise = null;
+
   async function loadDescriptors() {
     const data = await opsRequest('GET', '/ops');
     const ops = (data.ops || []).filter((descriptor) => !readOnly || descriptor.readOnly);
     descriptors.clear();
     for (const descriptor of ops) descriptors.set(descriptor.id.replace(/\./g, '_'), descriptor);
     return descriptors.size;
+  }
+
+  async function ensureDescriptorsLoaded() {
+    if (descriptors.size > 0) return descriptors.size;
+    if (!descriptorLoadPromise) {
+      descriptorLoadPromise = loadDescriptors().finally(() => {
+        descriptorLoadPromise = null;
+      });
+    }
+    return descriptorLoadPromise;
   }
 
   function buildTools(canvasId, log, generation, turn, identityPrefix) {
@@ -393,7 +405,7 @@ export function createOperationBridge({
     return delivery ? [...tools, delivery] : tools;
   }
 
-  return { descriptors, opsRequest, loadDescriptors, buildTools };
+  return { descriptors, opsRequest, loadDescriptors, ensureDescriptorsLoaded, buildTools };
 }
 
 export function scopedSchema(params, allowReferencedCanvasRead = false, descriptorId = '') {

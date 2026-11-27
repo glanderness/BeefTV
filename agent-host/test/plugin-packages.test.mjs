@@ -744,7 +744,11 @@ test('server.mjs loads enabled plugins from Go on startup, reports load-error, a
     }
     assert(healthy, `server.mjs did not become healthy: ${output}`);
 
-    // Verify startup load-error was reported to Go
+    // Startup plugin sync runs asynchronously right after server.listen(); wait briefly for it to report load-error.
+    const syncDeadline = Date.now() + 5000;
+    while (loadErrorReports.length === 0 && Date.now() < syncDeadline) {
+      await delay(30);
+    }
     assert.equal(loadErrorReports.length, 1);
     assert.equal(loadErrorReports[0].pluginId, 'bad-server-plugin');
     assert.match(loadErrorReports[0].error, /bad startup plugin/);

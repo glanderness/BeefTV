@@ -174,6 +174,56 @@ const mcpController = createMcpServerController({
 
 const combinedExtensions = () => [...pluginController.getExtensions(), ...mcpController.getExtensions()];
 
+let pluginSyncPromise = null;
+let mcpSyncPromise = null;
+function syncPluginsIfChanged() {
+  if (!pluginSyncPromise) {
+    pluginSyncPromise = pluginController.syncIfChanged()
+      .then(async (synced) => {
+        if (synced.changed) {
+          await durable.reloadPluginExtensions(combinedExtensions()).catch((error) => {
+            console.error(`agent-host: 插件扩展热重载失败（稍后可重试）：${error?.message || error}`);
+          });
+        }
+        return synced;
+      })
+      .catch((error) => {
+        console.error(`agent-host: 插件同步失败（稍后可重试）：${error?.message || error}`);
+        return { changed: false };
+      })
+      .finally(() => {
+        pluginSyncPromise = null;
+      });
+  }
+  return pluginSyncPromise;
+}
+
+function syncMcpIfChanged() {
+  if (!mcpSyncPromise) {
+    mcpSyncPromise = mcpController.syncIfChanged()
+      .then(async (synced) => {
+        if (synced.changed) {
+          await durable.reloadPluginExtensions(combinedExtensions()).catch((error) => {
+            console.error(`agent-host: MCP 扩展热重载失败（稍后可重试）：${error?.message || error}`);
+          });
+        }
+        return synced;
+      })
+      .catch((error) => {
+        console.error(`agent-host: MCP 同步失败（稍后可重试）：${error?.message || error}`);
+        return { changed: false };
+      })
+      .finally(() => {
+        mcpSyncPromise = null;
+      });
+  }
+  return mcpSyncPromise;
+}
+
+function syncExtensionsIfChanged() {
+  return Promise.all([syncPluginsIfChanged(), syncMcpIfChanged()]);
+}
+
 const hostTelemetry = await openHostTelemetry(DATA_DIR);
 
 const durable = createDurableSessionStore({
@@ -216,6 +266,7 @@ const durable = createDurableSessionStore({
     readCatalog:async (entry,signal,turnId,query={}) => (await ops.opsRequest('POST','/ops/skill.catalog',{params:query},signal,turnId || entry.turn.turnId)).result,
   },
   readCanvas: async (entry, signal, turnId) => {
+    if (ops.descriptors.size === 0) await ops.ensureDescriptorsLoaded().catch(() => {});
     if (!ops.descriptors.has('canvas_get')) return null;
     const { result } = await ops.opsRequest('POST', '/ops/canvas.get', { params: { canvasId: entry.canvasId } }, signal, turnId || entry.turn.turnId);
     const canvas = result?.canvas;
@@ -336,6 +387,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/health') {
     if (!instanceOK(req)) { respond(res, 403, { code: 403, reason: 'instance_mismatch' }); return; }
+    if (ops.descriptors.size === 0) {
+      void ops.ensureDescriptorsLoaded().catch(() => {});
+    }
     const persistenceSummary = durable.sessions.size === 0 ? 'ok' : [...new Set([...durable.sessions.values()].map((entry) => entry.persistence))].join(',');
     const proof = instanceProof();
     respond(res, 200, { ok: !providerReason, reason: providerReason || undefined,
@@ -348,13 +402,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/tools') {
-    const [syncedPlugins, syncedMcp] = await Promise.all([
-      pluginController.syncIfChanged().catch(() => ({ changed: false })),
-      mcpController.syncIfChanged().catch(() => ({ changed: false })),
-    ]);
-    if (syncedPlugins.changed || syncedMcp.changed) {
-      await durable.reloadPluginExtensions(combinedExtensions()).catch(() => {});
-    }
+    await ops.ensureDescriptorsLoaded().catch(() => {});
+    await syncExtensionsIfChanged();
     const canvasId = url.searchParams.get('canvasId') || '';
     const entry = canvasId ? durable.sessions.get(canvasId) : null;
     const extensionToolNames = [...pluginController.getToolNames(), ...mcpController.getToolNames()];
@@ -367,6 +416,7 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     if (req.method === 'GET' && url.pathname === '/plugins') {
+      if (pluginSyncPromise) await pluginSyncPromise;
       respond(res, 200, {
         packages: pluginController.listLoaded(),
         errors: pluginController.getErrors(),
@@ -733,14 +783,11 @@ const server = http.createServer(async (req, res) => {
       const authority=await ops.opsRequest('GET',`/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
       if(authority.canvasId!==canvasId || authority.open===false) throw Object.assign(new Error('turn_not_open'),{reason:'turn_not_open'});
       body.permissionMode=authority.permissionMode || 'canvas';
+      await ops.ensureDescriptorsLoaded().catch((error) => {
+        console.error(`agent-host: 回合前能力发现重试失败：${error?.message || error}`);
+      });
       if (!body.continuationId) {
-        const [syncedPlugins, syncedMcp] = await Promise.all([
-          pluginController.syncIfChanged().catch(() => ({ changed: false })),
-          mcpController.syncIfChanged().catch(() => ({ changed: false })),
-        ]);
-        if (syncedPlugins.changed || syncedMcp.changed) {
-          await durable.reloadPluginExtensions(combinedExtensions()).catch(() => {});
-        }
+        await syncExtensionsIfChanged();
       }
       // 只有 Durable 一套执行运行时：选中的是 Durable 会话就直接接上；否则（旧 JSONL 会话或尚无会话）
       // 新建一条 Durable 会话，并用旧会话文本作为交接说明开头。
@@ -818,13 +865,8 @@ if (LIFETIME_STDIN) {
 
 await initializeModel();
 try {
-  const count = await ops.loadDescriptors();
+  const count = await ops.ensureDescriptorsLoaded();
   console.error(`agent-host: 载入 ${count} 个操作（readOnly=${READ_ONLY_MODE}）`);
-  // Same sync every turn uses: a Go without plugin packages or MCP config just leaves them empty.
-  await pluginController.syncIfChanged();
-  await mcpController.syncIfChanged().catch((error) => {
-    console.error(`agent-host: MCP 初始化同步失败（稍后可重试）：${error?.message || error}`);
-  });
 }
 catch (error) { console.error(`agent-host: 能力发现失败（稍后可重试）：${error?.message || error}`); }
 function onListen() {
@@ -833,6 +875,8 @@ function onListen() {
     ? 'local-pipe'
     : `http://127.0.0.1:${bound && typeof bound === 'object' ? bound.port : PORT}`;
   console.log(`agent-host 已启动 ${endpoint} model=${MODEL?.id || MODEL_ID} api=${MODEL_API} baseUrl=${MODEL?.baseUrl || BASE_URL} ops=${OPS_URL} readOnly=${READ_ONLY_MODE} reason=${providerReason || 'ok'}`);
+  // 插件包和外部 MCP 连接可能耗时数十秒，不得阻塞 server.listen() 和 Go 就绪探针。
+  void syncExtensionsIfChanged();
 }
 if (LISTEN_FD > 0) server.listen({ fd: LISTEN_FD }, onListen);
 else if (LISTEN_PIPE) {

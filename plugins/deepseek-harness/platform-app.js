@@ -59,12 +59,18 @@ async function readVersionJSON(filePath) {
 }
 
 // 便携版与安装版统一支持通过随包 CLI `beeftv --version` 读取编译期版本号（不启动桌面窗口、不打开数据库）。
-async function readCLIVersion(cliPath) {
-  const output = await execFileOutput(cliPath, ['--version'], 5_000)
+async function readCLIVersion(cliPath, execOutput = execFileOutput) {
+  const output = await execOutput(cliPath, ['--version'], 5_000)
   return output && parseStableSemver(output) ? output : null
 }
 
-async function detectDarwinLocalApp(env = process.env) {
+function normalizeWindowsInstallDir(raw) {
+  const cleaned = String(raw || '').trim().replace(/^"|"$/g, '').trim().replace(/\//g, '\\')
+  if (!cleaned) return ''
+  return cleaned.replace(/\\+$/, '').toLowerCase()
+}
+
+async function detectDarwinLocalApp(env = process.env, execOutput = execFileOutput) {
   const bundle = env?.BEEFTV_LOCAL_APP_DIR?.trim() || '/Applications/BeefTV.app'
   const paths = {
     bundle,
@@ -77,8 +83,8 @@ async function detectDarwinLocalApp(env = process.env) {
   } catch {
     return null
   }
-  const version = await execFileOutput('/usr/libexec/PlistBuddy', ['-c', 'Print CFBundleShortVersionString', paths.info])
-    || await readCLIVersion(paths.cli)
+  const version = await execOutput('/usr/libexec/PlistBuddy', ['-c', 'Print CFBundleShortVersionString', paths.info])
+    || await readCLIVersion(paths.cli, execOutput)
   return {
     paths,
     version,
@@ -92,9 +98,9 @@ async function detectDarwinLocalApp(env = process.env) {
   }
 }
 
-async function readWindowsRegistryInstall() {
+async function readWindowsRegistryInstall(execOutput = execFileOutput) {
   const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\BeefTV'
-  const output = await execFileOutput('reg.exe', ['query', key], 5_000)
+  const output = await execOutput('reg.exe', ['query', key], 5_000)
   if (!output) return { dir: null, version: null }
   const readValue = name => {
     const pattern = new RegExp(`^\\s*${name}\\s+REG_\\w+\\s+(.+)$`, 'im')
@@ -104,8 +110,8 @@ async function readWindowsRegistryInstall() {
   return { dir: readValue('InstallLocation'), version: readValue('DisplayVersion') }
 }
 
-async function detectWindowsLocalApp(env = process.env) {
-  const reg = await readWindowsRegistryInstall()
+async function detectWindowsLocalApp(env = process.env, execOutput = execFileOutput) {
+  const reg = await readWindowsRegistryInstall(execOutput)
   const candidates = [
     env?.BEEFTV_LOCAL_APP_DIR,
     reg.dir,
@@ -125,10 +131,11 @@ async function detectWindowsLocalApp(env = process.env) {
     } catch {
       continue
     }
-    // 优先使用注册表版本或 version.json，其次调用随包 cli/beeftv.exe --version（适用于便携 ZIP 解压安装）。
-    const version = (reg.dir && reg.dir.toLowerCase() === dir.toLowerCase() ? reg.version : null)
+    // 优先调用随包 cli/beeftv.exe --version 读取真实编译期版本，其次读取 version.json，
+    // 最后才回退到注册表 DisplayVersion（避免应用内自动更新后残留的旧注册表版本覆盖新程序）。
+    const version = await readCLIVersion(paths.cli, execOutput)
       || await readVersionJSON(join(dir, 'version.json'))
-      || await readCLIVersion(paths.cli)
+      || (reg.dir && normalizeWindowsInstallDir(reg.dir) === normalizeWindowsInstallDir(dir) ? reg.version : null)
     return {
       paths,
       version,
@@ -148,7 +155,7 @@ async function detectWindowsLocalApp(env = process.env) {
   return null
 }
 
-async function detectLinuxLocalApp(env = process.env) {
+async function detectLinuxLocalApp(env = process.env, execOutput = execFileOutput) {
   const candidates = [
     env?.BEEFTV_LOCAL_APP_DIR,
     '/opt/beeftv/BeefTV-linux',
@@ -168,10 +175,10 @@ async function detectLinuxLocalApp(env = process.env) {
     }
     let version = await readVersionJSON(join(dir, 'version.json'))
     if (!version && dir === '/opt/beeftv/BeefTV-linux') {
-      version = await execFileOutput('dpkg-query', ['-W', '-f=${Version}', 'beeftv'], 5_000)
+      version = await execOutput('dpkg-query', ['-W', '-f=${Version}', 'beeftv'], 5_000)
     }
     if (!version) {
-      version = await readCLIVersion(paths.cli)
+      version = await readCLIVersion(paths.cli, execOutput)
     }
     return {
       paths,
@@ -192,12 +199,12 @@ async function detectLinuxLocalApp(env = process.env) {
   return null
 }
 
-export async function inspectLocalApp({ platform = process.platform, env = process.env } = {}) {
+export async function inspectLocalApp({ platform = process.platform, env = process.env, execOutput = execFileOutput } = {}) {
   const minimum = minimumLocalAppVersion(platform, env)
   let detected = null
-  if (platform === 'darwin') detected = await detectDarwinLocalApp(env)
-  else if (platform === 'win32') detected = await detectWindowsLocalApp(env)
-  else if (platform === 'linux') detected = await detectLinuxLocalApp(env)
+  if (platform === 'darwin') detected = await detectDarwinLocalApp(env, execOutput)
+  else if (platform === 'win32') detected = await detectWindowsLocalApp(env, execOutput)
+  else if (platform === 'linux') detected = await detectLinuxLocalApp(env, execOutput)
   else {
     return {
       status: { compatible: false, version: null, message: '当前系统暂不支持连接本机 BeefTV。' },

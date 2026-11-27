@@ -261,7 +261,9 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
                 }
             }
         }
-        await flushCanvasStorePersistence();
+        await flushCanvasStorePersistence().catch((error) => {
+            console.error("项目列表本地缓存写入失败，已保留当前工作区数据", { error });
+        });
         return appliedCount > 0;
     } catch (error) {
         console.error("项目列表同步失败", error);
@@ -298,7 +300,9 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
         if (!openLocalCanvasProject(id)) {
             useCanvasStore.setState((state) => state.projects.some((item) => item.id === id) ? state : { projects: [...state.projects, project] });
         }
-        await flushCanvasStorePersistence();
+        await flushCanvasStorePersistence().catch((error) => {
+            console.error("打开画布后本地缓存写入失败，已使用桌面数据库内容", { id, error });
+        });
         const resolved = openLocalCanvasProject(id) ?? project;
         if (resolved?.summaryOnly) {
             throw new Error("画布正在同步，请稍后重试");
@@ -308,7 +312,9 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
         if (isNotFoundApiError(error)) {
             const evicted = await evictDeletedCanvasIfClean(id, scope, { allowOpenEditor: true });
             if (evicted) {
-                await flushCanvasStorePersistence();
+                await flushCanvasStorePersistence().catch((flushError) => {
+                    console.error("清理已删除画布缓存失败", { id, error: flushError });
+                });
                 return null;
             }
         }
@@ -318,7 +324,9 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
         if (inFlightDocument && !inFlightDocument.summaryOnly && !canvasDeleting.has(saveKey(scope, id))) {
             const recovered = normalizeCanvasProjectGraph(inFlightDocument);
             applyLiveCanvasProject(id, recovered, true);
-            await flushCanvasStorePersistence();
+            await flushCanvasStorePersistence().catch((flushError) => {
+                console.error("恢复在途画布草稿缓存失败", { id, error: flushError });
+            });
             return recovered;
         }
         throw error;
