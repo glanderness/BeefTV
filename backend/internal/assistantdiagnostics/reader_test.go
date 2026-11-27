@@ -268,7 +268,7 @@ func TestAllowedOutcomeReasonsLoadedFromEmbeddedFixture(t *testing.T) {
 	for _, required := range []string{
 		"http_200", "http_429", "http_502", "stream_idle_timeout", "network_eof", "network_error", "aborted", "model_error",
 		"partial_output_stream_interrupted", "stream_ended_without_finish_reason", "model_content_filtered",
-		"model_output_truncated", "upstream_eof_before_first_byte", "provider_rate_limited", "provider_unavailable", "model_network_error",
+		"model_output_truncated", "upstream_eof_before_first_byte", "provider_rate_limited", "provider_unavailable", "provider_quota_exhausted", "model_network_error",
 	} {
 		if !allowedOutcomeReasons[required] {
 			t.Errorf("embedded allowedOutcomeReasons missing %q", required)
@@ -290,6 +290,7 @@ func TestSqliteProjectsSanitizedRawStopReasonAndExpandedFailureCodes(t *testing.
 		map[string]any{"role": "assistant", "timestamp": stamp.UnixMilli(), "model": "m1", "stopReason": "error", "rawStopReason": "aborted", "errorMessage": "partial_output_stream_interrupted", "content": "PRIVATE_PARTIAL"},
 		map[string]any{"role": "assistant", "timestamp": stamp.UnixMilli(), "model": "m1", "stopReason": "error", "rawStopReason": "SAFETY", "errorMessage": "stream_ended_without_finish_reason", "content": "PRIVATE_SAFETY"},
 		map[string]any{"role": "assistant", "timestamp": stamp.UnixMilli(), "model": "m1", "stopReason": "error", "rawStopReason": "PRIVATE_RAW_STOP_LEAK", "errorMessage": "upstream_eof_before_first_byte", "content": "PRIVATE_EOF"},
+		map[string]any{"role": "assistant", "timestamp": stamp.UnixMilli(), "model": "m1", "stopReason": "error", "rawStopReason": "error", "errorMessage": "provider_quota_exhausted", "content": "PRIVATE_QUOTA"},
 	}
 	entry, err := json.Marshal(map[string]any{"model": rows})
 	if err != nil {
@@ -338,6 +339,9 @@ func TestSqliteProjectsSanitizedRawStopReasonAndExpandedFailureCodes(t *testing.
 	}
 	if got := byID[prefix+"4"]; got.FailureReason != "upstream_eof_before_first_byte" || got.RawStopReason != "" {
 		t.Fatalf("private rawStopReason was not blocked at SQLite boundary: %+v", got)
+	}
+	if got := byID[prefix+"5"]; got.FailureReason != "provider_quota_exhausted" || got.RawStopReason != "error" {
+		t.Fatalf("provider_quota_exhausted projection mismatch: %+v", got)
 	}
 	if got := byID["outcome:out-cf"]; got.Reason != "model_content_filtered" || got.RawStopReason != "content_filter" {
 		t.Fatalf("ledger outcome rawStopReason mismatch: %+v", got)

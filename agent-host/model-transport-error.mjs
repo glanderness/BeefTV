@@ -101,14 +101,13 @@ function classifyFailureText(text) {
   if (text === PARTIAL_OUTPUT_STREAM_INTERRUPTED) return PARTIAL_OUTPUT_STREAM_INTERRUPTED;
   if (text === 'model_output_truncated') return 'model_output_truncated';
   if (isContentFilterError(text)) return 'model_content_filtered';
+  if (text === 'provider_quota_exhausted' || QUOTA_OR_BILLING_PATTERN.test(text)) return 'provider_quota_exhausted';
   if (STREAM_NO_FINISH_REASON.test(text)) return 'stream_ended_without_finish_reason';
   if (STREAM_IDLE_TIMEOUT.test(text)) return 'stream_idle_timeout';
   if (NORMALIZED_FIRST_RESPONSE_EOF.test(text)) return 'upstream_eof_before_first_byte';
   if (CONNECTION_FAILURE_PATTERN.test(text)) return 'model_network_error';
-  if (!QUOTA_OR_BILLING_PATTERN.test(text)) {
-    if (RATE_LIMIT_PATTERN.test(text)) return 'provider_rate_limited';
-    if (PROVIDER_UNAVAILABLE_PATTERN.test(text)) return 'provider_unavailable';
-  }
+  if (RATE_LIMIT_PATTERN.test(text)) return 'provider_rate_limited';
+  if (PROVIDER_UNAVAILABLE_PATTERN.test(text)) return 'provider_unavailable';
   return null;
 }
 
@@ -124,10 +123,7 @@ export function classifyModelFailureReason(detail, assistant = null) {
   if (sanitizeRawStopReason(assistant?.rawStopReason) === 'content_filter') {
     return 'model_content_filtered';
   }
-  const fromDetail = classifyFailureText(detailText);
-  if (fromDetail) return fromDetail;
-  if (QUOTA_OR_BILLING_PATTERN.test(detailText)) return null;
-  return classifyFailureText(assistantText);
+  return classifyFailureText(detailText) || classifyFailureText(assistantText);
 }
 
 export function normalizeModelTransportError(message) {
@@ -146,12 +142,12 @@ export function normalizeModelTransportError(message) {
     message.errorMessage = PARTIAL_OUTPUT_STREAM_INTERRUPTED;
     return { kind: 'partial_output_interrupted', originalReason, rawStopReason };
   }
-  if (QUOTA_OR_BILLING_PATTERN.test(originalDetail)) {
+  if (originalDetail.trim() === 'provider_quota_exhausted' || QUOTA_OR_BILLING_PATTERN.test(originalDetail)) {
     if (rawStopReason) message.rawStopReason = rawStopReason;
     // Neutralize quota/billing failures (e.g. HTTP 429 Insufficient balance) so pi-ai's
     // RETRYABLE_PROVIDER_ERROR_PATTERN never schedules retries on account/balance exhaustion.
-    message.errorMessage = 'model_error';
-    return { kind: 'quota_or_billing', originalReason: 'model_error', rawStopReason };
+    message.errorMessage = 'provider_quota_exhausted';
+    return { kind: 'quota_or_billing', originalReason: 'provider_quota_exhausted', rawStopReason };
   }
   if (typeof message.errorMessage === 'string' && FIRST_RESPONSE_EOF.test(message.errorMessage)) {
     message.errorMessage = `Network error: ${message.errorMessage}`;
@@ -189,7 +185,7 @@ export function recordModelResponseDiagnostics(dispatchDiagnostics, entry, messa
     }
     dispatchDiagnostics.record({ ...baseDiag, reason: PARTIAL_OUTPUT_STREAM_INTERRUPTED });
   } else if (normalized?.kind === 'quota_or_billing') {
-    dispatchDiagnostics.record({ ...baseDiag, reason: 'model_error' });
+    dispatchDiagnostics.record({ ...baseDiag, reason: 'provider_quota_exhausted' });
   } else if (normalized?.originalReason && normalized.originalReason !== 'model_error') {
     dispatchDiagnostics.record({ ...baseDiag, reason: normalized.originalReason });
   }
@@ -199,7 +195,6 @@ export function buildStreamErrorAssistant(model, lastPartial, error, options, fa
   const aborted = Boolean(options?.signal?.aborted);
   const content = Array.isArray(lastPartial?.content) ? lastPartial.content : [];
   const usage = lastPartial?.usage || emptyUsage();
-  const produced = !aborted && hasProducedContent({ content, usage });
   const rawStopReason = sanitizeRawStopReason(lastPartial?.rawStopReason, aborted ? 'aborted' : 'error');
   return {
     role: 'assistant',
@@ -210,9 +205,9 @@ export function buildStreamErrorAssistant(model, lastPartial, error, options, fa
     usage,
     stopReason: aborted ? 'aborted' : 'error',
     ...(rawStopReason ? { rawStopReason } : {}),
-    errorMessage: produced
-      ? PARTIAL_OUTPUT_STREAM_INTERRUPTED
-      : (error?.reason || error?.message || fallbackReason),
+    // Pass through the thrown error so afterResponse / normalizeModelTransportError can inspect
+    // content_filter first and record the original sanitized reason before partial-output override.
+    errorMessage: error?.reason || error?.message || fallbackReason,
     timestamp: Date.now(),
   };
 }

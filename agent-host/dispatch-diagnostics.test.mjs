@@ -178,7 +178,7 @@ test('MODEL_OUTCOME_REASONS loads from the single-source allowlist', () => {
     'partial_output_stream_interrupted', 'stream_ended_without_finish_reason',
     'model_content_filtered', 'model_output_truncated',
     'upstream_eof_before_first_byte', 'provider_rate_limited',
-    'provider_unavailable', 'model_network_error',
+    'provider_unavailable', 'provider_quota_exhausted', 'model_network_error',
   ]) {
     assert.ok(MODEL_OUTCOME_REASONS.includes(code), `missing allowlisted code: ${code}`);
   }

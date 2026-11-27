@@ -128,6 +128,7 @@ func TestAssistantFailureReasonIsAllowlistedAcrossExportAndOfflineAnalysis(t *te
 		{"skill_context_unavailable", "", "skill_context_unavailable", "", "skill_context_unavailable"},
 		{"partial_output_stream_interrupted", "aborted", "partial_output_stream_interrupted", "aborted", "partial_output_stream_interrupted"},
 		{"model_content_filtered", "content_filter", "model_content_filtered", "content_filter", "model_content_filtered"},
+		{"provider_quota_exhausted", "error", "provider_quota_exhausted", "error", "provider_quota_exhausted"},
 		{"stream_ended_without_finish_reason", "PRIVATE_STOP_LEAK", "stream_ended_without_finish_reason", "", "stream_ended_without_finish_reason"},
 		{"skill_context_unavailable token=PRIVATE_SECRET", "PRIVATE_STOP", "", "", "model_attempt_failed"},
 		{"PRIVATE_UNKNOWN_REASON", "", "", "", "model_attempt_failed"},

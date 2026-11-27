@@ -98,6 +98,14 @@ test("stream interruption, truncation, content filter and transport reasons rend
     expect(filteredHtml).not.toContain(">继续处理<");
     expect(assistantTurnCanContinue("model_content_filtered")).toBe(false);
 
+    const quotaTurn: AssistantTurn = { ...makeTurn("provider_quota_exhausted"), rawStopReason: "error" };
+    const quotaHtml = renderToStaticMarkup(
+        <CanvasAssistantTurnView turn={quotaTurn} handledProposals={new Set()} onLocate={() => {}} onUndo={() => {}} onRunProposal={() => {}} onDismissProposal={() => {}} onContinue={() => {}} />,
+    );
+    expect(quotaHtml).toContain("模型服务额度或余额不足，请检查账户余额后再试。");
+    expect(quotaHtml).not.toContain(">继续处理<");
+    expect(assistantTurnCanContinue("provider_quota_exhausted")).toBe(false);
+
     for (const [reason, expected] of [
         ["stream_ended_without_finish_reason", "未返回完成标记"],
         ["upstream_eof_before_first_byte", "返回首字节前中断"],

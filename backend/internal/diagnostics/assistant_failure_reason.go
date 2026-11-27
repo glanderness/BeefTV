@@ -19,6 +19,7 @@ func AssistantFailureReasonCodes() []string {
 		"upstream_eof_before_first_byte",
 		"provider_rate_limited",
 		"provider_unavailable",
+		"provider_quota_exhausted",
 		"model_network_error",
 	}
 }

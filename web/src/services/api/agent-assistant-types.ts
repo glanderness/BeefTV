@@ -493,6 +493,8 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
             return "模型服务当前请求较多（触发限流），请稍后点击继续处理。";
         case "provider_unavailable":
             return "模型服务暂时繁忙或不可用，已完成的改动会保留，请稍后点击继续处理。";
+        case "provider_quota_exhausted":
+            return "模型服务额度或余额不足，请检查账户余额后再试。";
         case "model_network_error":
             return "无法连接模型服务。若开启了系统代理，可在「通用设置 → 网络代理」切为不使用代理后重试；已完成的改动会保留。";
         case "model_error":

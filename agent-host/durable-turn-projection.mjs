@@ -206,6 +206,7 @@ const PUBLIC_TURN_ERROR_TEXT = {
   stream_idle_timeout: '模型输出长时间无响应，连接已超时中断。已完成的改动会保留，可点击继续处理。',
   provider_rate_limited: '模型服务当前请求较多（触发限流），请稍后点击继续处理。',
   provider_unavailable: '模型服务暂时繁忙或不可用，已完成的改动会保留，请稍后点击继续处理。',
+  provider_quota_exhausted: '模型服务额度或余额不足，请检查账户余额后再试。',
 };
 
 export function publicDurableTurn(active, running = false) {

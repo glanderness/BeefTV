@@ -233,7 +233,7 @@ test('scenario 1: pre-first-byte EOF and HTTP 502 retry at most twice (never 9x)
 });
 
 test('scenario 2: quota/billing HTTP 429 triggers 0 retries under single-layer retry policy', {timeout: 15000}, async t => {
-  assert.equal(isRetryableAssistantError({stopReason: 'error', errorMessage: 'model_error'}), false);
+  assert.equal(isRetryableAssistantError({stopReason: 'error', errorMessage: 'provider_quota_exhausted'}), false);
   for (const [label, body] of [
     ['insufficient_quota', {error: {message: 'You exceeded your current quota, please check your plan and billing details.', type: 'insufficient_quota', code: 'insufficient_quota'}}],
     ['insufficient_balance', {error: {message: 'Insufficient balance'}}],
@@ -248,8 +248,9 @@ test('scenario 2: quota/billing HTTP 429 triggers 0 retries under single-layer r
     const record = await f.store.wait(f.entry, f.submission, {onEvent: event => events.push(event)});
     assert.equal(f.requests.length, 1, `${label} HTTP 429 must trigger 0 retries`);
     assert.equal(events.filter(event => event.type === 'auto_retry_start').length, 0);
-    assert.equal(record.errorReason, 'model_error', `${label} must not misclassify as transient provider_rate_limited`);
-    assert(f.readLedger().some(row => row.reason === 'model_error'), `${label} must record sanitized diagnostics`);
+    assert.equal(record.errorReason, 'provider_quota_exhausted', `${label} must map to provider_quota_exhausted`);
+    assert.equal(publicDurableTurn(record).error, '模型服务额度或余额不足，请检查账户余额后再试。');
+    assert(f.readLedger().some(row => row.reason === 'provider_quota_exhausted'), `${label} must record sanitized quota diagnostics`);
   }
 });
 
@@ -294,10 +295,17 @@ test('scenario 3: 13k thinking/text tokens and signature-only reasoning_details 
   assert.equal(encFix.requests.length, 1, 'encrypted reasoning_details must trigger 0 retries');
   assert.equal(encRec.errorReason, PARTIAL_OUTPUT_STREAM_INTERRUPTED);
 
-  // 3c. Mid-stream thrown transport error (e.g. terminated / fetch failed) preserves partial deltas and triggers 0 retries
-  for (const thrownMsg of ['terminated', 'fetch failed']) {
+  // 3c. Mid-stream thrown transport error (e.g. terminated / fetch failed) preserves partial deltas + original diagnostics and triggers 0 retries;
+  //     Mid-stream thrown content_filter (e.g. SAFETY policy) after a text delta maps to model_content_filtered (NOT partial_output_stream_interrupted).
+  for (const [thrownMsg, expectedReason, expectedReply, expectedRawStop, expectedLedgerReason] of [
+    ['terminated', PARTIAL_OUTPUT_STREAM_INTERRUPTED, '中断前已流出的半截正文', 'error', null],
+    ['fetch failed', PARTIAL_OUTPUT_STREAM_INTERRUPTED, '中断前已流出的半截正文', 'error', 'model_network_error'],
+    ['Provider stopped with: SAFETY policy', 'model_content_filtered', '', 'content_filter', 'model_content_filtered'],
+  ]) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-stream-throw-'));
     t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+    const throwLedgerPath = path.join(dir, 'agent-requests.jsonl');
+    const throwDiag = createDispatchDiagnostics(throwLedgerPath, 'throw-launch');
     let calls = 0;
     const fakeModel = {id: 'fixture', name: 'fixture', api: 'openai-completions', provider: 'fixture', reasoning: true,
       input: ['text'], contextWindow: 200000, maxTokens: 1024, cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}};
@@ -329,6 +337,7 @@ test('scenario 3: 13k thinking/text tokens and signature-only reasoning_details 
     const throwStore = createDurableSessionStore({
       sessionRoot: path.join(dir, 'sessions'), workspaceRoot: path.join(dir, 'workspace'),
       getModels: () => throwingModels, getModelRef: () => ({provider: 'fixture', modelId: 'fixture'}),
+      dispatchDiagnostics: throwDiag,
       settings: {retry: {enabled: true, maxRetries: 2, baseDelayMs: 10, maxAgentDelayMs: 100}},
       buildTools: () => [],
       authorizeTurn: async ({turnId}) => ({turnId, canvasId: 'canvas', permissionMode: 'canvas', open: true}),
@@ -340,8 +349,14 @@ test('scenario 3: 13k thinking/text tokens and signature-only reasoning_details 
       content: 'stream then throw', userText: 'stream then throw', revisionBefore: 1});
     const throwRec = await throwStore.wait(throwEntry, throwSub);
     assert.equal(calls, 1, `thrown "${thrownMsg}" after partial deltas must trigger 0 retries`);
-    assert.equal(throwRec.errorReason, PARTIAL_OUTPUT_STREAM_INTERRUPTED);
-    assert.equal(throwRec.reply, '中断前已流出的半截正文');
+    assert.equal(throwRec.errorReason, expectedReason);
+    assert.equal(throwRec.reply, expectedReply);
+    assert.equal(throwRec.rawStopReason, expectedRawStop);
+    if (expectedLedgerReason) {
+      const rows = fs.readFileSync(throwLedgerPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+      assert(rows.some(row => row.reason === expectedLedgerReason),
+        `expected ledger reason ${expectedLedgerReason} for "${thrownMsg}", got ${JSON.stringify(rows)}`);
+    }
   }
 });
 
@@ -591,22 +606,22 @@ test('delayed headers beyond idle allowance and normal tool continuation both su
   assert.equal(events.filter(event => event.type === 'auto_retry_start').length, 0);
 });
 
-for (const [label, message, expectedDetail] of [
-  ['authentication', '401 Unauthorized: invalid API key', '401 Unauthorized: invalid API key'],
-  ['quota', `insufficient_quota: ${EOF_MESSAGE}`, 'model_error'],
-  ['balance', `insufficient balance: ${EOF_MESSAGE}`, 'model_error'],
-  ['billing', `billing account disabled: ${EOF_MESSAGE}`, 'model_error'],
-  ['request budget', 'turn_request_budget_exhausted', 'turn_request_budget_exhausted'],
-  ['tool budget', 'turn_tool_step_budget_exhausted', 'turn_tool_step_budget_exhausted'],
-  ['context overflow', 'context length exceeded', 'context length exceeded'],
-  ['unclassified EOF', 'unexpected EOF', 'unexpected EOF'],
-  ['content parse EOF', 'EOF while decoding JSON', 'EOF while decoding JSON'],
+for (const [label, message, expectedDetail, expectedReason] of [
+  ['authentication', '401 Unauthorized: invalid API key', '401 Unauthorized: invalid API key', 'model_error'],
+  ['quota', `insufficient_quota: ${EOF_MESSAGE}`, 'provider_quota_exhausted', 'provider_quota_exhausted'],
+  ['balance', `insufficient balance: ${EOF_MESSAGE}`, 'provider_quota_exhausted', 'provider_quota_exhausted'],
+  ['billing', `billing account disabled: ${EOF_MESSAGE}`, 'provider_quota_exhausted', 'provider_quota_exhausted'],
+  ['request budget', 'turn_request_budget_exhausted', 'turn_request_budget_exhausted', 'model_error'],
+  ['tool budget', 'turn_tool_step_budget_exhausted', 'turn_tool_step_budget_exhausted', 'model_error'],
+  ['context overflow', 'context length exceeded', 'context length exceeded', 'model_error'],
+  ['unclassified EOF', 'unexpected EOF', 'unexpected EOF', 'model_error'],
+  ['content parse EOF', 'EOF while decoding JSON', 'EOF while decoding JSON', 'model_error'],
 ]) test(`${label} remains terminal without new retries`, {timeout: 15000}, async t => {
   const f = await fixture(t, ({res}) => res.end(sse({error: {message}})));
   const events = [];
   const record = await f.store.wait(f.entry, f.submission, {onEvent: event => {events.push(event);}});
   assert.equal(record.error, expectedDetail);
-  assert.equal(record.errorReason, 'model_error');
+  assert.equal(record.errorReason, expectedReason);
   assert.equal(f.requests.length, 1);
   assert.equal(events.filter(event => event.type === 'auto_retry_start').length, 0);
 });
