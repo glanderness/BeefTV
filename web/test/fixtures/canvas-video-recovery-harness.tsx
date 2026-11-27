@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from "react";
+import React, { useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "antd";
 import "../../src/styles/globals.css";
@@ -14,10 +14,6 @@ import { CanvasAssistantAttachments } from "../../src/pages/canvas/canvas-assist
 import { CanvasAssistantOutputs } from "../../src/pages/canvas/canvas-assistant-outputs";
 import { ProjectAssetVideoPlayer } from "../../src/pages/projects/detail/assets";
 import { VideoArtifactPreview } from "../../src/pages/projects/detail/workflow-production-workbench";
-import { EditorPreviewMonitor } from "../../src/lib/plugins/builtin/editor/editor-preview-monitor";
-import { EditorStoreProvider } from "../../src/components/editor/editor-context";
-import { createEditorStore } from "../../src/stores/editor/editor-store";
-import { normalizeTimelineProject } from "../../src/lib/timeline/timeline-tracks";
 
 function Harness() {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -26,21 +22,12 @@ function Harness() {
     const initialInteracting = params.get("interacting") === "1";
     const initialZooming = params.get("zooming") === "1";
     const withSubtitles = params.get("subtitles") === "1";
-    const store = useMemo(() => {
-        const created = createEditorStore({ saveTimeline: async () => {} });
-        created.getState().load(normalizeTimelineProject({ version: 2, durationMs: 400,
-            tracks: [{ id: "video-track", kind: "video", label: "视频", order: 0 }],
-            clips: [{ id: "clip", nodeId: "video", trackId: "video-track", kind: "video", startMs: 0, durationMs: 400,
-                directMedia: { id: "video", title: "视频", kind: "video", storageKey: "resource:video", url: "/api/resources/video/file" } }] }));
-        return created;
-    }, []);
     if (surface === "viewer") return <App><CanvasVideoViewer node={{ id: "video", title: "视频预览", type: CanvasNodeType.Video, width: 320, height: 240, position: { x: 0, y: 0 }, metadata: { content: "/api/resources/video/file", storageKey: "resource:video", status: "success", mimeType: "video/mp4" } }} onClose={() => {}} /></App>;
     if (surface === "creation") return <App><CreationMediaPreviewModal url="/api/resources/video/file" type="video" storageKey="resource:video" onClose={() => {}} /></App>;
     if (surface === "workflow") return <App><VideoArtifactPreview resourceId="video" src="/api/resources/video/file" title="镜头视频" /></App>;
     if (surface === "storyboard") return <App><AssetPreviewModal node={{ id: "video", title: "视频预览", type: CanvasNodeType.Video, width: 320, height: 240, position: { x: 0, y: 0 }, metadata: { content: "/api/resources/video/file", status: "success", mimeType: "video/mp4" } }} onClose={() => {}} /></App>;
     if (surface === "projectAsset") return <App><ProjectAssetVideoPlayer url="/api/resources/video/file" className="" /></App>;
     if (surface === "assistantOutput") return <App><CanvasAssistantOutputs outputs={[{ taskId: "video-task", kind: "video", sourceRevision: 1 }]} /></App>;
-    if (surface === "editor") return <EditorStoreProvider store={store} host={{ projectId: "project", assets: [], refreshAssets: async () => [] }}><EditorPreviewMonitor /></EditorStoreProvider>;
     if (surface === "attachment") return <CanvasAssistantAttachments attachments={[{ resourceId: "video", kind: "video", name: "视频", mimeType: "video/mp4", bytes: 100, purpose: "analysis" }]} />;
     if (surface === "drawer") return <AssetVideoPreview storageKey="resource:video" url="/api/resources/video/file" title="视频" className="" />;
     if (surface === "thumbnail") return <AssetMediaPreview alt="视频" asset={{ id: "video", kind: "video", title: "视频", coverUrl: "", tags: [], createdAt: "", updatedAt: "", data: { storageKey: "resource:video", url: "/api/resources/video/file", width: 64, height: 48, bytes: 100, mimeType: "video/mp4" } }} />;

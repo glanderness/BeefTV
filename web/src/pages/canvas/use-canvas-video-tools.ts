@@ -31,7 +31,7 @@ import { getResourcePlaybackBlob, ownedResourceIdFromMediaRef, resourceStorageKe
 import { canvasNodeDiagnosticContext } from "@/services/diagnostics/canvas-media-diagnostics";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 import { canDeriveNodeViaBackend, deriveNodeSeparatedAudioViaBackend, deriveNodeVideoFramesViaBackend } from "@/services/video-resource-derive";
-import { assertLocalExecutorSession, beginLocalExecutorSession, isLocalExecutorSessionStop, isUncertainLocalExecutorSubmit, localExecutorFrozenInputKey, localExecutorIntentAfterError, nextLocalExecutorClientOperationId, runOwnedDepthCapture } from "@/lib/plugins/builtin/editor/local-executor-session";
+import { assertLocalExecutorSession, beginLocalExecutorSession, isLocalExecutorSessionStop, isUncertainLocalExecutorSubmit, localExecutorFrozenInputKey, localExecutorIntentAfterError, nextLocalExecutorClientOperationId, runOwnedDepthCapture } from "@/services/local-executor-session";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 import type { StartCanvasUploadStatus } from "./use-canvas-upload";
 import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";

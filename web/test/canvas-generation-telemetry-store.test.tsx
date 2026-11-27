@@ -13,7 +13,7 @@ import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { GENERATION_RESULT_FETCH_STAGE } from "@/lib/generation-delivery-progress";
 import { normalizeGenerationTaskProgress } from "@/lib/canvas/canvas-node-metadata-contract";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
-import { beginLocalExecutorSession } from "@/lib/plugins/builtin/editor/local-executor-session";
+import { beginLocalExecutorSession } from "@/services/local-executor-session";
 import { canvasGenerationTaskNodes } from "@/pages/canvas/canvas-generation-failure";
 import { http } from "@/services/api/request";
 import { queryGenerationTask, recoverTask, type GenerationTask } from "@/services/api/task-center";

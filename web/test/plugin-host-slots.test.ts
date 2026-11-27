@@ -9,9 +9,7 @@ import { createCanvasNode } from "../src/lib/canvas/canvas-project-domain";
 import { getNodeDefinition, getNodeMinSize } from "../src/lib/canvas/node-registry";
 import { getAddNodeMenuCommands, getToolbarTools, resolveAddNodeMenuCommands, resolveToolbarTools, type AddNodeMenuContext } from "../src/lib/canvas/tool-registry";
 import { CanvasNodeType } from "../src/types/canvas";
-import { EDITOR_SHELL_PLUGIN_ID } from "../src/lib/plugins/builtin/editor/editor-shell";
 import { getEditorSlots } from "../src/lib/plugins/editor-slot-registry";
-import { getRegisteredPlugin } from "../src/lib/plugins/plugin-registry";
 import {
     activateClientPluginModule,
     deactivateAllClientPlugins,
@@ -43,8 +41,8 @@ import { migrateLegacyPluginInstallations, usePluginStore } from "../src/stores/
 const DummyComponent = () => null;
 
 test("plugin origin follows installation source independently of trust and official IDs", () => {
-    const plugin = { manifest: { id: EDITOR_SHELL_PLUGIN_ID, trusted: true } } as RegisteredPlugin;
-    expect(pluginOrigin(plugin)).toBe("official");
+    const plugin = { manifest: { id: "example-plugin", trusted: true } } as RegisteredPlugin;
+    expect(pluginOrigin(plugin)).toBe("thirdParty");
     for (const source of ["bundled", "official", "system"]) {
         expect(pluginOrigin({ ...plugin, source })).toBe("official");
     }
@@ -55,10 +53,6 @@ test("plugin origin follows installation source independently of trust and offic
         expect(pluginOrigin({ ...plugin, source })).toBe("thirdParty");
     }
     expect(pluginOrigin({ manifest: { id: "beeftv-plugin-eagle-asset-connector", trusted: true }, source: "package" } as RegisteredPlugin)).toBe("thirdParty");
-});
-
-test("community-contributed built-in plugins preserve upstream and community author attribution", () => {
-    expect(getRegisteredPlugin(EDITOR_SHELL_PLUGIN_ID)?.manifest.author).toBe("开源社区");
 });
 
 const emptyMenuContext: AddNodeMenuContext = {

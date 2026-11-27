@@ -11,7 +11,6 @@ const (
 	PluginPortraitClearance   = plugins.PortraitClearance
 	PluginAIArtCritique       = plugins.AIArtCritique
 	PluginMediaConversion     = plugins.MediaConversion
-	PluginEditorShell         = plugins.EditorShell
 
 	PluginOriginOfficial = plugins.OriginOfficial
 	PluginOriginSystem   = plugins.OriginSystem

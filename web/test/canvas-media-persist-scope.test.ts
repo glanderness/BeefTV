@@ -9,7 +9,7 @@ import {
     type PersistOwnedCanvasMediaNodesDeps,
 } from "@/lib/canvas/canvas-media-persist";
 import { recoverOwnedDepthCaptureNode, recoverOwnedDepthCaptureNodes } from "@/lib/canvas/canvas-depth-recover";
-import { beginLocalExecutorSession, isLocalExecutorSessionStop } from "@/lib/plugins/builtin/editor/local-executor-session";
+import { beginLocalExecutorSession, isLocalExecutorSessionStop } from "@/services/local-executor-session";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { apiClient } from "@/services/api/request";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -552,9 +552,5 @@ describe("owned canvas persist and recover callbacks", () => {
         expect(tools).toContain("localExecutorFrozenInputKey([\"depth_capture\"");
         expect(tools).toContain("openLocalCanvasProjectFromBackend(id)");
         expect(tools).toContain("syncLocalCanvasSnapshot(id, patch)");
-        const exportSource = readFileSync(join(here, "../src/lib/plugins/builtin/editor/editor-export.tsx"), "utf8");
-        expect(exportSource).toContain("nextLocalExecutorClientOperationId(submitIntentRef.current, frozenInputKey)");
-        const transcription = readFileSync(join(here, "../src/lib/plugins/builtin/editor/editor-transcription.tsx"), "utf8");
-        expect(transcription).toContain("nextLocalExecutorClientOperationId(submitIntentRef.current, frozenInputKey)");
     });
 });

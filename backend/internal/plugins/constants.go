@@ -7,7 +7,6 @@ const (
 	PortraitClearance         = "portrait-clearance"
 	AIArtCritique             = "beeftv-plugin-ai-art-critique"
 	MediaConversion           = "beeftv-plugin-media-conversion"
-	EditorShell               = "editor-shell"
 
 	OriginOfficial = "official"
 	OriginSystem   = "system"

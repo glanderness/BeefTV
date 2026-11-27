@@ -8,8 +8,7 @@ import {
 
 const render = () => null;
 
-// 真实插件 editor-shell 会在被导入时占满全部 EditorSlotKind，而它是否已被导入取决于测试执行顺序。
-// 这里只断言本文件自己注册的 pluginId，使结果不再受其它测试文件的副作用影响。
+// 只断言本文件自己注册的 pluginId，使结果不受其它测试文件（如插件槽位集成测试）的副作用影响。
 const ownSlots = (slot: Parameters<typeof getEditorSlots>[0]) =>
     getEditorSlots(slot)
         .filter((item) => ["editor-a", "a", "b", "c", "x", "p1", "p2"].includes(item.pluginId))

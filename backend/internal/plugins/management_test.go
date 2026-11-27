@@ -24,7 +24,7 @@ func newManagedRuntime(t *testing.T) (*Runtime, *memoryStore, string) {
 }
 
 func TestUploadedManifestCannotClaimUserActivationScope(t *testing.T) {
-	policy := Management(EditorShell, OriginUploaded)
+	policy := Management(PortraitClearance, OriginUploaded)
 	if policy.Origin != OriginUploaded || policy.ActivationScope != ScopeSystem || policy.ConfigurationScope != ConfigurationSystem {
 		t.Fatalf("uploaded plugin policy = %#v", policy)
 	}
@@ -47,30 +47,30 @@ func TestPackageWithClientAndConfigUsesUserConfigurationScope(t *testing.T) {
 }
 
 func TestMigratedCommunityPluginsAreNotReservedOfficialApplications(t *testing.T) {
-	for _, id := range []string{PromptOptimizer, EagleAssetConnector, AIArtCritique, MediaConversion} {
+	for _, id := range []string{PromptOptimizer, EagleAssetConnector, AIArtCritique, MediaConversion, "editor-shell"} {
 		if IsReservedApplication(id) {
-			t.Fatalf("%s should be installable as a community package, not reserved as built-in", id)
+			t.Fatalf("%s should not be reserved as a built-in official application", id)
 		}
 	}
 }
 
-func TestEditorShellIsUserToggleableApplication(t *testing.T) {
-	policy := Management(EditorShell, "bundled")
+func TestOfficialApplicationIsUserToggleable(t *testing.T) {
+	policy := Management(PortraitClearance, "bundled")
 	if policy.Origin != OriginOfficial || policy.Kind != KindApplication || policy.ActivationScope != ScopeUser || policy.ConfigurationScope != ConfigurationNone {
-		t.Fatalf("editor shell policy = %#v", policy)
+		t.Fatalf("official application policy = %#v", policy)
 	}
 }
 
 func TestInstallUploadedRejectsReservedApplicationID(t *testing.T) {
 	runtime, store, _ := newManagedRuntime(t)
 	svc := New(runtime, store)
-	_, err := svc.InstallUploaded("admin-1", testPluginPackage(t, testManifest(EditorShell, "1.0.0")), "editor-shell.beeftv-plugin")
+	_, err := svc.InstallUploaded("admin-1", testPluginPackage(t, testManifest(PortraitClearance, "1.0.0")), "portrait-clearance.beeftv-plugin")
 	if err == nil || !strings.Contains(err.Error(), "由官方应用保留") {
 		t.Fatalf("reserved id error = %v", err)
 	}
 }
 
-func TestEditorShellReportsPlatformAvailableWithoutPlatformState(t *testing.T) {
+func TestOfficialApplicationReportsPlatformAvailableWithoutPlatformState(t *testing.T) {
 	runtime, store, _ := newManagedRuntime(t)
 	svc := New(runtime, store)
 	user := &model.User{ID: "user-1", Role: model.UserRoleUser}
@@ -78,15 +78,18 @@ func TestEditorShellReportsPlatformAvailableWithoutPlatformState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, ok := states[EditorShell]
+	state, ok := states[PortraitClearance]
 	if !ok {
-		t.Fatalf("editor shell missing from plugin states: %#v", states)
+		t.Fatalf("official application missing from plugin states: %#v", states)
 	}
 	if !state.PlatformAvailable || !state.CanToggle {
-		t.Fatalf("editor shell should be a user-toggleable application, got %#v", state)
+		t.Fatalf("official application should be user-toggleable, got %#v", state)
 	}
 	if state.BlockedReason == "管理员已停用该插件" {
-		t.Fatalf("editor shell reported as admin-disabled: %#v", state)
+		t.Fatalf("official application reported as admin-disabled: %#v", state)
+	}
+	if retired, exists := states["editor-shell"]; exists {
+		t.Fatalf("retired editor-shell should not be registered in plugin states: %#v", retired)
 	}
 }
 
@@ -100,35 +103,35 @@ func TestApplicationPluginUsesUserStateUnderPlatformAvailability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial := states[EditorShell]
+	initial := states[PortraitClearance]
 	if !initial.PlatformAvailable || initial.UserEnabled || initial.EffectiveEnabled || !initial.CanToggle {
 		t.Fatalf("initial application state = %#v", initial)
 	}
 
-	enabled, err := svc.SetUserEnabled(user, EditorShell, true)
+	enabled, err := svc.SetUserEnabled(user, PortraitClearance, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !enabled.UserConfigured || !enabled.UserEnabled || !enabled.EffectiveEnabled {
 		t.Fatalf("enabled application state = %#v", enabled)
 	}
-	if _, _, err := svc.SetPlatformAvailability(admin, EditorShell, false); err != nil {
+	if _, _, err := svc.SetPlatformAvailability(admin, PortraitClearance, false); err != nil {
 		t.Fatal(err)
 	}
 	if states, err = svc.StatesForUser(user); err != nil {
 		t.Fatal(err)
 	}
-	if states[EditorShell].EffectiveEnabled {
-		t.Fatalf("platform-disabled application stayed enabled: %#v", states[EditorShell])
+	if states[PortraitClearance].EffectiveEnabled {
+		t.Fatalf("platform-disabled application stayed enabled: %#v", states[PortraitClearance])
 	}
-	if _, _, err := svc.SetPlatformAvailability(admin, EditorShell, true); err != nil {
+	if _, _, err := svc.SetPlatformAvailability(admin, PortraitClearance, true); err != nil {
 		t.Fatal(err)
 	}
 	if states, err = svc.StatesForUser(user); err != nil {
 		t.Fatal(err)
 	}
-	if !states[EditorShell].EffectiveEnabled {
-		t.Fatalf("restored application lost the user's choice: %#v", states[EditorShell])
+	if !states[PortraitClearance].EffectiveEnabled {
+		t.Fatalf("restored application lost the user's choice: %#v", states[PortraitClearance])
 	}
 }
 
@@ -439,7 +442,7 @@ func TestUninstallUploadedSerializesSetUserEnabled(t *testing.T) {
 		t.Fatal("uninstall delete did not start")
 	}
 	go func() {
-		_, err := svcB.SetUserEnabled(user, EditorShell, true)
+		_, err := svcB.SetUserEnabled(user, PortraitClearance, true)
 		errEnable <- err
 	}()
 	select {
@@ -447,7 +450,7 @@ func TestUninstallUploadedSerializesSetUserEnabled(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("SetUserEnabled did not enter mutation")
 	}
-	state, err := store.UserPluginState(user.ID, EditorShell)
+	state, err := store.UserPluginState(user.ID, PortraitClearance)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +467,7 @@ func TestUninstallUploadedSerializesSetUserEnabled(t *testing.T) {
 	if _, ok := ByID(runtime.List(), "uninstall-serial"); ok {
 		t.Fatal("uninstalled plugin still listed")
 	}
-	enabled, err := store.UserPluginState(user.ID, EditorShell)
+	enabled, err := store.UserPluginState(user.ID, PortraitClearance)
 	if err != nil || enabled == nil || !enabled.Enabled {
 		t.Fatalf("serialized user enable = %#v err=%v", enabled, err)
 	}

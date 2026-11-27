@@ -1,9 +1,6 @@
 import { useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { App, ConfigProvider } from "antd";
-import { EditorStoreProvider } from "../../src/components/editor/editor-context";
-import { createEditorStore } from "../../src/stores/editor/editor-store";
-import { EditorExport } from "../../src/lib/plugins/builtin/editor/editor-export";
 import { CanvasSubtitleDialog } from "@/components/canvas/canvas-subtitle-dialog";
 import { CanvasTimelineDialog } from "../../src/components/canvas/canvas-timeline-dialog";
 import { getAntThemeConfig } from "@/lib/app-theme";
@@ -52,8 +49,6 @@ function SubtitleThemeHarness() {
         </ConfigProvider>
     );
 }
-const store = createEditorStore();
-store.getState().load(project);
 HTMLAnchorElement.prototype.click = function () { receipt.downloads++; };
 const root = createRoot(document.getElementById("root")!);
 Object.assign(window, {
@@ -64,13 +59,11 @@ Object.assign(window, {
     },
 });
 const mode = new URLSearchParams(location.search).get("mode");
-root.render(mode === "subtitle-theme" ? <SubtitleThemeHarness /> : <App>{mode === "canvas" ?
+root.render(mode === "subtitle-theme" ? <SubtitleThemeHarness /> : <App>{mode === "canvas-drag" || mode === "canvas-layout" || mode === "canvas-mobile" ?
+    <CanvasTimelineDialog node={dragNode} nodes={[]} timeline={dragProject} open onClose={() => root.unmount()}
+        onSave={(timeline) => { receipt.saved.push(timeline); }} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
+        onCreateAssembledNode={async () => { receipt.created++; return dragNode; }} /> :
     <CanvasTimelineDialog node={node} nodes={[]} timeline={project} open onClose={() => root.unmount()}
         onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
-        onCreateAssembledNode={async () => { receipt.created++; return node; }} /> :
-    mode === "canvas-drag" || mode === "canvas-layout" || mode === "canvas-mobile" ?
-        <CanvasTimelineDialog node={dragNode} nodes={[]} timeline={dragProject} open onClose={() => root.unmount()}
-            onSave={(timeline) => { receipt.saved.push(timeline); }} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
-            onCreateAssembledNode={async () => { receipt.created++; return dragNode; }} /> :
-        <EditorStoreProvider store={store} host={{ projectId: "fixture", assets: [], refreshAssets: async () => [] }}><EditorExport /></EditorStoreProvider>
+        onCreateAssembledNode={async () => { receipt.created++; return node; }} />
 }</App>);
