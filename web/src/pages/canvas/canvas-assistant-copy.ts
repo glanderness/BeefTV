@@ -480,6 +480,8 @@ export function assistantLifecycleText(event: Pick<AgentLifecycleEvent, "phase" 
         }
         case "compaction":
             return "正在整理对话内容，方便继续。";
+        case "approval":
+            return "等待你确认继续执行。";
         case "retry":
             return "模型暂时没响应，正在再试一次。";
         default:

@@ -19,6 +19,7 @@ import (
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/assistantturns"
+	"infinite-canvas/backend/internal/operations"
 	"infinite-canvas/backend/internal/skills"
 )
 
@@ -111,10 +112,15 @@ func registerAgentProxyTurnRoutes(
 		if !guard(c, true) {
 			return
 		}
-		_, payload, valid := readAssistantBodyLimit(c, app.AssistantProductionConfirmation{}, agentProductionConfirmMaxBody)
+		type productionConfirmBody struct {
+			app.AssistantProductionConfirmation
+			CreateMandate *operations.CreateProductionMandateInput `json:"createMandate,omitempty"`
+		}
+		_, bodyPayload, valid := readAssistantBodyLimit(c, productionConfirmBody{}, agentProductionConfirmMaxBody)
 		if !valid {
 			return
 		}
+		payload := bodyPayload.AssistantProductionConfirmation
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
@@ -128,6 +134,21 @@ func registerAgentProxyTurnRoutes(
 		if err != nil {
 			failAssistantProposal(c, err)
 			return
+		}
+		if bodyPayload.CreateMandate != nil && !autoBudget {
+			in := *bodyPayload.CreateMandate
+			if strings.TrimSpace(in.CanvasID) == "" {
+				in.CanvasID = payload.CanvasID
+			}
+			in.ApprovedBy = "ui"
+			if identity := strings.TrimSpace(c.GetString("agentIdentity")); identity == "owner" {
+				in.ApprovedBy = "owner-cli"
+			}
+			if m, mErr := operations.CreateProductionMandateInTx(svc.Database(), c.GetString("agentUserId"), in); mErr == nil && m != nil {
+				if resMap, ok := result.(map[string]any); ok {
+					resMap["mandate"] = operations.ProjectProductionMandate(*m)
+				}
+			}
 		}
 		ok(c, result)
 	}

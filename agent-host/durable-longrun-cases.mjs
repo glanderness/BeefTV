@@ -200,6 +200,9 @@ test('Flows 1 & 2: ToolPark streams tool_parked + heartbeat, survives /chat disc
     if (url === '/api/ops/skill.catalog') {
       return json(200, { code: 0, data: { result: { skills: [], total: 0 } } });
     }
+    if (url === '/api/assistant/runtime/tool-precheck') {
+      return json(200, { code: 0, data: { decision: 'allow' } });
+    }
     if (url === '/api/ops/canvas.get') {
       const node = taskSettled
         ? { id: 'n-1', type: 'image', title: 'Shot 1', metadata: { taskId, status: 'success', storageKey: 'resource:res-1', taskOutcome: { phase: 'ready' } } }
@@ -679,6 +682,9 @@ test('Flow 3: busy full-access session queues /events via whenBusy:followUp and 
     }
     if (url === '/api/ops/skill.catalog') {
       return json(200, { code: 0, data: { result: { skills: [], total: 0 } } });
+    }
+    if (url === '/api/assistant/runtime/tool-precheck') {
+      return json(200, { code: 0, data: { decision: 'allow' } });
     }
     if (url === '/api/ops/canvas.get') {
       return json(200, { code: 0, data: { result: { canvasId: 'canvas-fa', canvas: { id: 'canvas-fa', revision: 1, nodes: [], connections: [] } } } });

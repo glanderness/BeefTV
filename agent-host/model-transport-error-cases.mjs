@@ -156,7 +156,9 @@ test('production 180s request wait enables single-layer Layer 2 retry and preser
   });
   const open = Harness.open.bind(Harness);
   t.mock.method(Harness, 'open', (storage, options, context) => {
-    assert.deepEqual(options.settings.stream, {timeoutMs: 180000, maxRetries: 0, cacheRetention: 'long'});
+    const { metadata, ...restStream } = options.settings.stream;
+    assert.deepEqual(restStream, {timeoutMs: 180000, maxRetries: 0, cacheRetention: 'long'});
+    assert.match(String(metadata?.user_id || ''), /^durable:/);
     assert.deepEqual(options.settings.retry, {enabled: true, maxRetries: 2, baseDelayMs: 1500, maxAgentDelayMs: 15000});
     return open(storage, options, context);
   });

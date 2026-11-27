@@ -310,6 +310,9 @@ const retryLifecycle = (attempt, error) => ({ type: 'lifecycle', phase: 'retry',
 export function extractParkedToolMeta(slot) {
   if (!slot || typeof slot !== 'object') return null;
   const progress = slot.details?.beeftvProgress;
+  const approval = slot.details?.beeftvApproval && typeof slot.details.beeftvApproval === 'object'
+    ? slot.details.beeftvApproval
+    : null;
   const taskIds = Array.isArray(progress?.taskIds)
     ? progress.taskIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
     : [];
@@ -322,6 +325,7 @@ export function extractParkedToolMeta(slot) {
   if (typeof progress?.stage === 'string' && progress.stage) meta.stage = progress.stage;
   if (Number.isSafeInteger(progress?.saved) && progress.saved >= 0) meta.saved = progress.saved;
   if (Number.isSafeInteger(progress?.total) && progress.total > 0) meta.total = progress.total;
+  if (approval) meta.approval = approval;
   return meta;
 }
 
@@ -347,10 +351,31 @@ function parkedToolEvent(meta) {
     ...(meta.stage ? { stage: meta.stage } : {}),
     ...(meta.saved !== undefined ? { saved: meta.saved } : {}),
     ...(meta.total !== undefined ? { total: meta.total } : {}),
+    ...(meta.approval ? { approval: meta.approval } : {}),
+  };
+}
+
+function approvalRequiredEvent(meta) {
+  if (!meta?.approval || typeof meta.approval !== 'object') return null;
+  return {
+    type: 'approval_required',
+    ...meta.approval,
+    toolCallId: meta.toolCallId,
+    toolName: meta.toolName,
+    ...(meta.durableTaskId !== undefined ? { durableTaskId: meta.durableTaskId } : {}),
   };
 }
 
 function parkedLifecycleFromEvent(event) {
+  if (event?.approval) {
+    return {
+      type: 'lifecycle',
+      phase: 'approval',
+      toolName: event.toolName,
+      proposalId: event.approval.proposalId,
+      parked: true,
+    };
+  }
   const details = event?.stage ? { beeftvProgress: { stage: event.stage, saved: event.saved, total: event.total } } : null;
   const business = details ? businessLifecycle(event.toolName, details) : null;
   if (business) return { ...business, parked: true };
@@ -364,6 +389,15 @@ function snapshotLifecycle(event) {
   if (live.generation?.retry) return retryLifecycle(live.generation.attempt, live.generation.retry.error);
   for (const slot of [...(live.nestedTools || []), ...(live.tools || [])]) {
     if (slot.status !== 'running' && slot.status !== 'sleeping') continue;
+    if (slot.status === 'sleeping' && slot.details?.beeftvApproval) {
+      return {
+        type: 'lifecycle',
+        phase: 'approval',
+        toolName: slot.name,
+        proposalId: slot.details.beeftvApproval.proposalId,
+        parked: true,
+      };
+    }
     const progress = businessLifecycle(slot.name, slot.details);
     if (progress) return slot.status === 'sleeping' ? { ...progress, parked: true } : progress;
   }
@@ -385,7 +419,10 @@ export function durableStreamEvents(event, current = null) {
   switch (event?.type) {
     case 'plan': return [{ type: 'plan', plan: event.plan }];
     case 'tool_execution_start': return [{ type: 'lifecycle', phase: 'tool', toolName: event.toolName }];
-    case 'tool_parked': return [parkedToolEvent(event)];
+    case 'tool_parked': {
+      const approvalEv = approvalRequiredEvent(event);
+      return approvalEv ? [parkedToolEvent(event), approvalEv] : [parkedToolEvent(event)];
+    }
     case 'tool_execution_update': {
       const progress = businessLifecycle(event.toolName, event.details);
       return progress ? [progress] : [];
@@ -404,7 +441,11 @@ export function durableStreamEvents(event, current = null) {
     case 'snapshot': {
       const live = event.docs?.['pi.live'] || event;
       const progress = snapshotLifecycle(event);
-      const parked = extractParkedToolsFromLive(live).map(parkedToolEvent);
+      const parkedMetas = extractParkedToolsFromLive(live);
+      const parked = parkedMetas.flatMap((meta) => {
+        const approvalEv = approvalRequiredEvent(meta);
+        return approvalEv ? [parkedToolEvent(meta), approvalEv] : [parkedToolEvent(meta)];
+      });
       return [...(progress ? [progress] : []), ...parked];
     }
     default: return [];

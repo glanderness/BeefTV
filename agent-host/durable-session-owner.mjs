@@ -93,6 +93,10 @@ export function createDurableSessionStore({
   legacy = null,
   maxPlanContinuations = 6,
   thinkingLevel = agentThinkingLevel(),
+  opsRequest = null,
+  precheckTool = null,
+  enableImageFitting = true,
+  maxInlineImageChars = undefined,
 }) {
   if (!THINKING_LEVELS.includes(thinkingLevel)) throw fail('invalid_thinking_level');
   if (typeof authorizeTurn !== 'function') throw fail('durable_authorizer_required');
@@ -284,6 +288,10 @@ export function createDurableSessionStore({
     thinkingLevel,
     isDurableSessionId,
     fail,
+    opsRequest,
+    precheckTool,
+    enableImageFitting,
+    maxInlineImageChars,
   });
   const {
     currentPath,

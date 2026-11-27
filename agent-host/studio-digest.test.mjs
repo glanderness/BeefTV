@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  applyMonotoneMediaCutoff,
   buildStudioDigest,
   describeChangesSince,
+  evaluateMonotoneMediaCutoff,
   isTransientStudioTailMessage,
   nodeState,
   normalizeSystemHeaderMessages,
-  pruneHistoricalToolImages,
   snapshotOf,
   withCurrentStudio,
 } from './studio-digest.mjs';
@@ -163,136 +164,97 @@ describe('normalizeSystemHeaderMessages & withCurrentStudio', () => {
     expect(twice[3].content[0].text).toContain('画布版本 2');
   });
 
-  test('pruneHistoricalToolImages 保留当前批次及连续媒体探查中的 toolResult 图片，但裁剪已转入画布写入或历史轮次的旧预览图', () => {
+  test('单调媒体裁剪游标：连续视觉轮次保持前缀 100% 字节一致，超预算才单调前推且不回退', () => {
     const bigPad = 'A'.repeat(20 * 1024);
     const imgPart = (tag) => ({ type: 'image', mimeType: 'image/jpeg', data: `${tag}_${bigPad}` });
     const tinyPart = { type: 'image', mimeType: 'image/png', data: 'TINY_ICON' };
-    const freshBatch = [
-      { role: 'user', content: [{ type: 'text', text: '查看三张首帧图' }] },
-      {
-        role: 'assistant',
-        content: [
-          { type: 'toolCall', id: 'c1', name: 'media_overview', arguments: { nodeId: 'img-1' } },
-          { type: 'toolCall', id: 'c2', name: 'media_overview', arguments: { nodeId: 'img-2' } },
-        ],
-      },
-      { role: 'toolResult', toolCallId: 'c1', content: [{ type: 'text', text: '{"op":"media.overview"}' }, imgPart('BASE64_1'), tinyPart] },
-      { role: 'toolResult', toolCallId: 'c2', content: [{ type: 'text', text: '{"op":"media.overview"}' }, imgPart('BASE64_2')] },
-    ];
-    // 尚未有后续 assistant 响应时，同批 2 张图完整保留
-    const projectedFresh = pruneHistoricalToolImages(freshBatch);
-    expect(projectedFresh[2].content[1]).toEqual(imgPart('BASE64_1'));
-    expect(projectedFresh[3].content[1]).toEqual(imgPart('BASE64_2'));
 
-    // 连续 media_inspect（无新图片，例如音频检查）或只读/记账工具（plan_update、canvas_get）时，同轮刚读完的 overview 图仍保留，确保紧随其后的写操作请求能看到参考图
-    const duringInspectAndPlan = [
-      ...freshBatch,
-      {
-        role: 'assistant',
-        content: [
-          { type: 'toolCall', id: 'c3', name: 'media_inspect', arguments: { nodeId: 'vid-1', mode: 'audio' } },
-          { type: 'toolCall', id: 'c3p', name: 'plan_update', arguments: { items: [] } },
-          { type: 'toolCall', id: 'c3g', name: 'canvas_get', arguments: {} },
-        ],
-      },
-      { role: 'toolResult', toolCallId: 'c3', content: [{ type: 'text', text: '{"op":"media.inspect"}' }] },
-      { role: 'toolResult', toolCallId: 'c3p', content: [{ type: 'text', text: 'Current plan:' }] },
-      { role: 'toolResult', toolCallId: 'c3g', content: [{ type: 'text', text: '{"revision":2}' }] },
+    const turn1 = [
+      { role: 'user', content: [{ type: 'text', text: '看第一张首帧图' }] },
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'media_overview', arguments: { nodeId: 'img-1' } }] },
+      { role: 'toolResult', toolCallId: 'c1', content: [{ type: 'text', text: '{"op":"media.overview"}' }, imgPart('SHOT_1'), tinyPart] },
+      { role: 'assistant', content: [{ type: 'text', text: '镜1构图不错。' }] },
     ];
-    const projectedInspect = pruneHistoricalToolImages(duringInspectAndPlan);
-    expect(projectedInspect[2].content[1]).toEqual(imgPart('BASE64_1'));
-    expect(projectedInspect[3].content[1]).toEqual(imgPart('BASE64_2'));
+    const turn2 = [
+      ...turn1,
+      { role: 'user', content: [{ type: 'text', text: '再对比第二张首帧图' }, imgPart('USER_REF')] },
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'c2', name: 'media_overview', arguments: { nodeId: 'img-2' } }] },
+      { role: 'toolResult', toolCallId: 'c2', content: [{ type: 'text', text: '{"op":"media.overview"}' }, imgPart('SHOT_2')] },
+    ];
 
-    // 当同轮仅有 [BEEFTV_INPUT:...] 补充消息紧跟在 toolResult 后时，不裁剪当轮刚读出的图片
-    const withSupplementOnly = [
-      ...freshBatch,
-      { role: 'user', content: [{ type: 'text', text: '[BEEFTV_INPUT:s1]\n请重点看第二张图' }] },
-    ];
-    expect(pruneHistoricalToolImages(withSupplementOnly)[2].content[1]).toEqual(imgPart('BASE64_1'));
+    const entryMap = new Map();
+    turn2.forEach((m, idx) => entryMap.set(m, idx + 1));
 
-    // 当上一轮在 toolResult 后直接中断并进入下一轮普通 user 消息（无中间 assistant）时，旧轮图片必须被裁剪
-    const interruptedThenNextTurn = [
-      ...freshBatch,
-      { role: 'user', content: [{ type: 'text', text: '开启新一轮对话' }] },
-    ];
-    expect(pruneHistoricalToolImages(interruptedThenNextTurn)[2].content[1]).toEqual({
-      type: 'text',
-      text: '[此前已展示过的历史媒体预览图已在后续步骤折叠以节省上下文；如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
+    // 1. 预算足够时（例如 100KB），连续两轮对比镜1与镜2，游标保持 0 不动，前 4 条消息字节级完全一致
+    const evalTurn1 = evaluateMonotoneMediaCutoff(turn1, {
+      cutoffEntryId: 0,
+      messageEntryId: entryMap,
+      maxInlineImageChars: 100 * 1024,
     });
+    expect(evalTurn1.advanced).toBe(false);
+    expect(evalTurn1.cutoffEntryId).toBe(0);
 
-    // 一旦助手已读完图片并开始调用 canvas_node_configure，后续步骤不再重复上传旧 toolResult 的 base64
-    const afterCanvasConfigure = [
-      ...freshBatch,
-      {
-        role: 'assistant',
-        content: [{ type: 'toolCall', id: 'c4', name: 'canvas_node_configure', arguments: { nodeId: 'vid-1' } }],
-      },
-      { role: 'toolResult', toolCallId: 'c4', content: [{ type: 'text', text: '{"op":"canvas.node.configure"}' }] },
-    ];
-    const projectedAfterWrite = withCurrentStudio(afterCanvasConfigure, '现场摘要');
-    expect(projectedAfterWrite[2].content[1]).toEqual({
-      type: 'text',
-      text: '[此前已展示过的历史媒体预览图已在后续步骤折叠以节省上下文；如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
+    const evalTurn2 = evaluateMonotoneMediaCutoff(turn2, {
+      cutoffEntryId: evalTurn1.cutoffEntryId,
+      messageEntryId: entryMap,
+      maxInlineImageChars: 100 * 1024,
     });
-    expect(projectedAfterWrite[3].content[1]).toEqual({
-      type: 'text',
-      text: '[此前已展示过的历史媒体预览图已在后续步骤折叠以节省上下文；如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
-    });
-    // 小尺寸图标/占位图（<16KB）保持原样以维持前缀缓存一致
-    expect(projectedAfterWrite[2].content[2]).toEqual(tinyPart);
-    // 原数组不发生原地修改（保证持久层不变）
-    expect(freshBatch[2].content[1]).toEqual(imgPart('BASE64_1'));
+    expect(evalTurn2.advanced).toBe(false);
+    expect(evalTurn2.cutoffEntryId).toBe(0);
 
-    // 扫描版 PDF（file_read pdf-images）在同轮继续读另一份文本或调用 file_export 后仍保持可见（避免 KV-cache 破坏与模型误判幻觉）；
-    // 进入下一轮用户消息（或新一批扫描页大图）后才折叠，且占位提示准确引导 file_read 而非 media_inspect
-    const scannedPdfBatch = [
-      { role: 'user', content: [{ type: 'text', text: '读取扫描件并导出 Markdown' }] },
+    const req1 = withCurrentStudio(turn1, '现场摘要1', { mediaCutoffEntryId: evalTurn1.cutoffEntryId, messageEntryId: entryMap });
+    const req2 = withCurrentStudio(turn2, '现场摘要2', { mediaCutoffEntryId: evalTurn2.cutoffEntryId, messageEntryId: entryMap });
+    // 关键 KV-Cache 性质：turn2 的前缀与 turn1 的非尾消息 100% 字节一致
+    expect(JSON.stringify(req2.slice(0, turn1.length))).toBe(JSON.stringify(req1.slice(0, turn1.length)));
+    expect(req2[2].content[1]).toEqual(imgPart('SHOT_1'));
+    expect(req2[6].content[1]).toEqual(imgPart('SHOT_2'));
+
+    // 2. 第三张图到来导致累计内联图超过预算（例如 45KB）时，游标单调前推，只折叠最旧的 SHOT_1，保留最新 SHOT_2/SHOT_3 与小图标及用户附件
+    const turn3 = [
+      ...turn2,
       { role: 'assistant', content: [{ type: 'toolCall', id: 'f1', name: 'file_read', arguments: { resourceId: 'pdf-1' } }] },
-      {
-        role: 'toolResult',
-        toolCallId: 'f1',
-        toolName: 'file_read',
-        content: [{ type: 'text', text: '{"op":"file.read","result":{"format":"pdf-images"}}' }, imgPart('SCAN_PAGE_1')],
-      },
+      { role: 'toolResult', toolCallId: 'f1', toolName: 'file_read', content: [{ type: 'text', text: '{"op":"file.read","result":{"format":"pdf-images"}}' }, imgPart('SCAN_1')] },
     ];
-    const duringSecondTextRead = [
-      ...scannedPdfBatch,
-      { role: 'assistant', content: [{ type: 'toolCall', id: 'f2', name: 'file_read', arguments: { resourceId: 'notes-md' } }] },
-      { role: 'toolResult', toolCallId: 'f2', toolName: 'file_read', content: [{ type: 'text', text: '{"op":"file.read","result":{"content":"补充说明"}}' }] },
-    ];
-    expect(pruneHistoricalToolImages(duringSecondTextRead)[2].content[1]).toEqual(imgPart('SCAN_PAGE_1'));
-    const afterFileExportSameTurn = [
-      ...scannedPdfBatch,
-      { role: 'assistant', content: [{ type: 'toolCall', id: 'f3', name: 'file_export', arguments: { fileName: 'brief.md' } }] },
-      { role: 'toolResult', toolCallId: 'f3', toolName: 'file_export', content: [{ type: 'text', text: '{"op":"file.export"}' }] },
-    ];
-    expect(pruneHistoricalToolImages(afterFileExportSameTurn)[2].content[1]).toEqual(imgPart('SCAN_PAGE_1'));
-    const nextTurnAfterFileExport = [
-      ...afterFileExportSameTurn,
-      { role: 'assistant', content: [{ type: 'text', text: '已导出 brief.md' }] },
-      { role: 'user', content: [{ type: 'text', text: '继续下一步' }] },
-    ];
-    expect(pruneHistoricalToolImages(nextTurnAfterFileExport)[2].content[1]).toEqual({
+    turn3.forEach((m, idx) => entryMap.set(m, idx + 1));
+
+    const evalOverflow = evaluateMonotoneMediaCutoff(turn3, {
+      cutoffEntryId: 0,
+      messageEntryId: entryMap,
+      maxInlineImageChars: 45 * 1024,
+    });
+    expect(evalOverflow.advanced).toBe(true);
+    expect(evalOverflow.cutoffEntryId).toBe(3); // SHOT_1 所在的 entryId=3
+
+    const folded = applyMonotoneMediaCutoff(turn3, {
+      cutoffEntryId: evalOverflow.cutoffEntryId,
+      messageEntryId: entryMap,
+    });
+    expect(folded[2].content[1]).toEqual({
+      type: 'text',
+      text: '[此前已展示过的历史媒体预览图已在后续步骤折叠以节省上下文；如需复查概览请调 media_overview，查看原图或局部细节请调 media_inspect]',
+    });
+    // 小图标与用户附件永不折叠，且不修改原数组
+    expect(folded[2].content[2]).toEqual(tinyPart);
+    expect(folded[4].content[1]).toEqual(imgPart('USER_REF'));
+    expect(folded[6].content[1]).toEqual(imgPart('SHOT_2'));
+    expect(folded[8].content[1]).toEqual(imgPart('SCAN_1'));
+    expect(turn3[2].content[1]).toEqual(imgPart('SHOT_1'));
+
+    // 3. 当扫描件（file_read）被游标越过时，使用 file_read 专用占位文案；且游标永远单调不回退
+    const foldedPastScan = applyMonotoneMediaCutoff(turn3, {
+      cutoffEntryId: 9,
+      messageEntryId: entryMap,
+    });
+    expect(foldedPastScan[8].content[1]).toEqual({
       type: 'text',
       text: '[此前已展示过的文档扫描页画面已在后续步骤折叠以节省上下文；你此前据此读取并记录的内容仍然有效，如需再次查看请重新调用 file_read]',
     });
-
-    // 跨轮进入新用户消息并读取新一批视频帧时，旧轮图片被裁剪、新轮刚读出的视频帧保留
-    const nextTurnWithNewFrames = [
-      ...afterCanvasConfigure,
-      { role: 'assistant', content: [{ type: 'text', text: '已完成配置' }] },
-      { role: 'user', content: [{ type: 'text', text: '继续验收视频并交付' }, imgPart('USER_ATTACHMENT')] },
-      {
-        role: 'assistant',
-        content: [{ type: 'toolCall', id: 'c5', name: 'media_overview', arguments: { nodeId: 'vid-1' } }],
-      },
-      { role: 'toolResult', toolCallId: 'c5', content: [{ type: 'text', text: '{"op":"media.overview"}' }, imgPart('VIDEO_FRAME_1')] },
-    ];
-    const projectedNextTurn = withCurrentStudio(nextTurnWithNewFrames, '现场摘要');
-    expect(projectedNextTurn[2].content[1].type).toBe('text');
-    // 用户消息自带的附件图片始终保留
-    expect(projectedNextTurn[7].content[1]).toEqual(imgPart('USER_ATTACHMENT'));
-    // 新一轮刚读取的 toolResult 视频帧完整保留
-    expect(projectedNextTurn[9].content[1]).toEqual(imgPart('VIDEO_FRAME_1'));
+    const evalNoRollback = evaluateMonotoneMediaCutoff(turn1, {
+      cutoffEntryId: 9,
+      messageEntryId: entryMap,
+      maxInlineImageChars: 100 * 1024,
+    });
+    expect(evalNoRollback.advanced).toBe(false);
+    expect(evalNoRollback.cutoffEntryId).toBe(9);
   });
 });

@@ -441,7 +441,7 @@ func TestAssistantTurnsMigrationFromPreviewV9(t *testing.T) {
 	if err := db.Order("version").Find(&ledger).Error; err != nil {
 		t.Fatal(err)
 	}
-	if ledger[len(ledger)-1].Version != CurrentSchemaVersion || ledger[len(ledger)-1].Name != "assistant-referenced-resources" {
+	if ledger[len(ledger)-1].Version != CurrentSchemaVersion || ledger[len(ledger)-1].Name != "assistant-production-mandates" {
 		t.Fatalf("current identity: %+v", ledger[len(ledger)-1])
 	}
 	if !db.Migrator().HasTable(&model.TaskEffect{}) {
@@ -634,5 +634,56 @@ func TestV31TaskEffectsMigrationBackfillsHistoricalSucceededTasksAndValidatesSch
 	}
 	if err := RequireLocalSchema(db); err == nil {
 		t.Fatal("expected RequireLocalSchema to reject v31 database missing task_effects table")
+	}
+}
+
+func TestProductionMandatesMigrationV33(t *testing.T) {
+	db, err := Open(Config{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireLocalSchema(db); err != nil {
+		t.Fatalf("RequireLocalSchema failed after v33: %v", err)
+	}
+	// Simulate upgrading from a v32 DB.
+	if err := db.Exec("DROP TABLE assistant_mandate_reservations").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("DROP TABLE assistant_production_mandates").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("DELETE FROM local_schema_migrations WHERE version >= 33").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatalf("v32 -> v33 migration failed: %v", err)
+	}
+	if err := RequireLocalSchema(db); err != nil {
+		t.Fatalf("RequireLocalSchema after v32 -> v33 failed: %v", err)
+	}
+	// Idempotent re-run must keep ledger unchanged.
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatalf("idempotent v33 migration failed: %v", err)
+	}
+	// Unique index on (mandate_id, call_id) must reject duplicate call reservations.
+	if err := db.Create(&model.AssistantMandateReservation{
+		ID: "res-1", MandateID: "pm-1", UserID: "u1", CallID: "call-dup", Kind: model.MandateKindImage, AmountCNY: 1.5, Status: model.MandateReservationStatusReserved,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AssistantMandateReservation{
+		ID: "res-2", MandateID: "pm-1", UserID: "u1", CallID: "call-dup", Kind: model.MandateKindImage, AmountCNY: 1.5, Status: model.MandateReservationStatusReserved,
+	}).Error; err == nil {
+		t.Fatal("expected unique index idx_assistant_mandate_res_call to reject duplicate (mandate_id, call_id)")
+	}
+	// Dropping unique index must fail Ready.
+	if err := db.Exec("DROP INDEX idx_assistant_mandate_res_call").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireLocalSchema(db); err == nil {
+		t.Fatal("expected RequireLocalSchema to reject missing idx_assistant_mandate_res_call")
 	}
 }

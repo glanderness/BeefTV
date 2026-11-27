@@ -134,6 +134,9 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		cleanupDB()
 		return nil, err
 	}
+	if err := operations.ReconcileOrphanedMandateReservations(db); err != nil {
+		log.Printf("reconcile_orphaned_mandate_reservations_failed err=%v", err)
+	}
 
 	reportPhase("services", "正在加载本地工作区服务")
 	repo := repository.New(db)
@@ -228,7 +231,12 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 		_ = agentconnect.RetryStaleOneClickCredentials(agentops.NewClientRegistry(svc.DataDir()), svc.DataDir())
 	}
 	assistantHost := assistantruntime.New(assistantruntime.OptionsFromService(svc))
-	repo.SetOnTaskChanged(assistantHost.NotifyTaskChanged)
+	repo.SetOnTaskChanged(func(taskID string) {
+		if err := operations.ReconcileTaskMandateReservations(db, taskID); err != nil {
+			log.Printf("reconcile_mandate_reservation_failed task=%q err=%v", taskID, err)
+		}
+		assistantHost.NotifyTaskChanged(taskID)
+	})
 	svc.SetAssistantContinuationSubmitter(canvasHandler.AssistantContinuationSubmitter(svc, assistantHost))
 	api := router.Group("/api")
 	status := newSystemStatus(db, svc, true)

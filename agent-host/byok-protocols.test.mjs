@@ -14,7 +14,7 @@ import {
   resolveHostModelRequestUrl,
 } from './canvas-turn.mjs';
 import { createDurableSessionStore } from './durable-session-owner.mjs';
-import { installModelFetchProxy } from './model-fetch-proxy.mjs';
+import { createModelFetchProxy, wrapProviderWithModelFetch } from './model-fetch-proxy.mjs';
 import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { mediaToolResult, adaptMediaRequest } from './media-content.mjs';
 
@@ -282,7 +282,7 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
         .toBe(`http://127.0.0.1:${port}/custom/messages?beta=true`);
 
       const turnBudgetContext = new AsyncLocalStorage();
-      installModelFetchProxy({
+      const proxy = createModelFetchProxy({
         baseUrl: parsedBase.baseUrl,
         isRawBaseUrl: parsedBase.isRaw,
         modelApi: 'anthropic-messages',
@@ -294,6 +294,7 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
         dispatchDiagnostics: { record: () => {} },
         getOps: () => ({ opsRequest: async () => ({}) }),
       });
+      expect(globalThis.fetch).toBe(prevFetch);
 
       const runtime = await ModelRuntime.create({ authPath: path.join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
       runtime.registerProvider('beeftv', providerRegistration({
@@ -304,7 +305,7 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
         contextWindow: 200000,
       }));
       const models = createModels();
-      models.setProvider(runtime.getProvider('beeftv'));
+      models.setProvider(wrapProviderWithModelFetch(runtime.getProvider('beeftv'), proxy.fetch));
 
       const store = createDurableSessionStore({
         sessionRoot: path.join(dir, 'sessions'),
@@ -388,9 +389,8 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
         { modelId: 'gemini-2.0-flash', thinkingLevel: 'low' },
       ];
       for (const tc of cases) {
-        globalThis.fetch = prevFetch;
         const turnBudgetContext = new AsyncLocalStorage();
-        installModelFetchProxy({
+        const proxy = createModelFetchProxy({
           baseUrl,
           isRawBaseUrl: false,
           modelApi: 'google-generative-ai',
@@ -402,6 +402,7 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
           dispatchDiagnostics: { record: () => {} },
           getOps: () => ({ opsRequest: async () => ({}) }),
         });
+        expect(globalThis.fetch).toBe(prevFetch);
         const runtime = await ModelRuntime.create({ authPath: path.join(dir, `${tc.modelId}-auth.json`), modelsPath: null, refreshOnCreate: false });
         runtime.registerProvider('beeftv', providerRegistration({
           api: 'google-generative-ai',
@@ -411,7 +412,7 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
           contextWindow: 0,
         }));
         const models = createModels();
-        models.setProvider(runtime.getProvider('beeftv'));
+        models.setProvider(wrapProviderWithModelFetch(runtime.getProvider('beeftv'), proxy.fetch));
         const store = createDurableSessionStore({
           sessionRoot: path.join(dir, `${tc.modelId}-sessions`),
           workspaceRoot: path.join(dir, `${tc.modelId}-workspace`),
@@ -485,7 +486,7 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
     try {
       const baseUrl = `http://127.0.0.1:${port}/v1`;
       const turnBudgetContext = new AsyncLocalStorage();
-      installModelFetchProxy({
+      const proxy = createModelFetchProxy({
         baseUrl,
         isRawBaseUrl: false,
         modelApi: 'openai-responses',
@@ -497,6 +498,7 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
         dispatchDiagnostics: { record: () => {} },
         getOps: () => ({ opsRequest: async () => ({}) }),
       });
+      expect(globalThis.fetch).toBe(prevFetch);
 
       const runtime = await ModelRuntime.create({ authPath: path.join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
       runtime.registerProvider('beeftv', providerRegistration({
@@ -507,7 +509,7 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
         contextWindow: 200000,
       }));
       const models = createModels();
-      models.setProvider(runtime.getProvider('beeftv'));
+      models.setProvider(wrapProviderWithModelFetch(runtime.getProvider('beeftv'), proxy.fetch));
       const store = createDurableSessionStore({
         sessionRoot: path.join(dir, 'sessions'),
         workspaceRoot: path.join(dir, 'workspace'),
@@ -570,7 +572,7 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
     process.env.BEEFTV_AGENT_API_KEY = 'sk-oai-compat';
     try {
       const baseUrl = `http://127.0.0.1:${modelPort}/v1`;
-      installModelFetchProxy({
+      const proxy = createModelFetchProxy({
         baseUrl,
         isRawBaseUrl: false,
         modelApi: 'openai-completions',
@@ -582,15 +584,17 @@ describe('BYOK multi-protocol compatibility (Claude / Gemini / OpenAI Responses 
         dispatchDiagnostics: { record: () => {} },
         getOps: () => ({ opsRequest: async () => ({}) }),
       });
+      // 创建模型 fetch 代理绝不修改进程级 globalThis.fetch
+      expect(globalThis.fetch).toBe(prevFetch);
 
       // Non-model origin (even via Request object) must NEVER receive channel custom headers.
-      await globalThis.fetch(new Request(`http://127.0.0.1:${otherPort}/ping`, { method: 'GET' }));
+      await proxy.fetch(new Request(`http://127.0.0.1:${otherPort}/ping`, { method: 'GET' }));
       expect(seenOther).toHaveLength(1);
       expect(seenOther[0].headers['cf-aig-authorization']).toBeUndefined();
       expect(seenOther[0].headers['x-tenant']).toBeUndefined();
 
       // Request object targeting model origin receives custom headers without clobbering Authorization.
-      await globalThis.fetch(new Request(`${baseUrl}/chat/completions`, {
+      await proxy.fetch(new Request(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { authorization: 'Bearer sk-oai-compat', 'content-type': 'application/json' },
         body: JSON.stringify({ model: 'my-custom-chat', messages: [{ role: 'user', content: 'ping' }] }),

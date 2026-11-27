@@ -8,7 +8,7 @@ export const NODE_VERSION = '24.22.1';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const targets = { 'darwin/arm64': ['darwin', 'arm64'], 'darwin/amd64': ['darwin', 'x64'], 'windows/amd64': ['win32', 'x64'], 'linux/amd64': ['linux', 'x64'] };
 const runtimeModules = ['session-identity.mjs', 'canvas-turn.mjs', 'request-budget.mjs', 'durable-request-budget.mjs',
-  'durable-session-owner.mjs', 'durable-session-repository.mjs', 'durable-turn-admission.mjs', 'durable-pointer-resolver.mjs', 'durable-detached-reconciler.mjs', 'durable-turn-projection.mjs', 'durable-extensions.mjs', 'durable-watch-observer.mjs', 'durable-signals.mjs', 'durable-compaction.mjs', 'durable-followup.mjs', 'durable-telemetry.mjs', 'prompt-cache.mjs', 'business-progress.mjs', 'durable-turn-budget.mjs', 'media-content.mjs', 'native-part-store.mjs', 'native-history.mjs', 'skill-resource.mjs', 'active-skills.mjs',
+  'durable-session-owner.mjs', 'durable-session-repository.mjs', 'durable-turn-admission.mjs', 'durable-pointer-resolver.mjs', 'durable-detached-reconciler.mjs', 'durable-turn-projection.mjs', 'durable-extensions.mjs', 'durable-approval.mjs', 'durable-watch-observer.mjs', 'durable-signals.mjs', 'durable-compaction.mjs', 'durable-followup.mjs', 'durable-telemetry.mjs', 'prompt-cache.mjs', 'business-progress.mjs', 'durable-turn-budget.mjs', 'media-content.mjs', 'native-part-store.mjs', 'native-history.mjs', 'skill-resource.mjs', 'active-skills.mjs',
   'operation-bridge.mjs', 'await-business-tasks.mjs', 'timeline-delivery.mjs', 'canvas-read-view.mjs', 'canvas-write-view.mjs', 'session-owner.mjs', 'system-prompt.mjs', 'model-stream-idle.mjs', 'model-transport-error.mjs', 'model-fetch-proxy.mjs', 'http-utils.mjs', 'events-route.mjs', 'plan.mjs', 'studio-digest.mjs', 'dispatch-diagnostics.mjs', 'plugin-packages.mjs', 'mcp-servers.mjs'];
 const sourceFiles = ['server.mjs', 'plugin-host.mjs', ...runtimeModules, 'package.json', 'bun.lock'];
 const outcomeReasonsSource = path.join(root, 'backend', 'internal', 'assistantdiagnostics', 'model_outcome_reasons.json');
@@ -103,10 +103,15 @@ export function packageAgentHost({ runtime, target, destination, source = path.j
     const imports = ['@earendil-works/pi-coding-agent', '@earendil-works/pi-ai',
       '@earendil-works/pi-durable', '@earendil-works/pi-durable/storage/sqlite/node',
       '@earendil-works/pi-durable/tool-search', '@earendil-works/pi-durable/codemode',
+      '@earendil-works/pi-durable/images/fit', '@earendil-works/pi-durable/images/node',
       '@earendil-works/pi-codemode', '@earendil-works/pi-mcp',
       '@earendil-works/pi-ai/providers/openai', ...runtimeModules.map(name => `./${name}`)];
-    run(bundledNode, ['--input-type=module', '-e',
-      imports.map(name => `await import(${JSON.stringify(name)});`).join('\n')], stage);
+    const verifyScript = [
+      "import { createRequire } from 'node:module';",
+      "createRequire(import.meta.url).resolve('@silvia-odwyer/photon/photon_rs_bg.wasm');",
+      ...imports.map(name => `await import(${JSON.stringify(name)});`),
+    ].join('\n');
+    run(bundledNode, ['--input-type=module', '-e', verifyScript], stage);
     run(bundledNode, ['--check', 'server.mjs'], stage);
     run(bundledNode, ['--check', 'plugin-host.mjs'], stage);
     if (existsSync(destination)) throw new Error(`Refusing to overwrite existing agent-host: ${destination}`);

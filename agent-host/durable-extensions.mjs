@@ -13,10 +13,11 @@ import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, l
   normalizeSkillCatalog, sameSkillPin, skillsToLoad, activeSkillProjection, guardSkillModelRequests } from './skill-resource.mjs';
 import { missingSkillResources, restoredSkillMessage } from './active-skills.mjs';
 import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, publicPlan, renderPlanSection } from './plan.mjs';
-import { withCurrentStudio } from './studio-digest.mjs';
+import { buildUnboundMediaReminder, syncMonotoneMediaCutoff, withCurrentStudio } from './studio-digest.mjs';
 import { isToolPark } from './await-business-tasks.mjs';
 import { mutateTurnContinuation, readTurnContinuation } from './durable-signals.mjs';
 import { createCreativeCompactionExtension } from './durable-compaction.mjs';
+import { createDurableApprovalExtension, createSharedFitImagesExtension } from './durable-approval.mjs';
 import {
   createPartialOutputRetryGuard,
   normalizeModelTransportError,
@@ -229,6 +230,10 @@ export async function installDurableExtensions({
   codemodeSandbox = null,
   dispatchDiagnostics = null,
   ensureRunTurnHandoff = null,
+  opsRequest = null,
+  precheckTool = null,
+  enableImageFitting = true,
+  maxInlineImageChars = undefined,
 }) {
   const { readSkillContext, resolveActiveSkills, prepareSkillContext } = skillController;
   const skillHashPattern = /^[a-f0-9]{64}$/;
@@ -338,10 +343,6 @@ export async function installDurableExtensions({
               : {}),
         ...(typeof tool.cancel === 'function' ? { cancel: (args, api, context) => tool.cancel(args, api, context) } : {}),
         execute: async (args, api, context) => {
-          if (entry.generation.aborted) throw fail('aborted');
-          if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
-          if (entry.generation.pendingInput?.state === 'pending' && !api.checkpoint?.businessTaskWait) throw fail('supplement_preparation_pending');
-          await authorization(entry, entry.turn.turnId);
           try {
             const proposalCount = entry.turn.proposals.length;
             const pendingScriptProposalCount = (entry.turn.scriptProposals || []).filter((item) => item?.status === 'pending').length;
@@ -358,14 +359,12 @@ export async function installDurableExtensions({
             if (!tool.readOnly && typeof readCanvas === 'function') {
               await refreshStudioDigest(entry, entry.turn.turnId, { selectedNodeIds: entry.input?.selectedNodeIds || [], computeDiff: false, signal: context.abortSignal });
             }
-            // Official Durable ends only when every call in this response requests
-            // termination. Mixed/failed rounds keep their normal model continuation.
-            // 提方案失败时它自己不请求结束，整轮仍按官方规则继续，所以同批计划更新请求结束是安全的。
+            // Official Durable ends only when every call in this response requests termination.
+            // 同批 plan_update 的终止控制已收归 ToolHooks.afterTool，不再依赖 doc.roundProposes。
             const proposed = tool.label === 'canvas.generation.propose' && result.isError !== true && entry.turn.proposals.length > proposalCount;
             const scriptProposed = tool.label === 'skill.script.run' && result.isError !== true &&
               (entry.turn.scriptProposals || []).filter((item) => item?.status === 'pending').length > pendingScriptProposalCount;
-            const planWithProposal = tool.label === 'plan.update' && result.isError !== true && (await state(entry))?.roundProposes === true;
-            return { ...result, output: content, ...(proposed || scriptProposed || planWithProposal ? { control: { ...result.control, terminate: true } } : {}) };
+            return { ...result, output: content, ...(proposed || scriptProposed ? { control: { ...result.control, terminate: true } } : {}) };
           } finally { await persistEffects(entry); }
         },
       });
@@ -419,34 +418,9 @@ export async function installDurableExtensions({
       ...(Array.isArray(pluginTool.callers) && pluginTool.callers.length > 0 ? { callers: pluginTool.callers } : {}),
       ...(pluginTool.structuredOutputSchema ? { structuredOutputSchema: pluginTool.structuredOutputSchema } : {}),
       execute: async (args, api, context) => {
-        if (entry.generation.aborted) throw fail('aborted');
-        if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
-        if (entry.generation.pendingInput?.state === 'pending') throw fail('supplement_preparation_pending');
-        if (entry.turn?.turnId) await authorization(entry, entry.turn.turnId);
-        const currentMode = entry.permissionMode || entry.generation?.permissionMode || 'canvas';
-        const toolIsReadOnly = pluginTool.readOnly === true;
-        if (currentMode === 'read-only' && !toolIsReadOnly) {
-          const err = new Error(`scope_denied: 本轮助手只能读取（禁止调用 ${pluginTool.name}）`);
-          err.reason = 'scope_denied';
-          throw err;
-        }
         const started = Date.now();
-        // Plugin tools reach business operations only through this nested call,
-        // so the turn's permission mode is enforced here, once, for every plugin.
-        const wrappedApi = {
-          ...api,
-          executeTool: async (toolName, toolParams, callContext = context, options = {}) => {
-            const activeMode = entry.permissionMode || entry.generation?.permissionMode || 'canvas';
-            if (activeMode === 'read-only' && !entry.readOnlyToolNames?.has(toolName)) {
-              const err = new Error(`scope_denied: 本轮助手只能读取（禁止调用 ${toolName}）`);
-              err.reason = 'scope_denied';
-              throw err;
-            }
-            return api.executeTool(toolName, toolParams, callContext, options);
-          },
-        };
         try {
-          const rawResult = await runWithBudget(entry, () => pluginTool.execute(args, wrappedApi, context));
+          const rawResult = await runWithBudget(entry, () => pluginTool.execute(args, api, context));
           if (isToolPark(rawResult)) return rawResult;
           await mutateTurnContinuation(entry, (doc) => { doc.toolCalledSinceYield = true; }, context);
           const output = rawResult?.output ?? rawResult?.content ?? [];
@@ -510,6 +484,11 @@ export async function installDurableExtensions({
     registry.install(creativeCompactionExt);
     entry.pluginExtensions = nextWrapped;
     entry.pluginTools = nextWrapped.flatMap((ext) => ext.tools || []);
+    for (const rawExt of Array.isArray(rawExtensions) ? rawExtensions : []) {
+      for (const t of rawExt?.tools || []) {
+        if (t?.readOnly === true && t?.name) entry.readOnlyToolNames?.add(t.name);
+      }
+    }
     entry.toolNames = [...selectedHostTools, ...builtinExtensionTools, ...entry.pluginTools].map((tool) => tool.name);
   }
 
@@ -518,7 +497,7 @@ export async function installDurableExtensions({
     tools: selectedHostTools,
     hooks: [hook(GenerationTask, {
       beforeProviderRequest: ({ model, payload }) => {
-        const adapted = adaptProviderPromptCache(payload, model?.api, { sessionId: entry.sessionId });
+        const adapted = adaptProviderPromptCache(payload, model?.api);
         return adapted === payload ? undefined : { payload: adapted };
       },
       afterResponse: async (message, ...rest) => {
@@ -529,12 +508,6 @@ export async function installDurableExtensions({
         }
         const normalized = normalizeModelTransportError(message, ...rest);
         recordModelResponseDiagnostics(dispatchDiagnostics, entry, message, normalized);
-        // 本次响应是否带提方案调用：同批的 plan_update 也要请求结束本轮，否则官方 Durable 因为
-        // 「不是所有调用都请求结束」而多发一轮只为总结的请求。写进 Durable 文档而不是内存，
-        // 重启后从工具阶段接着跑时（不会再触发本钩子）仍然生效；每次响应都会重新写。
-        const proposes = Array.isArray(message?.content)
-          && message.content.some((part) => part?.type === 'toolCall' && (part.name === 'canvas_generation_propose' || part.name === 'skill_script_run'));
-        if (((await state(entry))?.roundProposes === true) !== proposes) await update(entry, (doc) => { doc.roundProposes = proposes; });
       },
       beforeRequest: async (request, _runtime, context) => {
         if (entry.budget?.failure?.reason || (entry.budget?.maxRequests > 0 && entry.budget.requests >= entry.budget.maxRequests)) {
@@ -567,11 +540,18 @@ export async function installDurableExtensions({
           // inputs through the official request hook; the queue still owns their
           // transcript placement. This prevents replaying a stale prepared intent.
           let baseMessages = request.messages;
+          const contextView = await _runtime.context(_runtime.conversationId, context);
+          const messageEntryId = new Map();
+          for (let index = 0; index < (contextView?.entries || []).length; index += 1) {
+            const item = contextView.entries[index];
+            for (const msg of contextView.contributions?.[index] || item.model || []) {
+              if (msg && typeof msg === 'object') messageEntryId.set(msg, item.id);
+            }
+          }
           // 新会话的条目从固定渠道亲和性之后开始，签名与 cache_control 可以原样复用；
           // 升级前未固定的旧条目签名来自随机上游节点，继续重发会触发 Invalid signature。
           const affinityMinEntryId = typeof nativeDoc?.affinityMinEntryId === 'number' ? nativeDoc.affinityMinEntryId : Infinity;
           if (affinityMinEntryId > 1) {
-            const contextView = await _runtime.context(_runtime.conversationId, context);
             const unpinnedAssistants = new Set();
             const unpinnedSignatures = new Set();
             for (let index = 0; index < contextView.entries.length; index += 1) {
@@ -597,6 +577,9 @@ export async function installDurableExtensions({
               baseMessages = [...baseMessages, { role: 'user', content: supplementContent(input.requestId, input.content), timestamp: Date.now() }];
             }
           }
+          const cutoffEval = await syncMonotoneMediaCutoff(_runtime, context, baseMessages, messageEntryId, {
+            maxInlineImageChars,
+          });
           let restoredSkillsText = '';
           if (skills) {
             const agent = await _runtime.agent(context);
@@ -625,6 +608,9 @@ export async function installDurableExtensions({
             includeStudio: typeof readCanvas === 'function',
             planText: renderPlanSection(nativeDoc?.plan) || '',
             restoredSkillsText,
+            mediaCutoffEntryId: cutoffEval.cutoffEntryId,
+            mediaCutoffMessageIndex: cutoffEval.cutoffMessageIndex,
+            messageEntryId,
           });
           entry.generation.modelEpoch = active?.intentEpoch || 0;
           await persistEffects(entry);
@@ -648,46 +634,10 @@ export async function installDurableExtensions({
         const cont = await readTurnContinuation(entry, context);
         if (!cont.unboundReminderSent && entry.turn.createdNodeIds?.length > 0 && typeof readCanvas === 'function') {
           const canvas = await readCanvas(entry, undefined, entry.turn.turnId).catch(() => null);
-          const nodes = Array.isArray(canvas?.nodes) ? canvas.nodes : [];
-          const connections = Array.isArray(canvas?.connections) ? canvas.connections : [];
-          const byId = new Map(nodes.map((n) => [n.id, n]));
-          const scriptNodes = nodes.filter((n) => n.type === 'script' && (n.metadata?.storyboard?.rows?.length || 0) > 0);
-          if (scriptNodes.length > 0) {
-            const boundIds = new Set();
-            for (const s of scriptNodes) {
-              for (const r of s.metadata?.storyboard?.rows || []) {
-                if (r.imageNodeId) boundIds.add(r.imageNodeId);
-                if (r.videoNodeId) boundIds.add(r.videoNodeId);
-              }
-            }
-            const createdSet = new Set(entry.turn.createdNodeIds);
-            const unboundMedia = nodes.filter(
-              (n) => createdSet.has(n.id) && (n.type === 'image' || n.type === 'video') && !boundIds.has(n.id),
-            );
-            const createdImages = nodes.filter((n) => createdSet.has(n.id) && n.type === 'image');
-            const unlinkedVideos = createdImages.length > 0
-              ? nodes.filter(
-                  (n) =>
-                    createdSet.has(n.id) &&
-                    n.type === 'video' &&
-                    !connections.some((e) => e.toNodeId === n.id && byId.get(e.fromNodeId)?.type === 'image'),
-                )
-              : [];
-            if (unboundMedia.length > 0 || unlinkedVideos.length > 0) {
-              await mutateTurnContinuation(entry, (draft) => { draft.unboundReminderSent = true; }, context);
-              const hints = [];
-              if (unboundMedia.length > 0) {
-                const list = unboundMedia.map((n) => `${n.id}「${n.title || n.type}」`).join('、');
-                hints.push(`本轮新建的媒体节点（${list}）尚未通过 canvas_script_row_update 的 imageNodeId/videoNodeId 写回对应分镜行`);
-              }
-              if (unlinkedVideos.length > 0) {
-                const vList = unlinkedVideos.map((n) => `${n.id}「${n.title || n.type}」`).join('、');
-                hints.push(`本轮新建的视频节点（${vList}）尚未通过 canvas_edge_create 连接对应的首帧图节点`);
-              }
-              return {
-                continue: `[制作现场检查] ${hints.join('；')}（当前画布 expectedRevision=${canvas.revision}）。请先补齐上述绑定/连线后再回复用户。`,
-              };
-            }
+          const reminder = buildUnboundMediaReminder(canvas, entry.turn.createdNodeIds);
+          if (reminder) {
+            await mutateTurnContinuation(entry, (draft) => { draft.unboundReminderSent = true; }, context);
+            return { continue: reminder };
           }
         }
         if (!cont.planTouchedInTurn || !cont.toolCalledSinceYield) return;
@@ -705,7 +655,22 @@ export async function installDurableExtensions({
     })],
   });
 
+  const approvalExtension = createDurableApprovalExtension({
+    entry,
+    opsRequest,
+    precheckTool,
+    authorization,
+  });
+
   registry.install(operationExtension);
+  registry.install(approvalExtension);
+  if (enableImageFitting) {
+    try {
+      registry.install(await createSharedFitImagesExtension());
+    } catch (error) {
+      console.error(`agent-host: Photon 图片预压缩扩展初始化失败（退回原图传递）：${error?.message || error}`);
+    }
+  }
   registry.install(toolSearchExt);
   if (codemodeExt) registry.install(codemodeExt);
   let configureQueue = Promise.resolve();

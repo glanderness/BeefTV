@@ -22,7 +22,8 @@ import { createNativePartStore } from './native-part-store.mjs';
 import { createDispatchDiagnostics } from './dispatch-diagnostics.mjs';
 import { createPluginPackageController } from './plugin-packages.mjs';
 import { createMcpServerController } from './mcp-servers.mjs';
-import { installModelFetchProxy } from './model-fetch-proxy.mjs';
+import { createModelFetchProxy, wrapProviderWithModelFetch } from './model-fetch-proxy.mjs';
+import { closeSharedPhotonImages } from './durable-approval.mjs';
 import { handleEventsRoute } from './events-route.mjs';
 import { openHostTelemetry } from './durable-telemetry.mjs';
 import {
@@ -118,7 +119,7 @@ const lifetimeBudget = createDurableRequestBudget({ limit: LIFETIME_REQUEST_BUDG
 const turnBudgetContext = new AsyncLocalStorage();
 const nativePartStore = createNativePartStore({directory:path.join(DATA_DIR,'native-parts')});
 
-const { outbound, getDispatched } = installModelFetchProxy({
+const modelFetchProxy = createModelFetchProxy({
   baseUrl: BASE_URL,
   isRawBaseUrl: IS_RAW_BASE_URL,
   modelApi: MODEL_API,
@@ -130,6 +131,7 @@ const { outbound, getDispatched } = installModelFetchProxy({
   dispatchDiagnostics,
   getOps: () => ops,
 });
+const { outbound, getDispatched } = modelFetchProxy;
 
 const ops = createOperationBridge({
   opsUrl: OPS_URL,
@@ -248,6 +250,7 @@ const hostTelemetry = await openHostTelemetry(DATA_DIR);
 
 const durable = createDurableSessionStore({
   sessionRoot: SESSION_ROOT, workspaceRoot: WORKSPACE_ROOT, buildTools: ops.buildTools,
+  opsRequest: ops.opsRequest,
   legacy,
   telemetry: hostTelemetry.telemetry,
   dispatchDiagnostics,
@@ -256,7 +259,7 @@ const durable = createDurableSessionStore({
     const models = createModels();
     const provider = modelRuntime?.getProvider(PROVIDER_ID);
     if (!provider) return models;
-    const budgeted = fn => (...args) => {
+    const runInEntryBudget = (fn) => {
       if ((entry.compacting || entry.compactingHookCount > 0) && !entry.busy) {
         const compactBudget = {
           sessionId: entry.sessionId,
@@ -266,16 +269,18 @@ const durable = createDurableSessionStore({
           requests: 0,
           generation: { durable: true, aborted: false },
         };
-        return turnBudgetContext.run(compactBudget, () => fn.call(provider, ...args));
+        return turnBudgetContext.run(compactBudget, fn);
       }
-      if (!entry.budget) entry.budget = createDurableTurnBudget(entry,{maxRequests:MAX_REQUESTS_PER_TURN,maxToolSteps:MAX_TOOL_STEPS_PER_TURN});
-      entry.budget.sessionId=entry.sessionId; entry.budget.nativeHistory=entry.nativeHistory;
-    entry.budget.generation = entry.generation;
-      entry.budget.turnId = entry.turn.turnId; entry.budget.canvasId = entry.canvasId;
+      if (!entry.budget) entry.budget = createDurableTurnBudget(entry, { maxRequests: MAX_REQUESTS_PER_TURN, maxToolSteps: MAX_TOOL_STEPS_PER_TURN });
+      entry.budget.sessionId = entry.sessionId;
+      entry.budget.nativeHistory = entry.nativeHistory;
+      entry.budget.generation = entry.generation;
+      entry.budget.turnId = entry.turn.turnId;
+      entry.budget.canvasId = entry.canvasId;
       entry.budget.requestId = entry.input?.requestId;
-      return turnBudgetContext.run(entry.budget,()=>fn.call(provider,...args));
+      return turnBudgetContext.run(entry.budget, fn);
     };
-    models.setProvider({...provider,stream:budgeted(provider.stream),streamSimple:budgeted(provider.streamSimple)});
+    models.setProvider(wrapProviderWithModelFetch(provider, modelFetchProxy.fetch, runInEntryBudget));
     return models;
   },
   getModelRef: () => ({ provider: PROVIDER_ID, modelId: MODEL_ID }),
@@ -904,6 +909,7 @@ async function shutdown() {
     console.error(`agent-host: 关闭时释放会话失败 ${error?.message || error}`);
   }
   await mcpController.closeAll().catch(() => {});
+  await closeSharedPhotonImages().catch(() => {});
   await hostTelemetry.close();
   await new Promise((resolve) => server.close(() => resolve()));
   process.exit(0);

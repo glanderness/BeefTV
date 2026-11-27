@@ -235,13 +235,66 @@ export type AssistantPlan = {
     updatedAt: string;
 };
 
+export type AssistantProductionMandate = {
+    id: string;
+    canvasId: string;
+    sessionId?: string;
+    maxAmountCny: number;
+    spentAmountCny: number;
+    reservedAmountCny: number;
+    remainingCny: number;
+    maxUnquotedCount: number;
+    usedUnquotedCount: number;
+    remainingUnquoted: number;
+    allowedKinds: string[];
+    status: "active" | "exhausted" | "revoked" | "expired";
+    version: number;
+    approvedBy?: string;
+    expiresAt?: string;
+    createdAt?: string;
+    updatedAt?: string;
+};
+
+export type CreateAssistantMandateInput = {
+    canvasId?: string;
+    sessionId?: string;
+    maxAmountCny: number;
+    maxUnquotedCount?: number;
+    allowedKinds?: string[];
+    ttlHours?: number;
+};
+
+export type AssistantPendingApproval = {
+    proposalId: string;
+    canvasId?: string;
+    sessionId?: string;
+    turnId?: string;
+    durableTaskId?: number;
+    toolCallId?: string;
+    toolName: string;
+    opName?: string;
+    kind?: string;
+    kinds?: string[];
+    nodeIds?: string[];
+    summary?: string;
+    reason?: string;
+    message?: string;
+    estimatedCny?: number;
+    unquotedCount?: number;
+    suggestedCapCny?: number;
+    status?: string;
+    createdAt?: string;
+};
+
 export type AgentLifecycleEvent = {
     type: "lifecycle";
-    phase: "compaction" | "compaction_end" | "retry" | "retry_end" | "tool" | "tool_end" | "business";
+    phase: "compaction" | "compaction_end" | "retry" | "retry_end" | "tool" | "tool_end" | "business" | "approval";
     stage?: "processing" | "downloading" | "saving" | "saved" | "binding" | "rendering" | "exporting" | "checking" | "observation_unavailable";
     saved?: number;
     total?: number;
     toolName?: string;
+    proposalId?: string;
+    parked?: boolean;
     reason?: string;
     aborted?: boolean;
     willRetry?: boolean;
@@ -259,6 +312,8 @@ export type StreamHandlers = {
     onPlan?: (plan: AssistantPlan | null) => void;
     onTurnEnd?: (end: AgentTurnEnd) => void;
     onLifecycle?: (event: AgentLifecycleEvent) => void;
+    onApprovalRequired?: (approval: AssistantPendingApproval) => void;
+    onHeartbeat?: (payload: { pendingApprovals?: AssistantPendingApproval[] }) => void;
 };
 
 /**
@@ -394,13 +449,17 @@ export type AssistantHistory = {
     thinkingLevel?: AssistantThinkingLevel;
     contextUsage?: AssistantContextUsage | null;
     forkedFrom?: AssistantSessionForkSource | null;
+    activeMandate?: AssistantProductionMandate | null;
+    pendingApprovals?: AssistantPendingApproval[];
     turns: (AssistantTurn & { undone?: boolean })[];
     active?: { turnId: string; requestId?: string; continuationId?: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
         references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running";
-        /** 正在进行的回合此刻的进度（例如模型重试），只用于展示，结束后不再返回。 */
+        /** 正在进行的回合此刻的进度（例如模型重试或等待审批），只用于展示，结束后不再返回。 */
         lifecycle?: AgentLifecycleEvent | null; plan?: AssistantPlan | null; streamed?: string;
         /** 正在进行回合的思考片段，与流式推送的 reasoning_snapshot 同形。 */
-        reasoning?: AssistantReasoningSegment[] } | null;
+        reasoning?: AssistantReasoningSegment[];
+        /** 正在休眠等待用户确认的付费工具审批单。 */
+        pendingApprovals?: AssistantPendingApproval[] } | null;
 };
 
 /** 撤销失败的机器可读原因，映射到卡片里的一句话。 */
@@ -526,6 +585,10 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
             return "压缩上下文失败，当前对话内容已保留，请稍后再试。";
         case "host_timeout":
             return "助手处理耗时过长，请稍后重新读取对话查看结果。";
+        case "agent_token_cannot_approve":
+            return "该预算包或审批操作只能由当前用户在界面确认。";
+        case "mandate_exhausted":
+            return "当前制作预算包额度已用尽，请批准本次调用或重新开启预算包。";
         default:
             return fallback;
     }

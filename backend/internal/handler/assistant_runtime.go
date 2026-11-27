@@ -264,6 +264,43 @@ func registerAssistantRuntimeRoutes(r gin.IRouter, svc assistantRuntimeRouteServ
 		}
 		ok(c, map[string]any{"cancelled": true})
 	})
+	r.POST("/assistant/runtime/tool-precheck", func(c *gin.Context) {
+		if !isLoopbackRequest(c.Request) || !isAssistantHostRequest(c, svc) {
+			fail(c, http.StatusForbidden, app.Forbidden("仅内置助手宿主可以预检工具授权"))
+			return
+		}
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var req operations.ToolPrecheckRequest
+		decoder := json.NewDecoder(io.LimitReader(c.Request.Body, 1<<20))
+		if decoder.Decode(&req) != nil || (strings.TrimSpace(req.OpName) == "" && strings.TrimSpace(req.ToolName) == "") {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("工具授权预检参数无效"))
+			return
+		}
+		dbProvider, hasDB := svc.(interface{ Database() *gorm.DB })
+		binder, hasBinder := svc.(operations.DomainBinder)
+		if !hasDB || dbProvider.Database() == nil {
+			fail(c, http.StatusServiceUnavailable, app.BadAuthRequest("数据库未就绪"))
+			return
+		}
+		var precheck operations.ToolPrecheckResult
+		if err := dbProvider.Database().Transaction(func(tx *gorm.DB) error {
+			var domain operations.Domain
+			if hasBinder {
+				domain = binder.BindDomain(tx)
+			}
+			var evalErr error
+			precheck, evalErr = operations.EvaluatePaidToolPrecheckInTx(tx, domain, user.ID, req)
+			return evalErr
+		}); err != nil {
+			failAssistantProposal(c, err)
+			return
+		}
+		ok(c, precheck)
+	})
 	r.GET("/assistant/runtime/turns/:turnId", handle)
 	r.POST("/assistant/runtime/turns/:turnId/complete", handle)
 }

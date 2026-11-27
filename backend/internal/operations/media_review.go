@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"infinite-canvas/backend/internal/model"
 )
 
 // MediaReviewer performs one bounded inference over bytes already authorized by
@@ -72,9 +73,23 @@ func runMediaReview(ctx *Context, raw json.RawMessage) (any, error) {
 		return nil, InvalidArg("media_review_requires_video", "审片工具需要视频素材")
 	}
 	part := media.Content[0]
+	var permit *paidSyncPermit
+	if ctx.Caller.Kind == CallerAssistant && ctx.DB() != nil && (strings.TrimSpace(ctx.TurnID) != "" || HasAnyMandateInTx(ctx.DB(), ctx.UserID, args.CanvasID, "")) {
+		var permitErr error
+		permit, permitErr = acquirePaidSyncPermit(ctx, args.CanvasID, model.MandateKindMediaReview, "media.review")
+		if permitErr != nil {
+			return nil, permitErr
+		}
+	}
 	observation, err := reviewer.ReviewMedia(ctx.Context, part, args.Question)
 	if err != nil {
+		if permit != nil {
+			permit.Release()
+		}
 		return nil, err
+	}
+	if permit != nil {
+		permit.Settle("")
 	}
 	note := "指定片段已交给审片模型；观察可能有遗漏，需与原始要求及可见画面对照。时间位置以截取片段起点为0，加上source.startMs后才是原素材位置。"
 	if args.Mode == "audio" {

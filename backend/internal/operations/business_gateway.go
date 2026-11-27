@@ -4,7 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+
+	"infinite-canvas/backend/internal/model"
 )
+
+type authorizedCloudTranscribeKey struct{}
+
+// WithAuthorizedCloudTranscription marks a business.call context as having
+// passed Go-side ProductionMandate or owner ToolApproval authorization for
+// cloud Whisper transcription (POST /timeline/transcriptions).
+func WithAuthorizedCloudTranscription(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, authorizedCloudTranscribeKey{}, true)
+}
+
+// IsAuthorizedCloudTranscription reports whether the context carries Go-side
+// mandate/approval authorization for cloud Whisper transcription.
+func IsAuthorizedCloudTranscription(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(authorizedCloudTranscribeKey{}).(bool)
+	return v
+}
 
 const (
 	businessListDefaultLimit = 50
@@ -133,5 +157,44 @@ func opBusinessCall(ctx *Context, raw json.RawMessage) (any, error) {
 		return nil, InvalidArg("invalid_params", "tool 必填")
 	}
 	req.OperationID = strings.TrimSpace(ctx.OperationID)
-	return ctx.BusinessGateway.CallBusinessTool(ctx.Context, ctx.UserID, req)
+	callCtx := ctx.Context
+	var permit *paidSyncPermit
+	if ctx.Caller.Kind == CallerAssistant && req.Tool == "business_post_timeline_transcriptions" && isCloudTranscriptionBody(req.Body) && ctx.DB() != nil {
+		canvasID := lookupTurnCanvasID(ctx.DB(), ctx.UserID, ctx.TurnID)
+		if canvasID != "" {
+			p, permitErr := acquirePaidSyncPermit(ctx, canvasID, model.MandateKindMediaTranscribe, "business.call")
+			if permitErr == nil && p != nil {
+				permit = p
+				callCtx = WithAuthorizedCloudTranscription(callCtx)
+			}
+		}
+	}
+	out, err := ctx.BusinessGateway.CallBusinessTool(callCtx, ctx.UserID, req)
+	if err != nil {
+		if permit != nil {
+			permit.Release()
+		}
+		return nil, err
+	}
+	if permit != nil {
+		taskID := extractBusinessResponseTaskID(out)
+		permit.Settle(taskID)
+	}
+	return out, nil
+}
+
+func extractBusinessResponseTaskID(out any) string {
+	m, ok := out.(map[string]any)
+	if !ok {
+		return ""
+	}
+	if data, ok := m["data"].(map[string]any); ok {
+		if id, _ := data["id"].(string); strings.TrimSpace(id) != "" {
+			return strings.TrimSpace(id)
+		}
+		if id, _ := data["taskId"].(string); strings.TrimSpace(id) != "" {
+			return strings.TrimSpace(id)
+		}
+	}
+	return ""
 }

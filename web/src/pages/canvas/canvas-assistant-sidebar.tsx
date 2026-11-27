@@ -8,7 +8,7 @@ import { AppDrawer } from "@/components/ui/product/app-drawer";
 import { assetLibraryQueryKey, assetPickerQueryKey } from "@/components/assets/asset-view-session";
 import { appQueryClient } from "@/lib/query-client";
 import { referencedAssetIdsInPrompt, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import type { AssistantAttachment, AssistantGenerationProposal, AssistantSkillSelection, AssistantPlan } from "@/services/api/agent-assistant";
+import type { AssistantAttachment, AssistantGenerationProposal, AssistantSkillSelection, AssistantPlan, CreateAssistantMandateInput } from "@/services/api/agent-assistant";
 import type { CanvasNodeData } from "@/types/canvas";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { SkillInstallModal } from "@/pages/skills/skill-install-modal";
@@ -18,6 +18,7 @@ import { attachmentFromCanvasReference, attachmentRangeError, readAssistantInput
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
 import { ASSISTANT_CONTINUE_PROMPT, ASSISTANT_CHECK_RESULTS_PROMPT, ASSISTANT_STARTER_PROMPTS, appendAssistantDraft, assistantSkillLabel, assistantStatusNotice, assistantVisibleReply } from "./canvas-assistant-copy";
 import { CanvasAssistantComposer } from "./canvas-assistant-composer";
+import { CanvasAssistantApprovalCard, CanvasAssistantMandateBar } from "./canvas-assistant-approval-card";
 import { CanvasAssistantReply, CanvasAssistantTurnView, CanvasAssistantUserMessage } from "./canvas-assistant-turn";
 import { AssistantReasoning } from "@/components/ai/message-reasoning";
 import { usePluginSlot } from "@/lib/plugins/slot-registry";
@@ -33,7 +34,7 @@ type Props = {
     selectedNodeIds: string[];
     references: CanvasResourceReference[];
     onLocateNodes: (nodeIds: string[]) => void;
-    onRunProposal: (proposal: AssistantGenerationProposal, turnId: string) => void;
+    onRunProposal: (proposal: AssistantGenerationProposal, turnId: string, createMandate?: CreateAssistantMandateInput) => void;
     onOpenModelSettings: () => void;
     proposalFeedback?: Record<string, string>;
     runningProposalIds?: ReadonlySet<string>;
@@ -160,7 +161,7 @@ export function CanvasAssistantSidebar(props: Props) {
     useLayoutEffect(() => {
         const node = logRef.current;
         if (node && followLatestRef.current) node.scrollTop = node.scrollHeight;
-    }, [turnCount, assistant.streamed, assistant.reasoning, assistant.pendingUserText, assistant.lifecycleNotice, props.proposalFeedback]);
+    }, [turnCount, assistant.streamed, assistant.reasoning, assistant.pendingUserText, assistant.lifecycleNotice, assistant.pendingApprovals.length, props.proposalFeedback]);
 
     const notice = assistant.status && !assistant.status.available && assistant.status.reason !== "host_starting" ? assistantStatusNotice(assistant.status.reason) : null;
     const inputReady = draftLoaded && loadedDraftIdentity === draftIdentity;
@@ -405,6 +406,7 @@ export function CanvasAssistantSidebar(props: Props) {
                         proposalFeedback={props.proposalFeedback}
                         runningProposalIds={props.runningProposalIds}
                         generationDisabled={assistant.streaming || assistant.sessionBusy || assistant.compacting || assistant.awaitingReceipt || !assistant.historyLoaded || Boolean(assistant.historyError)}
+                        hasActiveMandate={Boolean(assistant.activeMandate && assistant.activeMandate.status === "active")}
                         onLocate={onLocateNodes}
                         onUndo={(turnId) => void assistant.undoTurn(turnId)}
                         onFork={!readOnly && Boolean(assistant.sessionId?.startsWith("durable:")) ? (turnId) => void assistant.forkSession(turnId) : undefined}
@@ -422,6 +424,12 @@ export function CanvasAssistantSidebar(props: Props) {
                 ))}
 
                 <CanvasAssistantPlan plan={assistant.plan} />
+                <CanvasAssistantMandateBar
+                    mandate={assistant.activeMandate}
+                    busy={assistant.mandateBusy}
+                    readOnly={readOnly}
+                    onRevoke={() => void assistant.revokeActiveMandate()}
+                />
                 <AssistantPublicationEntry canvasId={assistant.canvasId} turnCount={assistant.turns.length} running={assistant.streaming} />
                 {props.continuation?.notice ? <div className="canvas-assistant-card" aria-label="自动继续状态">
                     <span role="status">{props.continuation.notice}</span>
@@ -461,6 +469,19 @@ export function CanvasAssistantSidebar(props: Props) {
                     </div>
                 ) : null}
 
+                {assistant.pendingApprovals.map((approval) => (
+                    <CanvasAssistantApprovalCard
+                        key={approval.proposalId}
+                        approval={approval}
+                        busy={assistant.decidingApprovalIds.has(approval.proposalId)}
+                        disabled={readOnly}
+                        feedback={assistant.approvalFeedback[approval.proposalId]}
+                        onApproveOnce={(proposalId) => void assistant.approvePendingTool(proposalId)}
+                        onApproveMandate={(proposalId, createMandate) => void assistant.approvePendingTool(proposalId, { createMandate })}
+                        onReject={(proposalId) => void assistant.rejectPendingTool(proposalId)}
+                    />
+                ))}
+
                 {!assistant.pendingUserText && !assistant.pendingAttachments.length ? assistant.supplements.filter(item => item.status !== "accepted").map((item, index) => <div key={`unconfirmed:${index}`} className="canvas-assistant-supplement">
                     <CanvasAssistantUserMessage text={item.text} selectedCount={0} />
                     <p className="canvas-assistant-meta" role="status">{item.status === "sending" ? "正在确认补充要求是否收到…" : "未能确认收到补充要求。请查看最新回复后再决定是否发送。"}</p>
@@ -489,8 +510,10 @@ export function CanvasAssistantSidebar(props: Props) {
                 onPermissionChange={assistant.setPermissionMode}
                 thinkingLevel={assistant.thinkingLevel}
                 onThinkingLevelChange={(level) => void assistant.setThinkingLevel(level)}
-                autoConfirmMaxCny={assistant.autoConfirmMaxCny}
-                onAutoConfirmMaxCnyChange={!readOnly ? (limit) => void assistant.setAutoConfirmMaxCny(limit) : undefined}
+                activeMandate={assistant.activeMandate}
+                mandateBusy={assistant.mandateBusy}
+                onCreateMandate={!readOnly ? (input) => void assistant.createMandate(input) : undefined}
+                onRevokeMandate={!readOnly ? () => void assistant.revokeActiveMandate() : undefined}
                 contextUsage={assistant.contextUsage}
                 canCompact={Boolean(assistant.sessionId?.startsWith("durable:")) && assistant.turns.length > 0}
                 compacting={assistant.compacting}

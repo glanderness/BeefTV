@@ -49,23 +49,33 @@ export function createDurableSessionRepository({
   thinkingLevel,
   isDurableSessionId,
   fail,
+  opsRequest = null,
+  precheckTool = null,
+  enableImageFitting = true,
+  maxInlineImageChars = undefined,
 }) {
   const directory = (canvasId) => path.join(sessionRoot, canvasKey(canvasId));
   const durableDirectory = (canvasId) => path.join(directory(canvasId), 'durable');
   const currentPath = (canvasId) => path.join(directory(canvasId), 'current.json');
   const borrowed = new Map();
   let openCount = 0;
-  // Single-layer bounded transient retry:
+  // Single-layer bounded transient retry + native Pi stream metadata.user_id affinity:
   // - Keep Layer 1 stream.maxRetries=0 (pi-ai provider-retry retries all 429s blindly without inspecting quota/billing).
   // - Enable Layer 2 Durable retry (isRetryableAssistantError excludes quota/billing, while Path A + Path B guards
   //   prevent double-billing after any partial output or crash-restart convertPartial).
-  const defaultHarnessSettings = () => ({
-    stream: { timeoutMs: 180000, maxRetries: 0, cacheRetention: resolveHostCacheRetention() },
+  const defaultHarnessSettings = (sessionId = '') => ({
     retry: { enabled: true, maxRetries: 2, baseDelayMs: 1500, maxAgentDelayMs: 15000 },
     afterFailedRun: 'continue',
     toolExecution: 'parallel',
     steeringMode: 'all',
     ...settings,
+    stream: {
+      timeoutMs: 180000,
+      maxRetries: 0,
+      cacheRetention: resolveHostCacheRetention(),
+      ...(sessionId ? { metadata: { user_id: sessionId } } : {}),
+      ...(settings?.stream && typeof settings.stream === 'object' ? settings.stream : {}),
+    },
   });
 
   function publish(entry) {
@@ -177,6 +187,10 @@ export function createDurableSessionRepository({
       codemodeSandbox,
       dispatchDiagnostics,
       ensureRunTurnHandoff,
+      opsRequest,
+      precheckTool,
+      enableImageFitting,
+      maxInlineImageChars,
     });
     openCount += 1;
     try {
@@ -185,7 +199,7 @@ export function createDurableSessionRepository({
         registry,
         readOnly,
         ...(telemetry ? { telemetry } : {}),
-        settings: defaultHarnessSettings(),
+        settings: defaultHarnessSettings(sessionId),
       }, CTX);
     } catch (error) {
       if (isCorruptSessionArtifactError(error)) {
@@ -398,6 +412,8 @@ export function createDurableSessionRepository({
       if (parkedTools.length > 0) {
         active.parked = true;
         active.parkedTools = parkedTools;
+        const pendingApprovals = parkedTools.filter((item) => item?.approval).map((item) => item.approval);
+        if (pendingApprovals.length > 0) active.pendingApprovals = pendingApprovals;
         const projectedLifecycle = durableLifecycleState(null, { type: 'snapshot', docs: { 'pi.live': live } });
         if (projectedLifecycle) active.lifecycle = projectedLifecycle;
       }
@@ -624,6 +640,8 @@ export function createDurableSessionRepository({
           codemodeSandbox,
           dispatchDiagnostics,
           ensureRunTurnHandoff,
+          opsRequest,
+          precheckTool,
         });
         openCount += 1;
         dstEntry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${newUuid}.sqlite`)), {
@@ -631,7 +649,7 @@ export function createDurableSessionRepository({
           registry,
           readOnly: false,
           ...(telemetry ? { telemetry } : {}),
-          settings: defaultHarnessSettings(),
+          settings: defaultHarnessSettings(newSessionId),
         }, CTX);
         const parentConv = await dstEntry.harness.conversation(srcConvId, CTX);
         if (!parentConv) throw fail('corrupt_session_manifest');
@@ -673,7 +691,6 @@ export function createDurableSessionRepository({
           doc.plan = restoredPlan;
           doc.loadedSkills = (doc.loadedSkills || []).filter((item) => keptTurnIds.has(item?.turnId));
           doc.pendingSkillRollback = null;
-          doc.roundProposes = false;
           doc.lastStudioSnapshot = null;
           doc.lastStudioSnapshotRevision = null;
           doc.studioDigestText = '';
