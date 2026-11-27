@@ -24,6 +24,7 @@ export function isGenerationTaskSubmissionUncertain(task: GenerationTaskDisplayT
 }
 
 export function generationTaskStatusLabel(task: GenerationTaskDisplayTarget) {
+    if (task.stage === "recovery_stopped") return "待取回结果";
     const outcome = normalizeTaskOutcome(task.outcome);
     if (outcome) {
         return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus }).badge;
@@ -34,6 +35,7 @@ export function generationTaskStatusLabel(task: GenerationTaskDisplayTarget) {
 }
 
 export function generationTaskStageLabel(task: GenerationTaskDisplayTarget) {
+    if (task.stage === "recovery_stopped") return "已停止自动取回，可手动继续取回";
     const outcome = normalizeTaskOutcome(task.outcome);
     if (
         outcome &&
@@ -53,6 +55,7 @@ export function generationTaskStageLabel(task: GenerationTaskDisplayTarget) {
 }
 
 export function generationTaskShowsProgress(task: GenerationTaskDisplayTarget) {
+    if (task.stage === "recovery_stopped") return false;
     const outcome = normalizeTaskOutcome(task.outcome);
     if (outcome && outcome.phase !== "running" && outcome.phase !== "fetching") return false;
     if (isGenerationTaskSubmissionUncertain(task) || task.stage === "delivery_paused" || task.stage === "delivery_timed_out") return false;

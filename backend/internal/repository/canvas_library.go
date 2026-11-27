@@ -1,7 +1,11 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -14,6 +18,12 @@ var (
 	ErrCanvasLibraryFolderMissing = errors.New("canvas library folder missing")
 	ErrCanvasLibraryFolderDeleted = errors.New("canvas library folder deleted")
 	ErrCanvasDrawingDeleted       = errors.New("canvas drawing deleted")
+	ErrCanvasProjectDeleted       = fmt.Errorf("%w: canvas project deleted", ErrCanvasRevisionConflict)
+)
+
+const (
+	deletedCanvasTombstonesSettingKey = "deleted_canvas_tombstones"
+	maxDeletedCanvasTombstones        = 4096
 )
 
 func liveCanvasLibraryFolders(db *gorm.DB) *gorm.DB {
@@ -270,6 +280,13 @@ func (r *Repository) UpsertCanvasProject(project *model.CanvasProject) error {
 		return ErrCanvasRevisionConflict
 	}
 	if expected == 0 {
+		deleted, err := isCanvasProjectTombstoned(r.db, project.UserID, project.ID)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			return ErrCanvasProjectDeleted
+		}
 		created := *project
 		created.Revision = 1
 		result := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&created)
@@ -297,6 +314,12 @@ func (r *Repository) UpsertCanvasProject(project *model.CanvasProject) error {
 	return nil
 }
 
+func (r *Repository) ClearDeletedCanvasProjectTombstone(userID, id string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return clearCanvasProjectTombstone(tx, userID, id, time.Now().UTC())
+	})
+}
+
 func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		// Serialize deletion with saves before reading the history IDs to remove.
@@ -318,9 +341,111 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 				return err
 			}
 		}
+		if err := recordCanvasProjectTombstone(tx, userID, id, time.Now().UTC()); err != nil {
+			return err
+		}
 		// Historical tasks keep project_id. There is no FK from tasks to canvases;
 		// clearing the id would make a reload look like standalone work and start
 		// a new paid run. Retry fail-closes because the canvas row is gone.
 		return tx.Delete(&model.CanvasProject{}, "id = ? AND user_id = ?", id, userID).Error
 	})
+}
+
+func canvasProjectTombstoneKey(userID, id string) string {
+	return strings.TrimSpace(userID) + "\x00" + strings.TrimSpace(id)
+}
+
+func loadCanvasProjectTombstones(db *gorm.DB) (map[string]int64, error) {
+	var setting model.SystemSetting
+	err := db.First(&setting, "key = ?", deletedCanvasTombstonesSettingKey).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return map[string]int64{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	tombstones := map[string]int64{}
+	if strings.TrimSpace(setting.ValueJSON) == "" {
+		return tombstones, nil
+	}
+	if err := json.Unmarshal([]byte(setting.ValueJSON), &tombstones); err != nil {
+		return map[string]int64{}, nil
+	}
+	return tombstones, nil
+}
+
+func saveCanvasProjectTombstones(tx *gorm.DB, tombstones map[string]int64, now time.Time) error {
+	if len(tombstones) > maxDeletedCanvasTombstones {
+		type entry struct {
+			key string
+			at  int64
+		}
+		entries := make([]entry, 0, len(tombstones))
+		for k, at := range tombstones {
+			entries = append(entries, entry{key: k, at: at})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].at != entries[j].at {
+				return entries[i].at < entries[j].at
+			}
+			return entries[i].key < entries[j].key
+		})
+		for _, stale := range entries[:len(entries)-maxDeletedCanvasTombstones] {
+			delete(tombstones, stale.key)
+		}
+	}
+	encoded, err := json.Marshal(tombstones)
+	if err != nil {
+		return err
+	}
+	setting := model.SystemSetting{
+		Key:       deletedCanvasTombstonesSettingKey,
+		ValueJSON: string(encoded),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	return tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value_json", "updated_at"}),
+	}).Create(&setting).Error
+}
+
+func isCanvasProjectTombstoned(db *gorm.DB, userID, id string) (bool, error) {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(id) == "" || !db.Migrator().HasTable(&model.SystemSetting{}) {
+		return false, nil
+	}
+	tombstones, err := loadCanvasProjectTombstones(db)
+	if err != nil {
+		return false, err
+	}
+	_, deleted := tombstones[canvasProjectTombstoneKey(userID, id)]
+	return deleted, nil
+}
+
+func recordCanvasProjectTombstone(tx *gorm.DB, userID, id string, now time.Time) error {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(id) == "" || !tx.Migrator().HasTable(&model.SystemSetting{}) {
+		return nil
+	}
+	tombstones, err := loadCanvasProjectTombstones(tx)
+	if err != nil {
+		return err
+	}
+	tombstones[canvasProjectTombstoneKey(userID, id)] = now.UnixNano()
+	return saveCanvasProjectTombstones(tx, tombstones, now)
+}
+
+func clearCanvasProjectTombstone(tx *gorm.DB, userID, id string, now time.Time) error {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(id) == "" || !tx.Migrator().HasTable(&model.SystemSetting{}) {
+		return nil
+	}
+	tombstones, err := loadCanvasProjectTombstones(tx)
+	if err != nil {
+		return err
+	}
+	key := canvasProjectTombstoneKey(userID, id)
+	if _, exists := tombstones[key]; !exists {
+		return nil
+	}
+	delete(tombstones, key)
+	return saveCanvasProjectTombstones(tx, tombstones, now)
 }

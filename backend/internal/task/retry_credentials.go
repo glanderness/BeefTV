@@ -15,7 +15,7 @@ type credentialRetryStore interface {
 }
 
 func (s *Service) validateRetryCredentialRefresh(task *model.Task, refresh retryCredentialRefresh) error {
-	if task.InputJSON != refresh.expectedInputJSON || task.ProviderRequestID != "" || task.PollStage != "" || task.NextPollAt != nil || task.Stage == "submission_unknown" {
+	if task.InputJSON != refresh.expectedInputJSON || task.ProviderRequestID != "" || task.PollStage != "" || task.NextPollAt != nil || task.Stage == "submission_unknown" || task.Stage == model.TaskStageRecoveryStopped {
 		return kernel.BadAuthRequest("原任务已被接纳或状态发生变化，请先查询原任务，避免重复生成")
 	}
 	previous, err := s.deps.Secrets.DecryptInputJSON(task.InputJSON)

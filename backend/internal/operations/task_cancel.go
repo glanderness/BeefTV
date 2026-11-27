@@ -42,9 +42,16 @@ func opTaskCancel(ctx *Context, params json.RawMessage) (any, error) {
 	if before == nil {
 		return nil, NotFound("task_not_found", "任务不存在")
 	}
-	// 只有这几种状态有取消语义；其余状态直接说明，不把内部错误伪装成业务冲突。
+	// 只有这几种状态有取消或停止自动取回语义；其余状态直接说明，不把内部错误伪装成业务冲突。
 	switch before.Status {
 	case model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusCancelled, model.TaskStatusSucceeded:
+	case model.TaskStatusFailed:
+		if before.Outcome == nil || before.Outcome.Phase != "retrievable" {
+			return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(before.Status)+"，无法取消", map[string]any{
+				"taskId": taskID,
+				"status": before.Status,
+			})
+		}
 	default:
 		return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(before.Status)+"，无法取消", map[string]any{
 			"taskId": taskID,
@@ -107,6 +114,8 @@ func taskCancelNote(previous model.TaskStatus, current model.TaskStatus) string 
 		return "已请求取消。上游已经受理的任务可能已经计费，这里不承诺退款。"
 	case current == model.TaskStatusSucceeded:
 		return "任务已经完成，已停止继续取回产物。上游可能已经计费，这里不承诺退款。"
+	case current == model.TaskStatusFailed:
+		return "已停止自动取回，已提交任务的结果仍会保留，之后可随时手动继续取回。"
 	default:
 		return "已请求取消。上游已经受理的任务可能已经计费，这里不承诺退款。"
 	}

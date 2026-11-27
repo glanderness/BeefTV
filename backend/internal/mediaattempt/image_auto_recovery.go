@@ -115,7 +115,7 @@ func (s *Service) RecoverFailedImage(ctx context.Context, candidate model.Task) 
 		return err
 	}
 	recheck := s.ManagedImageNeedsRecheck(*task)
-	if task.LeaseOwner != owner || task.Status != model.TaskStatusFailed || (!ImageRecoveryNeedsPolling(*task) && !recheck) {
+	if task.LeaseOwner != owner || task.Status != model.TaskStatusFailed || (!localtask.ManualRecovery(ctx) && task.Stage == model.TaskStageRecoveryStopped) || (!ImageRecoveryNeedsPolling(*task) && !recheck) {
 		return nil
 	}
 	var outcome string

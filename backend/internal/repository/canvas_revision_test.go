@@ -120,3 +120,77 @@ func testCanvasRevision(t *testing.T, db *gorm.DB) {
 	}
 	t.Run("history", func(t *testing.T) { testCanvasHistory(t, db) })
 }
+
+func TestDeleteCanvasProjectDurableTombstoneBlocksLateRevisionZeroAcrossRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "tombstone.db")
+	openDB := func() *gorm.DB {
+		db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sqlDB, _ := db.DB()
+		sqlDB.SetMaxOpenConns(1)
+		return db
+	}
+
+	db1 := openDB()
+	if err := db1.AutoMigrate(
+		&model.CanvasProject{},
+		&model.CanvasSnapshot{},
+		&model.CanvasSnapshotResource{},
+		&model.CanvasUnitLink{},
+		&model.SystemSetting{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	repo1 := New(db1)
+
+	// Case 1: Existing canvas deleted -> late revision=0 create must fail before AND after restart.
+	project := model.CanvasProject{ID: "canvas-zombie", UserID: "owner", Title: "draft", PayloadJSON: `{"nodes":[]}`}
+	if err := repo1.UpsertCanvasProject(&project); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo1.DeleteCanvasProject("owner", "canvas-zombie"); err != nil {
+		t.Fatal(err)
+	}
+	// Case 2: Delete arrives BEFORE initial revision=0 create (never persisted row) -> tombstone still blocks late create.
+	if err := repo1.DeleteCanvasProject("owner", "canvas-raced-before-create"); err != nil {
+		t.Fatal(err)
+	}
+	sqlDB1, _ := db1.DB()
+	if err := sqlDB1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate full backend restart by opening a brand new DB connection & Repository.
+	db2 := openDB()
+	sqlDB2, _ := db2.DB()
+	t.Cleanup(func() { _ = sqlDB2.Close() })
+	repo2 := New(db2)
+
+	for _, id := range []string{"canvas-zombie", "canvas-raced-before-create"} {
+		late := model.CanvasProject{ID: id, UserID: "owner", Title: "resurrected", PayloadJSON: `{"nodes":[]}`, Revision: 0}
+		err := repo2.UpsertCanvasProject(&late)
+		if !errors.Is(err, ErrCanvasProjectDeleted) || !errors.Is(err, ErrCanvasRevisionConflict) {
+			t.Fatalf("late revision=0 create for deleted %q returned %v, want ErrCanvasProjectDeleted/ErrCanvasRevisionConflict", id, err)
+		}
+		if _, lookupErr := repo2.CanvasProjectForUser("owner", id); !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			t.Fatalf("deleted canvas %q resurrected in DB: err=%v", id, lookupErr)
+		}
+	}
+
+	// Other user or other ID is unaffected.
+	other := model.CanvasProject{ID: "canvas-fresh", UserID: "owner", Title: "fresh", PayloadJSON: `{"nodes":[]}`, Revision: 0}
+	if err := repo2.UpsertCanvasProject(&other); err != nil || other.Revision != 1 {
+		t.Fatalf("fresh canvas create failed: rev=%d err=%v", other.Revision, err)
+	}
+
+	// Explicit recycle-bin restore clears tombstone and permits recreate.
+	if err := repo2.ClearDeletedCanvasProjectTombstone("owner", "canvas-zombie"); err != nil {
+		t.Fatal(err)
+	}
+	restored := model.CanvasProject{ID: "canvas-zombie", UserID: "owner", Title: "restored", PayloadJSON: `{"nodes":[]}`, Revision: 0}
+	if err := repo2.UpsertCanvasProject(&restored); err != nil || restored.Revision != 1 {
+		t.Fatalf("explicit restore after clearing tombstone failed: rev=%d err=%v", restored.Revision, err)
+	}
+}

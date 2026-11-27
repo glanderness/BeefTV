@@ -18,6 +18,7 @@ const (
 	TaskStageFetchingResult   = "正在取回结果"
 	TaskStageDeliveryPaused   = "delivery_paused"
 	TaskStageDeliveryTimedOut = "delivery_timed_out"
+	TaskStageRecoveryStopped  = "recovery_stopped"
 )
 
 // RevisionWatchCanvasBindReasons are terminal canvas bind refusals that can

@@ -52,7 +52,7 @@ export type CanvasDocumentPatchResult = {
     document?: Record<string, unknown>;
 };
 
-export async function patchCanvasDocument(input: CanvasDocumentPatchInput) {
+export async function patchCanvasDocument(input: CanvasDocumentPatchInput, signal?: AbortSignal) {
     return executeWorkspaceOperation<CanvasDocumentPatchResult>("canvas.document.patch", {
         opId: input.operationId,
         params: {
@@ -71,7 +71,7 @@ export async function patchCanvasDocument(input: CanvasDocumentPatchInput) {
             ...(input.expectedFields && Object.keys(input.expectedFields).length ? { expectedFields: input.expectedFields } : {}),
             ...(input.forceHistorySnapshot ? { forceHistorySnapshot: true } : {}),
         },
-    });
+    }, signal);
 }
 
 export async function executeWorkspaceOperation<T>(
@@ -88,7 +88,7 @@ export async function commitCanvasDocument(input: {
     canvasId: string;
     expectedRevision: number;
     document: Record<string, unknown>;
-}) {
+}, signal?: AbortSignal) {
     return executeWorkspaceOperation<CanvasDocumentCommitResult>("canvas.document.commit", {
         opId: input.operationId,
         params: {
@@ -96,7 +96,7 @@ export async function commitCanvasDocument(input: {
             expectedRevision: input.expectedRevision,
             document: input.document,
         },
-    });
+    }, signal);
 }
 
 export type CanvasTaskBindReceipt = {

@@ -682,7 +682,8 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, canvasData.RequestMaxBodyBytes())
 		var req struct {
-			Project json.RawMessage `json:"project"`
+			Project        json.RawMessage `json:"project"`
+			RestoreDeleted bool            `json:"restoreDeleted"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
@@ -705,7 +706,12 @@ func registerUserDataRoutes(r *gin.RouterGroup, owners workspaceOwners, canvasDa
 		if audit.Revision != nil {
 			baseRevision = *audit.Revision
 		}
-		project, err := canvasData.UpsertUserCanvasProject(user.ID, req.Project)
+		var project canvas.UserDataSummary
+		if req.RestoreDeleted {
+			project, err = canvasData.RestoreDeletedUserCanvasProject(user.ID, req.Project)
+		} else {
+			project, err = canvasData.UpsertUserCanvasProject(user.ID, req.Project)
+		}
 		defer func() {
 			nodesBefore, nodesAfter := -1, len(audit.Nodes)
 			if project.SaveAudit != nil {

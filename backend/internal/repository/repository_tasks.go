@@ -312,6 +312,19 @@ func (r *Repository) CancelTaskIfStatus(userID string, id string, expected model
 	return result.RowsAffected == 1, result.Error
 }
 
+// StopTaskRecoveryIfFailed stops automatic background recovery polling on a
+// failed retrievable task without cancelling it or discarding its paid output.
+func (r *Repository) StopTaskRecoveryIfFailed(userID string, id string, now time.Time) (bool, error) {
+	result := r.db.Model(&model.Task{}).
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.TaskStatusFailed).
+		Updates(map[string]any{
+			"stage":        model.TaskStageRecoveryStopped,
+			"next_poll_at": nil,
+			"updated_at":   now,
+		})
+	return result.RowsAffected == 1, result.Error
+}
+
 // 上游取消先落库再发请求；条件更新保证并发和重复取消只有一个调用方取得发送权。
 func (r *Repository) ClaimTaskProviderCancellation(userID string, id string, now time.Time) error {
 	result := r.db.Model(&model.Task{}).

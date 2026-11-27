@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
 import { TaskDetailItem } from "./canvas-project-feedback";
 import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
-import { canRecoverTaskOutcome, readTaskOutcome } from "@/lib/task-outcome";
+import { canRecoverTaskOutcome, readTaskOutcome, taskStopActionKind, taskStopActionLabel } from "@/lib/task-outcome";
 import { formatTaskLog, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasImageHistoryItem, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import { CanvasVideoViewer } from "@/components/canvas/image-viewer/canvas-video-viewer";
@@ -40,6 +40,8 @@ type CanvasProjectStatusDialogsProps = {
 export function CanvasProjectStatusDialogs({ projectId, readOnly, theme, task, taskLogs, taskLoading, taskError, previewNode, clearConfirmOpen, onCloseTask, onCancelTask, onRetrieveTask, retrievingTaskId, onClosePreview, onSelectPrimaryImage, onRemoveHistoryItem, onSyncDiscoveredHistory, onApplyImageParameters, onOpenNodeInfo, onCancelClear, onConfirmClear }: CanvasProjectStatusDialogsProps) {
     const config = useEffectiveConfig();
     const previewSource = useResolvedPreviewSource(previewNode);
+    const stopAction = task ? taskStopActionKind(task) : null;
+    const stopLabel = stopAction ? taskStopActionLabel(stopAction) : null;
     return (
         <>
             <Modal title="任务详情" open={Boolean(task)} footer={null} width="min(920px, calc(100vw - 32px))" onCancel={onCloseTask}>
@@ -72,10 +74,10 @@ export function CanvasProjectStatusDialogs({ projectId, readOnly, theme, task, t
                                 <Button loading={retrievingTaskId === task.id} onClick={() => onRetrieveTask(task)}>取回结果</Button>
                             </div>
                         ) : null}
-                        {onCancelTask && (task.status === "queued" || task.status === "running") ? (
+                        {onCancelTask && stopLabel ? (
                             <div className="flex justify-end">
-                                <Button danger icon={<XCircle className="size-4" />} onClick={() => onCancelTask(task)}>
-                                    取消任务
+                                <Button danger={stopAction === "cancel"} icon={<XCircle className="size-4" />} onClick={() => onCancelTask(task)}>
+                                    {stopLabel}
                                 </Button>
                             </div>
                         ) : null}

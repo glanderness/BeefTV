@@ -502,10 +502,11 @@ describe("canvas lazy hydration", () => {
         await repository.hydrateLocalCanvasProjectsFromBackend();
         expect(projects[0]?.summaryOnly).toBe(true);
 
-        // Non-404 preload error aborts deletion before issuing DELETE.
-        await expect(repository.deleteLocalCanvasProjects(["canvas-1"])).rejects.toThrow("后端暂时不可用");
-        expect(writeRequests).toEqual([]);
-        expect(projects.some((item) => item.id === "canvas-1")).toBe(true);
+        // Non-404 preload error is best-effort: skips recycle-bin snapshot and proceeds with DELETE.
+        await repository.deleteLocalCanvasProjects(["canvas-1"]);
+        expect(writeRequests).toEqual([{ method: "DELETE", path: "/canvas-projects/canvas-1" }]);
+        expect(projects.some((item) => item.id === "canvas-1")).toBe(false);
+        expect(recordedDeletedProjects).toHaveLength(0);
 
         // History-free rollback deletion removes without polluting recycle bin.
         await repository.deleteLocalCanvasProjects(["canvas-2"], { recordHistory: false });
@@ -513,6 +514,7 @@ describe("canvas lazy hydration", () => {
 
         await repository.deleteLocalCanvasProjects(["canvas-0"]);
         expect(writeRequests).toEqual([
+            { method: "DELETE", path: "/canvas-projects/canvas-1" },
             { method: "DELETE", path: "/canvas-projects/canvas-2" },
             { method: "DELETE", path: "/canvas-projects/canvas-0" },
         ]);

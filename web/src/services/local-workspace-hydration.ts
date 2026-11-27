@@ -275,8 +275,8 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
 }
 
 /** Read the durable document without adopting it or hiding errors behind local state. */
-export async function readLocalCanvasProjectFromBackend(id: string): Promise<CanvasProject> {
-    const response = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`);
+export async function readLocalCanvasProjectFromBackend(id: string, signal?: AbortSignal): Promise<CanvasProject> {
+    const response = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`, signal ? { signal } : undefined);
     if (!response.project) throw new Error("画布读取失败，请重试");
     return normalizeCanvasProjectGraph(response.project);
 }

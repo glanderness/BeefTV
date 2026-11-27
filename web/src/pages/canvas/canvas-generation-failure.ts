@@ -188,12 +188,18 @@ export function canvasGenerationTaskNodes(nodes: CanvasNodeData[], targetNodeId:
         // 后端已经判死（outcome.phase=failed）时，前端不能再合成「继续取回」把它盖掉。
         const backendTerminalFailure = task.outcome?.phase === "failed";
         const retainRecovery = task.status === "succeeded" && !backendTerminalFailure && !hasCompletedContent && (targetUnavailable || existingOutcome?.phase === "retrievable" || CLIENT_DELIVERY_FAILURE_CODES.has(node.metadata?.generationErrorCode || ""));
+        const stoppedRecovery = task.status === "failed" && task.stage === "recovery_stopped";
         const failure = paused
             ? {
                   taskOutcome: task.outcome ?? deliveryPendingTaskOutcome(),
                   generationErrorCode: "download_failed" as const,
                   errorDetails: task.stage === "delivery_timed_out" ? "取回结果已超时，可以继续取回" : "已停止取回，可以继续取回",
               }
+            : stoppedRecovery
+              ? {
+                    ...canvasTaskFailureMetadata(task, node.metadata),
+                    errorDetails: "已停止自动取回，可随时点击继续取回",
+                }
             : failed
               ? canvasTaskFailureMetadata(task, node.metadata)
               : undefined;

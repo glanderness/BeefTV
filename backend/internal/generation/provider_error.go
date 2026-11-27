@@ -256,6 +256,9 @@ func ClassifyError(err error) Failure {
 	if errors.As(err, &protocolPreparation) {
 		return normalizeFailure(Failure{Category: CategoryModelMissing, Reason: protocolPreparation.Error(), Action: "本次请求尚未提交，请检查所选模型的插件是否已安装、启用并支持该生成类型"})
 	}
+	if errors.Is(err, errUpstreamReadIdle) {
+		return normalizeFailure(Failure{Category: CategoryTimeout, Retryable: true, Reason: "模型流式响应长时间无数据返回，已超时中止"})
+	}
 	if errors.Is(err, context.Canceled) {
 		return normalizeFailure(Failure{Category: CategoryCancelled})
 	}

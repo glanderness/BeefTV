@@ -268,6 +268,13 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 	return s.upsertUserCanvasProjectWithHistory(userID, raw, "automatic")
 }
 
+// RestoreDeletedUserCanvasProject explicitly clears a canvas deletion tombstone
+// and recreates the canvas from a user-initiated recycle-bin restore.
+func (s *Service) RestoreDeletedUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
+	summary, _, _, err := s.upsertUserCanvasProject(userID, raw, nil, "restore", false, true)
+	return summary, err
+}
+
 func (s *Service) upsertUserCanvasProjectWithHistory(userID string, raw json.RawMessage, reason string) (UserDataSummary, error) {
 	return s.upsertUserCanvasProjectWithAssets(userID, raw, nil, reason)
 }
@@ -283,6 +290,10 @@ func (s *Service) upsertUserCanvasProjectAndPayload(userID string, raw json.RawM
 }
 
 func (s *Service) upsertUserCanvasProjectAndPayloadWithCapture(userID string, raw json.RawMessage, candidateAssets []model.Asset, reason string, includePayload bool) (UserDataSummary, json.RawMessage, bool, error) {
+	return s.upsertUserCanvasProject(userID, raw, candidateAssets, reason, includePayload, false)
+}
+
+func (s *Service) upsertUserCanvasProject(userID string, raw json.RawMessage, candidateAssets []model.Asset, reason string, includePayload bool, allowRestoreDeleted bool) (UserDataSummary, json.RawMessage, bool, error) {
 	var version struct {
 		Revision *int64 `json:"revision"`
 	}
@@ -360,6 +371,11 @@ func (s *Service) upsertUserCanvasProjectAndPayloadWithCapture(userID string, ra
 			nodesBefore = rawJSONSliceCount(previous["nodes"])
 		}
 		if err := s.repo.Transaction(func(tx *repository.Repository) error {
+			if allowRestoreDeleted && project.Revision == 0 {
+				if err := tx.ClearDeletedCanvasProjectTombstone(userID, project.ID); err != nil {
+					return err
+				}
+			}
 			if len(candidateAssets) > 0 {
 				if _, err := s.Library().WithRepository(tx).PersistPreparedAssets(userID, candidateAssets); err != nil {
 					return err

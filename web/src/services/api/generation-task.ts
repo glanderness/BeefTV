@@ -55,6 +55,8 @@ type BackendGenerationTaskOptions = {
     metadata?: Record<string, unknown>;
     onTaskUpdate?: (task: GenerationTask) => void;
     onTextDelta?: (text: string) => void;
+    useTextEvents?: boolean;
+    timeoutMs?: number;
     resolveReferenceLinks?: ResolveReferenceLinks;
     streamText?: boolean;
     enableThinking?: boolean;
@@ -101,6 +103,8 @@ export async function runBackendGenerationTask(
         metadata,
         onTaskUpdate,
         onTextDelta,
+        useTextEvents,
+        timeoutMs,
         streamText,
         enableThinking,
         clientOperationId,
@@ -115,7 +119,7 @@ export async function runBackendGenerationTask(
     const prepared = await prepareGenerationReferences({ config, mode, referenceImages, referenceVideos, referenceAudios, mask });
     throwIfAborted(signal);
     return createAndWaitGenerationTask(
-        { projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate, onTextDelta, streamText, enableThinking, clientOperationId, retryOf, attemptGroupId, resolveReferenceLinks },
+        { projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate, onTextDelta, useTextEvents, timeoutMs, streamText, enableThinking, clientOperationId, retryOf, attemptGroupId, resolveReferenceLinks },
         prepared,
         dependencies,
     );
@@ -274,8 +278,15 @@ function usesArkVideoAssetReference(config: AiConfig) {
 
 async function createAndWaitGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies) {
     const task = await createBackendGenerationTask(options, prepared, dependencies);
-    const { signal, onTaskUpdate, onTextDelta } = options;
-    const completed = await dependencies.waitTask(task.id, { signal, initialTask: task, onTaskUpdate, onTextDelta });
+    const { signal, onTaskUpdate, onTextDelta, useTextEvents, timeoutMs } = options;
+    const completed = await dependencies.waitTask(task.id, {
+        signal,
+        initialTask: task,
+        onTaskUpdate,
+        onTextDelta,
+        ...(useTextEvents !== undefined ? { useTextEvents } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    });
     return parseBackendGenerationResult(completed);
 }
 

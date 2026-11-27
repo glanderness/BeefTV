@@ -137,7 +137,7 @@ export async function restoreDeletedCanvasProjects(
     if (isLocalWorkspaceMode()) {
         for (const restored of candidates) {
             try {
-                await syncLocalCanvasProjectToBackend(restored.id);
+                await syncLocalCanvasProjectToBackend(restored.id, { allowRestoreDeleted: true });
                 restoredIds.push(restored.id);
             } catch (error) {
                 failedIds.push(restored.id);

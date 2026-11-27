@@ -10,6 +10,7 @@ import { canConvertCanvasVideoDraft, resolveCanvasVideoDraftSource } from "@/lib
 import type { InlineVideoTrimRange } from "@/lib/canvas/canvas-video-inline-trim";
 import { buildCanvasVideoRetake, canvasVideoRetakeModel } from "@/lib/canvas/canvas-video-retake";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { taskStopActionKind } from "@/lib/task-outcome";
 
 import { promoteLegacyBatchTableSize } from "@/lib/canvas/canvas-batch-table";
 import { persistCanvasDocument } from "@/services/local-workspace-repository";
@@ -238,14 +239,34 @@ export function useCanvasGenerationOrchestration({
 
     const cancelCanvasTask = useCallback(
         (task: GenerationTask) => {
-            const deliveryOnly = task.status === "succeeded";
+            const stopAction = taskStopActionKind(task) ?? (task.status === "succeeded" ? "pause_download" : "cancel");
+            const dialogCopy = stopAction === "pause_download"
+                ? {
+                    title: "暂停下载结果？",
+                    content: "已生成的结果会保留，之后可以继续取回。",
+                    okText: "暂停下载",
+                    success: "已暂停下载",
+                }
+                : stopAction === "stop_retrieve"
+                  ? {
+                      title: "停止自动取回？",
+                      content: "已提交任务的结果仍会保留，停止后不再自动轮询，之后可随时手动继续取回。",
+                      okText: "停止自动取回",
+                      success: "已停止自动取回",
+                  }
+                  : {
+                      title: "取消生成任务？",
+                      content: localOnly ? "任务会立即停止本地执行。" : "任务会立即停止本地执行；如果已经提交到上游，系统会继续核对取消结果和积分状态。",
+                      okText: "取消任务",
+                      success: "任务已取消",
+                  };
             const owner = lifetime.capture(projectId);
             const isCurrent = () => lifetime.matches(owner, projectIdRef.current);
             modal.confirm({
                 ...canvasTaskConfirmation,
-                title: deliveryOnly ? "停止取回结果？" : "取消生成任务？",
-                content: deliveryOnly ? "已生成的结果会保留，之后可以继续取回。" : localOnly ? "任务会立即停止本地执行。" : "任务会立即停止本地执行；如果已经提交到上游，系统会继续核对取消结果和积分状态。",
-                okText: deliveryOnly ? "停止取回" : "取消任务",
+                title: dialogCopy.title,
+                content: dialogCopy.content,
+                okText: dialogCopy.okText,
                 cancelText: "继续等待",
                 onOk: async () => {
                     if (!isCurrent()) return;
@@ -257,7 +278,7 @@ export function useCanvasGenerationOrchestration({
                         setTaskDetail((current) => (current?.id === task.id ? next : current));
                         await queryClient.invalidateQueries({ queryKey: ["canvas-active-tasks", projectId] });
                         if (!isCurrent()) return;
-                        message.success(deliveryOnly ? "已停止取回" : "任务已取消");
+                        message.success(dialogCopy.success);
                     } catch (error) {
                         if (!isCurrent()) return;
                         message.error(error instanceof Error ? error.message : "取消任务失败");

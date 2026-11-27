@@ -242,14 +242,13 @@ test("video preview viewer toggles play/pause on Space without triggering when a
     expect(await page.evaluate(() => document.querySelector("video")!.paused)).toBe(true);
 }, 20_000);
 
-test("active task panel hides ended delivery tasks and allows cancelling running tasks", async () => {
+test("active task panel shows running and fetching tasks with outcome-derived stop labels", async () => {
     await page.goto(`${server.url}?mode=task-panel`);
     const panel = page.getByRole("region", { name: "当前画布生成任务" });
     await panel.getByRole("button", { name: /生成任务/ }).click();
-    expect(await panel.getByText("1 项", { exact: true }).count()).toBe(1);
-    expect(await panel.getByRole("listitem").count()).toBe(1);
-    expect(await panel.getByText(/正在取回结果/).count()).toBe(0);
-    expect(await panel.getByRole("button", { name: "停止取回", exact: true }).count()).toBe(0);
+    expect(await panel.getByText("2 项", { exact: true }).count()).toBe(1);
+    expect(await panel.getByRole("listitem").count()).toBe(2);
+    expect(await panel.getByRole("button", { name: "暂停下载", exact: true }).count()).toBe(1);
 
     await panel.getByRole("button", { name: "取消任务", exact: true }).click();
     await expect(page.getByTestId("cancelled-log").textContent()).resolves.toBe("task-running-1:running");

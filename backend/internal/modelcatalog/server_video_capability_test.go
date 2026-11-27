@@ -135,6 +135,44 @@ func TestWan30VideoAndMossImageDefaultCapabilitiesAndQualityAliases(t *testing.T
 	}
 }
 
+func TestMossImagePreservesExplicitCapabilityOverrides(t *testing.T) {
+	// Default preset remains intact when no explicit capability config is supplied.
+	fallback := ApplyModelSpecificImageCapability(nil, "openai-image", "moss-image-sft-1.0", "")
+	if fallback == nil || fallback.References.MaxImages != 0 || fallback.MaxOutputs != 1 || fallback.ResponseFormat.Value != ImageResponseFormatURL {
+		t.Fatalf("nil profile should fall back to official MOSS preset, got %#v", fallback)
+	}
+
+	// Explicit server/channel capability config must NOT be overwritten by MOSS defaults.
+	explicit := &ImageCapabilityConfig{
+		References:            ImageReferenceConfig{PromptMaxChars: 8000, MaxImages: 4, MaxImageBytes: 10 << 20, MaskSupported: true},
+		Size:                  ImageSizeConfig{Parameter: "size", Values: []string{"1:1", "16:9", "2048x2048", "4096x4096"}, Default: "16:9", AllowCustom: false},
+		Quality:               ImageQualityConfig{Supported: true, Values: []string{"standard", "hd"}, Default: "hd"},
+		TransparentBackground: VideoBooleanConfig{Supported: true, Default: true},
+		ResponseFormat:        ImageResponseFormat{Supported: true, Value: ImageResponseFormatBase64},
+		OutputFormat:          ParameterSupport{Supported: true},
+		MaxOutputs:            4,
+	}
+	preserved := ApplyModelSpecificImageCapability(explicit, "openai-image", "moss-image-sft-1.0", "")
+	if preserved != explicit || preserved.References.MaxImages != 4 || !preserved.References.MaskSupported || preserved.MaxOutputs != 4 || preserved.ResponseFormat.Value != ImageResponseFormatBase64 || preserved.Size.Default != "16:9" {
+		t.Fatalf("explicit MOSS capability override was clobbered: got %#v", preserved)
+	}
+
+	version := "server-v4"
+	if err := ValidateImageTask(explicit, TaskInput{
+		Config: TaskConfig{
+			InterfaceType:            "openai-image",
+			Model:                    "moss-image-sft-1.0",
+			Size:                     "4096x4096",
+			Quality:                  "hd",
+			Count:                    "3",
+			ImageCapabilitiesVersion: &version,
+		},
+		ReferenceImages: []MediaRef{{Bytes: 1024}, {Bytes: 1024}},
+	}); err != nil {
+		t.Fatalf("ValidateImageTask rejected valid request matching explicit MOSS override: %v", err)
+	}
+}
+
 func TestVideoCapabilityPreservesDeclarativeControlFieldsAcrossRoundTrip(t *testing.T) {
 	version := "server-v3"
 	enabled := true

@@ -347,8 +347,14 @@ func isExtendedGPTImageModel(protocol, modelName string) bool {
 
 // Upgrade only the old built-in GPT image choices; keep other stored limits.
 func applyModelSpecificImageCapability(profile *ImageCapabilityConfig, protocol string, modelName string, _ string) *ImageCapabilityConfig {
-	if providerpreset.SeedreamFamily(modelName) != "" || isMossImageModel(modelName) {
+	if providerpreset.SeedreamFamily(modelName) != "" {
 		return DefaultImageCapabilityConfig(protocol, modelName)
+	}
+	if isMossImageModel(modelName) {
+		if profile == nil {
+			return DefaultImageCapabilityConfig(protocol, modelName)
+		}
+		return profile
 	}
 	name := strings.ToLower(strings.TrimSpace(modelName))
 	if profile == nil || protocol != "openai-image" || (name != "gpt-image-2" && !isExtendedGPTImageModel(protocol, name)) {

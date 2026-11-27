@@ -129,37 +129,37 @@ test("legacy metadata-only history never requests a nonexistent backend task", a
     expect(reads).toEqual([]);
 });
 
-test("canvas panel only counts generating nodes and removes ended or deleted tasks", async () => {
+test("canvas panel counts active generating and auto-recovering tasks and removes ended, stopped, or deleted tasks", async () => {
     let terminal = false;
     let unavailable = false;
-    const task = (id: string, status: string, nodeId?: string, phase = "running") => ({
-        id, projectId: "test-canvas", type: "canvas_video", model: id === "live" ? "Test Live Model" : "Test Video Model", status, prompt: id === "live" ? "" : id, attempts: 1,
+    const task = (id: string, status: string, nodeId?: string, phase = "running", stage?: string) => ({
+        id, projectId: "test-canvas", type: "canvas_video", model: id === "live" ? "Test Live Model" : "Test Video Model", status, stage, prompt: id === "live" ? "" : id, attempts: 1,
         clientContext: nodeId ? { nodeId } : undefined,
-        outcome: { phase, regenerate: "blocked", reason: "provider_result_pending" },
+        outcome: { phase, regenerate: phase === "failed" ? "allowed" : "blocked", reason: phase === "failed" ? "not_charged" : "provider_result_pending" },
         createdAt: "2026-11-25T06:56:21Z", updatedAt: "2026-11-26T06:23:55Z",
     });
     await page.route("**/api/tasks?*", route => {
         expect(new URL(route.request().url()).searchParams.get("allActive")).toBe("true");
         if (unavailable) return route.fulfill({ status: 503, json: { code: 1, msg: "unavailable" } });
         return route.fulfill({ json: { code: 0, data: [
-            task("live", terminal ? "failed" : "running", undefined, terminal ? "retrievable" : "running"),
-            task("fail", terminal ? "failed" : "running", "fail-node", terminal ? "retrievable" : "running"),
-            task("succeed", terminal ? "succeeded" : "running", "succeed-node", terminal ? "fetching" : "running"),
-            task("cancel", terminal ? "cancelled" : "queued", "cancel-node", terminal ? "retrievable" : "running"),
+            task("live", terminal ? "failed" : "running", undefined, terminal ? "failed" : "running"),
+            task("fail", terminal ? "failed" : "running", "fail-node", terminal ? "retrievable" : "running", terminal ? "recovery_stopped" : undefined),
+            task("succeed", terminal ? "succeeded" : "running", "succeed-node", terminal ? "retrievable" : "running", terminal ? "delivery_paused" : undefined),
+            task("cancel", terminal ? "cancelled" : "queued", "cancel-node", terminal ? "failed" : "running"),
             task("child-task", "running", "child"),
             task("orphan", "running", "missing-node"),
-            task("recovery-task", "failed", "recovery-node", "retrievable"),
+            task("recovery-task", "failed", "recovery-node", "retrievable", terminal ? "recovery_stopped" : "submission_unknown"),
             ...Array.from({ length: terminal ? 0 : 34 }, (_, i) => task(`queued-${i}`, "queued", `queued-node-${i}`)),
         ] } });
     });
 
     await page.goto(server.url + "?panel");
     const panel = page.getByRole("region", { name: "当前画布生成任务" });
-    await panel.getByText("39 项", { exact: true }).waitFor({ timeout: 4500 });
+    await panel.getByText("40 项", { exact: true }).waitFor({ timeout: 4500 });
     await panel.getByRole("button", { name: /生成任务/ }).click();
     const rows = panel.getByRole("listitem");
-    expect(await rows.count()).toBe(39);
-    expect(await panel.getByText(/recovery-task|orphan/).count()).toBe(0);
+    expect(await rows.count()).toBe(40);
+    expect(await panel.getByText(/orphan/).count()).toBe(0);
     await panel.getByRole("button", { name: /Test Live Model/ }).click();
     await panel.getByRole("button", { name: "定位到画布节点", exact: true }).click();
     expect(await page.getByRole("status", { name: "定位结果" }).innerText()).toBe("live-node");
@@ -169,7 +169,7 @@ test("canvas panel only counts generating nodes and removes ended or deleted tas
     await panel.getByText("刷新失败，显示上次状态").waitFor({ timeout: 5500 });
     await page.getByRole("button", { name: "删除视频节点" }).click();
     await panel.getByText("刷新失败，显示上次状态").waitFor();
-    expect(await rows.count()).toBe(39); // 38 remaining tasks and one refresh status row.
+    expect(await rows.count()).toBe(40); // 39 remaining tasks and one refresh status row.
 
     terminal = true;
     unavailable = false;

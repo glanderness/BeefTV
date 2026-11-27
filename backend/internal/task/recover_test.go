@@ -98,6 +98,10 @@ func (s *forbidMutationStore) CancelIfStatus(string, string, model.TaskStatus, t
 	return false, errors.New("CancelIfStatus must never be called by RecoverTask")
 }
 
+func (s *forbidMutationStore) StopRecoveryIfFailed(string, string, time.Time) (bool, error) {
+	return false, errors.New("StopRecoveryIfFailed must never be called by RecoverTask")
+}
+
 func (s *forbidMutationStore) List(string, int, string, bool) ([]model.Task, error) {
 	return nil, nil
 }

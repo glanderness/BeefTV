@@ -101,29 +101,6 @@ const defaultImageSizes = [
     "2160x3840",
 ];
 
-function isMossImageModel(model: string) {
-    const name = String(model ?? "").trim().toLowerCase().split("/").pop() || "";
-    return name.startsWith("moss-image");
-}
-
-function mossImageCapability(): ImageCapabilityConfig {
-    return {
-        references: { promptMaxChars: 4000, maxImages: 0, maxImageBytes: 0, maskSupported: false },
-        size: {
-            parameter: "size",
-            values: ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "1024x1024", "1024x768", "768x1024", "1360x1024", "1024x1360", "1280x720", "720x1280", "1536x1024", "1024x1536", "1824x1024", "1024x1824", "2048x2048"],
-            default: "1:1",
-            allowCustom: true,
-        },
-        quality: { supported: false, values: [], default: "auto" },
-        transparentBackground: { supported: false, default: false },
-        sequentialGeneration: { supported: false, default: false },
-        responseFormat: { supported: true, value: "url" },
-        outputFormat: { supported: false },
-        maxOutputs: 1,
-    };
-}
-
 function isExtendedGPTImageModel(protocol: ModelProtocol | undefined, model: string): boolean {
     const normalized = model.trim().toLowerCase();
     if (protocol !== "openai-image" || !normalized.startsWith("gpt-image-")) return false;
@@ -132,7 +109,6 @@ function isExtendedGPTImageModel(protocol: ModelProtocol | undefined, model: str
 }
 
 export function upgradeGPTImageCapability(profile: ImageCapabilityConfig, protocol: ModelProtocol | undefined, model: string): ImageCapabilityConfig {
-    if (isMossImageModel(model)) return mossImageCapability();
     const seedream = seedreamImageCapability(model);
     if (seedream) return seedream;
     if (protocol !== "openai-image" || (model.trim().toLowerCase() !== "gpt-image-2" && !isExtendedGPTImageModel(protocol, model))) return profile;
@@ -147,7 +123,6 @@ export function upgradeGPTImageCapability(profile: ImageCapabilityConfig, protoc
 }
 
 export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = ""): ImageCapabilityConfig {
-    if (isMossImageModel(model)) return mossImageCapability();
     const seedream = seedreamImageCapability(model);
     if (seedream) return seedream;
     const image: ImageCapabilityConfig = {
