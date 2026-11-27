@@ -78,10 +78,23 @@ test("plugin card keeps 已启用 on a single horizontal line and never clips �
         const cardBox = (await card.boundingBox())!;
         const statusEl = card.locator(".plugin-enabled-label");
         const statusBox = (await statusEl.boundingBox())!;
+        const statusMetrics = await statusEl.evaluate((el) => {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            return {
+                lineCount: range.getClientRects().length,
+                whiteSpace: getComputedStyle(el).whiteSpace,
+                scrollWidth: el.scrollWidth,
+                clientWidth: el.clientWidth,
+            };
+        });
 
-        // 「已启用」 stays on one horizontal line instead of wrapping vertically per character
+        // 「已启用」 stays on one horizontal line instead of wrapping vertically per character (font-independent)
         expect(statusBox.height).toBeLessThanOrEqual(24);
-        expect(statusBox.width).toBeGreaterThanOrEqual(30);
+        expect(statusBox.width).toBeGreaterThan(0);
+        expect(statusMetrics.lineCount).toBe(1);
+        expect(statusMetrics.whiteSpace).toBe("nowrap");
+        expect(statusMetrics.scrollWidth).toBeLessThanOrEqual(statusMetrics.clientWidth + 1);
         expect(statusBox.x + statusBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
 
         // Every action control fits completely inside the card with zero clipping
