@@ -92,7 +92,11 @@ export function runProjectionStoreFlush() {
 export function withCanvasProjection<T>(scope: string, id: string, fn: () => Promise<T>): Promise<T> {
     const key = saveKey(scope, id);
     const run = (canvasProjectionLocks.get(key) ?? Promise.resolve()).then(fn, fn);
-    canvasProjectionLocks.set(key, run.then(() => undefined, () => undefined));
+    const tail = run.then(() => undefined, () => undefined);
+    canvasProjectionLocks.set(key, tail);
+    void tail.finally(() => {
+        if (canvasProjectionLocks.get(key) === tail) canvasProjectionLocks.delete(key);
+    });
     return run;
 }
 

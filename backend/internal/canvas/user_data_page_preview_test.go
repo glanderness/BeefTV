@@ -2,9 +2,11 @@ package canvas
 
 import (
 	"encoding/json"
+	"infinite-canvas/backend/internal/model"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestCanvasLibraryPreviewFindsMediaBeyondFourNodes(t *testing.T) {
@@ -182,5 +184,77 @@ func TestLocalMediaKeysSharedCrossLanguageContract(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUserCanvasProjectsPageDegradesCorruptPayloadRow(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	userID := "owner"
+
+	healthyRaw, _ := json.Marshal(map[string]any{
+		"id":                 "canvas-healthy",
+		"revision":           0,
+		"workspaceProjectId": "ws-healthy",
+		"title":              "正常画布",
+		"nodes": []map[string]any{
+			{"id": "img-1", "type": "image", "metadata": map[string]any{"content": "/api/resources/cover-ok/file"}},
+		},
+	})
+	if _, err := svc.UpsertUserCanvasProject(userID, healthyRaw); err != nil {
+		t.Fatalf("upsert healthy canvas: %v", err)
+	}
+
+	corruptAt := time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC)
+	corruptNamed := model.CanvasProject{
+		ID:          "canvas-corrupt-named",
+		UserID:      userID,
+		Title:       "损坏但有标题",
+		Revision:    3,
+		PayloadJSON: "{truncated-json",
+		CreatedAt:   corruptAt,
+		UpdatedAt:   corruptAt,
+	}
+	corruptUntitled := model.CanvasProject{
+		ID:          "canvas-corrupt-untitled",
+		UserID:      userID,
+		Title:       "   ",
+		Revision:    2,
+		PayloadJSON: "[not-an-object]",
+		CreatedAt:   corruptAt.Add(-time.Minute),
+		UpdatedAt:   corruptAt.Add(-time.Minute),
+	}
+	if err := svc.repo.DB().Create(&corruptNamed).Error; err != nil {
+		t.Fatalf("insert corrupt named row: %v", err)
+	}
+	if err := svc.repo.DB().Create(&corruptUntitled).Error; err != nil {
+		t.Fatalf("insert corrupt untitled row: %v", err)
+	}
+
+	page, err := svc.UserCanvasProjectsPage(userID, 1, 50, "", "", "updated")
+	if err != nil {
+		t.Fatalf("UserCanvasProjectsPage should degrade corrupt rows instead of failing: %v", err)
+	}
+	if page.Total != 3 || len(page.Projects) != 3 {
+		t.Fatalf("unexpected page counts: total=%d len=%d", page.Total, len(page.Projects))
+	}
+
+	byID := map[string]CanvasLibrarySummary{}
+	for _, item := range page.Projects {
+		byID[item.ID] = item
+	}
+
+	healthy, ok := byID["canvas-healthy"]
+	if !ok || healthy.Title != "正常画布" || healthy.NodeCount != 1 || len(healthy.PreviewNodes) != 1 {
+		t.Fatalf("healthy row lost summary data: %+v", healthy)
+	}
+
+	named, ok := byID["canvas-corrupt-named"]
+	if !ok || named.Title != "损坏但有标题" || named.Revision != 3 || named.NodeCount != 0 || named.PreviewNodes == nil || len(named.PreviewNodes) != 0 || !named.CreatedAt.Equal(corruptAt) || !named.UpdatedAt.Equal(corruptAt) {
+		t.Fatalf("corrupt named row degraded unexpectedly: %+v", named)
+	}
+
+	untitled, ok := byID["canvas-corrupt-untitled"]
+	if !ok || untitled.Title != "未命名画布" || untitled.Revision != 2 || untitled.NodeCount != 0 || untitled.PreviewNodes == nil || len(untitled.PreviewNodes) != 0 {
+		t.Fatalf("corrupt untitled row degraded unexpectedly: %+v", untitled)
 	}
 }

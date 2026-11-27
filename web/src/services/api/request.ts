@@ -153,6 +153,7 @@ export type HttpRequestConfig = Omit<AxiosRequestConfig, "method" | "url" | "dat
 
 const HEAVY_CANVAS_DOCUMENT_TIMEOUT_MS = 180_000;
 const CANVAS_DOCUMENT_READ_TIMEOUT_MS = 30_000;
+const CANVAS_PROJECT_LIST_READ_TIMEOUT_MS = 20_000;
 
 function isHeavyCanvasDocumentWrite(method: string, url: string) {
     if (method === "get" || method === "delete") return false;
@@ -161,11 +162,17 @@ function isHeavyCanvasDocumentWrite(method: string, url: string) {
 
 function isCanvasDocumentRead(method: string, url: string) {
     if (method === "get") {
-        // Only full canvas documents and version history snapshots get the 30s read budget;
-        // lightweight list probes (GET /canvas-projects) keep the 4s startup fallback timeout.
+        // Full canvas documents and version history snapshots get the 30s read budget.
         return /^\/canvas-projects\/[^/?#]+(?:\/history(?:\/[^/?#]+)?)?(?:[?#]|$)/.test(url);
     }
     return method === "post" && (url === "/ops/canvas.get" || url.startsWith("/ops/canvas.get?"));
+}
+
+function isCanvasProjectListRead(method: string, url: string) {
+    // Paginated project list reads stream summary metadata from SQLite and can wait behind
+    // concurrent autosave writes on the single SQLite connection; give them a dedicated budget
+    // instead of the 4s startup probe default.
+    return method === "get" && /^\/canvas-projects\/?(?:[?#]|$)/.test(url);
 }
 
 function send<T>(method: string, url: string, data?: unknown, config?: HttpRequestConfig) {
@@ -173,7 +180,9 @@ function send<T>(method: string, url: string, data?: unknown, config?: HttpReque
         ? HEAVY_CANVAS_DOCUMENT_TIMEOUT_MS
         : isCanvasDocumentRead(method, url)
           ? CANVAS_DOCUMENT_READ_TIMEOUT_MS
-          : undefined;
+          : isCanvasProjectListRead(method, url)
+            ? CANVAS_PROJECT_LIST_READ_TIMEOUT_MS
+            : undefined;
     const timeout = config?.timeout ?? defaultTimeout;
     return request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...(timeout !== undefined ? { timeout } : {}), ...config }));
 }

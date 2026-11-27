@@ -174,6 +174,71 @@ const mcpController = createMcpServerController({
 
 const combinedExtensions = () => [...pluginController.getExtensions(), ...mcpController.getExtensions()];
 
+let extensionReloadQueue = Promise.resolve();
+function queueExtensionReload() {
+  const next = extensionReloadQueue.catch(() => {}).then(() =>
+    durable.reloadPluginExtensions(combinedExtensions()),
+  );
+  extensionReloadQueue = next;
+  return next;
+}
+
+function createExtensionSync(label, controller) {
+  let inFlight = null;
+  return {
+    sync() {
+      if (!inFlight) {
+        inFlight = controller.syncIfChanged()
+          .then(async (synced) => {
+            if (synced.changed) {
+              await queueExtensionReload().catch((error) => {
+                console.error(`agent-host: ${label}扩展热重载失败（稍后可重试）：${error?.message || error}`);
+              });
+            }
+            return synced;
+          })
+          .catch((error) => {
+            console.error(`agent-host: ${label}同步失败（稍后可重试）：${error?.message || error}`);
+            return { changed: false };
+          })
+          .finally(() => {
+            inFlight = null;
+          });
+      }
+      return inFlight;
+    },
+    waitIfInFlight: () => inFlight,
+  };
+}
+
+const pluginSync = createExtensionSync('插件', pluginController);
+const mcpSync = createExtensionSync('MCP ', mcpController);
+function syncExtensionsIfChanged() {
+  return Promise.all([pluginSync.sync(), mcpSync.sync()]);
+}
+
+let hostToolsRefreshPromise = null;
+function refreshMountedHostTools() {
+  if (!hostToolsRefreshPromise) {
+    hostToolsRefreshPromise = durable.refreshHostTools()
+      .catch((error) => {
+        console.error(`agent-host: 会话画布工具刷新失败（稍后可重试）：${error?.message || error}`);
+      })
+      .finally(() => {
+        hostToolsRefreshPromise = null;
+      });
+  }
+  return hostToolsRefreshPromise;
+}
+
+async function ensureDescriptorsLoaded() {
+  const count = await ops.ensureDescriptorsLoaded();
+  if (count > 0 && durable.sessions.size > 0) {
+    await refreshMountedHostTools();
+  }
+  return count;
+}
+
 const hostTelemetry = await openHostTelemetry(DATA_DIR);
 
 const durable = createDurableSessionStore({
@@ -216,6 +281,7 @@ const durable = createDurableSessionStore({
     readCatalog:async (entry,signal,turnId,query={}) => (await ops.opsRequest('POST','/ops/skill.catalog',{params:query},signal,turnId || entry.turn.turnId)).result,
   },
   readCanvas: async (entry, signal, turnId) => {
+    if (ops.descriptors.size === 0) await ensureDescriptorsLoaded().catch(() => {});
     if (!ops.descriptors.has('canvas_get')) return null;
     const { result } = await ops.opsRequest('POST', '/ops/canvas.get', { params: { canvasId: entry.canvasId } }, signal, turnId || entry.turn.turnId);
     const canvas = result?.canvas;
@@ -336,6 +402,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/health') {
     if (!instanceOK(req)) { respond(res, 403, { code: 403, reason: 'instance_mismatch' }); return; }
+    if (ops.descriptors.size === 0) {
+      void ensureDescriptorsLoaded().catch(() => {});
+    }
     const persistenceSummary = durable.sessions.size === 0 ? 'ok' : [...new Set([...durable.sessions.values()].map((entry) => entry.persistence))].join(',');
     const proof = instanceProof();
     respond(res, 200, { ok: !providerReason, reason: providerReason || undefined,
@@ -348,13 +417,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/tools') {
-    const [syncedPlugins, syncedMcp] = await Promise.all([
-      pluginController.syncIfChanged().catch(() => ({ changed: false })),
-      mcpController.syncIfChanged().catch(() => ({ changed: false })),
-    ]);
-    if (syncedPlugins.changed || syncedMcp.changed) {
-      await durable.reloadPluginExtensions(combinedExtensions()).catch(() => {});
-    }
+    await ensureDescriptorsLoaded().catch(() => {});
+    await syncExtensionsIfChanged();
     const canvasId = url.searchParams.get('canvasId') || '';
     const entry = canvasId ? durable.sessions.get(canvasId) : null;
     const extensionToolNames = [...pluginController.getToolNames(), ...mcpController.getToolNames()];
@@ -367,6 +431,8 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     if (req.method === 'GET' && url.pathname === '/plugins') {
+      const pendingPluginSync = pluginSync.waitIfInFlight();
+      if (pendingPluginSync) await pendingPluginSync;
       respond(res, 200, {
         packages: pluginController.listLoaded(),
         errors: pluginController.getErrors(),
@@ -376,7 +442,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/plugins/reload') {
       const body = await readJsonBody(req);
       const reloaded = await pluginController.reload(Array.isArray(body.packages) ? body.packages : undefined);
-      await durable.reloadPluginExtensions(combinedExtensions());
+      await queueExtensionReload();
       respond(res, 200, { ok: true, packages: reloaded.packages, errors: reloaded.errors });
       return;
     }
@@ -672,7 +738,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/mcp-servers/reload') {
       const reloaded = await mcpController.reload();
-      await durable.reloadPluginExtensions(combinedExtensions()).catch(() => {});
+      await queueExtensionReload().catch(() => {});
       respond(res, 200, { ok: true, servers: reloaded.servers });
       return;
     }
@@ -707,6 +773,7 @@ const server = http.createServer(async (req, res) => {
       await handleEventsRoute(req, res, {
         durable,
         ops,
+        ensureDescriptorsLoaded,
         currentId,
         followDurable,
         getProviderReason: () => providerReason,
@@ -733,14 +800,11 @@ const server = http.createServer(async (req, res) => {
       const authority=await ops.opsRequest('GET',`/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
       if(authority.canvasId!==canvasId || authority.open===false) throw Object.assign(new Error('turn_not_open'),{reason:'turn_not_open'});
       body.permissionMode=authority.permissionMode || 'canvas';
+      await ensureDescriptorsLoaded().catch((error) => {
+        console.error(`agent-host: 回合前能力发现重试失败：${error?.message || error}`);
+      });
       if (!body.continuationId) {
-        const [syncedPlugins, syncedMcp] = await Promise.all([
-          pluginController.syncIfChanged().catch(() => ({ changed: false })),
-          mcpController.syncIfChanged().catch(() => ({ changed: false })),
-        ]);
-        if (syncedPlugins.changed || syncedMcp.changed) {
-          await durable.reloadPluginExtensions(combinedExtensions()).catch(() => {});
-        }
+        await syncExtensionsIfChanged();
       }
       // 只有 Durable 一套执行运行时：选中的是 Durable 会话就直接接上；否则（旧 JSONL 会话或尚无会话）
       // 新建一条 Durable 会话，并用旧会话文本作为交接说明开头。
@@ -818,13 +882,8 @@ if (LIFETIME_STDIN) {
 
 await initializeModel();
 try {
-  const count = await ops.loadDescriptors();
+  const count = await ensureDescriptorsLoaded();
   console.error(`agent-host: 载入 ${count} 个操作（readOnly=${READ_ONLY_MODE}）`);
-  // Same sync every turn uses: a Go without plugin packages or MCP config just leaves them empty.
-  await pluginController.syncIfChanged();
-  await mcpController.syncIfChanged().catch((error) => {
-    console.error(`agent-host: MCP 初始化同步失败（稍后可重试）：${error?.message || error}`);
-  });
 }
 catch (error) { console.error(`agent-host: 能力发现失败（稍后可重试）：${error?.message || error}`); }
 function onListen() {
@@ -833,6 +892,8 @@ function onListen() {
     ? 'local-pipe'
     : `http://127.0.0.1:${bound && typeof bound === 'object' ? bound.port : PORT}`;
   console.log(`agent-host 已启动 ${endpoint} model=${MODEL?.id || MODEL_ID} api=${MODEL_API} baseUrl=${MODEL?.baseUrl || BASE_URL} ops=${OPS_URL} readOnly=${READ_ONLY_MODE} reason=${providerReason || 'ok'}`);
+  // 插件包和外部 MCP 连接可能耗时数十秒，不得阻塞 server.listen() 和 Go 就绪探针。
+  void syncExtensionsIfChanged();
 }
 if (LISTEN_FD > 0) server.listen({ fd: LISTEN_FD }, onListen);
 else if (LISTEN_PIPE) {

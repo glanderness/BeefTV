@@ -79,7 +79,11 @@ type ObservedCanvasPersist = {
 };
 
 type AsyncCanvasStorageLock = {
-    request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+    request<T>(
+        name: string,
+        optionsOrCallback: { signal?: AbortSignal } | (() => Promise<T>),
+        callback?: () => Promise<T>,
+    ): Promise<T>;
 };
 
 type CanvasStorageLockOptions = {
@@ -92,6 +96,26 @@ type CanvasDocumentBase = {
 };
 
 const CANVAS_STORAGE_LOCK_PREFIX = "infinite-canvas:canvas-generation-storage-lock:";
+const DEFAULT_CANVAS_STORAGE_LOCK_TIMEOUT_MS = 5_000;
+const DEFAULT_CANVAS_STORAGE_IO_TIMEOUT_MS = 8_000;
+
+let canvasStorageLockTimeoutMs = DEFAULT_CANVAS_STORAGE_LOCK_TIMEOUT_MS;
+let canvasStorageIoTimeoutMs = DEFAULT_CANVAS_STORAGE_IO_TIMEOUT_MS;
+
+export function setCanvasStorePersistenceTimeoutsForTest(options: { lockTimeoutMs?: number; ioTimeoutMs?: number } | null) {
+    canvasStorageLockTimeoutMs = options?.lockTimeoutMs ?? DEFAULT_CANVAS_STORAGE_LOCK_TIMEOUT_MS;
+    canvasStorageIoTimeoutMs = options?.ioTimeoutMs ?? DEFAULT_CANVAS_STORAGE_IO_TIMEOUT_MS;
+}
+
+function withStorageTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+        if (timer !== undefined) clearTimeout(timer);
+    });
+}
 
 let suppressCanvasStorePersistence = 0;
 export const canvasMemoryStates = new Map<string, PersistedCanvasState>();
@@ -108,14 +132,65 @@ function isDesktopSingleSourceMode(): boolean {
     return typeof window !== "undefined" && isDesktopShellOrigin(window.location);
 }
 
-function runWithBrowserCanvasStorageLock<T>(scope: string, operation: () => Promise<T>, options: CanvasStorageLockOptions) {
+function runWithBrowserCanvasStorageLock<T>(scope: string, operation: () => Promise<T>, options: CanvasStorageLockOptions): Promise<T> {
     const locks = typeof window !== "undefined" && typeof navigator !== "undefined" ? (navigator.locks as AsyncCanvasStorageLock | undefined) : undefined;
     const lockName = `${CANVAS_STORAGE_LOCK_PREFIX}${scope}`;
-    if (locks) return locks.request(lockName, operation);
-    if (options.requireCrossRealmLock && typeof window !== "undefined" && typeof document !== "undefined") {
-        throw new Error("当前浏览器不支持跨标签存储锁，已停止画布生成持久化");
+    if (!locks) {
+        if (options.requireCrossRealmLock && typeof window !== "undefined" && typeof document !== "undefined") {
+            throw new Error("当前浏览器不支持跨标签存储锁，已停止画布生成持久化");
+        }
+        return operation();
     }
-    return operation();
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    let entered = false;
+    let timedOut = false;
+    let lockTimer: ReturnType<typeof setTimeout> | undefined;
+    const clearLockTimer = () => {
+        if (lockTimer !== undefined) {
+            clearTimeout(lockTimer);
+            lockTimer = undefined;
+        }
+    };
+    return new Promise<T>((resolve, reject) => {
+        const runLocked = async (): Promise<T> => {
+            if (timedOut) return undefined as T;
+            entered = true;
+            clearLockTimer();
+            return operation();
+        };
+        lockTimer = setTimeout(() => {
+            if (entered) return;
+            timedOut = true;
+            controller?.abort();
+            if (options.requireCrossRealmLock) {
+                reject(new Error("画布跨标签存储锁等待超时"));
+                return;
+            }
+            console.warn("画布存储锁等待超时，降级为直接写入本地缓存", { scope });
+            void operation().then(resolve, reject);
+        }, canvasStorageLockTimeoutMs);
+
+        let lockAttempt: Promise<T>;
+        try {
+            lockAttempt = controller
+                ? locks.request(lockName, { signal: controller.signal }, runLocked)
+                : locks.request(lockName, runLocked);
+        } catch (error) {
+            clearLockTimer();
+            reject(error);
+            return;
+        }
+        void lockAttempt.then(
+            (result) => {
+                clearLockTimer();
+                if (!timedOut) resolve(result);
+            },
+            (error) => {
+                clearLockTimer();
+                if (!timedOut) reject(error);
+            },
+        );
+    });
 }
 
 /**
@@ -123,15 +198,19 @@ function runWithBrowserCanvasStorageLock<T>(scope: string, operation: () => Prom
  */
 export function withCanvasStorePersistenceLock<T>(scope: string, operation: () => Promise<T>, options: CanvasStorageLockOptions = {}): Promise<T> {
     const previous = canvasStorageTails.get(scope) ?? Promise.resolve();
-    const pending = previous.then(() => undefined, () => undefined).then(() => runWithBrowserCanvasStorageLock(scope, operation, options));
-    const tail = pending.then(
+    let tail!: Promise<void>;
+    const release = () => {
+        if (canvasStorageTails.get(scope) === tail) canvasStorageTails.delete(scope);
+    };
+    const pending = previous
+        .then(() => undefined, () => undefined)
+        .then(() => runWithBrowserCanvasStorageLock(scope, operation, options))
+        .finally(release);
+    tail = pending.then(
         () => undefined,
         () => undefined,
     );
     canvasStorageTails.set(scope, tail);
-    void tail.finally(() => {
-        if (canvasStorageTails.get(scope) === tail) canvasStorageTails.delete(scope);
-    });
     return pending;
 }
 
@@ -269,7 +348,11 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
         if (isDesktopSingleSourceMode()) {
             const drafts = selectUnsavedDesktopDrafts(scope, queued.state.projects);
             if (drafts.length === 0) {
-                await Promise.allSettled([storage.removeItem(CANVAS_DRAFTS_KEY), storage.removeItem(CANVAS_STORE_KEY)]);
+                await withStorageTimeout(
+                    Promise.allSettled([storage.removeItem(CANVAS_DRAFTS_KEY), storage.removeItem(CANVAS_STORE_KEY)]),
+                    canvasStorageIoTimeoutMs,
+                    "画布本地缓存清理超时",
+                );
                 desktopDraftsPersistedScopes.delete(scope);
                 const doc: CanvasStorageDocument = {
                     state: { projects: queued.state.projects },
@@ -284,13 +367,20 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
                     version: 0,
                     storageRevision: nextRevision,
                 };
-                await storage.setItem(CANVAS_DRAFTS_KEY, serializeCanvasStorageDocument(doc));
+                await withStorageTimeout(
+                    Promise.resolve(storage.setItem(CANVAS_DRAFTS_KEY, serializeCanvasStorageDocument(doc))),
+                    canvasStorageIoTimeoutMs,
+                    "画布本地缓存写入超时",
+                );
                 desktopDraftsPersistedScopes.add(scope);
                 committed = doc;
                 recordCanvasStorageDocument(scope, { ...doc, state: { projects: queued.state.projects } });
             }
         } else {
-            const durable = parseCanvasStorageDocument(await storage.getItem(queued.name), queued.baseProjects);
+            const durable = parseCanvasStorageDocument(
+                await withStorageTimeout(Promise.resolve(storage.getItem(queued.name)), canvasStorageIoTimeoutMs, "画布本地缓存读取超时"),
+                queued.baseProjects,
+            );
             const ignored = ignoredDeletedCanvasIds.get(scope);
             const merged = mergeCanvasStorageProjects({
                 durable,
@@ -304,7 +394,11 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
                 for (const id of merged.droppedDeletedIds) nextIgnored.add(id);
                 ignoredDeletedCanvasIds.set(scope, nextIgnored);
             }
-            await storage.setItem(queued.name, serializeCanvasStorageDocument(merged.document));
+            await withStorageTimeout(
+                Promise.resolve(storage.setItem(queued.name, serializeCanvasStorageDocument(merged.document))),
+                canvasStorageIoTimeoutMs,
+                "画布本地缓存写入超时",
+            );
             committed = merged.document;
             recordCanvasStorageDocument(scope, merged.document, queued.state.projects);
         }
@@ -438,11 +532,19 @@ export function createCanvasPersistStorage<TStore extends { projects: CanvasProj
 }
 
 export async function flushCanvasStorePersistence() {
+    const deadline = Date.now() + canvasStorageLockTimeoutMs + canvasStorageIoTimeoutMs;
     while (canvasStorageTails.size || queuedCanvasPersists.size || canvasSaveTimers.size) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+            throw new Error("画布本地缓存写入超时");
+        }
         for (const scope of [...canvasSaveTimers.keys()]) clearCanvasSaveTimer(scope);
         const writes = [...queuedCanvasPersists.values()].map(({ scope, token }) => writeQueuedCanvasPersist(scope, token));
-        if (writes.length) await Promise.all(writes);
-        else if (canvasStorageTails.size) await Promise.all([...canvasStorageTails.values()]);
+        if (writes.length) {
+            await withStorageTimeout(Promise.all(writes), remaining, "画布本地缓存写入超时");
+        } else if (canvasStorageTails.size) {
+            await withStorageTimeout(Promise.all([...canvasStorageTails.values()]), remaining, "画布本地缓存写入超时");
+        }
     }
 }
 

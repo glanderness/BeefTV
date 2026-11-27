@@ -31,6 +31,10 @@ export function assistantStatusNotice(reason: string | undefined): AssistantStat
         case "host_start_failed":
         case "host_unreachable":
             return { text: "助手没有启动成功", actionLabel: "重试", action: "retry" };
+        case "forbidden":
+            return { text: "当前页面无法使用创作助手，请刷新或重新打开画布", actionLabel: "重试", action: "retry" };
+        case "desktop_token_required":
+            return { text: "当前页面与桌面端连接已失效，请重启 BeefTV 或重新打开窗口", actionLabel: "重试", action: "retry" };
         default:
             return { text: ASSISTANT_UNAVAILABLE_FALLBACK, actionLabel: "重试", action: "retry" };
     }

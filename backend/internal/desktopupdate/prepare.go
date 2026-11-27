@@ -123,6 +123,7 @@ func (e *Engine) prepareAndStartHelper(ctx context.Context, staged *stagedUpdate
 	req := HelperRequest{
 		DataDir:           e.dataDir,
 		WebViewProfileDir: webViewProfileDir,
+		TargetVersion:     staged.version,
 		Schema:            helperRequestSchema,
 		ParentPID:         parentPID,
 		Platform:          staged.platform,

@@ -23,6 +23,8 @@ describe("canvas document read and default request timeouts", () => {
             await http.get("/canvas-projects/large-canvas-1/history/snap-99");
             await http.post("/ops/canvas.get", { id: "large-canvas-1" });
             await http.get("/canvas-projects");
+            await http.get("/canvas-projects?page=1&pageSize=50&sort=updated");
+            await http.get("/canvas-projects", { timeout: 6_500 });
             await http.get("/health");
             await http.put("/canvas-projects/large-canvas-1", { nodes: [] });
         } finally {
@@ -33,7 +35,9 @@ describe("canvas document read and default request timeouts", () => {
         const getHistory = captured.find((item) => item.method === "get" && item.url === "/canvas-projects/large-canvas-1/history");
         const getSnapshot = captured.find((item) => item.method === "get" && item.url === "/canvas-projects/large-canvas-1/history/snap-99");
         const opsCanvasGet = captured.find((item) => item.method === "post" && item.url === "/ops/canvas.get");
-        const listCanvases = captured.find((item) => item.method === "get" && item.url === "/canvas-projects");
+        const listCanvases = captured.find((item) => item.method === "get" && item.url === "/canvas-projects" && item.timeout !== 6_500);
+        const listCanvasesQuery = captured.find((item) => item.method === "get" && item.url === "/canvas-projects?page=1&pageSize=50&sort=updated");
+        const listCanvasesOverride = captured.find((item) => item.method === "get" && item.url === "/canvas-projects" && item.timeout === 6_500);
         const health = captured.find((item) => item.method === "get" && item.url === "/health");
         const writeCanvas = captured.find((item) => item.method === "put" && item.url === "/canvas-projects/large-canvas-1");
 
@@ -41,7 +45,9 @@ describe("canvas document read and default request timeouts", () => {
         expect(getHistory?.timeout).toBeGreaterThanOrEqual(30_000);
         expect(getSnapshot?.timeout).toBeGreaterThanOrEqual(30_000);
         expect(opsCanvasGet?.timeout).toBeGreaterThanOrEqual(30_000);
-        expect(listCanvases?.timeout).toBe(4_000);
+        expect(listCanvases?.timeout).toBe(20_000);
+        expect(listCanvasesQuery?.timeout).toBe(20_000);
+        expect(listCanvasesOverride?.timeout).toBe(6_500);
         expect(health?.timeout).toBe(4_000);
         expect(writeCanvas?.timeout).toBe(180_000);
     });

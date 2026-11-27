@@ -642,8 +642,14 @@ export function useCanvasProjectLifecycle({
             }
             updateProject(projectId, { viewport: viewportRef.current });
             void (async () => {
-                await flushCanvasStorePersistence();
-                if (localMode) await syncLocalCanvasProjectToBackend(projectId);
+                if (localMode) {
+                    void flushCanvasStorePersistence().catch((error) => {
+                        console.error("离开画布时本地缓存写入失败，已优先同步桌面数据库", { projectId, reason, error });
+                    });
+                    await syncLocalCanvasProjectToBackend(projectId);
+                } else {
+                    await flushCanvasStorePersistence();
+                }
             })().catch((error) => {
                 if (isCanvasSubmitControlError(error)) return;
                 console.error("离开画布时保存失败", { projectId, reason, error });
@@ -724,8 +730,14 @@ export function useCanvasProjectLifecycle({
             observedStoreRef.current = storedEditorProject() ?? observedStoreRef.current;
         }
         updateProject(projectId, { viewport: viewportRef.current });
-        await flushCanvasStorePersistence();
-        if (localMode) await syncLocalCanvasProjectToBackend(projectId);
+        if (localMode) {
+            void flushCanvasStorePersistence().catch((error) => {
+                console.error("画布本地缓存写入失败，已优先保存到桌面数据库", { projectId, error });
+            });
+            await syncLocalCanvasProjectToBackend(projectId);
+        } else {
+            await flushCanvasStorePersistence();
+        }
     }, [activeChatId, backgroundMode, canvasAppearance, chatSessions, connectionsRef, localMode, nodesRef, projectId, projectLoaded, showImageInfo, updateProject, viewportRef]);
 
     useEffect(() => {

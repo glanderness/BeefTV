@@ -35,9 +35,11 @@ describe("canvas editor flushes content when leaving", () => {
         expect(effect).toContain("observedContentRef.current = next;");
     });
 
-    test("flushes the store write queue and then the local backend without waiting for timers", () => {
+    test("flushes the store write queue and the local backend without waiting for timers or blocking SQLite on IndexedDB", () => {
         const effect = leaveFlushEffect();
-        expect(effect).toMatch(/await flushCanvasStorePersistence\(\);\s*if \(localMode\) await syncLocalCanvasProjectToBackend\(projectId\);/);
+        expect(effect).toContain("void flushCanvasStorePersistence().catch(");
+        expect(effect).toContain("await syncLocalCanvasProjectToBackend(projectId);");
+        expect(effect).toContain("await flushCanvasStorePersistence();");
         expect(effect).toContain('console.error("离开画布时保存失败"');
     });
 

@@ -56,6 +56,22 @@ export class CanvasJournalError extends Error {
 
 const memory = new Map<string, CanvasOperationJournal>();
 const journalLocks = new Map<string, Promise<void>>();
+const DEFAULT_JOURNAL_STORAGE_TIMEOUT_MS = 8_000;
+let journalStorageTimeoutMs = DEFAULT_JOURNAL_STORAGE_TIMEOUT_MS;
+
+export function setCanvasJournalStorageTimeoutForTest(timeoutMs: number | null) {
+    journalStorageTimeoutMs = timeoutMs ?? DEFAULT_JOURNAL_STORAGE_TIMEOUT_MS;
+}
+
+function withJournalStorageTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new CanvasJournalError(message)), journalStorageTimeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+        if (timer !== undefined) clearTimeout(timer);
+    });
+}
 
 type JournalStorageDelay = {
     beforeGet?: () => Promise<void>;
@@ -176,7 +192,11 @@ function parseCanvasOperationJournal(raw: unknown, scope: string, canvasId: stri
 function withJournal<T>(scope: string, canvasId: string, fn: () => Promise<T>): Promise<T> {
     const key = cacheKey(scope, canvasId);
     const run = (journalLocks.get(key) ?? Promise.resolve()).then(fn, fn);
-    journalLocks.set(key, run.then(() => undefined, () => undefined));
+    const tail = run.then(() => undefined, () => undefined);
+    journalLocks.set(key, tail);
+    void tail.finally(() => {
+        if (journalLocks.get(key) === tail) journalLocks.delete(key);
+    });
     return run;
 }
 
@@ -187,8 +207,12 @@ async function readJournalUnlocked(canvasId: string, scope: string): Promise<Can
     await journalStorageDelay?.beforeGet?.();
     let raw: string | null = null;
     try {
-        raw = await localForageStorageForScope(scope).getItem(journalName(canvasId));
+        raw = await withJournalStorageTimeout(
+            Promise.resolve(localForageStorageForScope(scope).getItem(journalName(canvasId))),
+            "画布提交日记读取超时",
+        );
     } catch (error) {
+        if (error instanceof CanvasJournalError) throw error;
         throw new CanvasJournalError("画布提交日记读取失败", { cause: error });
     }
     if (raw == null || raw === "") {
@@ -217,7 +241,10 @@ async function writeJournalUnlocked(journal: CanvasOperationJournal) {
     }
     const serialized = JSON.stringify(validated);
     await journalStorageDelay?.beforeSet?.();
-    await localForageStorageForScope(scope).setItem(journalName(journal.canvasId), serialized);
+    await withJournalStorageTimeout(
+        Promise.resolve(localForageStorageForScope(scope).setItem(journalName(journal.canvasId), serialized)),
+        "画布提交日记写入超时",
+    );
     const detached = parseCanvasOperationJournal(JSON.parse(serialized), scope, journal.canvasId);
     memory.set(cacheKey(scope, journal.canvasId), detached);
     if (detached.confirmedSnapshot) recordCanvasDocumentBase(detached.confirmedSnapshot, scope);
@@ -349,7 +376,10 @@ export async function clearCanvasOperationJournal(canvasId: string, scope = getA
     return withJournal(scope, canvasId, async () => {
         bumpMediaReferenceEpoch();
         await journalStorageDelay?.beforeSet?.();
-        await localForageStorageForScope(scope).removeItem(journalName(canvasId));
+        await withJournalStorageTimeout(
+            Promise.resolve(localForageStorageForScope(scope).removeItem(journalName(canvasId))),
+            "画布提交日记清理超时",
+        );
         memory.delete(cacheKey(scope, canvasId));
     });
 }

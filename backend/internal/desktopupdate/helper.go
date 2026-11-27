@@ -30,6 +30,7 @@ var (
 type HelperRequest struct {
 	DataDir           string `json:"dataDir,omitempty"`
 	WebViewProfileDir string `json:"webViewProfileDir,omitempty"`
+	TargetVersion     string `json:"targetVersion,omitempty"`
 	Schema            int    `json:"schema"`
 	ParentPID         int    `json:"parentPid"`
 	Platform          string `json:"platform"`
@@ -251,6 +252,11 @@ func RunHelperRequest(req HelperRequest) error {
 			_ = relaunchInstall(req)
 		}
 		return wrapped
+	}
+	if strings.HasPrefix(req.Platform, "windows") {
+		if version := normalizeWindowsDisplayVersion(req.TargetVersion); version != "" {
+			_ = syncWindowsUninstallRegistryVersion(filepath.Dir(req.TargetPath), version)
+		}
 	}
 	result.Launched = true
 	result.Status = "launched"

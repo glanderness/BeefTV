@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"infinite-canvas/backend/internal/kernel"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -56,8 +57,13 @@ func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, 
 	result := CanvasLibraryPage{Projects: make([]CanvasLibrarySummary, 0, len(projects)), Page: page, PageSize: pageSize, Total: total, HasMore: int64(page)*int64(pageSize) < total}
 	for _, project := range projects {
 		parsed, err := parseCanvasSummaryPayload(project.PayloadJSON)
+		title := project.Title
 		if err != nil {
-			return CanvasLibraryPage{}, err
+			log.Printf("canvas: corrupt summary payload for project %s: %v", project.ID, err)
+			parsed = parsedCanvasSummaryPayload{}
+			if strings.TrimSpace(title) == "" {
+				title = "未命名画布"
+			}
 		}
 		preview := canvasLibraryPreviewNodes(parsed.nodes)
 		result.Projects = append(result.Projects, CanvasLibrarySummary{
@@ -65,7 +71,7 @@ func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, 
 			WorkspaceProjectID: parsed.workspaceProjectID,
 			ProjectID:          project.ProjectID,
 			FolderID:           project.LibraryFolderID,
-			Title:              project.Title,
+			Title:              title,
 			CanvasTitle:        parsed.canvasTitle,
 			Revision:           project.Revision,
 			CreatedAt:          project.CreatedAt,

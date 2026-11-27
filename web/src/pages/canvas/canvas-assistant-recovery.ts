@@ -14,6 +14,7 @@ import {
     type AssistantTurn,
     type AssistantUndoFailure,
 } from "@/services/api/agent-assistant";
+import { ApiError } from "@/services/api/request";
 import { scopedLocalStorage } from "@/lib/user-scope";
 
 export type PendingAssistantRecovery = {
@@ -154,13 +155,25 @@ export function isAssistantTransientReason(reason: string | undefined): boolean 
     return reason === "host_starting" || reason === "host_busy";
 }
 
+export function resolveAssistantRestartError(error: unknown): AgentHostStatus {
+    const reason = error instanceof ApiError && error.reason
+        ? error.reason
+        : "host_start_failed";
+    return { available: false, reason };
+}
+
 export function resolveAssistantStatusPollError(
     prev: AgentHostStatus | null,
     reason: AgentHostStatus["reason"],
     consecutiveErrors: number,
 ): AgentHostStatus {
-    if (!reason && prev && (prev.available || isAssistantTransientReason(prev.reason)) && consecutiveErrors < 2) {
-        return prev;
+    if (!reason && consecutiveErrors < 2) {
+        if (prev === null) {
+            return { available: false, reason: "host_starting" };
+        }
+        if (prev.available || isAssistantTransientReason(prev.reason)) {
+            return prev;
+        }
     }
     return { available: false, ...(reason ? { reason } : {}) };
 }

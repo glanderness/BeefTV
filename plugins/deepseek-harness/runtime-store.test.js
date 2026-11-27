@@ -837,3 +837,61 @@ test('platform-app checks platform minimum versions and discovers Windows/Linux 
   assert.equal(winNew.status.compatible, true)
   assert.equal(winNew.status.version, '2.4.3')
 })
+
+test('platform-app prefers real Windows CLI version over stale uninstall registry DisplayVersion', async context => {
+  const dir = await mkdtemp(join(tmpdir(), 'beeftv-win-version-priority-'))
+  context.after(() => rm(dir, { recursive: true, force: true }))
+
+  const winDir = join(dir, 'BeefTV')
+  await mkdir(join(winDir, 'cli'), { recursive: true })
+  await writeFile(join(winDir, 'BeefTV.exe'), 'MZ')
+  await writeFile(join(winDir, 'cli', 'beeftv.exe'), 'MZ')
+
+  const staleRegOutput = [
+    'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\BeefTV',
+    `    InstallLocation    REG_SZ    ${winDir}`,
+    '    DisplayVersion    REG_SZ    2.4.2',
+  ].join('\r\n')
+
+  // 1. CLI binary reports updated 2.5.0 while uninstall registry still holds stale 2.4.2.
+  const fromCli = await inspectLocalApp({
+    platform: 'win32',
+    env: {},
+    execOutput: async (cmd, args) => {
+      if (cmd === 'reg.exe') return staleRegOutput
+      if (cmd === join(winDir, 'cli', 'beeftv.exe') && args?.[0] === '--version') return '2.5.0'
+      return null
+    },
+  })
+  assert.equal(fromCli.status.compatible, true)
+  assert.equal(fromCli.status.version, '2.5.0')
+
+  // 2. When CLI cannot run (or spawn throws on Windows), version.json still overrides stale registry DisplayVersion.
+  await writeFile(join(winDir, 'version.json'), JSON.stringify({ version: '2.4.9' }))
+  const fromVersionJson = await inspectLocalApp({
+    platform: 'win32',
+    env: {},
+    execOutput: async cmd => {
+      if (cmd === 'reg.exe') return staleRegOutput
+      throw new Error('spawn UNKNOWN')
+    },
+  })
+  assert.equal(fromVersionJson.status.compatible, true)
+  assert.equal(fromVersionJson.status.version, '2.4.9')
+
+  // 3. When neither CLI nor version.json provides a version, fall back to registry DisplayVersion
+  // (including when registry InstallLocation carries a trailing backslash).
+  await rm(join(winDir, 'version.json'))
+  const staleRegTrailingSlash = [
+    'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\BeefTV',
+    `    InstallLocation    REG_SZ    ${winDir}\\`,
+    '    DisplayVersion    REG_SZ    2.4.2',
+  ].join('\r\n')
+  const fromRegistry = await inspectLocalApp({
+    platform: 'win32',
+    env: { BEEFTV_LOCAL_APP_DIR: winDir },
+    execOutput: async cmd => (cmd === 'reg.exe' ? staleRegTrailingSlash : null),
+  })
+  assert.equal(fromRegistry.status.compatible, false)
+  assert.equal(fromRegistry.status.version, '2.4.2')
+})
