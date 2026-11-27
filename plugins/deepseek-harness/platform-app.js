@@ -43,9 +43,20 @@ export function supportsHarnessVersion(version, platform = process.platform, env
 
 function execFileOutput(command, args, timeout = 5_000) {
   return new Promise(resolve => {
-    execFile(command, args, { timeout, windowsHide: true }, (error, stdout) => {
-      resolve(error ? null : String(stdout).trim() || null)
-    })
+    let settled = false
+    const finish = value => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    try {
+      const child = execFile(command, args, { timeout, windowsHide: true }, (error, stdout) => {
+        finish(error ? null : String(stdout).trim() || null)
+      })
+      child?.once?.('error', () => finish(null))
+    } catch {
+      finish(null)
+    }
   })
 }
 
@@ -60,8 +71,12 @@ async function readVersionJSON(filePath) {
 
 // 便携版与安装版统一支持通过随包 CLI `beeftv --version` 读取编译期版本号（不启动桌面窗口、不打开数据库）。
 async function readCLIVersion(cliPath, execOutput = execFileOutput) {
-  const output = await execOutput(cliPath, ['--version'], 5_000)
-  return output && parseStableSemver(output) ? output : null
+  try {
+    const output = await execOutput(cliPath, ['--version'], 5_000)
+    return output && parseStableSemver(output) ? output : null
+  } catch {
+    return null
+  }
 }
 
 function normalizeWindowsInstallDir(raw) {

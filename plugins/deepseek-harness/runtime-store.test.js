@@ -866,12 +866,15 @@ test('platform-app prefers real Windows CLI version over stale uninstall registr
   assert.equal(fromCli.status.compatible, true)
   assert.equal(fromCli.status.version, '2.5.0')
 
-  // 2. When CLI cannot run, version.json still overrides stale registry DisplayVersion.
+  // 2. When CLI cannot run (or spawn throws on Windows), version.json still overrides stale registry DisplayVersion.
   await writeFile(join(winDir, 'version.json'), JSON.stringify({ version: '2.4.9' }))
   const fromVersionJson = await inspectLocalApp({
     platform: 'win32',
     env: {},
-    execOutput: async cmd => (cmd === 'reg.exe' ? staleRegOutput : null),
+    execOutput: async cmd => {
+      if (cmd === 'reg.exe') return staleRegOutput
+      throw new Error('spawn UNKNOWN')
+    },
   })
   assert.equal(fromVersionJson.status.compatible, true)
   assert.equal(fromVersionJson.status.version, '2.4.9')
