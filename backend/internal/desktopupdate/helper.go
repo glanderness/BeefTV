@@ -253,6 +253,11 @@ func RunHelperRequest(req HelperRequest) error {
 		}
 		return wrapped
 	}
+	if strings.HasPrefix(req.Platform, "windows") {
+		if version := normalizeWindowsDisplayVersion(req.TargetVersion); version != "" {
+			_ = syncWindowsUninstallRegistryVersion(filepath.Dir(req.TargetPath), version)
+		}
+	}
 	result.Launched = true
 	result.Status = "launched"
 	result.Phase = "done"

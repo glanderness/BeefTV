@@ -14,6 +14,7 @@ import {
     type AssistantTurn,
     type AssistantUndoFailure,
 } from "@/services/api/agent-assistant";
+import { ApiError } from "@/services/api/request";
 import { scopedLocalStorage } from "@/lib/user-scope";
 
 export type PendingAssistantRecovery = {
@@ -152,6 +153,13 @@ export function isAssistantProviderUnreadyReason(reason: string | undefined): bo
 
 export function isAssistantTransientReason(reason: string | undefined): boolean {
     return reason === "host_starting" || reason === "host_busy";
+}
+
+export function resolveAssistantRestartError(error: unknown): AgentHostStatus {
+    const reason = error instanceof ApiError && error.reason
+        ? error.reason
+        : "host_start_failed";
+    return { available: false, reason };
 }
 
 export function resolveAssistantStatusPollError(

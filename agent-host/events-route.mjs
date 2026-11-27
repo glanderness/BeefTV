@@ -7,6 +7,7 @@ import { MAX_EVENTS_BODY_BYTES, readJsonBody, respond } from './http-utils.mjs';
 export async function handleEventsRoute(req, res, {
   durable,
   ops,
+  ensureDescriptorsLoaded = () => ops.ensureDescriptorsLoaded?.(),
   currentId,
   followDurable,
   getProviderReason,
@@ -43,8 +44,8 @@ export async function handleEventsRoute(req, res, {
         : crypto.createHash('sha256').update(`wake:${canvasId}:${requestId}`).digest('hex').slice(0, 24);
       let openedTurn = false;
       try {
-        if (ops.descriptors?.size === 0 && typeof ops.ensureDescriptorsLoaded === 'function') {
-          await ops.ensureDescriptorsLoaded().catch(() => {});
+        if (ops.descriptors?.size === 0 && typeof ensureDescriptorsLoaded === 'function') {
+          await Promise.resolve(ensureDescriptorsLoaded()).catch(() => {});
         }
         await ops.opsRequest('POST', '/assistant/runtime/turns', {
           turnId,

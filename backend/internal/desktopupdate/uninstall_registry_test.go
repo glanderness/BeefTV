@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestWindowsUninstallRegistryNormalizationAndMatching(t *testing.T) {
@@ -81,16 +82,12 @@ func TestApplyWindowsUninstallDisplayVersionOnlyWhenInstallLocationMatches(t *te
 	}
 }
 
-func TestSwapWindowsUpdatesUninstallRegistryBestEffort(t *testing.T) {
-	root := t.TempDir()
-	targetDir := filepath.Join(root, "installed")
-	stagedDir := filepath.Join(root, "staged")
-	if err := WriteWindowsLayout(targetDir, "OLD"); err != nil {
-		t.Fatal(err)
+func TestRunHelperRequestUpdatesUninstallRegistryOnlyAfterRelaunchSucceeds(t *testing.T) {
+	prevWait := acquireParentExitWait
+	acquireParentExitWait = func(int) (func(time.Duration) error, func(), error) {
+		return func(time.Duration) error { return nil }, func() {}, nil
 	}
-	if err := WriteWindowsLayout(stagedDir, "NEW"); err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() { acquireParentExitWait = prevWait })
 
 	var calls []struct {
 		dir     string
@@ -106,44 +103,78 @@ func TestSwapWindowsUpdatesUninstallRegistryBestEffort(t *testing.T) {
 	}
 	t.Cleanup(func() { syncWindowsUninstallRegistryVersion = prevSync })
 
-	req := HelperRequest{
-		Platform:      "windows-amd64",
-		TargetPath:    filepath.Join(targetDir, windowsExeName),
-		StagedPath:    stagedDir,
-		BackupPath:    filepath.Join(root, "backup"),
-		TargetVersion: "v2.5.1",
+	prevRelaunch := relaunchInstall
+	t.Cleanup(func() { relaunchInstall = prevRelaunch })
+
+	// 1. Successful swap + relaunch updates uninstall registry best-effort even when registry write errors.
+	root := t.TempDir()
+	targetDir := filepath.Join(root, "installed")
+	stagedDir := filepath.Join(root, "staged")
+	if err := WriteWindowsLayout(targetDir, "OLD"); err != nil {
+		t.Fatal(err)
 	}
-	// Registry write error must remain best-effort and never fail or roll back a successful swap.
-	if err := SwapInstall(req); err != nil {
-		t.Fatalf("SwapInstall failed despite best-effort registry sync: %v", err)
+	if err := WriteWindowsLayout(stagedDir, "NEW"); err != nil {
+		t.Fatal(err)
+	}
+	relaunchInstall = func(HelperRequest) error { return nil }
+	req := HelperRequest{
+		Schema:         helperRequestSchema,
+		ParentPID:      12345,
+		Platform:       "windows-amd64",
+		TargetPath:     filepath.Join(targetDir, windowsExeName),
+		StagedPath:     stagedDir,
+		BackupPath:     filepath.Join(root, "backup"),
+		ResultPath:     filepath.Join(root, "result.json"),
+		TargetVersion:  "v2.5.1",
+		WaitTimeoutSec: 5,
+	}
+	if err := RunHelperRequest(req); err != nil {
+		t.Fatalf("RunHelperRequest failed despite best-effort registry sync: %v", err)
 	}
 	if len(calls) != 1 || calls[0].dir != targetDir || calls[0].version != "2.5.1" {
 		t.Fatalf("unexpected registry sync calls: %+v", calls)
 	}
 	if got, err := os.ReadFile(req.TargetPath); err != nil || string(got) != "MZ-NEW" {
-		t.Fatalf("target exe after swap = %q err=%v, want MZ-NEW", got, err)
+		t.Fatalf("target exe after update = %q err=%v, want MZ-NEW", got, err)
 	}
 
-	// Failed swap must never touch uninstall registry.
+	// 2. Failed relaunch triggers RestoreBackup and must NOT write the rolled-back new version to registry.
 	calls = nil
-	badStaged := filepath.Join(root, "bad-staged")
-	if err := WriteWindowsLayout(badStaged, "BAD"); err != nil {
+	rollbackRoot := t.TempDir()
+	rollbackTarget := filepath.Join(rollbackRoot, "installed")
+	rollbackStaged := filepath.Join(rollbackRoot, "staged")
+	if err := WriteWindowsLayout(rollbackTarget, "OLD"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(badStaged, "agent-host", "runtime", "node.exe")); err != nil {
+	if err := WriteWindowsLayout(rollbackStaged, "NEW"); err != nil {
 		t.Fatal(err)
 	}
-	failReq := HelperRequest{
-		Platform:      "windows-amd64",
-		TargetPath:    filepath.Join(targetDir, windowsExeName),
-		StagedPath:    badStaged,
-		BackupPath:    filepath.Join(root, "backup-2"),
-		TargetVersion: "v2.5.2",
+	relaunchAttempts := 0
+	relaunchInstall = func(HelperRequest) error {
+		relaunchAttempts++
+		if relaunchAttempts == 1 {
+			return errors.New("simulated new binary launch failure")
+		}
+		return nil
 	}
-	if err := SwapInstall(failReq); err == nil {
-		t.Fatal("expected SwapInstall failure for invalid staged layout")
+	rollbackReq := HelperRequest{
+		Schema:         helperRequestSchema,
+		ParentPID:      12345,
+		Platform:       "windows-amd64",
+		TargetPath:     filepath.Join(rollbackTarget, windowsExeName),
+		StagedPath:     rollbackStaged,
+		BackupPath:     filepath.Join(rollbackRoot, "backup"),
+		ResultPath:     filepath.Join(rollbackRoot, "result.json"),
+		TargetVersion:  "v2.5.2",
+		WaitTimeoutSec: 5,
+	}
+	if err := RunHelperRequest(rollbackReq); err == nil {
+		t.Fatal("expected RunHelperRequest failure when relaunch fails")
 	}
 	if len(calls) != 0 {
-		t.Fatalf("failed swap must not sync uninstall registry, got %+v", calls)
+		t.Fatalf("rolled-back update must not sync uninstall registry, got %+v", calls)
+	}
+	if got, err := os.ReadFile(rollbackReq.TargetPath); err != nil || string(got) != "MZ-OLD" {
+		t.Fatalf("target exe after rollback = %q err=%v, want MZ-OLD", got, err)
 	}
 }

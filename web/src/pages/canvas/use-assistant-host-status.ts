@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/services/api/request";
 import { getAgentHostStatus, restartAgentHost, type AgentHostStatus } from "@/services/api/agent-assistant";
-import { isAssistantTransientReason, resolveAssistantStatusPollError } from "./canvas-assistant-recovery";
+import {
+    isAssistantTransientReason,
+    resolveAssistantRestartError,
+    resolveAssistantStatusPollError,
+} from "./canvas-assistant-recovery";
 
 /**
  * 助手宿主状态轮询与手动重启。
@@ -87,8 +91,8 @@ export function useAssistantHostStatus(open: boolean) {
             statusRef.current = nextStatus;
             setStatus(nextStatus);
             rescheduleRef.current?.();
-        } catch {
-            const failed: AgentHostStatus = { available: false, reason: "host_start_failed" };
+        } catch (error) {
+            const failed = resolveAssistantRestartError(error);
             statusRef.current = failed;
             setStatus(failed);
             rescheduleRef.current?.();

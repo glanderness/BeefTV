@@ -81,9 +81,6 @@ func swapWindows(req HelperRequest) error {
 			return errors.Join(err, restoreWindows(req))
 		}
 	}
-	if version := normalizeWindowsDisplayVersion(req.TargetVersion); version != "" {
-		_ = syncWindowsUninstallRegistryVersion(targetDir, version)
-	}
 	return nil
 }
 

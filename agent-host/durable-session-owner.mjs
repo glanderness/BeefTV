@@ -140,7 +140,7 @@ export function createDurableSessionStore({
     const mode = result?.permissionMode || 'canvas';
     if (!['read-only', 'canvas', 'full-access'].includes(mode)) throw fail('invalid_permission_mode');
     if (entry.input?.turnId === turnId && (entry.input.permissionMode || 'canvas') !== mode) throw fail('permission_mode_frozen');
-    if (!entry.readOnlyHandle && entry.permissionMode !== mode) {
+    if (!entry.readOnlyHandle && (entry.permissionMode !== mode || entry.pendingHostToolsRefresh || entry.hasHostToolsDrift?.(mode))) {
       entry.permissionMode = mode;
       entry.generation.permissionMode = mode;
       if (entry.configurePermission) await entry.configurePermission(mode);
@@ -186,6 +186,9 @@ export function createDurableSessionStore({
     if (active) {
       if (agent.model?.provider !== modelRef.provider || agent.model?.modelId !== modelRef.modelId) throw fail('turn_model_frozen');
     } else {
+      if (entry.pendingHostToolsRefresh && typeof entry.refreshHostTools === 'function') {
+        await entry.refreshHostTools();
+      }
       if (entry.pendingPluginExtensions && typeof entry.reloadPluginExtensions === 'function') {
         const pending = entry.pendingPluginExtensions;
         entry.pendingPluginExtensions = null;
@@ -529,6 +532,11 @@ export function createDurableSessionStore({
       entry.compacting = false;
     }
   }
+  async function refreshHostTools() {
+    for (const entry of sessions.values()) {
+      if (typeof entry.refreshHostTools === 'function') await entry.refreshHostTools();
+    }
+  }
   async function reloadPluginExtensions(newExtensions) {
     for (const entry of sessions.values()) {
       if (typeof entry.reloadPluginExtensions === 'function') await entry.reloadPluginExtensions(newExtensions);
@@ -585,6 +593,7 @@ export function createDurableSessionStore({
     listCanvasSessions,
     configureSession,
     compactSession,
+    refreshHostTools,
     reloadPluginExtensions,
     disposeAll,
     skillContext,

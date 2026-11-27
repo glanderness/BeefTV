@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
+import { ApiError } from "@/services/api/request";
 import { waitForAssistant } from "@/pages/canvas/assistant-readiness";
 import {
     createCanvasRun,
     isAssistantTransientReason,
+    resolveAssistantRestartError,
     resolveAssistantStatusPollError,
     shouldAutoLoadHistory,
     shouldSuppressAssistantHistoryError,
@@ -66,6 +68,24 @@ test("single transient poll failure preserves available, host_starting, and host
     expect(resolveAssistantStatusPollError(null, undefined, 2)).toEqual({ available: false });
     expect(resolveAssistantStatusPollError(null, "forbidden", 1)).toEqual({ available: false, reason: "forbidden" });
     expect(resolveAssistantStatusPollError(null, "desktop_token_required", 1)).toEqual({ available: false, reason: "desktop_token_required" });
+});
+test("restart error preserves ApiError reason such as forbidden/desktop_token_required and falls back to host_start_failed", () => {
+    expect(resolveAssistantRestartError(new ApiError("forbidden", { status: 403, reason: "forbidden" }))).toEqual({
+        available: false,
+        reason: "forbidden",
+    });
+    expect(resolveAssistantRestartError(new ApiError("token missing", { status: 403, reason: "desktop_token_required" }))).toEqual({
+        available: false,
+        reason: "desktop_token_required",
+    });
+    expect(resolveAssistantRestartError(new ApiError("boom", { status: 500 }))).toEqual({
+        available: false,
+        reason: "host_start_failed",
+    });
+    expect(resolveAssistantRestartError(new Error("network failed"))).toEqual({
+        available: false,
+        reason: "host_start_failed",
+    });
 });
 test("host_busy allows history auto-reload and suppresses transient empty-history error banner", () => {
     const erroredRun = { ...createCanvasRun(), historyError: "没能读取对话。请重新读取。", historyHostUnavailable: true };

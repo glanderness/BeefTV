@@ -174,54 +174,69 @@ const mcpController = createMcpServerController({
 
 const combinedExtensions = () => [...pluginController.getExtensions(), ...mcpController.getExtensions()];
 
-let pluginSyncPromise = null;
-let mcpSyncPromise = null;
-function syncPluginsIfChanged() {
-  if (!pluginSyncPromise) {
-    pluginSyncPromise = pluginController.syncIfChanged()
-      .then(async (synced) => {
-        if (synced.changed) {
-          await durable.reloadPluginExtensions(combinedExtensions()).catch((error) => {
-            console.error(`agent-host: 插件扩展热重载失败（稍后可重试）：${error?.message || error}`);
-          });
-        }
-        return synced;
-      })
-      .catch((error) => {
-        console.error(`agent-host: 插件同步失败（稍后可重试）：${error?.message || error}`);
-        return { changed: false };
-      })
-      .finally(() => {
-        pluginSyncPromise = null;
-      });
-  }
-  return pluginSyncPromise;
+let extensionReloadQueue = Promise.resolve();
+function queueExtensionReload() {
+  const next = extensionReloadQueue.catch(() => {}).then(() =>
+    durable.reloadPluginExtensions(combinedExtensions()),
+  );
+  extensionReloadQueue = next;
+  return next;
 }
 
-function syncMcpIfChanged() {
-  if (!mcpSyncPromise) {
-    mcpSyncPromise = mcpController.syncIfChanged()
-      .then(async (synced) => {
-        if (synced.changed) {
-          await durable.reloadPluginExtensions(combinedExtensions()).catch((error) => {
-            console.error(`agent-host: MCP 扩展热重载失败（稍后可重试）：${error?.message || error}`);
+function createExtensionSync(label, controller) {
+  let inFlight = null;
+  return {
+    sync() {
+      if (!inFlight) {
+        inFlight = controller.syncIfChanged()
+          .then(async (synced) => {
+            if (synced.changed) {
+              await queueExtensionReload().catch((error) => {
+                console.error(`agent-host: ${label}扩展热重载失败（稍后可重试）：${error?.message || error}`);
+              });
+            }
+            return synced;
+          })
+          .catch((error) => {
+            console.error(`agent-host: ${label}同步失败（稍后可重试）：${error?.message || error}`);
+            return { changed: false };
+          })
+          .finally(() => {
+            inFlight = null;
           });
-        }
-        return synced;
-      })
-      .catch((error) => {
-        console.error(`agent-host: MCP 同步失败（稍后可重试）：${error?.message || error}`);
-        return { changed: false };
-      })
-      .finally(() => {
-        mcpSyncPromise = null;
-      });
-  }
-  return mcpSyncPromise;
+      }
+      return inFlight;
+    },
+    waitIfInFlight: () => inFlight,
+  };
 }
 
+const pluginSync = createExtensionSync('插件', pluginController);
+const mcpSync = createExtensionSync('MCP ', mcpController);
 function syncExtensionsIfChanged() {
-  return Promise.all([syncPluginsIfChanged(), syncMcpIfChanged()]);
+  return Promise.all([pluginSync.sync(), mcpSync.sync()]);
+}
+
+let hostToolsRefreshPromise = null;
+function refreshMountedHostTools() {
+  if (!hostToolsRefreshPromise) {
+    hostToolsRefreshPromise = durable.refreshHostTools()
+      .catch((error) => {
+        console.error(`agent-host: 会话画布工具刷新失败（稍后可重试）：${error?.message || error}`);
+      })
+      .finally(() => {
+        hostToolsRefreshPromise = null;
+      });
+  }
+  return hostToolsRefreshPromise;
+}
+
+async function ensureDescriptorsLoaded() {
+  const count = await ops.ensureDescriptorsLoaded();
+  if (count > 0 && durable.sessions.size > 0) {
+    await refreshMountedHostTools();
+  }
+  return count;
 }
 
 const hostTelemetry = await openHostTelemetry(DATA_DIR);
@@ -266,7 +281,7 @@ const durable = createDurableSessionStore({
     readCatalog:async (entry,signal,turnId,query={}) => (await ops.opsRequest('POST','/ops/skill.catalog',{params:query},signal,turnId || entry.turn.turnId)).result,
   },
   readCanvas: async (entry, signal, turnId) => {
-    if (ops.descriptors.size === 0) await ops.ensureDescriptorsLoaded().catch(() => {});
+    if (ops.descriptors.size === 0) await ensureDescriptorsLoaded().catch(() => {});
     if (!ops.descriptors.has('canvas_get')) return null;
     const { result } = await ops.opsRequest('POST', '/ops/canvas.get', { params: { canvasId: entry.canvasId } }, signal, turnId || entry.turn.turnId);
     const canvas = result?.canvas;
@@ -388,7 +403,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/health') {
     if (!instanceOK(req)) { respond(res, 403, { code: 403, reason: 'instance_mismatch' }); return; }
     if (ops.descriptors.size === 0) {
-      void ops.ensureDescriptorsLoaded().catch(() => {});
+      void ensureDescriptorsLoaded().catch(() => {});
     }
     const persistenceSummary = durable.sessions.size === 0 ? 'ok' : [...new Set([...durable.sessions.values()].map((entry) => entry.persistence))].join(',');
     const proof = instanceProof();
@@ -402,7 +417,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/tools') {
-    await ops.ensureDescriptorsLoaded().catch(() => {});
+    await ensureDescriptorsLoaded().catch(() => {});
     await syncExtensionsIfChanged();
     const canvasId = url.searchParams.get('canvasId') || '';
     const entry = canvasId ? durable.sessions.get(canvasId) : null;
@@ -416,7 +431,8 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     if (req.method === 'GET' && url.pathname === '/plugins') {
-      if (pluginSyncPromise) await pluginSyncPromise;
+      const pendingPluginSync = pluginSync.waitIfInFlight();
+      if (pendingPluginSync) await pendingPluginSync;
       respond(res, 200, {
         packages: pluginController.listLoaded(),
         errors: pluginController.getErrors(),
@@ -426,7 +442,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/plugins/reload') {
       const body = await readJsonBody(req);
       const reloaded = await pluginController.reload(Array.isArray(body.packages) ? body.packages : undefined);
-      await durable.reloadPluginExtensions(combinedExtensions());
+      await queueExtensionReload();
       respond(res, 200, { ok: true, packages: reloaded.packages, errors: reloaded.errors });
       return;
     }
@@ -722,7 +738,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/mcp-servers/reload') {
       const reloaded = await mcpController.reload();
-      await durable.reloadPluginExtensions(combinedExtensions()).catch(() => {});
+      await queueExtensionReload().catch(() => {});
       respond(res, 200, { ok: true, servers: reloaded.servers });
       return;
     }
@@ -757,6 +773,7 @@ const server = http.createServer(async (req, res) => {
       await handleEventsRoute(req, res, {
         durable,
         ops,
+        ensureDescriptorsLoaded,
         currentId,
         followDurable,
         getProviderReason: () => providerReason,
@@ -783,7 +800,7 @@ const server = http.createServer(async (req, res) => {
       const authority=await ops.opsRequest('GET',`/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
       if(authority.canvasId!==canvasId || authority.open===false) throw Object.assign(new Error('turn_not_open'),{reason:'turn_not_open'});
       body.permissionMode=authority.permissionMode || 'canvas';
-      await ops.ensureDescriptorsLoaded().catch((error) => {
+      await ensureDescriptorsLoaded().catch((error) => {
         console.error(`agent-host: 回合前能力发现重试失败：${error?.message || error}`);
       });
       if (!body.continuationId) {
@@ -865,7 +882,7 @@ if (LIFETIME_STDIN) {
 
 await initializeModel();
 try {
-  const count = await ops.ensureDescriptorsLoaded();
+  const count = await ensureDescriptorsLoaded();
   console.error(`agent-host: 载入 ${count} 个操作（readOnly=${READ_ONLY_MODE}）`);
 }
 catch (error) { console.error(`agent-host: 能力发现失败（稍后可重试）：${error?.message || error}`); }

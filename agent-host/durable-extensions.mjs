@@ -306,56 +306,76 @@ export async function installDurableExtensions({
     return items;
   }
 
-  const baseHostTools = [...buildTools(canvasId, entry.log, entry.generation, entry.turn, sessionId), ...hostTools()];
-  entry.readOnlyToolNames = new Set(
-    baseHostTools.filter((tool) => tool.readOnly === true && tool.label !== 'canvas.generation.propose' && tool.label !== 'skill.script.run').map((tool) => tool.name),
-  );
-  const tools = baseHostTools.map((tool) => defineTool({
-    name: tool.name, description: tool.description + (tool.label === 'canvas.generation.propose'
-      ? '。成功提案会结束本轮；plan_update 与本调用同一次响应发出。'
-      : tool.label === 'skill.script.run'
-        ? '。首次运行需用户确认并结束本轮；plan_update 可与本调用同一次响应发出。'
-        : ''), parameters: tool.parameters,
-    replay: durableToolReplay(tool),
-    executionMode: tool.readOnly === true && tool.label !== 'canvas.generation.propose' && tool.label !== 'skill.script.run' ? 'parallel' : 'sequential',
-    ...(DEFERRED_HOST_TOOL_LABELS.has(tool.label) ? { deferred: true } : {}),
-    ...(MODEL_ONLY_HOST_TOOL_LABELS.has(tool.label) ? { callers: ['model'] } : {}),
-    ...(['media.overview', 'media.inspect', 'media.check', 'media.review'].includes(tool.label)
-      ? { outputLimits: { maxBytes: 64 * 1024 * 1024, maxLines: 100000 } }
-      : tool.label === 'file.read'
-        ? { outputLimits: { maxBytes: 16 * 1024 * 1024, maxLines: 4000 } }
-        : ['skill.load', 'skill.file'].includes(tool.label)
-          ? { outputLimits: { maxBytes: 128 * 1024, maxLines: 4000 } }
-          : {}),
-    execute: async (args, api, context) => {
-      if (entry.generation.aborted) throw fail('aborted');
-      if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
-      if (entry.generation.pendingInput?.state === 'pending') throw fail('supplement_preparation_pending');
-      await authorization(entry, entry.turn.turnId);
-      try {
-        const proposalCount = entry.turn.proposals.length;
-        const pendingScriptProposalCount = (entry.turn.scriptProposals || []).filter((item) => item?.status === 'pending').length;
-        const resolvedArgs = await resolveSkillToolArgs(tool.label, args, String(api.taskId), context.abortSignal);
-        // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
-        const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), resolvedArgs, context.abortSignal,
-          { executeTool: (name, params, options) => api.executeTool(name, params, context, options),
-            reportProgress: (progress) => api.details({ beeftvProgress: progress }, context) }));
-        entry.generation.toolCalledSinceYield = true;
-        if (!tool.readOnly && typeof readCanvas === 'function') {
-          await refreshStudioDigest(entry, entry.turn.turnId, { selectedNodeIds: entry.input?.selectedNodeIds || [], computeDiff: false, signal: context.abortSignal });
-        }
-        // Official Durable ends only when every call in this response requests
-        // termination. Mixed/failed rounds keep their normal model continuation.
-        // 提方案失败时它自己不请求结束，整轮仍按官方规则继续，所以同批计划更新请求结束是安全的。
-        const proposed = tool.label === 'canvas.generation.propose' && result.isError !== true && entry.turn.proposals.length > proposalCount;
-        const scriptProposed = tool.label === 'skill.script.run' && result.isError !== true &&
-          (entry.turn.scriptProposals || []).filter((item) => item?.status === 'pending').length > pendingScriptProposalCount;
-        const planWithProposal = tool.label === 'plan.update' && result.isError !== true && (await state(entry))?.roundProposes === true;
-        return { ...result, output: content, ...(proposed || scriptProposed || planWithProposal ? { control: { ...result.control, terminate: true } } : {}) };
-      } finally { await persistEffects(entry); }
-    },
-  }));
-  let selectedHostTools = tools;
+  const wrappedHostTools = new Map();
+  function wrapHostTool(tool) {
+    let wrapped = wrappedHostTools.get(tool.name);
+    if (!wrapped) {
+      wrapped = defineTool({
+        name: tool.name, description: tool.description + (tool.label === 'canvas.generation.propose'
+          ? '。成功提案会结束本轮；plan_update 与本调用同一次响应发出。'
+          : tool.label === 'skill.script.run'
+            ? '。首次运行需用户确认并结束本轮；plan_update 可与本调用同一次响应发出。'
+            : ''), parameters: tool.parameters,
+        replay: durableToolReplay(tool),
+        executionMode: tool.readOnly === true && tool.label !== 'canvas.generation.propose' && tool.label !== 'skill.script.run' ? 'parallel' : 'sequential',
+        ...(DEFERRED_HOST_TOOL_LABELS.has(tool.label) ? { deferred: true } : {}),
+        ...(MODEL_ONLY_HOST_TOOL_LABELS.has(tool.label) ? { callers: ['model'] } : {}),
+        ...(['media.overview', 'media.inspect', 'media.check', 'media.review'].includes(tool.label)
+          ? { outputLimits: { maxBytes: 64 * 1024 * 1024, maxLines: 100000 } }
+          : tool.label === 'file.read'
+            ? { outputLimits: { maxBytes: 16 * 1024 * 1024, maxLines: 4000 } }
+            : ['skill.load', 'skill.file'].includes(tool.label)
+              ? { outputLimits: { maxBytes: 128 * 1024, maxLines: 4000 } }
+              : {}),
+        execute: async (args, api, context) => {
+          if (entry.generation.aborted) throw fail('aborted');
+          if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
+          if (entry.generation.pendingInput?.state === 'pending') throw fail('supplement_preparation_pending');
+          await authorization(entry, entry.turn.turnId);
+          try {
+            const proposalCount = entry.turn.proposals.length;
+            const pendingScriptProposalCount = (entry.turn.scriptProposals || []).filter((item) => item?.status === 'pending').length;
+            const resolvedArgs = await resolveSkillToolArgs(tool.label, args, String(api.taskId), context.abortSignal);
+            // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
+            const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), resolvedArgs, context.abortSignal,
+              { executeTool: (name, params, options) => api.executeTool(name, params, context, options),
+                reportProgress: (progress) => api.details({ beeftvProgress: progress }, context) }));
+            entry.generation.toolCalledSinceYield = true;
+            if (!tool.readOnly && typeof readCanvas === 'function') {
+              await refreshStudioDigest(entry, entry.turn.turnId, { selectedNodeIds: entry.input?.selectedNodeIds || [], computeDiff: false, signal: context.abortSignal });
+            }
+            // Official Durable ends only when every call in this response requests
+            // termination. Mixed/failed rounds keep their normal model continuation.
+            // 提方案失败时它自己不请求结束，整轮仍按官方规则继续，所以同批计划更新请求结束是安全的。
+            const proposed = tool.label === 'canvas.generation.propose' && result.isError !== true && entry.turn.proposals.length > proposalCount;
+            const scriptProposed = tool.label === 'skill.script.run' && result.isError !== true &&
+              (entry.turn.scriptProposals || []).filter((item) => item?.status === 'pending').length > pendingScriptProposalCount;
+            const planWithProposal = tool.label === 'plan.update' && result.isError !== true && (await state(entry))?.roundProposes === true;
+            return { ...result, output: content, ...(proposed || scriptProposed || planWithProposal ? { control: { ...result.control, terminate: true } } : {}) };
+          } finally { await persistEffects(entry); }
+        },
+      });
+      wrappedHostTools.set(tool.name, wrapped);
+    }
+    return wrapped;
+  }
+
+  function projectHostTools(mode) {
+    entry.generation.permissionMode = mode;
+    const projected = [...buildTools(canvasId, entry.log, entry.generation, entry.turn, sessionId), ...hostTools()];
+    entry.readOnlyToolNames = new Set(
+      projected
+        .filter((tool) => tool.readOnly === true && tool.label !== 'canvas.generation.propose' && tool.label !== 'skill.script.run')
+        .map((tool) => tool.name),
+    );
+    return projected.map((tool) => ({
+      ...wrapHostTool(tool),
+      parameters: tool.parameters,
+    }));
+  }
+
+  let selectedHostTools = projectHostTools(entry.generation.permissionMode || 'full-access');
+  let hostToolSignature = selectedHostTools.map((tool) => tool.name).join('\0');
   const toolSearchExt = createToolSearchExtension();
   const codemodeExt = codemodeSandbox
     ? createCodemodeExtension({ sandbox: codemodeSandbox, models: false, inlineBudget: 0 })
@@ -366,7 +386,8 @@ export async function installDurableExtensions({
   ];
   entry.pluginExtensions = [];
   entry.pluginTools = [];
-  entry.toolNames = [...tools, ...builtinExtensionTools].map((tool) => tool.name);
+  entry.pendingHostToolsRefresh = false;
+  entry.toolNames = [...selectedHostTools, ...builtinExtensionTools].map((tool) => tool.name);
 
   function wrapPluginExtensionForEntry(rawExtension) {
     if (!rawExtension || typeof rawExtension !== 'object') return null;
@@ -469,7 +490,7 @@ export async function installDurableExtensions({
 
   const operationExtension = defineExtension({
     name: 'beeftv.operations.v1',
-    tools,
+    tools: selectedHostTools,
     hooks: [hook(GenerationTask, {
       beforeProviderRequest: ({ model, payload }) => {
         const adapted = adaptProviderPromptCache(payload, model?.api, { sessionId: entry.sessionId });
@@ -646,20 +667,45 @@ export async function installDurableExtensions({
   registry.install(operationExtension);
   registry.install(toolSearchExt);
   if (codemodeExt) registry.install(codemodeExt);
-  entry.configurePermission = async (mode) => {
-    entry.generation.permissionMode = mode;
-    const projected = [...buildTools(canvasId, entry.log, entry.generation, entry.turn, sessionId), ...hostTools()];
-    const byName = new Map(projected.map((t) => [t.name, t]));
-    selectedHostTools = tools.filter((t) => byName.has(t.name)).map((t) => ({ ...t, parameters: byName.get(t.name).parameters }));
+  let configureQueue = Promise.resolve();
+  function syncActiveTools() {
     const activeTools = [...selectedHostTools, ...builtinExtensionTools, ...entry.pluginTools];
     entry.toolNames = activeTools.map((tool) => tool.name);
+    const next = configureQueue.catch(() => {}).then(async () => {
+      const latestTools = [...selectedHostTools, ...builtinExtensionTools, ...entry.pluginTools];
+      entry.toolNames = latestTools.map((tool) => tool.name);
+      if (entry.root) {
+        await entry.root.configure({
+          tools: latestTools,
+          instructions: SYSTEM_PROMPT,
+        }, CTX);
+      }
+    });
+    configureQueue = next;
+    return next;
+  }
+
+  entry.hasHostToolsDrift = (mode = entry.permissionMode || entry.generation.permissionMode || 'full-access') => {
+    const probeGeneration = { ...entry.generation, permissionMode: mode };
+    const projected = [...buildTools(canvasId, entry.log, probeGeneration, entry.turn, sessionId), ...hostTools()];
+    return projected.map((tool) => tool.name).join('\0') !== hostToolSignature;
+  };
+  entry.configurePermission = async (mode) => {
+    selectedHostTools = projectHostTools(mode);
+    hostToolSignature = selectedHostTools.map((tool) => tool.name).join('\0');
+    entry.pendingHostToolsRefresh = false;
     registry.install(defineExtension({ ...operationExtension, tools: selectedHostTools }));
-    if (entry.root) {
-      await entry.root.configure({
-        tools: activeTools,
-        instructions: SYSTEM_PROMPT,
-      }, CTX);
+    await syncActiveTools();
+  };
+  entry.refreshHostTools = async () => {
+    if (entry.readOnlyHandle) return;
+    const mode = entry.permissionMode || entry.generation.permissionMode || 'full-access';
+    if (!entry.pendingHostToolsRefresh && !entry.hasHostToolsDrift(mode)) return;
+    if (entry.busy || entry.compacting) {
+      entry.pendingHostToolsRefresh = true;
+      return;
     }
+    await entry.configurePermission(mode);
   };
   entry.reloadPluginExtensions = async (newExtensions) => {
     if (entry.busy || entry.compacting) {
@@ -668,13 +714,7 @@ export async function installDurableExtensions({
     }
     entry.pendingPluginExtensions = null;
     applyPluginExtensionsToRegistry(newExtensions);
-    const activeTools = [...selectedHostTools, ...builtinExtensionTools, ...entry.pluginTools];
-    if (entry.root) {
-      await entry.root.configure({
-        tools: activeTools,
-        instructions: SYSTEM_PROMPT,
-      }, CTX);
-    }
+    await syncActiveTools();
   };
 
   if (skills) {
