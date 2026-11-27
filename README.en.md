@@ -31,6 +31,7 @@
 
 <p align="center">
   <a href="README.md">简体中文</a> ·
+  <a href="README.tr.md">Türkçe</a> ·
   <a href="#recent-updates">Recent updates</a> ·
   <a href="#product-demo">Product demo</a> ·
   <a href="#workflows">Workflows</a> ·
