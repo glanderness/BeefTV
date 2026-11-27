@@ -6,7 +6,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ASSISTANT_PROPOSAL_INVALIDATED_TEXT, ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantScriptProposal, type AssistantTurn, type CreateAssistantMandateInput } from "@/services/api/agent-assistant";
-import { formatMandateCny, suggestMandateCapCny } from "./canvas-assistant-approval-card";
+import { formatMandateCny } from "./canvas-assistant-approval-card";
 import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantOrderTargetLines, assistantProductionProposalParts, assistantProposalConfirmLabel, assistantProposalText, assistantProposalProgress, assistantScriptProposalLines, assistantScriptResultStatusText, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
 import type { CanvasNodeData } from "@/types/canvas";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
@@ -313,10 +313,10 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                                 <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={generationDisabled} onClick={() => onRunProposal(proposal, turn.turnId)}>
                                     {assistantProposalConfirmLabel(proposal)}
                                 </Button>
-                                {!proposal.regenerate && !hasActiveMandate ? (() => {
-                                    const suggestedCap = suggestMandateCapCny(
-                                        typeof estimateAmount === "number" ? estimateAmount : undefined,
-                                    );
+                                {!proposal.regenerate && !hasActiveMandate && estimateUnknown === 0 ? (() => {
+                                    const suggestedCap = typeof proposal.suggestedCapCny === "number" && Number.isFinite(proposal.suggestedCapCny) && proposal.suggestedCapCny > 0
+                                        ? Math.ceil(proposal.suggestedCapCny)
+                                        : 20;
                                     return (
                                         <Button
                                             size="small"
@@ -325,7 +325,7 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                                             disabled={generationDisabled}
                                             onClick={() => onRunProposal(proposal, turn.turnId, {
                                                 maxAmountCny: suggestedCap,
-                                                maxUnquotedCount: Math.max(4, estimateUnknown),
+                                                maxUnquotedCount: 0,
                                             })}
                                         >
                                             {`批准本片预算包（上限 ${formatMandateCny(suggestedCap)}）`}

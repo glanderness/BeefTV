@@ -112,17 +112,17 @@ func registerAgentProxyTurnRoutes(
 		if !guard(c, true) {
 			return
 		}
-		type productionConfirmBody struct {
-			app.AssistantProductionConfirmation
-			CreateMandate *operations.CreateProductionMandateInput `json:"createMandate,omitempty"`
-		}
-		_, bodyPayload, valid := readAssistantBodyLimit(c, productionConfirmBody{}, agentProductionConfirmMaxBody)
+		_, payload, valid := readAssistantBodyLimit(c, app.AssistantProductionConfirmation{}, agentProductionConfirmMaxBody)
 		if !valid {
 			return
 		}
-		payload := bodyPayload.AssistantProductionConfirmation
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
+		}
+		if payload.CreateMandate != nil && strings.TrimSpace(payload.CreateMandate.CanvasID) != "" {
+			if _, allowed := requireOwnedCanvas(c, payload.CreateMandate.CanvasID); !allowed {
+				return
+			}
 		}
 		if !assistantProposalIDPattern.MatchString(c.Param("proposalId")) {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("生成建议标识无效"))
@@ -130,25 +130,13 @@ func registerAgentProxyTurnRoutes(
 		}
 		payload.ProposalID = c.Param("proposalId")
 		payload.AutoBudget = autoBudget
+		if autoBudget {
+			payload.CreateMandate = nil
+		}
 		result, err := svc.ConfirmAssistantProduction(c.GetString("agentUserId"), c.Param("turnId"), payload)
 		if err != nil {
 			failAssistantProposal(c, err)
 			return
-		}
-		if bodyPayload.CreateMandate != nil && !autoBudget {
-			in := *bodyPayload.CreateMandate
-			if strings.TrimSpace(in.CanvasID) == "" {
-				in.CanvasID = payload.CanvasID
-			}
-			in.ApprovedBy = "ui"
-			if identity := strings.TrimSpace(c.GetString("agentIdentity")); identity == "owner" {
-				in.ApprovedBy = "owner-cli"
-			}
-			if m, mErr := operations.CreateProductionMandateInTx(svc.Database(), c.GetString("agentUserId"), in); mErr == nil && m != nil {
-				if resMap, ok := result.(map[string]any); ok {
-					resMap["mandate"] = operations.ProjectProductionMandate(*m)
-				}
-			}
 		}
 		ok(c, result)
 	}
@@ -490,6 +478,9 @@ func registerAgentProxyTurnRoutes(
 		if err := svc.AssistantTurns().CancelContinuations(c.GetString("agentUserId"), payload.CanvasID, cancelSession, false); err != nil {
 			failService(c, err)
 			return
+		}
+		if db := svc.Database(); db != nil {
+			_ = operations.ClosePendingApprovalsForCanvasSessionInTx(db, c.GetString("agentUserId"), payload.CanvasID, cancelSession)
 		}
 		body, err := json.Marshal(target)
 		if err != nil {

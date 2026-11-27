@@ -374,6 +374,7 @@ export function collectTurnEffects(turn, opID, result, operationId, { noTurnCanv
           ...(Array.isArray(result.targets) ? { targets: result.targets } : {}),
           ...(result.estimate ? { estimate: result.estimate } : {}),
           ...(result.production ? { production: result.production } : {}),
+          ...(typeof result.suggestedCapCny === 'number' && result.suggestedCapCny > 0 ? { suggestedCapCny: result.suggestedCapCny } : {}),
           ...(result.regenerate ? { regenerate: true } : {}),
           ...(result.source ? { source: { canvasId: result.source.canvasId,
             canvasRevision: result.source.canvasRevision, modelConfigRevision: result.source.modelConfigRevision } } : {}) });

@@ -428,7 +428,10 @@ function InfiniteCanvasPage() {
         continuationSessionId: assistant.sessionId,
         continuePlan: Boolean(assistant.plan?.items.some((item) => item.status !== "done")),
         onContinuationArmed: assistantContinuation.refresh,
-        onMandateUpdated: () => { void assistant.refreshMandate(); },
+        onMandateUpdated: (mandate) => {
+            if (mandate !== undefined) assistant.applyActiveMandate(mandate);
+            else void assistant.refreshMandate();
+        },
         handleGenerateNode: generation.handleGenerateNode,
     });
 

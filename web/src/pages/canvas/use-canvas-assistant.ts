@@ -32,6 +32,7 @@ import {
     type AssistantAttachment,
     type AssistantSkillSelection,
     type AssistantPermissionMode,
+    type AssistantProductionMandate,
     type AssistantThinkingLevel,
     type AssistantTurn,
     type CreateAssistantMandateInput,
@@ -537,6 +538,12 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     if (turn.change?.canvasChanges?.length) {
                         for (const changed of turn.change.canvasChanges) onCanvasChangedRef.current?.(changed.canvasId, assistantChangedNodeIds(changed));
                     } else onCanvasChangedRef.current?.(targetCanvas, assistantChangedNodeIds(turn.change));
+                    // 回合结束后立即刷新预算包台账余额，避免用户看到过期的剩余/预留额度。
+                    void listAssistantMandates(targetCanvas, run.sessionId ?? undefined).then((mandateRes) => {
+                        if (!isLiveRun(originNamespace, targetCanvas, run)) return;
+                        run.activeMandate = mandateRes.activeMandate ?? null;
+                        rerenderIfActive(targetCanvas);
+                    }).catch(() => {});
                     rerenderIfActive(targetCanvas);
                 },
             }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, sessionId: run.sessionId ?? undefined, requestId, attachments, skills, permissionMode });
@@ -717,6 +724,13 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const [approvalFeedback, setApprovalFeedback] = useState<Record<string, string>>({});
     const [mandateBusy, setMandateBusy] = useState(false);
 
+    const applyActiveMandate = useCallback((mandate: AssistantProductionMandate | null) => {
+        const targetCanvas = activeCanvasRef.current;
+        const run = runFor(targetCanvas);
+        run.activeMandate = mandate;
+        rerenderIfActive(targetCanvas);
+    }, [rerenderIfActive, runFor]);
+
     const refreshMandate = useCallback(async () => {
         const originNamespace = namespaceRef.current;
         const targetCanvas = activeCanvasRef.current;
@@ -784,7 +798,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const decidePendingApproval = useCallback(async (
         proposalId: string,
         decision: "approve" | "reject",
-        options?: { createMandate?: CreateAssistantMandateInput; rejectReason?: string },
+        options?: { createMandate?: CreateAssistantMandateInput; reason?: string },
     ) => {
         const originNamespace = namespaceRef.current;
         const targetCanvas = activeCanvasRef.current;
@@ -803,12 +817,17 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 : undefined;
             const res = await decideAssistantApproval(proposalId, {
                 decision,
-                ...(options?.rejectReason ? { rejectReason: options.rejectReason } : {}),
+                ...(options?.reason ? { reason: options.reason } : {}),
                 ...(createMandatePayload ? { createMandate: createMandatePayload } : {}),
             });
             if (!isLiveRun(originNamespace, targetCanvas, run)) return;
-            run.pendingApprovals = run.pendingApprovals.filter((item) => item.proposalId !== proposalId);
             if (res.mandate) run.activeMandate = res.mandate;
+            if (res.signaled === false) {
+                setApprovalFeedback((cur) => ({ ...cur, [proposalId]: "审批已失效，请让助手重试。" }));
+                rerenderIfActive(targetCanvas);
+                return;
+            }
+            run.pendingApprovals = run.pendingApprovals.filter((item) => item.proposalId !== proposalId);
             if (run.pendingApprovals.length === 0 && run.lifecycleNotice === "等待你确认继续执行。") {
                 run.lifecycleNotice = decision === "approve" ? "已确认，正在继续执行…" : "已拒绝该操作，等待助手回应…";
             }
@@ -834,8 +853,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     );
 
     const rejectPendingTool = useCallback(
-        (proposalId: string, rejectReason?: string) =>
-            decidePendingApproval(proposalId, "reject", { rejectReason }),
+        (proposalId: string, reason?: string) =>
+            decidePendingApproval(proposalId, "reject", { reason }),
         [decidePendingApproval],
     );
 
@@ -860,6 +879,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         decidingApprovalIds,
         approvalFeedback,
         mandateBusy,
+        applyActiveMandate,
         refreshMandate,
         createMandate,
         revokeActiveMandate,

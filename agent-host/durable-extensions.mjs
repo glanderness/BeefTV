@@ -373,14 +373,18 @@ export async function installDurableExtensions({
     return wrapped;
   }
 
+  entry.pluginReadOnlyToolNames = new Set();
+
   function projectHostTools(mode) {
+    entry.permissionMode = mode;
     entry.generation.permissionMode = mode;
     const projected = [...buildTools(canvasId, entry.log, entry.generation, entry.turn, sessionId), ...hostTools()];
-    entry.readOnlyToolNames = new Set(
-      projected
+    entry.readOnlyToolNames = new Set([
+      ...projected
         .filter((tool) => tool.readOnly === true && tool.label !== 'canvas.generation.propose' && tool.label !== 'skill.script.run')
         .map((tool) => tool.name),
-    );
+      ...(entry.pluginReadOnlyToolNames || []),
+    ]);
     return projected.map((tool) => ({
       ...wrapHostTool(tool),
       parameters: tool.parameters,
@@ -484,10 +488,19 @@ export async function installDurableExtensions({
     registry.install(creativeCompactionExt);
     entry.pluginExtensions = nextWrapped;
     entry.pluginTools = nextWrapped.flatMap((ext) => ext.tools || []);
+    const prevPluginReadOnly = entry.pluginReadOnlyToolNames || new Set();
+    for (const prevName of prevPluginReadOnly) {
+      entry.readOnlyToolNames?.delete(prevName);
+    }
+    const nextPluginReadOnly = new Set();
     for (const rawExt of Array.isArray(rawExtensions) ? rawExtensions : []) {
       for (const t of rawExt?.tools || []) {
-        if (t?.readOnly === true && t?.name) entry.readOnlyToolNames?.add(t.name);
+        if (t?.readOnly === true && t?.name) nextPluginReadOnly.add(t.name);
       }
+    }
+    entry.pluginReadOnlyToolNames = nextPluginReadOnly;
+    for (const name of nextPluginReadOnly) {
+      entry.readOnlyToolNames?.add(name);
     }
     entry.toolNames = [...selectedHostTools, ...builtinExtensionTools, ...entry.pluginTools].map((tool) => tool.name);
   }

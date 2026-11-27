@@ -4,9 +4,18 @@
 // 2. 任何预检错误或异常都在 try/catch 内显式返回 { block }（fail-closed，绝不依赖 throw 拦工具）；
 // 3. 付费工具需要用户确认时以 api.memo(turnId:callId) 幂等记录 proposalId 并返回 { sleep: { signals } }，
 //    原地休眠等待 Go 投递 ApprovalDecision 信号，同回合无缝恢复（执行时 Go 再次原子核验 SQLite）；
-// 4. 通过 ToolHooks.afterTool 读取 LiveDoc 同批工具槽位，取代手写 doc.roundProposes 终止状态机；
+// 4. 通过 Pi 1.6.0 官方 GenerationHooks.afterTools 在整批工具结束后统一判定是否因提案而收口回合
+//    （兼容串行、并行及 codemode 嵌套调用，彻底消除对工具执行顺序的猜测）；
 // 5. 统一管理共享 Photon Worker 图片预压缩扩展（createFitImagesExtension）。
-import { LiveDoc, ToolTask, defineExtension, hook } from '@earendil-works/pi-durable';
+import {
+  GenerationTask,
+  LiveDoc,
+  ToolTask,
+  defineExtension,
+  defineTask,
+  hook,
+  hookTask,
+} from '@earendil-works/pi-durable';
 import { createFitImagesExtension } from '@earendil-works/pi-durable/images/fit';
 import { createNodePhotonImages } from '@earendil-works/pi-durable/images/node';
 import { ApprovalDecision } from './durable-signals.mjs';
@@ -28,10 +37,117 @@ const CANVAS_MULTI_READ_TOOLS = new Set([
   'canvas_create',
 ]);
 
-const ROUND_TERMINATING_PROPOSAL_TOOLS = new Set([
+export const ProposalTerminateTask = defineTask({
+  name: 'beeftv.proposal_terminate',
+  version: 1,
+  initial: (input) => ({ phase: 'decide', terminate: Boolean(input?.terminate) }),
+  phases: {
+    decide: async (task, runtime, context) => {
+      const result = task.state.checkpoint.terminate ? { terminate: true } : {};
+      await runtime.commit(() => ({
+        status: 'terminal',
+        outcome: { status: 'completed', result },
+      }), context);
+    },
+  },
+  abort: async (_task, runtime, context) => {
+    await runtime.commit(() => ({
+      status: 'terminal',
+      outcome: { status: 'aborted' },
+    }), context);
+  },
+});
+
+function isPendingScriptProposalResult(msg) {
+  if (!msg || typeof msg !== 'object') return false;
+  if (msg.details && typeof msg.details === 'object') {
+    if (msg.details.status === 'pending' || msg.details.proposal?.status === 'pending') return true;
+  }
+  const text = Array.isArray(msg.content)
+    ? msg.content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('\n').trim()
+    : '';
+  if (!text) return false;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.status === 'pending' || parsed.proposal?.status === 'pending') return true;
+    }
+  } catch {
+    // 非 JSON 文本忽略
+  }
+  return false;
+}
+
+const PROPOSAL_COMPANION_TOOLS = new Set([
+  'plan_update',
   'canvas_generation_propose',
   'skill_script_run',
 ]);
+
+async function roundProducedProposal(results, api, entry, context) {
+  const resultIds = Array.isArray(results) ? results : [];
+  if (resultIds.length === 0) return false;
+  let hasSuccessfulProposal = false;
+  let hasCodemode = false;
+  let hasDisallowedSibling = false;
+
+  for (const entryId of resultIds) {
+    const record = typeof api?.entry === 'function'
+      ? await api.entry(entryId, context).catch(() => null)
+      : null;
+    const messages = Array.isArray(record?.model) ? record.model : [];
+    for (const msg of messages) {
+      if (!msg || msg.role !== 'toolResult') continue;
+      if (msg.toolName === 'canvas_generation_propose') {
+        if (msg.isError !== true) hasSuccessfulProposal = true;
+        else hasDisallowedSibling = true;
+        continue;
+      }
+      if (msg.toolName === 'skill_script_run') {
+        if (msg.isError !== true && isPendingScriptProposalResult(msg)) hasSuccessfulProposal = true;
+        else hasDisallowedSibling = true;
+        continue;
+      }
+      if (msg.toolName === 'plan_update') {
+        if (msg.isError === true) hasDisallowedSibling = true;
+        continue;
+      }
+      if (msg.toolName === 'codemode') {
+        if (msg.isError === true) hasDisallowedSibling = true;
+        else hasCodemode = true;
+        continue;
+      }
+      // 其他写入或读取工具与提案同批发出时（例如 [propose, configure]），保持继续把结果交回模型，不提前截断。
+      hasDisallowedSibling = true;
+    }
+  }
+  if (hasDisallowedSibling) return false;
+
+  if (hasCodemode) {
+    const live = typeof api?.snapshot === 'function'
+      ? await api.snapshot(LiveDoc, api.conversationId, context).catch(() => null)
+      : null;
+    const nestedSlots = Array.isArray(live?.nestedTools) ? live.nestedTools : [];
+    let nestedProposal = false;
+    for (const slot of nestedSlots) {
+      if (slot?.status !== 'done' || slot?.summary?.isError === true) continue;
+      if (slot.name === 'canvas_generation_propose') {
+        nestedProposal = true;
+      } else if (slot.name === 'skill_script_run') {
+        const pending = slot.details?.status === 'pending'
+          || slot.details?.proposal?.status === 'pending'
+          || (Array.isArray(entry?.turn?.scriptProposals) && entry.turn.scriptProposals.some((p) => p?.status === 'pending'));
+        if (pending) nestedProposal = true;
+      } else if (!PROPOSAL_COMPANION_TOOLS.has(slot.name)) {
+        // codemode 内部还执行了其他工具时，把最终程序输出交回模型，除非仅做方案与计划提交。
+        return false;
+      }
+    }
+    if (nestedProposal) hasSuccessfulProposal = true;
+  }
+
+  return hasSuccessfulProposal;
+}
 
 let sharedPhotonPromise = null;
 let sharedPhotonInstance = null;
@@ -139,52 +255,59 @@ export function createDurableApprovalExtension({
 
   return defineExtension({
     name: 'beeftv.approval.v1',
-    hooks: [hook(ToolTask, {
-      beforeTool: async (call, runtime, context) => {
-        // 关键安全规则：Pi scheduler 会吞掉钩子抛错；所有权限校验与 Go 预检必须包在 try/catch 内，
-        // 任何异常、拒绝或不确定状态一律显式返回 { block: reason }（fail-closed）。
-        try {
-          if (entry?.generation?.aborted || context?.abortSignal?.aborted) {
-            return { block: 'aborted' };
-          }
-          if (entry?.generation?.pendingInputError) {
-            return { block: entry.generation.pendingInputError.reason || 'turn_intent_changed' };
-          }
-          const turnId = String(entry?.turn?.turnId || '').trim();
-          const memoKey = `beeftv.approval:${turnId}:${call.id}`;
-          const existingMemo = typeof runtime?.memo === 'function'
-            ? await runtime.memo(memoKey, context)
-            : undefined;
-          if (entry?.generation?.pendingInput?.state === 'pending' && !existingMemo?.proposalId) {
-            return { block: 'supplement_preparation_pending' };
-          }
+    tasks: [ProposalTerminateTask],
+    hooks: [
+      hook(ToolTask, {
+        beforeTool: async (call, runtime, context) => {
+          // 关键安全规则：Pi scheduler 会吞掉钩子抛错；所有权限校验与 Go 预检必须包在 try/catch 内，
+          // 任何异常、拒绝或不确定状态一律显式返回 { block: reason }（fail-closed）。
+          try {
+            if (entry?.generation?.aborted || context?.abortSignal?.aborted) {
+              return { block: 'aborted' };
+            }
+            if (entry?.generation?.pendingInputError) {
+              return { block: entry.generation.pendingInputError.reason || 'turn_intent_changed' };
+            }
+            const turnId = String(entry?.turn?.turnId || '').trim();
+            const memoKey = `beeftv.approval:${turnId}:${call.id}`;
+            const existingMemo = typeof runtime?.memo === 'function'
+              ? await runtime.memo(memoKey, context)
+              : undefined;
+            if (entry?.generation?.pendingInput?.state === 'pending' && !existingMemo?.proposalId) {
+              return { block: 'supplement_preparation_pending' };
+            }
 
-          const currentMode = entry?.permissionMode || entry?.generation?.permissionMode || 'canvas';
-          if (currentMode === 'read-only' && !isAllowedInReadOnlyMode(entry, call.name)) {
-            return { block: `scope_denied: 本轮助手只能读取（禁止调用 ${call.name}）` };
-          }
+            // 必须先执行回合授权检查，再做 permissionMode 与 canvasId 门控，防止授权撤销后凭旧模式放行。
+            if (turnId && typeof authorization === 'function') {
+              await authorization(entry, turnId);
+            }
 
-          if (
-            currentMode === 'canvas' &&
-            call.name.startsWith('canvas_') &&
-            !CANVAS_MULTI_READ_TOOLS.has(call.name) &&
-            call.arguments &&
-            typeof call.arguments === 'object' &&
-            call.arguments.canvasId !== undefined &&
-            entry?.canvasId &&
-            call.arguments.canvasId !== entry.canvasId
-          ) {
-            return { block: `scope_denied: 画布参数与当前会话不一致（${call.arguments.canvasId} ≠ ${entry.canvasId}）` };
-          }
+            const currentMode = entry?.permissionMode || entry?.generation?.permissionMode || 'canvas';
+            if (currentMode === 'read-only' && !isAllowedInReadOnlyMode(entry, call.name)) {
+              return { block: `scope_denied: 本轮助手只能读取（禁止调用 ${call.name}）` };
+            }
 
-          if (turnId && typeof authorization === 'function') {
-            await authorization(entry, turnId);
-          }
+            if (
+              currentMode === 'canvas' &&
+              call.name.startsWith('canvas_') &&
+              !CANVAS_MULTI_READ_TOOLS.has(call.name) &&
+              call.arguments &&
+              typeof call.arguments === 'object' &&
+              call.arguments.canvasId !== undefined &&
+              entry?.canvasId &&
+              call.arguments.canvasId !== entry.canvasId
+            ) {
+              return { block: `scope_denied: 画布参数与当前会话不一致（${call.arguments.canvasId} ≠ ${entry.canvasId}）` };
+            }
 
-          const paidOp = resolvePaidOpForTool(call);
-          if (!paidOp || !runPrecheck) {
-            return undefined;
-          }
+            const paidOp = resolvePaidOpForTool(call);
+            if (!paidOp) {
+              return undefined;
+            }
+            // 付费工具缺少预检通道时必须 fail-closed，严禁静默放行。
+            if (!runPrecheck) {
+              return { block: 'tool_precheck_unavailable' };
+            }
 
           const effectiveCallId = entry?.sessionId && runtime?.taskId
             ? toolOperationId(entry.sessionId, String(runtime.taskId))
@@ -292,27 +415,13 @@ export function createDurableApprovalExtension({
           return { block: error?.message || error?.reason || 'tool_gate_error' };
         }
       },
-
-      afterTool: async (call, result, runtime, context) => {
-        if (!result || typeof result !== 'object') return result;
-        if (call.name === 'plan_update' && result.isError !== true && result.control?.terminate !== true) {
-          const live = typeof runtime?.snapshot === 'function'
-            ? await runtime.snapshot(LiveDoc, runtime.conversationId, context).catch(() => null)
-            : null;
-          const roundHasProposal = Array.isArray(live?.tools) && live.tools.some(
-            (slot) => ROUND_TERMINATING_PROPOSAL_TOOLS.has(slot?.name),
-          );
-          if (roundHasProposal) {
-            return {
-              ...result,
-              control: {
-                ...(result.control && typeof result.control === 'object' ? result.control : {}),
-                terminate: true,
-              },
-            };
-          }
+    }),
+    hook(GenerationTask, {
+      afterTools: async (_assistant, results, api, context) => {
+        if (await roundProducedProposal(results, api, entry, context)) {
+          return { tasks: [hookTask(ProposalTerminateTask, { terminate: true })] };
         }
-        return result;
+        return undefined;
       },
     })],
   });

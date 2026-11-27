@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-import { confirmAssistantProduction, confirmAssistantProposalRunnable, createAssistantMandate, type AssistantGenerationProposal, type CreateAssistantMandateInput } from "@/services/api/agent-assistant";
+import { confirmAssistantProduction, confirmAssistantProposalRunnable, createAssistantMandate, type AssistantGenerationProposal, type AssistantProductionMandate, type CreateAssistantMandateInput } from "@/services/api/agent-assistant";
 import { ApiError } from "@/services/api/request";
 import { armAssistantContinuation, registerAssistantSubmission } from "@/services/api/assistant-continuation";
 import { refreshLocalCanvasProjectIfChanged } from "@/services/local-workspace-repository";
@@ -26,7 +26,7 @@ type UseCanvasAssistantProposalOptions = {
     continuationSessionId?: string | null;
     continuePlan?: boolean;
     onContinuationArmed?: () => void;
-    onMandateUpdated?: () => void;
+    onMandateUpdated?: (mandate?: AssistantProductionMandate | null) => void;
 };
 
 export function productionConfirmationErrorMessage(error: unknown): string {
@@ -109,16 +109,16 @@ export function useCanvasAssistantProposal({
                     // An unknown HTTP result is recovered using the same immutable
                     // plan. The backend rechecks it and reuses accepted task IDs.
                     attemptedProductionsRef.current.add(confirmationKey);
-                    await confirmAssistantProduction(owner.canvasId, turnId, proposal, true, mandateInput);
+                    const confirmed = await confirmAssistantProduction(owner.canvasId, turnId, proposal, true, mandateInput);
                     await refreshLocalCanvasProjectIfChanged(owner.canvasId);
                     if (!lifetime.matches(owner, projectIdRef.current)) return;
                     markHandledRef.current(proposalId);
                     onContinuationArmed?.();
-                    if (mandateInput) onMandateUpdated?.();
+                    if (confirmed.mandate) onMandateUpdated?.(confirmed.mandate);
                     setAssistantProposalFeedback(current => ({
                         ...current,
-                        [proposalId]: mandateInput
-                            ? `已启用本片预算包（上限 ¥${mandateInput.maxAmountCny}），正在按方案制作，后续镜头将在额度内自动推进。`
+                        [proposalId]: confirmed.mandate
+                            ? `已启用本片预算包（上限 ¥${confirmed.mandate.maxAmountCny}），正在按方案制作，后续镜头将在额度内自动推进。`
                             : "正在按已确认方案制作，素材保存后会自动继续。",
                     }));
                 })().catch(error => {
@@ -160,8 +160,8 @@ export function useCanvasAssistantProposal({
                         });
                     if (!canConfirmViaOrder) {
                         if (mandateInput) {
-                            await createAssistantMandate(mandateInput);
-                            onMandateUpdated?.();
+                            const created = await createAssistantMandate(mandateInput);
+                            if (created.mandate) onMandateUpdated?.(created.mandate);
                         }
                         if (continuePlan && sessionId) {
                             continuationId = (await armAssistantContinuation(owner.canvasId, sessionId, turnId, proposal)).id;
@@ -171,7 +171,7 @@ export function useCanvasAssistantProposal({
                     }
                     const result = await confirmAssistantProduction(owner.canvasId, turnId, proposal, Boolean(continuePlan && sessionId), mandateInput);
                     await refreshLocalCanvasProjectIfChanged(owner.canvasId);
-                    if (mandateInput) onMandateUpdated?.();
+                    if (result.mandate) onMandateUpdated?.(result.mandate);
                     if (result.continuationId) {
                         continuationId = result.continuationId;
                         onContinuationArmed?.();

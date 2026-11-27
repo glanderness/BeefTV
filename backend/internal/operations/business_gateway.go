@@ -162,7 +162,8 @@ func opBusinessCall(ctx *Context, raw json.RawMessage) (any, error) {
 	if ctx.Caller.Kind == CallerAssistant && req.Tool == "business_post_timeline_transcriptions" && isCloudTranscriptionBody(req.Body) && ctx.DB() != nil {
 		canvasID := lookupTurnCanvasID(ctx.DB(), ctx.UserID, ctx.TurnID)
 		if canvasID != "" {
-			p, permitErr := acquirePaidSyncPermit(ctx, canvasID, model.MandateKindMediaTranscribe, "business.call")
+			digest := cloudTranscribeTargetDigest(canvasID, req.Tool, cloudTranscriptionModel(req.Body))
+			p, permitErr := acquirePaidSyncPermit(ctx, canvasID, model.MandateKindMediaTranscribe, "business.call", digest)
 			if permitErr == nil && p != nil {
 				permit = p
 				callCtx = WithAuthorizedCloudTranscription(callCtx)

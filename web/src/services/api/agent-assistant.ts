@@ -112,14 +112,14 @@ export async function decideAssistantApproval(
     proposalId: string,
     payload: {
         decision: "approve" | "reject";
-        rejectReason?: string;
+        reason?: string;
         createMandate?: CreateAssistantMandateInput;
     },
 ) {
     return http.post<{
         approval: AssistantPendingApproval;
         mandate?: AssistantProductionMandate;
-        signalDelivered?: boolean;
+        signaled?: boolean;
     }>(
         `/assistant/approvals/${encodeURIComponent(proposalId)}/decide`,
         payload,

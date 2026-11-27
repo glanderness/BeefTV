@@ -386,6 +386,11 @@ func (s *Service) Finalize(turnID string) error {
 		if err := s.persist(tx, rec); err != nil {
 			return err
 		}
+		if err := tx.Model(&model.AgentOpRecord{}).
+			Where("user_id = ? AND op = ? AND turn_id = ? AND status = ?", rec.UserID, "assistant.tool.approval", rec.TurnID, "approval:pending").
+			Update("status", "approval:closed").Error; err != nil {
+			return err
+		}
 		return tx.Model(&model.AssistantContinuation{}).Where("turn_id = ? AND state IN ?", rec.TurnID, []string{"claimed", "running"}).Update("state", "done").Error
 	})
 }

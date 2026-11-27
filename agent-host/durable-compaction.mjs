@@ -256,13 +256,8 @@ export function createCreativeCompactionExtension({ entry, state, skills, resolv
             // 非 stop、含工具调用或空摘要时返回 undefined，交回官方 CompactionTask 瞬态重试循环。
             return undefined;
           }
-          // 压缩推进时单调更新 MediaRetentionDoc 游标，使压缩点前的历史视觉内容稳定落到游标之前。
-          const compactBoundaryEntryId = Number(
-            compaction?.firstKeptEntryId
-            ?? compaction?.cutoffEntryId
-            ?? compaction?.entries?.at?.(-1)?.id
-            ?? 0,
-          );
+          // 压缩成功生成摘要后，单调更新 MediaRetentionDoc 游标到本次被压缩片段的最后一条 entry id。
+          const compactBoundaryEntryId = Number(compaction?.entries?.at?.(-1)?.id ?? 0);
           if (Number.isFinite(compactBoundaryEntryId) && compactBoundaryEntryId > 0) {
             await api.commit(async (tx) => {
               const retention = await tx.doc(MediaRetentionDoc, api.conversationId);

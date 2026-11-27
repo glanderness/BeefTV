@@ -218,7 +218,8 @@ export function createDurableSessionStore({
     Object.assign(entry.turn, active.effects ? JSON.parse(JSON.stringify(active.effects)) : {});
     entry.turn.turnId = active.turnId;
     entry.input = active;
-    entry.generation.permissionMode = active.permissionMode || 'canvas';
+    entry.permissionMode = active.permissionMode || 'canvas';
+    entry.generation.permissionMode = entry.permissionMode;
     entry.generation.aborted ||= Boolean(active.stopped);
     entry.generation.intentEpoch = active.intentEpoch || 0;
     entry.generation.modelEpoch = active.modelEpoch || 0;

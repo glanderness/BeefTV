@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/agentops"
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 )
 
@@ -99,7 +100,16 @@ func TestAssistantMandatesOwnerLifecycleAndApprovalSignalDispatch(t *testing.T) 
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		})
 	})
+	owner, err := env.service.LocalWorkspaceOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
 	sessionID := "durable:00000000-0000-0000-0000-000000000020"
+	if err := env.service.Database().Create(&model.AssistantTurn{
+		TurnID: "turn-signal-1", UserID: owner.ID, CanvasID: env.canvasID, DurableSessionID: sessionID, State: "open", PermissionMode: "canvas",
+	}).Error; err != nil {
+		t.Fatalf("open turn failed: %v", err)
+	}
 
 	// 1. Host calls /assistant/runtime/tool-precheck for media.review -> gets approval_required and persists record.
 	precheckBody, _ := json.Marshal(map[string]any{
@@ -185,15 +195,27 @@ func TestAssistantMandatesOwnerLifecycleAndApprovalSignalDispatch(t *testing.T) 
 		t.Fatalf("expected allow after approval+mandate, got %+v", preResp2.Data)
 	}
 
-	// 4. Owner lists and revokes the mandate.
-	listReq := httptest.NewRequest(http.MethodGet, "/api/assistant/mandates?canvasId="+env.canvasID, nil)
+	// 4. Owner lists mandates -> must include non-null activeMandate!
+	listReq := httptest.NewRequest(http.MethodGet, "/api/assistant/mandates?canvasId="+env.canvasID+"&sessionId="+sessionID, nil)
 	listReq.RemoteAddr = "127.0.0.1:43210"
 	listReq.Host = "127.0.0.1:8080"
 	listReq.Header.Set("X-Beeftv-Ui-Session", env.uiToken)
 	listRec := httptest.NewRecorder()
 	env.router.ServeHTTP(listRec, listReq)
-	if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), decResp.Data.Mandate.ID) {
+	if listRec.Code != http.StatusOK {
 		t.Fatalf("list mandates failed: %d %s", listRec.Code, listRec.Body.String())
+	}
+	var listResp struct {
+		Data struct {
+			Mandates      []operations.ProductionMandateView `json:"mandates"`
+			ActiveMandate *operations.ProductionMandateView  `json:"activeMandate"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listResp); err != nil {
+		t.Fatal(err)
+	}
+	if listResp.Data.ActiveMandate == nil || listResp.Data.ActiveMandate.ID != decResp.Data.Mandate.ID {
+		t.Fatalf("expected activeMandate=%s in GET /assistant/mandates, got %+v", decResp.Data.Mandate.ID, listResp.Data.ActiveMandate)
 	}
 
 	revReq := httptest.NewRequest(http.MethodPost, "/api/assistant/mandates/"+decResp.Data.Mandate.ID+"/revoke", strings.NewReader(`{}`))
@@ -205,5 +227,73 @@ func TestAssistantMandatesOwnerLifecycleAndApprovalSignalDispatch(t *testing.T) 
 	env.router.ServeHTTP(revRec, revReq)
 	if revRec.Code != http.StatusOK || !strings.Contains(revRec.Body.String(), `"status":"revoked"`) {
 		t.Fatalf("revoke mandate failed: %d %s", revRec.Code, revRec.Body.String())
+	}
+
+	// After revoke, GET /assistant/mandates must return activeMandate: null.
+	listReq2 := httptest.NewRequest(http.MethodGet, "/api/assistant/mandates?canvasId="+env.canvasID+"&sessionId="+sessionID, nil)
+	listReq2.RemoteAddr = "127.0.0.1:43210"
+	listReq2.Host = "127.0.0.1:8080"
+	listReq2.Header.Set("X-Beeftv-Ui-Session", env.uiToken)
+	listRec2 := httptest.NewRecorder()
+	env.router.ServeHTTP(listRec2, listReq2)
+	var listResp2 struct {
+		Data struct {
+			ActiveMandate *operations.ProductionMandateView `json:"activeMandate"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(listRec2.Body.Bytes(), &listResp2); err != nil {
+		t.Fatal(err)
+	}
+	if listResp2.Data.ActiveMandate != nil {
+		t.Fatalf("expected activeMandate=null after revoke, got %+v", listResp2.Data.ActiveMandate)
+	}
+
+	// 5. Cancelling an open turn with a pending approval clears pendingApprovals from /assistant/history!
+	if err := env.service.Database().Create(&model.AssistantTurn{
+		TurnID: "turn-cancel-apv", UserID: owner.ID, CanvasID: env.canvasID, DurableSessionID: sessionID, State: "open", PermissionMode: "canvas",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	cancelPreBody, _ := json.Marshal(map[string]any{
+		"canvasId": env.canvasID, "sessionId": sessionID, "turnId": "turn-cancel-apv",
+		"durableTaskId": 88, "toolName": "media_review", "opName": "media.review",
+		"callId": "call-cancel-1", "params": map[string]any{"canvasId": env.canvasID, "mode": "video"},
+	})
+	cpReq := httptest.NewRequest(http.MethodPost, "/api/assistant/runtime/tool-precheck", bytes.NewReader(cancelPreBody))
+	cpReq.RemoteAddr = "127.0.0.1:43210"
+	cpReq.Host = "127.0.0.1:8080"
+	cpReq.Header.Set("Content-Type", "application/json")
+	cpReq.Header.Set("X-Beeftv-Agent-Token", assistantTestHostToken)
+	cpRec := httptest.NewRecorder()
+	env.router.ServeHTTP(cpRec, cpReq)
+	if cpRec.Code != http.StatusOK {
+		t.Fatalf("precheck before cancel failed: %d %s", cpRec.Code, cpRec.Body.String())
+	}
+	cancelReq := httptest.NewRequest(http.MethodPost, "/api/assistant/cancel", strings.NewReader(`{"canvasId":"`+env.canvasID+`"}`))
+	cancelReq.RemoteAddr = "127.0.0.1:43210"
+	cancelReq.Host = "127.0.0.1:8080"
+	cancelReq.Header.Set("Content-Type", "application/json")
+	cancelReq.Header.Set("X-Beeftv-Ui-Session", env.uiToken)
+	cancelRec := httptest.NewRecorder()
+	env.router.ServeHTTP(cancelRec, cancelReq)
+	if cancelRec.Code != http.StatusOK {
+		t.Fatalf("cancel failed: %d %s", cancelRec.Code, cancelRec.Body.String())
+	}
+	histReq := httptest.NewRequest(http.MethodGet, "/api/assistant/history?canvasId="+env.canvasID, nil)
+	histReq.RemoteAddr = "127.0.0.1:43210"
+	histReq.Host = "127.0.0.1:8080"
+	histReq.Header.Set("X-Beeftv-Ui-Session", env.uiToken)
+	histRec := httptest.NewRecorder()
+	env.router.ServeHTTP(histRec, histReq)
+	var histResp struct {
+		Data struct {
+			PendingApprovals []operations.ToolApprovalRecord `json:"pendingApprovals"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(histRec.Body.Bytes(), &histResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(histResp.Data.PendingApprovals) != 0 {
+		t.Fatalf("expected pendingApprovals=[] after cancel, got %+v", histResp.Data.PendingApprovals)
 	}
 }

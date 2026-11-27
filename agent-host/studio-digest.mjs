@@ -9,7 +9,7 @@ export const MediaRetentionDoc = defineDoc({
   version: 1,
   scope: 'conversation',
   history: 'latest',
-  fork: 'copy',
+  fork: 'current',
   initial: () => ({
     cutoffEntryId: 0,
     cutoffMessageIndex: 0,

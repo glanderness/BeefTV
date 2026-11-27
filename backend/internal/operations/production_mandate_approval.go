@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,6 +22,9 @@ const (
 	ToolApprovalStatusApproved = "approved"
 	ToolApprovalStatusRejected = "rejected"
 	ToolApprovalStatusConsumed = "consumed"
+	ToolApprovalStatusClosed   = "closed"
+
+	defaultApprovalTTL = 24 * time.Hour
 )
 
 // ToolApprovalRecord persists a parked paid-tool approval request (and owner
@@ -39,6 +42,7 @@ type ToolApprovalRecord struct {
 	Kind            string         `json:"kind,omitempty"`
 	Kinds           []string       `json:"kinds,omitempty"`
 	NodeIDs         []string       `json:"nodeIds,omitempty"`
+	TargetDigest    string         `json:"targetDigest,omitempty"`
 	Summary         string         `json:"summary,omitempty"`
 	Reason          string         `json:"reason,omitempty"`
 	EstimatedCNY    *float64       `json:"estimatedCny,omitempty"`
@@ -96,6 +100,82 @@ func DeterministicApprovalProposalID(turnID, callID string) string {
 	return "ap-" + hex.EncodeToString(sum[:8])
 }
 
+func sortedUniqueStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(items))
+	out := make([]string, 0, len(items))
+	for _, raw := range items {
+		v := strings.TrimSpace(raw)
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ComputeApprovalTargetDigest builds a deterministic SHA-256 digest binding an
+// approval strictly to (opName, canvasID, sorted nodeIDs, normalized params).
+func ComputeApprovalTargetDigest(opName, canvasID string, nodeIDs []string, normalizedParams map[string]any) string {
+	payload := map[string]any{
+		"op":      strings.TrimSpace(opName),
+		"canvas":  strings.TrimSpace(canvasID),
+		"nodeIds": sortedUniqueStrings(nodeIDs),
+	}
+	if len(normalizedParams) > 0 {
+		payload["params"] = normalizedParams
+	}
+	encoded, _ := json.Marshal(payload)
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:16])
+}
+
+func sortedNodeIDsMatch(a, b []string) bool {
+	sa := sortedUniqueStrings(a)
+	sb := sortedUniqueStrings(b)
+	if len(sa) != len(sb) {
+		return false
+	}
+	for i := range sa {
+		if sa[i] != sb[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func approvalIsExpired(rec *ToolApprovalRecord, now time.Time) bool {
+	if rec == nil || strings.TrimSpace(rec.CreatedAt) == "" {
+		return false
+	}
+	created, err := time.Parse(time.RFC3339, strings.TrimSpace(rec.CreatedAt))
+	if err != nil {
+		return false
+	}
+	return now.Sub(created) > defaultApprovalTTL
+}
+
+// isApprovalTurnLiveInTx returns true when turnID is empty (non-turn-scoped) or
+// the owning AssistantTurn row is still open, not undone, and not invalidated.
+func isApprovalTurnLiveInTx(tx *gorm.DB, userID, turnID string) bool {
+	turnID = strings.TrimSpace(turnID)
+	if tx == nil || turnID == "" {
+		return true
+	}
+	var turn model.AssistantTurn
+	err := tx.Select("turn_id, user_id, state, undone, continuation_invalidated").
+		Where("turn_id = ? AND user_id = ?", turnID, strings.TrimSpace(userID)).
+		First(&turn).Error
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(turn.State) == "open" && !turn.Undone && !turn.ContinuationInvalidated
+}
+
 func UpsertToolApprovalInTx(tx *gorm.DB, userID string, rec ToolApprovalRecord) error {
 	if tx == nil || strings.TrimSpace(rec.ProposalID) == "" {
 		return nil
@@ -108,6 +188,7 @@ func UpsertToolApprovalInTx(tx *gorm.DB, userID string, rec ToolApprovalRecord) 
 	if strings.TrimSpace(rec.Status) == "" {
 		rec.Status = ToolApprovalStatusPending
 	}
+	rec.NodeIDs = sortedUniqueStrings(rec.NodeIDs)
 	encoded, err := json.Marshal(rec)
 	if err != nil {
 		return err
@@ -159,6 +240,49 @@ func LookupToolApprovalInTx(tx *gorm.DB, userID, proposalID string) (*ToolApprov
 	return &rec, nil
 }
 
+// ClosePendingApprovalsForCanvasSessionInTx closes lingering pending approvals
+// on a canvas (optionally scoped to sessionID) when the user explicitly cancels a turn.
+func ClosePendingApprovalsForCanvasSessionInTx(tx *gorm.DB, userID, canvasID, sessionID string) error {
+	canvasID = strings.TrimSpace(canvasID)
+	if tx == nil || strings.TrimSpace(userID) == "" || canvasID == "" {
+		return nil
+	}
+	var rows []model.AgentOpRecord
+	if err := tx.Where("user_id = ? AND op = ? AND payload_hash = ? AND status = ?",
+		strings.TrimSpace(userID), toolApprovalOpName, canvasID, "approval:"+ToolApprovalStatusPending).
+		Find(&rows).Error; err != nil {
+		return AsError(err)
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, row := range rows {
+		var rec ToolApprovalRecord
+		if json.Unmarshal([]byte(row.ResultJSON), &rec) != nil {
+			continue
+		}
+		if sessionID != "" && strings.TrimSpace(rec.SessionID) != "" && strings.TrimSpace(rec.SessionID) != sessionID {
+			continue
+		}
+		rec.Status = ToolApprovalStatusClosed
+		rec.UpdatedAt = now
+		encoded, err := json.Marshal(rec)
+		if err != nil {
+			continue
+		}
+		if err := tx.Model(&model.AgentOpRecord{}).
+			Where("user_id = ? AND op_id = ? AND status = ?", row.UserID, row.OpID, "approval:"+ToolApprovalStatusPending).
+			Updates(map[string]any{
+				"status":      "approval:" + ToolApprovalStatusClosed,
+				"result_json": string(encoded),
+			}).Error; err != nil {
+			return AsError(err)
+		}
+	}
+	return nil
+}
+
+// ListPendingToolApprovalsInTx returns only live pending approvals whose owning
+// AssistantTurn is still open (not settled, undone, or invalidated) and within TTL.
 func ListPendingToolApprovalsInTx(tx *gorm.DB, userID, canvasID, sessionID string) ([]ToolApprovalRecord, error) {
 	if tx == nil || strings.TrimSpace(userID) == "" {
 		return []ToolApprovalRecord{}, nil
@@ -171,6 +295,7 @@ func ListPendingToolApprovalsInTx(tx *gorm.DB, userID, canvasID, sessionID strin
 	if err := q.Order("created_at DESC").Find(&rows).Error; err != nil {
 		return nil, AsError(err)
 	}
+	now := time.Now().UTC()
 	sessionID = strings.TrimSpace(sessionID)
 	out := make([]ToolApprovalRecord, 0, len(rows))
 	for _, row := range rows {
@@ -181,45 +306,78 @@ func ListPendingToolApprovalsInTx(tx *gorm.DB, userID, canvasID, sessionID strin
 		if sessionID != "" && strings.TrimSpace(rec.SessionID) != "" && strings.TrimSpace(rec.SessionID) != sessionID {
 			continue
 		}
+		if approvalIsExpired(&rec, now) || !isApprovalTurnLiveInTx(tx, userID, rec.TurnID) {
+			continue
+		}
 		out = append(out, rec)
 	}
 	return out, nil
 }
 
-// LookupApprovedToolApprovalForCallInTx looks up an owner-approved single-call
-// ToolApprovalRecord matching either explicit proposalID, (turnID, callID), or
-// an approved pending record on the same (turnID, opName, canvasID).
+// LookupApprovedToolApprovalForCallInTx performs strict single-call approval
+// binding: never accepts an untrusted model-supplied proposalID to hijack another
+// call, always enforces OpName, CanvasID, CallID (when non-empty), sorted NodeIDs,
+// and TargetDigest equality.
 func LookupApprovedToolApprovalForCallInTx(
 	tx *gorm.DB,
-	userID, canvasID, turnID, proposalID, callID, opName string,
+	userID, canvasID, turnID, callID, opName string,
+	nodeIDs []string,
+	targetDigest string,
 ) (*ToolApprovalRecord, error) {
 	if tx == nil {
 		return nil, nil
 	}
-	candidates := []string{}
-	if id := strings.TrimSpace(proposalID); id != "" {
-		candidates = append(candidates, id)
+	canvasID = strings.TrimSpace(canvasID)
+	turnID = strings.TrimSpace(turnID)
+	callID = strings.TrimSpace(callID)
+	opName = strings.TrimSpace(opName)
+	targetDigest = strings.TrimSpace(targetDigest)
+	if opName == "" {
+		return nil, nil
 	}
-	if strings.TrimSpace(turnID) != "" && strings.TrimSpace(callID) != "" {
-		candidates = append(candidates, DeterministicApprovalProposalID(turnID, callID))
+	matchesRecord := func(rec *ToolApprovalRecord) bool {
+		if rec == nil || rec.Status != ToolApprovalStatusApproved {
+			return false
+		}
+		if strings.TrimSpace(rec.CanvasID) != canvasID {
+			return false
+		}
+		if strings.TrimSpace(rec.OpName) != opName {
+			return false
+		}
+		if turnID != "" && strings.TrimSpace(rec.TurnID) != turnID {
+			return false
+		}
+		if callID != "" && strings.TrimSpace(rec.CallID) != callID {
+			return false
+		}
+		if len(nodeIDs) > 0 || len(rec.NodeIDs) > 0 {
+			if !sortedNodeIDsMatch(rec.NodeIDs, nodeIDs) {
+				return false
+			}
+		}
+		if targetDigest != "" && strings.TrimSpace(rec.TargetDigest) != "" && strings.TrimSpace(rec.TargetDigest) != targetDigest {
+			return false
+		}
+		return true
 	}
-	for _, id := range candidates {
-		rec, err := LookupToolApprovalInTx(tx, userID, id)
+
+	if turnID != "" && callID != "" {
+		rec, err := LookupToolApprovalInTx(tx, userID, DeterministicApprovalProposalID(turnID, callID))
 		if err != nil {
 			return nil, err
 		}
-		if rec != nil && rec.Status == ToolApprovalStatusApproved &&
-			(rec.CanvasID == "" || rec.CanvasID == canvasID) &&
-			(rec.TurnID == "" || turnID == "" || rec.TurnID == turnID) {
+		if matchesRecord(rec) {
 			return rec, nil
 		}
+		return nil, nil
 	}
-	if strings.TrimSpace(turnID) == "" {
+	if turnID == "" {
 		return nil, nil
 	}
 	var rows []model.AgentOpRecord
 	if err := tx.Where("user_id = ? AND op = ? AND payload_hash = ? AND turn_id = ? AND status = ?",
-		userID, toolApprovalOpName, strings.TrimSpace(canvasID), strings.TrimSpace(turnID), "approval:"+ToolApprovalStatusApproved).
+		userID, toolApprovalOpName, canvasID, turnID, "approval:"+ToolApprovalStatusApproved).
 		Order("created_at DESC").Find(&rows).Error; err != nil {
 		return nil, AsError(err)
 	}
@@ -228,22 +386,70 @@ func LookupApprovedToolApprovalForCallInTx(
 		if json.Unmarshal([]byte(row.ResultJSON), &rec) != nil {
 			continue
 		}
-		if opName == "" || rec.OpName == "" || rec.OpName == opName {
-			if callID == "" || rec.CallID == "" || rec.CallID == callID {
-				return &rec, nil
-			}
+		if matchesRecord(&rec) {
+			return &rec, nil
 		}
 	}
 	return nil, nil
 }
 
-func MarkToolApprovalConsumedInTx(tx *gorm.DB, userID string, rec *ToolApprovalRecord) error {
+// ConsumeToolApprovalAtomicInTx transitions an approved record to consumed via a
+// conditional UPDATE verifying status='approval:approved' and RowsAffected==1 so
+// concurrent or retried calls can never double-spend a single-call approval.
+func ConsumeToolApprovalAtomicInTx(tx *gorm.DB, userID string, rec *ToolApprovalRecord) error {
 	if tx == nil || rec == nil {
 		return nil
 	}
 	updated := *rec
 	updated.Status = ToolApprovalStatusConsumed
-	return UpsertToolApprovalInTx(tx, userID, updated)
+	updated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	encoded, err := json.Marshal(updated)
+	if err != nil {
+		return AsError(err)
+	}
+	res := tx.Model(&model.AgentOpRecord{}).
+		Where("user_id = ? AND op_id = ? AND status = ?", userID, toolApprovalOpID(rec.ProposalID), "approval:"+ToolApprovalStatusApproved).
+		Updates(map[string]any{
+			"status":      "approval:" + ToolApprovalStatusConsumed,
+			"result_json": string(encoded),
+		})
+	if res.Error != nil {
+		return AsError(res.Error)
+	}
+	if res.RowsAffected != 1 {
+		return Conflict("approval_already_consumed", "该次审批已被使用或已失效，请重新确认", nil)
+	}
+	rec.Status = ToolApprovalStatusConsumed
+	return nil
+}
+
+// checkMandateInputCoversApproval verifies that a newly created mandate requested
+// alongside approval actually covers the triggering call's kinds, estimated cost,
+// and unquoted count so Shot 1 cannot bypass or exceed the new mandate ceiling.
+func checkMandateInputCoversApproval(in CreateProductionMandateInput, rec *ToolApprovalRecord) error {
+	if rec == nil {
+		return nil
+	}
+	allowed, err := normalizeMandateKinds(in.AllowedKinds)
+	if err != nil {
+		return err
+	}
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, k := range allowed {
+		allowedSet[k] = true
+	}
+	for _, k := range rec.Kinds {
+		if !allowedSet[strings.ToLower(strings.TrimSpace(k))] {
+			return InvalidArg("mandate_kind_not_allowed", "新建预算包未包含当前操作所需类型: "+k)
+		}
+	}
+	if rec.EstimatedCNY != nil && roundCNY(*rec.EstimatedCNY) > roundCNY(in.MaxAmountCNY) {
+		return InvalidArg("mandate_insufficient_for_call", fmt.Sprintf("新建预算包上限 ¥%.2f 低于本次预估 ¥%.2f", in.MaxAmountCNY, *rec.EstimatedCNY))
+	}
+	if rec.UnquotedCount > 0 && in.MaxUnquotedCount < rec.UnquotedCount {
+		return InvalidArg("mandate_unquoted_not_allowed", fmt.Sprintf("新建预算包未报价次数上限 %d 低于本次所需 %d 次", in.MaxUnquotedCount, rec.UnquotedCount))
+	}
+	return nil
 }
 
 func DecideToolApprovalInTx(
@@ -262,16 +468,30 @@ func DecideToolApprovalInTx(
 	if decision != "approve" && decision != "reject" {
 		return nil, nil, InvalidArg("invalid_decision", "decision 必须是 approve 或 reject")
 	}
+	now := time.Now().UTC()
+	if rec.Status == ToolApprovalStatusClosed || rec.Status == ToolApprovalStatusConsumed {
+		return nil, nil, Conflict("approval_stale", "该审批记录已结束或已失效，请让助手重新发起", nil)
+	}
+	if approvalIsExpired(rec, now) || !isApprovalTurnLiveInTx(tx, userID, rec.TurnID) {
+		rec.Status = ToolApprovalStatusClosed
+		_ = UpsertToolApprovalInTx(tx, userID, *rec)
+		return nil, nil, Conflict("approval_stale", "该审批所属回合已结束、已撤销或已过期，请让助手重新发起", nil)
+	}
 	var createdMandate *model.AssistantProductionMandate
 	if decision == "approve" && createMandate != nil {
 		in := *createMandate
 		if strings.TrimSpace(in.CanvasID) == "" {
 			in.CanvasID = rec.CanvasID
+		} else if strings.TrimSpace(rec.CanvasID) != "" && strings.TrimSpace(in.CanvasID) != strings.TrimSpace(rec.CanvasID) {
+			return nil, nil, InvalidArg("canvas_mismatch", "预算包画布与待审批操作所属画布不一致")
 		}
 		if strings.TrimSpace(in.SessionID) == "" {
 			in.SessionID = rec.SessionID
 		}
 		in.ApprovedBy = approvedBy
+		if err := checkMandateInputCoversApproval(in, rec); err != nil {
+			return nil, nil, err
+		}
 		m, mErr := CreateProductionMandateInTx(tx, userID, in)
 		if mErr != nil {
 			return nil, nil, mErr
@@ -293,642 +513,4 @@ func DecideToolApprovalInTx(
 		}
 	}
 	return rec, createdMandate, nil
-}
-
-// suggestedMandateCap rounds an estimated cost up to a helpful budget-pack default.
-func suggestedMandateCap(estimatedCNY float64) float64 {
-	if estimatedCNY <= 0 || math.IsNaN(estimatedCNY) || math.IsInf(estimatedCNY, 0) {
-		return 20
-	}
-	for _, step := range []float64{20, 50, 100, 200, 500} {
-		if estimatedCNY*3 <= step {
-			return step
-		}
-	}
-	return math.Ceil(estimatedCNY*2/50) * 50
-}
-
-// buildGenerationReserveItems prices each target individually so quoted targets
-// reserve exact CNY while unquoted/BYOK targets consume explicit unquoted slots.
-func buildGenerationReserveItems(
-	domain Domain,
-	nodes map[string]map[string]any,
-	targets []GenerationTarget,
-	callPrefix string,
-) (items []MandateReserveItem, totalQuotedCNY float64, unquotedCount int, kinds []string) {
-	est := EstimateGenerationCost(domain, estimateGenerationTargets(nodes, targets))
-	kindSeen := map[string]bool{}
-	items = make([]MandateReserveItem, 0, len(targets))
-	for i, target := range targets {
-		if !kindSeen[target.Kind] {
-			kindSeen[target.Kind] = true
-			kinds = append(kinds, target.Kind)
-		}
-		amount := 0.0
-		isUnquoted := true
-		if i < len(est.Items) {
-			quote := est.Items[i]
-			if quote.Amount != nil && !quote.Variable && quote.Reserve == nil && !math.IsNaN(*quote.Amount) && !math.IsInf(*quote.Amount, 0) && roundCNY(*quote.Amount) > 0 {
-				amount = roundCNY(*quote.Amount)
-				isUnquoted = false
-			}
-		}
-		if isUnquoted {
-			unquotedCount++
-		} else {
-			totalQuotedCNY = roundCNY(totalQuotedCNY + amount)
-		}
-		items = append(items, MandateReserveItem{
-			CallID:    callPrefix + ":" + target.NodeID,
-			Kind:      target.Kind,
-			AmountCNY: amount,
-			Unquoted:  isUnquoted,
-		})
-	}
-	return items, totalQuotedCNY, unquotedCount, kinds
-}
-
-func checkMandateCapacity(
-	mandate *model.AssistantProductionMandate,
-	kinds []string,
-	quotedCNY float64,
-	unquotedCount int,
-	now time.Time,
-) (ok bool, reason, message string) {
-	if mandate == nil {
-		return false, "no_active_mandate", "尚未授权本片预算包，请批准本次调用或批准本片预算包"
-	}
-	if mandate.Status != model.MandateStatusActive || mandateIsExpired(mandate, now) {
-		return false, "mandate_" + mandate.Status, "当前预算包已不可用，请重新授权"
-	}
-	for _, k := range kinds {
-		if !mandateAllowsKind(mandate, k) {
-			return false, "mandate_kind_not_allowed", "当前预算包未授权该类型操作: " + k
-		}
-	}
-	if unquotedCount > 0 {
-		rem := mandateRemainingUnquoted(mandate)
-		if mandate.MaxUnquotedCount <= 0 || unquotedCount > rem {
-			return false, "mandate_unquoted_not_allowed", "未报价或自带 Key 模型需要单独确认，当前预算包未报价额度不足"
-		}
-	}
-	if quotedCNY > 0 {
-		rem := mandateRemainingCNY(mandate)
-		if roundCNY(quotedCNY) > rem {
-			return false, "mandate_budget_exceeded", fmt.Sprintf("本次预估 ¥%.2f 超出预算包剩余额度 ¥%.2f", quotedCNY, rem)
-		}
-	}
-	return true, "", ""
-}
-
-// isCloudTranscriptionBody inspects business_post_timeline_transcriptions body
-// to distinguish paid cloud Whisper (non-empty model) from local whisper.cpp.
-func isCloudTranscriptionBody(raw json.RawMessage) bool {
-	if len(raw) == 0 {
-		return false
-	}
-	var payload struct {
-		Body struct {
-			Model string `json:"model"`
-		} `json:"body"`
-		Model string `json:"model"`
-	}
-	if json.Unmarshal(raw, &payload) != nil {
-		return false
-	}
-	return strings.TrimSpace(payload.Body.Model) != "" || strings.TrimSpace(payload.Model) != ""
-}
-
-// EvaluatePaidToolPrecheckInTx evaluates a paid tool call before execution inside
-// ToolHooks.beforeTool. It never mutates mandate balances (actual atomic reservation
-// happens inside the operation transaction), and persists a pending ToolApprovalRecord
-// idempotently when owner confirmation is required.
-func EvaluatePaidToolPrecheckInTx(
-	tx *gorm.DB,
-	domain Domain,
-	userID string,
-	req ToolPrecheckRequest,
-) (ToolPrecheckResult, error) {
-	opName := strings.TrimSpace(req.OpName)
-	if opName == "" {
-		opName = strings.TrimSpace(req.ToolName)
-	}
-	canvasID := strings.TrimSpace(req.CanvasID)
-	sessionID := strings.TrimSpace(req.SessionID)
-	turnID := strings.TrimSpace(req.TurnID)
-	callID := strings.TrimSpace(req.CallID)
-	if sessionID == "" && turnID != "" && tx != nil {
-		sessionID = lookupTurnSessionID(tx, userID, turnID)
-	}
-	now := time.Now().UTC()
-
-	var kinds []string
-	var nodeIDs []string
-	var quotedCNY float64
-	var unquotedCount int
-	var summary string
-	var explicitProposalID string
-
-	switch opName {
-	case "canvas.generation.submit", "canvas.generation.regenerate":
-		var args struct {
-			CanvasID   string   `json:"canvasId"`
-			ProposalID string   `json:"proposalId"`
-			OrderID    string   `json:"orderId"`
-			NodeIDs    []string `json:"nodeIds"`
-		}
-		_ = json.Unmarshal(req.Params, &args)
-		if strings.TrimSpace(args.CanvasID) != "" {
-			canvasID = strings.TrimSpace(args.CanvasID)
-		}
-		explicitProposalID = strings.TrimSpace(args.ProposalID)
-		if explicitProposalID == "" {
-			explicitProposalID = strings.TrimSpace(args.OrderID)
-		}
-		nodeIDs = args.NodeIDs
-		if domain != nil && canvasID != "" && len(args.NodeIDs) > 0 {
-			rawDoc, err := domain.UserCanvasProject(userID, canvasID)
-			if err != nil {
-				return ToolPrecheckResult{Decision: "deny", Reason: "canvas_not_found", Message: "画布不存在或无权访问"}, nil
-			}
-			var doc map[string]any
-			if err := json.Unmarshal(rawDoc, &doc); err != nil {
-				return ToolPrecheckResult{Decision: "deny", Reason: "invalid_canvas", Message: "画布内容无法解析"}, nil
-			}
-			targets, err := GenerationTargets(domain, doc, args.NodeIDs)
-			if err != nil {
-				opErr := AsError(err)
-				return ToolPrecheckResult{Decision: "deny", Reason: opErr.Reason, Message: opErr.Message}, nil
-			}
-			// Legacy owner-confirmed GenerationOrder already authorizes this turn's exact targets.
-			if turnID != "" && tx != nil {
-				if plan, planErr := ResolveAuthorizedOrderForTurnInTx(tx, userID, canvasID, turnID); planErr == nil && plan != nil {
-					if opName != "canvas.generation.regenerate" || plan.Regenerate {
-						approvedMap := map[string]GenerationTarget{}
-						for _, t := range plan.Targets {
-							approvedMap[t.NodeID] = t
-						}
-						allCovered := len(targets) > 0
-						for _, t := range targets {
-							exp, ok := approvedMap[t.NodeID]
-							if !ok || !GenerationTargetEqual(exp, t) {
-								allCovered = false
-								break
-							}
-						}
-						if allCovered {
-							return ToolPrecheckResult{Decision: "allow", Reason: "confirmed_generation_order"}, nil
-						}
-					}
-				}
-			}
-			nodes := map[string]map[string]any{}
-			for _, v := range canvasNodes(doc) {
-				if n, ok := v.(map[string]any); ok {
-					nodes[dependencyString(n, "id")] = n
-				}
-			}
-			_, quotedCNY, unquotedCount, kinds = buildGenerationReserveItems(domain, nodes, targets, "precheck")
-			actionLabel := "生成"
-			if opName == "canvas.generation.regenerate" {
-				actionLabel = "重做"
-			}
-			summary = fmt.Sprintf("%s %d 个素材节点", actionLabel, len(targets))
-		} else {
-			unquotedCount = 1
-			kinds = []string{model.MandateKindImage}
-			summary = "画布素材生成"
-		}
-
-	case "media.review":
-		var args struct {
-			CanvasID string `json:"canvasId"`
-			Mode     string `json:"mode"`
-		}
-		_ = json.Unmarshal(req.Params, &args)
-		if strings.TrimSpace(args.CanvasID) != "" {
-			canvasID = strings.TrimSpace(args.CanvasID)
-		}
-		kinds = []string{model.MandateKindMediaReview}
-		unquotedCount = 1
-		modeLabel := "视频"
-		if strings.EqualFold(strings.TrimSpace(args.Mode), "audio") {
-			modeLabel = "音频"
-		}
-		summary = "调用多模态审片模型检查" + modeLabel + "片段"
-
-	case "business.call":
-		var args struct {
-			Tool string          `json:"tool"`
-			Body json.RawMessage `json:"body"`
-		}
-		_ = json.Unmarshal(req.Params, &args)
-		if strings.TrimSpace(args.Tool) != "business_post_timeline_transcriptions" || !isCloudTranscriptionBody(args.Body) {
-			return ToolPrecheckResult{Decision: "allow"}, nil
-		}
-		kinds = []string{model.MandateKindMediaTranscribe}
-		unquotedCount = 1
-		summary = "调用云端语音转写服务"
-
-	default:
-		return ToolPrecheckResult{Decision: "allow"}, nil
-	}
-
-	// Check if single-call owner approval already exists for this invocation.
-	if tx != nil {
-		if approved, err := LookupApprovedToolApprovalForCallInTx(tx, userID, canvasID, turnID, explicitProposalID, callID, opName); err == nil && approved != nil {
-			return ToolPrecheckResult{
-				Decision:   "allow",
-				Reason:     "single_call_approved",
-				ProposalID: approved.ProposalID,
-				Approval:   approved,
-			}, nil
-		}
-	}
-
-	// Check active ProductionMandate capacity.
-	var mandate *model.AssistantProductionMandate
-	if tx != nil && canvasID != "" {
-		mandate, _ = FindActiveMandateInTx(tx, userID, canvasID, sessionID, now)
-	}
-	var mandateView *ProductionMandateView
-	if mandate != nil {
-		v := ProjectProductionMandate(*mandate)
-		mandateView = &v
-	}
-	if ok, reason, msg := checkMandateCapacity(mandate, kinds, quotedCNY, unquotedCount, now); ok {
-		return ToolPrecheckResult{
-			Decision:      "allow",
-			Reason:        "active_mandate",
-			MandateID:     mandate.ID,
-			EstimatedCNY:  floatPtrIfPositive(quotedCNY),
-			UnquotedCount: unquotedCount,
-			Kinds:         kinds,
-			Mandate:       mandateView,
-		}, nil
-	} else {
-		proposalID := explicitProposalID
-		if proposalID == "" {
-			if turnID != "" && callID != "" {
-				proposalID = DeterministicApprovalProposalID(turnID, callID)
-			} else {
-				proposalID = newMandateID("ap")
-			}
-		}
-		// Preserve existing record status if already decided (e.g. rejected/approved across wakeup).
-		if tx != nil {
-			if existing, err := LookupToolApprovalInTx(tx, userID, proposalID); err == nil && existing != nil {
-				if existing.Status == ToolApprovalStatusApproved {
-					return ToolPrecheckResult{Decision: "allow", Reason: "single_call_approved", ProposalID: existing.ProposalID, Approval: existing}, nil
-				}
-				if existing.Status == ToolApprovalStatusRejected {
-					rejectMsg := existing.RejectReason
-					if rejectMsg == "" {
-						rejectMsg = "用户已拒绝该操作"
-					}
-					return ToolPrecheckResult{Decision: "deny", Reason: "approval_rejected", Message: rejectMsg, ProposalID: existing.ProposalID, Approval: existing}, nil
-				}
-				// Update durableTaskId/sessionId if host restarted and re-parked cleanly.
-				if req.DurableTaskID > 0 && existing.DurableTaskID != req.DurableTaskID {
-					existing.DurableTaskID = req.DurableTaskID
-					if sessionID != "" {
-						existing.SessionID = sessionID
-					}
-					_ = UpsertToolApprovalInTx(tx, userID, *existing)
-				}
-				return ToolPrecheckResult{
-					Decision:        "approval_required",
-					Reason:          reason,
-					Message:         msg,
-					ProposalID:      existing.ProposalID,
-					EstimatedCNY:    existing.EstimatedCNY,
-					UnquotedCount:   existing.UnquotedCount,
-					Kinds:           existing.Kinds,
-					Summary:         existing.Summary,
-					SuggestedCapCNY: existing.SuggestedCapCNY,
-					Approval:        existing,
-					Mandate:         mandateView,
-				}, nil
-			}
-		}
-		kindSingle := "mixed"
-		if len(kinds) == 1 {
-			kindSingle = kinds[0]
-		}
-		estPtr := floatPtrIfPositive(quotedCNY)
-		suggested := suggestedMandateCap(quotedCNY)
-		rec := ToolApprovalRecord{
-			ProposalID:      proposalID,
-			CanvasID:        canvasID,
-			SessionID:       sessionID,
-			TurnID:          turnID,
-			DurableTaskID:   req.DurableTaskID,
-			ToolName:        strings.TrimSpace(req.ToolName),
-			OpName:          opName,
-			CallID:          callID,
-			Kind:            kindSingle,
-			Kinds:           kinds,
-			NodeIDs:         nodeIDs,
-			Summary:         summary,
-			Reason:          reason,
-			EstimatedCNY:    estPtr,
-			UnquotedCount:   unquotedCount,
-			SuggestedCapCNY: suggested,
-			Status:          ToolApprovalStatusPending,
-		}
-		if tx != nil {
-			if err := UpsertToolApprovalInTx(tx, userID, rec); err != nil {
-				return ToolPrecheckResult{}, err
-			}
-		}
-		return ToolPrecheckResult{
-			Decision:        "approval_required",
-			Reason:          reason,
-			Message:         msg,
-			ProposalID:      proposalID,
-			EstimatedCNY:    estPtr,
-			UnquotedCount:   unquotedCount,
-			Kinds:           kinds,
-			Summary:         summary,
-			SuggestedCapCNY: suggested,
-			Approval:        &rec,
-			Mandate:         mandateView,
-		}, nil
-	}
-}
-
-func floatPtrIfPositive(v float64) *float64 {
-	if v > 0 && !math.IsNaN(v) && !math.IsInf(v, 0) {
-		c := roundCNY(v)
-		return &c
-	}
-	return nil
-}
-
-func lookupTurnCanvasID(db *gorm.DB, userID, turnID string) string {
-	if db == nil || strings.TrimSpace(turnID) == "" {
-		return ""
-	}
-	var row model.AssistantTurn
-	if err := db.Select("canvas_id").Where("turn_id = ? AND user_id = ?", strings.TrimSpace(turnID), userID).First(&row).Error; err != nil {
-		return ""
-	}
-	return strings.TrimSpace(row.CanvasID)
-}
-
-// tryAdmitAssistantGenerationViaMandateInTx attempts to authorize and admit a
-// built-in assistant canvas.generation.submit / regenerate call inside the
-// caller's Store.Run transaction via either an owner-approved single-call
-// ToolApprovalRecord or an active ProductionMandate.
-// Returns (result, handled, err). When handled==false, caller falls back to the
-// legacy GenerationOrder AuthorizedGenerationAdmission path.
-func tryAdmitAssistantGenerationViaMandateInTx(
-	ctx *Context,
-	canvasID, proposalID string,
-	nodes map[string]map[string]any,
-	targets []GenerationTarget,
-	releaseEnded bool,
-) (any, bool, error) {
-	tx := ctx.DB()
-	if tx == nil || strings.TrimSpace(ctx.TurnID) == "" {
-		return nil, false, nil
-	}
-	// If the turn already has a legacy owner-confirmed GenerationOrder covering
-	// these targets, keep using the legacy AuthorizedGenerationAdmission path.
-	if plan, err := ResolveAuthorizedOrderForTurnInTx(tx, ctx.UserID, canvasID, ctx.TurnID); err != nil {
-		return nil, true, err
-	} else if plan != nil && plan.SourceTurnID != "" {
-		if !releaseEnded || plan.Regenerate {
-			approvedMap := make(map[string]GenerationTarget, len(plan.Targets))
-			for _, t := range plan.Targets {
-				approvedMap[t.NodeID] = t
-			}
-			allCovered := len(targets) > 0
-			for _, t := range targets {
-				exp, ok := approvedMap[t.NodeID]
-				if !ok || !GenerationTargetEqual(exp, t) {
-					allCovered = false
-					break
-				}
-			}
-			if allCovered {
-				return nil, false, nil
-			}
-		}
-	}
-
-	var source model.AssistantTurn
-	if err := tx.First(&source, "turn_id = ? AND user_id = ? AND canvas_id = ?", ctx.TurnID, ctx.UserID, canvasID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, false, nil
-		}
-		return nil, true, AsError(err)
-	}
-	if source.Undone || source.ContinuationInvalidated {
-		return nil, true, PreconditionFailed("production_revoked", "本次制作授权已停止", nil)
-	}
-
-	opName := "canvas.generation.submit"
-	if releaseEnded {
-		opName = "canvas.generation.regenerate"
-	}
-	approvedCall, err := LookupApprovedToolApprovalForCallInTx(tx, ctx.UserID, canvasID, ctx.TurnID, proposalID, ctx.OperationID, opName)
-	if err != nil {
-		return nil, true, err
-	}
-
-	now := time.Now().UTC()
-	var activeMandate *model.AssistantProductionMandate
-	if approvedCall == nil {
-		activeMandate, err = FindActiveMandateInTx(tx, ctx.UserID, canvasID, source.DurableSessionID, now)
-		if err != nil {
-			return nil, true, err
-		}
-		if activeMandate == nil {
-			if HasAnyMandateInTx(tx, ctx.UserID, canvasID, source.DurableSessionID) {
-				return nil, true, PreconditionFailed("approval_required", "当前制作预算包额度已用尽，请批准本次调用或追加预算包", map[string]any{
-					"reason": "mandate_exhausted",
-				})
-			}
-			return nil, false, nil
-		}
-	}
-
-	port, ok := ctx.Domain.(ExternalGenerationAdmission)
-	if !ok {
-		return nil, true, Unsupported("generation_unavailable", "当前工作区不能提交生成")
-	}
-
-	callKey := strings.TrimSpace(ctx.OperationID)
-	if callKey == "" {
-		callKey = "turn:" + ctx.TurnID + ":" + newMandateID("call")
-	}
-
-	var reservations []model.AssistantMandateReservation
-	var updatedMandate *model.AssistantProductionMandate
-	var totalQuotedCNY float64
-	if activeMandate != nil {
-		items, quoted, _, _ := buildGenerationReserveItems(ctx.Domain, nodes, targets, "op:"+callKey)
-		totalQuotedCNY = quoted
-		reservations, updatedMandate, err = ReserveMandateBatchInTx(tx, ctx.UserID, activeMandate.ID, items, now)
-		if err != nil {
-			return nil, true, err
-		}
-	}
-
-	admitKey := "mandate:" + callKey
-	if approvedCall != nil {
-		admitKey = "approval:" + approvedCall.ProposalID + ":" + callKey
-	}
-	out, err := port.SubmitExternalGeneration(ctx.UserID, admitKey, canvasID, targets, releaseEnded)
-	if err != nil {
-		return nil, true, err
-	}
-
-	taskIDs := extractSubmittedTaskIDs(out)
-	for i := range reservations {
-		if i < len(taskIDs) && strings.TrimSpace(taskIDs[i]) != "" {
-			if bindErr := BindMandateReservationTaskInTx(tx, reservations[i].ID, taskIDs[i]); bindErr != nil {
-				return nil, true, AsError(bindErr)
-			}
-		}
-	}
-
-	approvedBy := "ui"
-	if approvedCall != nil {
-		if strings.TrimSpace(approvedCall.ApprovedBy) != "" {
-			approvedBy = approvedCall.ApprovedBy
-		}
-		if err := MarkToolApprovalConsumedInTx(tx, ctx.UserID, approvedCall); err != nil {
-			return nil, true, err
-		}
-	} else if updatedMandate != nil {
-		approvedBy = "mandate:" + updatedMandate.ID
-	}
-
-	if outMap, ok := out.(map[string]any); ok {
-		if updatedMandate != nil {
-			outMap["mandateId"] = updatedMandate.ID
-			outMap["mandateRemainingCny"] = mandateRemainingCNY(updatedMandate)
-			outMap["mandateRemainingUnquoted"] = mandateRemainingUnquoted(updatedMandate)
-		}
-		if totalQuotedCNY > 0 {
-			outMap["estimatedCny"] = totalQuotedCNY
-		}
-		if approvedCall != nil {
-			outMap["approvalProposalId"] = approvedCall.ProposalID
-		}
-	}
-
-	orderProposalID := proposalID
-	if orderProposalID == "" {
-		if approvedCall != nil {
-			orderProposalID = approvedCall.ProposalID
-		} else {
-			orderProposalID = "mp-" + callKey
-		}
-	}
-	nodeIDs := make([]string, 0, len(targets))
-	kind := ""
-	for _, t := range targets {
-		nodeIDs = append(nodeIDs, t.NodeID)
-		if kind == "" {
-			kind = t.Kind
-		} else if kind != t.Kind {
-			kind = "mixed"
-		}
-	}
-	_ = MarkGenerationOrderSubmittedInTx(tx, ctx.Domain, ctx.UserID, canvasID, ctx.TurnID, orderProposalID, kind, nodeIDs, targets, out, "", approvedBy, releaseEnded)
-	return out, true, nil
-}
-
-// paidSyncPermit holds an in-flight synchronous paid-op reservation (media.review
-// or cloud Whisper media_transcribe) so the caller can settle on success or release on error.
-type paidSyncPermit struct {
-	db            *gorm.DB
-	userID        string
-	reservationID string
-	mandateID     string
-	approval      *ToolApprovalRecord
-}
-
-func (p *paidSyncPermit) Settle(taskID string) {
-	if p == nil || p.db == nil {
-		return
-	}
-	now := time.Now().UTC()
-	_ = p.db.Transaction(func(tx *gorm.DB) error {
-		if p.approval != nil {
-			_ = MarkToolApprovalConsumedInTx(tx, p.userID, p.approval)
-		}
-		if p.reservationID != "" {
-			if strings.TrimSpace(taskID) != "" {
-				return BindMandateReservationTaskInTx(tx, p.reservationID, taskID)
-			}
-			return SettleReservationInTx(tx, p.reservationID, now)
-		}
-		return nil
-	})
-}
-
-func (p *paidSyncPermit) Release() {
-	if p == nil || p.db == nil || p.reservationID == "" {
-		return
-	}
-	now := time.Now().UTC()
-	_ = p.db.Transaction(func(tx *gorm.DB) error {
-		return ReleaseReservationInTx(tx, p.reservationID, now)
-	})
-}
-
-// acquirePaidSyncPermit reserves an unquoted slot on an active ProductionMandate
-// (or matches a single-call approved ToolApprovalRecord) for paid synchronous
-// operations (media.review, cloud media_transcribe).
-func acquirePaidSyncPermit(ctx *Context, canvasID, kind, opName string) (*paidSyncPermit, error) {
-	db := ctx.DB()
-	if db == nil {
-		return nil, nil
-	}
-	sessionID := ""
-	if strings.TrimSpace(ctx.TurnID) != "" {
-		sessionID = lookupTurnSessionID(db, ctx.UserID, ctx.TurnID)
-	}
-	callID := strings.TrimSpace(ctx.OperationID)
-	if callID == "" {
-		callID = kind + ":" + newMandateID("call")
-	}
-	var permit *paidSyncPermit
-	err := db.Transaction(func(tx *gorm.DB) error {
-		if approved, err := LookupApprovedToolApprovalForCallInTx(tx, ctx.UserID, canvasID, ctx.TurnID, "", ctx.OperationID, opName); err != nil {
-			return err
-		} else if approved != nil {
-			permit = &paidSyncPermit{db: db, userID: ctx.UserID, approval: approved}
-			return nil
-		}
-		now := time.Now().UTC()
-		mandate, err := FindActiveMandateInTx(tx, ctx.UserID, canvasID, sessionID, now)
-		if err != nil {
-			return err
-		}
-		if mandate == nil {
-			return PreconditionFailed("approval_required", "该付费操作需要用户批准或有效制作预算包授权", map[string]any{
-				"kind":   kind,
-				"reason": "no_active_mandate",
-			})
-		}
-		res, _, err := ReserveMandateInTx(tx, ctx.UserID, mandate.ID, MandateReserveItem{
-			CallID:   callID,
-			Kind:     kind,
-			Unquoted: true,
-		}, now)
-		if err != nil {
-			return err
-		}
-		permit = &paidSyncPermit{db: db, userID: ctx.UserID, reservationID: res.ID, mandateID: mandate.ID}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return permit, nil
 }

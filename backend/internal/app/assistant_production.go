@@ -14,14 +14,15 @@ import (
 )
 
 type AssistantProductionConfirmation struct {
-	CanvasID     string                        `json:"canvasId"`
-	ProposalID   string                        `json:"proposalId"`
-	Kind         string                        `json:"kind"`
-	NodeIDs      []string                      `json:"nodeIds"`
-	Targets      []operations.GenerationTarget `json:"targets"`
-	ContinuePlan bool                          `json:"continuePlan,omitempty"`
-	Regenerate   bool                          `json:"regenerate,omitempty"`
-	AutoBudget   bool                          `json:"-"`
+	CanvasID      string                                   `json:"canvasId"`
+	ProposalID    string                                   `json:"proposalId"`
+	Kind          string                                   `json:"kind"`
+	NodeIDs       []string                                 `json:"nodeIds"`
+	Targets       []operations.GenerationTarget            `json:"targets"`
+	ContinuePlan  bool                                     `json:"continuePlan,omitempty"`
+	Regenerate    bool                                     `json:"regenerate,omitempty"`
+	CreateMandate *operations.CreateProductionMandateInput `json:"createMandate,omitempty"`
+	AutoBudget    bool                                     `json:"-"`
 }
 
 func (s *Service) ConfirmAssistantProduction(userID, turnID string, input AssistantProductionConfirmation) (any, error) {
@@ -109,6 +110,11 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		result, err = domain.admitProductionTargets(userID, input.CanvasID, plan, batch)
 		if err != nil {
 			return err
+		}
+		if input.CreateMandate != nil && !input.AutoBudget {
+			if err = operations.AttachMandateForProductionConfirmInTx(tx, domain, userID, input.CanvasID, source.DurableSessionID, input.ProposalID, approvedBy, input.CreateMandate, doc, batch, result); err != nil {
+				return err
+			}
 		}
 		operations.AttachAutoConfirmResult(result, autoEval)
 		var continuationID string

@@ -642,6 +642,8 @@ export function createDurableSessionRepository({
           ensureRunTurnHandoff,
           opsRequest,
           precheckTool,
+          enableImageFitting,
+          maxInlineImageChars,
         });
         openCount += 1;
         dstEntry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${newUuid}.sqlite`)), {

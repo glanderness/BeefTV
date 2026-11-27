@@ -499,6 +499,7 @@ test('Flow 1b: gatedCall early wakeup keeps api.memo idempotent, until reconcile
       getModels: () => models,
       getModelRef: () => ({ provider: 'beeftv', modelId: 'studio-test' }),
       buildTools: bridge.buildTools,
+      precheckTool: async () => ({ decision: 'allow' }),
       authorizeTurn: async () => ({ open: true, canvasId: 'c1', permissionMode: 'canvas' }),
       settings: { retry: { maxRetries: 0 } },
     });

@@ -71,6 +71,7 @@ function stubController(open: boolean, setOpen: (next: boolean) => void, width: 
         decidingApprovalIds: new Set<string>(),
         approvalFeedback: {},
         mandateBusy: false,
+        applyActiveMandate: noop,
         refreshMandate: asyncNoop,
         createMandate: async () => null,
         revokeActiveMandate: asyncNoop,

@@ -12,9 +12,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/model"
-	localtask "infinite-canvas/backend/internal/task"
 )
 
 const (
@@ -255,11 +253,27 @@ func CreateProductionMandateInTx(tx *gorm.DB, userID string, in CreateProduction
 	if approvedBy == "" {
 		approvedBy = "ui"
 	}
+	sessionID := strings.TrimSpace(in.SessionID)
+	// Enforce at most ONE active mandate per (user_id, canvas_id, session_id) scope:
+	// atomically revoke any prior active mandates in this scope before inserting the new one
+	// so revoking the current active mandate never resurrects an older hidden active mandate.
+	revokeQuery := tx.Model(&model.AssistantProductionMandate{}).
+		Where("user_id = ? AND canvas_id = ? AND status = ?", userID, canvasID, model.MandateStatusActive)
+	if sessionID != "" {
+		revokeQuery = revokeQuery.Where("(session_id = ? OR session_id = '')", sessionID)
+	}
+	if err := revokeQuery.Updates(map[string]any{
+		"status":     model.MandateStatusRevoked,
+		"version":    gorm.Expr("version + 1"),
+		"updated_at": now,
+	}).Error; err != nil {
+		return nil, AsError(err)
+	}
 	row := &model.AssistantProductionMandate{
 		ID:                newMandateID("pm"),
 		UserID:            userID,
 		CanvasID:          canvasID,
-		SessionID:         strings.TrimSpace(in.SessionID),
+		SessionID:         sessionID,
 		MaxAmountCNY:      roundCNY(in.MaxAmountCNY),
 		SpentAmountCNY:    0,
 		ReservedAmountCNY: 0,
@@ -680,122 +694,4 @@ func ReleaseReservationInTx(tx *gorm.DB, reservationID string, now time.Time) er
 			"version":             mandate.Version + 1,
 			"updated_at":          now,
 		}).Error
-}
-
-// ReconcileTaskReservationInTx aligns a single reserved row against its owning task's
-// canonical ComputeOutcome state. NEVER releases failed+retrievable or settlement-pending tasks.
-func ReconcileTaskReservationInTx(tx *gorm.DB, res model.AssistantMandateReservation, task *model.Task, now time.Time) error {
-	if res.Status != model.MandateReservationStatusReserved {
-		return nil
-	}
-	if task == nil {
-		return ReleaseReservationInTx(tx, res.ID, now)
-	}
-	if task.Status == model.TaskStatusSucceeded {
-		return SettleReservationInTx(tx, res.ID, now)
-	}
-	if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
-		return nil
-	}
-	proj, _, _, err := assistantturns.ProjectTaskInTx(tx, res.UserID, *task)
-	if err != nil {
-		// Fail closed: never release on unreadable evidence.
-		return nil
-	}
-	outcome := proj.Outcome
-	usageState := strings.ToLower(strings.TrimSpace(task.ProviderUsageState()))
-	billingState := strings.ToLower(strings.TrimSpace(task.ProviderBillingState()))
-
-	// Provider confirmed charge -> settle spent even if result is unrecoverable.
-	if usageState == "completed" || (billingState == "settled" && usageState != "failed") || outcome.Reason == localtask.ReasonChargedResultUnrecoverable {
-		return SettleReservationInTx(tx, res.ID, now)
-	}
-	// Retrievable, fetching, running, or pending settlement -> keep reserved (#297).
-	if outcome.Phase == "retrievable" || outcome.Phase == "fetching" || outcome.Phase == "running" ||
-		task.MediaSettlementPending() || outcome.Reason == localtask.ReasonSettlementPending {
-		return nil
-	}
-	// Non-retrievable terminal failure or cancellation -> release reservation.
-	if (task.Status == model.TaskStatusFailed || task.Status == model.TaskStatusCancelled) && outcome.Phase == "failed" {
-		return ReleaseReservationInTx(tx, res.ID, now)
-	}
-	return nil
-}
-
-// ReconcileTaskMandateReservations reconciles any reserved mandate entries bound to taskID.
-func ReconcileTaskMandateReservations(db *gorm.DB, taskID string) error {
-	taskID = strings.TrimSpace(taskID)
-	if db == nil || taskID == "" {
-		return nil
-	}
-	var count int64
-	if err := db.Model(&model.AssistantMandateReservation{}).
-		Where("task_id = ? AND status = ?", taskID, model.MandateReservationStatusReserved).
-		Count(&count).Error; err != nil || count == 0 {
-		return err
-	}
-	now := time.Now().UTC()
-	return db.Transaction(func(tx *gorm.DB) error {
-		var rows []model.AssistantMandateReservation
-		if err := tx.Where("task_id = ? AND status = ?", taskID, model.MandateReservationStatusReserved).Find(&rows).Error; err != nil {
-			return err
-		}
-		if len(rows) == 0 {
-			return nil
-		}
-		var task model.Task
-		taskPtr := &task
-		if err := tx.Where("id = ?", taskID).First(&task).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				taskPtr = nil
-			} else {
-				return err
-			}
-		}
-		for _, res := range rows {
-			if err := ReconcileTaskReservationInTx(tx, res, taskPtr, now); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-// ReconcileOrphanedMandateReservations runs on Go backend startup to settle or release
-// reservations left behind by crashes between reserve and task admission or task completion.
-func ReconcileOrphanedMandateReservations(db *gorm.DB) error {
-	if db == nil {
-		return nil
-	}
-	if !db.Migrator().HasTable(&model.AssistantMandateReservation{}) {
-		return nil
-	}
-	now := time.Now().UTC()
-	return db.Transaction(func(tx *gorm.DB) error {
-		var rows []model.AssistantMandateReservation
-		if err := tx.Where("status = ?", model.MandateReservationStatusReserved).Find(&rows).Error; err != nil {
-			return err
-		}
-		for _, res := range rows {
-			if strings.TrimSpace(res.TaskID) == "" {
-				if err := ReleaseReservationInTx(tx, res.ID, now); err != nil {
-					return err
-				}
-				continue
-			}
-			var task model.Task
-			taskPtr := &task
-			if err := tx.Where("id = ?", res.TaskID).First(&task).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					taskPtr = nil
-				} else {
-					return err
-				}
-			}
-			if err := ReconcileTaskReservationInTx(tx, res, taskPtr, now); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }

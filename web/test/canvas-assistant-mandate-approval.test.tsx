@@ -5,7 +5,6 @@ import {
     CanvasAssistantApprovalCard,
     CanvasAssistantMandateBar,
     formatMandateCny,
-    suggestMandateCapCny,
 } from "@/pages/canvas/canvas-assistant-approval-card";
 import { CanvasAssistantTurnView } from "@/pages/canvas/canvas-assistant-turn";
 import {
@@ -56,6 +55,7 @@ describe("PR-5 Canvas Assistant ProductionMandate & Approval Card UI", () => {
         expect(html).toContain("即将生成 2 张首帧图");
         expect(html).toContain("约 ¥3.50 + 1 项无报价");
         expect(html).toContain("图片生成 · 媒体审片");
+        expect(html).toContain("同时允许无报价/自带 Key 调用（限 4 次，独立于 ¥ 上限计数）");
         expect(html).toContain("批准本次");
         expect(html).toContain("批准本片预算包（上限 ¥50）");
         expect(html).toContain("拒绝");
@@ -91,16 +91,16 @@ describe("PR-5 Canvas Assistant ProductionMandate & Approval Card UI", () => {
         );
         expect(revokedHtml).toBe("");
         expect(formatMandateCny(20)).toBe("¥20");
-        expect(suggestMandateCapCny(12)).toBe(50);
     });
 
-    test("CanvasAssistantTurnView 生成方案卡支持批准本片预算包，已有预算包或原地重做时不重复显示", () => {
+    test("CanvasAssistantTurnView 生成方案卡采用服务端 suggestedCapCny，无报价或已有预算包时不静默放行", () => {
         const proposal: AssistantGenerationProposal = {
             proposalId: "gp-1",
             kind: "image",
             nodeIds: ["n1"],
             model: "image-1",
             modelKey: "beeftv::image-1",
+            suggestedCapCny: 50,
             estimate: { amount: 1.5, priced: 1, unknown: 0, text: "预计费用：¥1.50" },
         };
         const turn: AssistantTurn = {
@@ -126,7 +126,23 @@ describe("PR-5 Canvas Assistant ProductionMandate & Approval Card UI", () => {
                 onDismissProposal={() => {}}
             />,
         );
-        expect(withoutMandate).toContain("批准本片预算包（上限 ¥20）");
+        expect(withoutMandate).toContain("批准本片预算包（上限 ¥50）");
+
+        const withUnknown = renderToStaticMarkup(
+            <CanvasAssistantTurnView
+                turn={{
+                    ...turn,
+                    proposals: [{ ...proposal, estimate: { amount: 0, priced: 0, unknown: 1, text: "暂无价格" } }],
+                }}
+                handledProposals={new Set()}
+                hasActiveMandate={false}
+                onLocate={() => {}}
+                onUndo={() => {}}
+                onRunProposal={() => {}}
+                onDismissProposal={() => {}}
+            />,
+        );
+        expect(withUnknown).not.toContain("批准本片预算包");
 
         const withMandate = renderToStaticMarkup(
             <CanvasAssistantTurnView
@@ -241,25 +257,27 @@ describe("PR-5 NDJSON approval_required / heartbeat 流与 Go 预算包 API 契�
         }) as never);
         httpPostSpy.mockImplementation((async (url: string, body: unknown) => {
             calls.push({ method: "POST", url, body });
+            if (url.includes("/decide")) return { approval: { proposalId: "ap-1" }, signaled: false };
             return { ok: true };
         }) as never);
 
         await listAssistantMandates("c1", "durable:s1");
-        await createAssistantMandate({ canvasId: "c1", maxAmountCny: 50, maxUnquotedCount: 4 });
+        await createAssistantMandate({ canvasId: "c1", maxAmountCny: 50, maxUnquotedCount: 0, expiresInMinutes: 120 });
         await revokeAssistantMandate("pm-1");
-        await decideAssistantApproval("ap-1", { decision: "approve", createMandate: { maxAmountCny: 50 } });
+        const decided = await decideAssistantApproval("ap-1", { decision: "reject", reason: "超出预算" });
         await confirmAssistantProduction("c1", "t1", {
             proposalId: "gp-1",
             kind: "image",
             nodeIds: ["n1"],
             model: "m1",
             modelKey: "beeftv::m1",
-        }, true, { maxAmountCny: 50, maxUnquotedCount: 4 });
+        }, true, { maxAmountCny: 50, maxUnquotedCount: 0 });
 
         expect(calls[0]).toEqual({ method: "GET", url: "/assistant/mandates?canvasId=c1&sessionId=durable%3As1" });
-        expect(calls[1]).toMatchObject({ method: "POST", url: "/assistant/mandates", body: { canvasId: "c1", maxAmountCny: 50, maxUnquotedCount: 4 } });
+        expect(calls[1]).toMatchObject({ method: "POST", url: "/assistant/mandates", body: { canvasId: "c1", maxAmountCny: 50, maxUnquotedCount: 0, expiresInMinutes: 120 } });
         expect(calls[2]).toMatchObject({ method: "POST", url: "/assistant/mandates/pm-1/revoke" });
-        expect(calls[3]).toMatchObject({ method: "POST", url: "/assistant/approvals/ap-1/decide", body: { decision: "approve", createMandate: { maxAmountCny: 50 } } });
-        expect(calls[4]).toMatchObject({ method: "POST", url: "/assistant/turns/t1/proposals/gp-1/production", body: { createMandate: { maxAmountCny: 50, maxUnquotedCount: 4 } } });
+        expect(calls[3]).toMatchObject({ method: "POST", url: "/assistant/approvals/ap-1/decide", body: { decision: "reject", reason: "超出预算" } });
+        expect(decided.signaled).toBe(false);
+        expect(calls[4]).toMatchObject({ method: "POST", url: "/assistant/turns/t1/proposals/gp-1/production", body: { createMandate: { maxAmountCny: 50, maxUnquotedCount: 0 } } });
     });
 });

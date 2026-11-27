@@ -96,12 +96,20 @@ func registerAssistantMandateRoutes(
 		}
 		sessionID := strings.TrimSpace(c.Query("sessionId"))
 		status := strings.TrimSpace(c.Query("status"))
-		mandates, err := operations.ListProductionMandatesInTx(svc.Database(), c.GetString("agentUserId"), canvasID, sessionID, status)
+		userID := c.GetString("agentUserId")
+		mandates, err := operations.ListProductionMandatesInTx(svc.Database(), userID, canvasID, sessionID, status)
 		if err != nil {
 			failAssistantProposal(c, err)
 			return
 		}
-		ok(c, gin.H{"mandates": mandates})
+		var activeMandate *operations.ProductionMandateView
+		if canvasID != "" {
+			if active, aErr := operations.FindActiveMandateInTx(svc.Database(), userID, canvasID, sessionID, time.Now().UTC()); aErr == nil && active != nil {
+				view := operations.ProjectProductionMandate(*active)
+				activeMandate = &view
+			}
+		}
+		ok(c, gin.H{"mandates": mandates, "activeMandate": activeMandate})
 	})
 
 	r.POST("/assistant/mandates", func(c *gin.Context) {
@@ -250,6 +258,16 @@ func registerAssistantMandateRoutes(
 		}
 		if strings.TrimSpace(payload.CanvasID) != "" {
 			if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+				return
+			}
+		}
+		if payload.CreateMandate != nil && strings.TrimSpace(payload.CreateMandate.CanvasID) != "" {
+			if _, allowed := requireOwnedCanvas(c, payload.CreateMandate.CanvasID); !allowed {
+				return
+			}
+		}
+		if existing, lookupErr := operations.LookupToolApprovalInTx(svc.Database(), c.GetString("agentUserId"), proposalID); lookupErr == nil && existing != nil && strings.TrimSpace(existing.CanvasID) != "" {
+			if _, allowed := requireOwnedCanvas(c, existing.CanvasID); !allowed {
 				return
 			}
 		}

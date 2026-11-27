@@ -7,8 +7,6 @@ import type {
     CreateAssistantMandateInput,
 } from "@/services/api/agent-assistant";
 
-const MANDATE_CAP_TIERS = [20, 50, 100, 200] as const;
-
 const KIND_LABELS: Record<string, string> = {
     image: "图片生成",
     video: "视频生成",
@@ -28,17 +26,11 @@ export function formatMandateCny(amount: number): string {
     return `¥${amount.toFixed(2)}`;
 }
 
-export function suggestMandateCapCny(estimatedCny?: number, suggestedCapCny?: number): number {
+function resolveSuggestedCap(suggestedCapCny?: number): number {
     if (typeof suggestedCapCny === "number" && Number.isFinite(suggestedCapCny) && suggestedCapCny > 0) {
         return Math.ceil(suggestedCapCny);
     }
-    const base = typeof estimatedCny === "number" && Number.isFinite(estimatedCny) && estimatedCny > 0
-        ? estimatedCny * 3
-        : 20;
-    for (const tier of MANDATE_CAP_TIERS) {
-        if (tier >= base) return tier;
-    }
-    return Math.ceil(base / 50) * 50;
+    return 20;
 }
 
 function buildCapOptions(suggested: number): number[] {
@@ -65,12 +57,14 @@ export function CanvasAssistantApprovalCard({
     onApproveMandate,
     onReject,
 }: ApprovalCardProps) {
-    const initialCap = suggestMandateCapCny(approval.estimatedCny, approval.suggestedCapCny);
+    const initialCap = resolveSuggestedCap(approval.suggestedCapCny);
     const [selectedCap, setSelectedCap] = useState<number>(initialCap);
+    const [allowUnquoted, setAllowUnquoted] = useState(false);
     const capOptions = buildCapOptions(initialCap);
 
     const hasQuotedAmount = typeof approval.estimatedCny === "number" && Number.isFinite(approval.estimatedCny) && approval.estimatedCny > 0;
     const unquotedCount = typeof approval.unquotedCount === "number" && approval.unquotedCount > 0 ? approval.unquotedCount : 0;
+    const optedInUnquotedLimit = Math.max(4, unquotedCount);
     const badgeText = hasQuotedAmount
         ? `约 ${formatMandateCny(approval.estimatedCny!)}${unquotedCount > 0 ? ` + ${unquotedCount} 项无报价` : ""}`
         : unquotedCount > 0
@@ -84,7 +78,7 @@ export function CanvasAssistantApprovalCard({
     const handleApproveMandate = () => {
         onApproveMandate(approval.proposalId, {
             maxAmountCny: selectedCap,
-            maxUnquotedCount: Math.max(4, unquotedCount),
+            maxUnquotedCount: allowUnquoted ? optedInUnquotedLimit : 0,
         });
     };
 
@@ -119,6 +113,15 @@ export function CanvasAssistantApprovalCard({
                     </button>
                 ))}
             </div>
+            <label className="canvas-assistant-meta inline-flex items-center gap-1.5 cursor-pointer select-none">
+                <input
+                    type="checkbox"
+                    checked={allowUnquoted}
+                    disabled={busy || disabled}
+                    onChange={(event) => setAllowUnquoted(event.target.checked)}
+                />
+                <span>{`同时允许无报价/自带 Key 调用（限 ${optedInUnquotedLimit} 次，独立于 ¥ 上限计数）`}</span>
+            </label>
             {feedback ? (
                 <span className="canvas-assistant-meta canvas-assistant-failed" role="status">
                     {feedback}
@@ -139,7 +142,7 @@ export function CanvasAssistantApprovalCard({
                     size="small"
                     autoInsertSpace={false}
                     loading={busy}
-                    disabled={disabled}
+                    disabled={disabled || (unquotedCount > 0 && !allowUnquoted)}
                     onClick={handleApproveMandate}
                 >
                     {`批准本片预算包（上限 ${formatMandateCny(selectedCap)}）`}

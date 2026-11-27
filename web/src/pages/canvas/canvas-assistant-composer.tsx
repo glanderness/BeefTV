@@ -161,6 +161,7 @@ export function CanvasAssistantComposer({
 }: Props) {
     const [contentHeight, setContentHeight] = useState(LINE_HEIGHT);
     const [mandateOpen, setMandateOpen] = useState(false);
+    const [mandateAllowUnquoted, setMandateAllowUnquoted] = useState(false);
     const fileInput = useRef<HTMLInputElement>(null);
     const height = Math.min(MAX_LINES * LINE_HEIGHT, Math.max(MIN_LINES * LINE_HEIGHT, contentHeight));
     const canSend = !disabled && !compacting && (!streaming || canSupplement) && !supplementBusy && !inputBusy && (Boolean(value.trim()) || Boolean(hasAttachments));
@@ -390,7 +391,10 @@ export function CanvasAssistantComposer({
                                             disabled={disabled || mandateBusy}
                                             onClick={() => {
                                                 if (disabled || mandateBusy) return;
-                                                onCreateMandate({ maxAmountCny: opt.value, maxUnquotedCount: 4 });
+                                                onCreateMandate({
+                                                    maxAmountCny: opt.value,
+                                                    maxUnquotedCount: mandateAllowUnquoted ? 4 : 0,
+                                                });
                                                 setMandateOpen(false);
                                             }}
                                         >
@@ -402,6 +406,15 @@ export function CanvasAssistantComposer({
                                         </button>
                                     );
                                 })}
+                                <label className="canvas-assistant-autoconfirm-menu-sub inline-flex items-center gap-1.5 px-2 py-1.5 cursor-pointer select-none">
+                                    <input
+                                        type="checkbox"
+                                        checked={mandateAllowUnquoted}
+                                        disabled={disabled || mandateBusy}
+                                        onChange={(event) => setMandateAllowUnquoted(event.target.checked)}
+                                    />
+                                    <span>允许无报价/自带 Key 调用（限 4 次，不计入 ¥ 上限）</span>
+                                </label>
                                 {mandateActive && onRevokeMandate ? (
                                     <button
                                         type="button"

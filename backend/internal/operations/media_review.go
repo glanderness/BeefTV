@@ -76,7 +76,8 @@ func runMediaReview(ctx *Context, raw json.RawMessage) (any, error) {
 	var permit *paidSyncPermit
 	if ctx.Caller.Kind == CallerAssistant && ctx.DB() != nil && (strings.TrimSpace(ctx.TurnID) != "" || HasAnyMandateInTx(ctx.DB(), ctx.UserID, args.CanvasID, "")) {
 		var permitErr error
-		permit, permitErr = acquirePaidSyncPermit(ctx, args.CanvasID, model.MandateKindMediaReview, "media.review")
+		digest := mediaReviewTargetDigest(args.CanvasID, args.NodeID, args.AssetID, args.ResourceID, args.Mode, args.StartMs, args.EndMs)
+		permit, permitErr = acquirePaidSyncPermit(ctx, args.CanvasID, model.MandateKindMediaReview, "media.review", digest)
 		if permitErr != nil {
 			return nil, permitErr
 		}
