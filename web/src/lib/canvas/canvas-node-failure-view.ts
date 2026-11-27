@@ -94,7 +94,10 @@ class NodeFailureView implements CanvasNodeFailureView {
     get outcome() { return this.read("outcome", () => readNodeTaskOutcome(this.node.metadata)); }
     get copy() {
         return this.read("copy", () =>
-            taskOutcomeCopy(this.outcome, this.options?.nowMs, this.node.metadata?.taskProviderCancelStatus ? { providerCancelStatus: this.node.metadata.taskProviderCancelStatus } : undefined),
+            taskOutcomeCopy(this.outcome, this.options?.nowMs, {
+                providerCancelStatus: this.node.metadata?.taskProviderCancelStatus,
+                stage: this.node.metadata?.taskStage,
+            }),
         );
     }
     get explanation() { return this.read("explanation", () => canvasNodeFailureExplanation(this.node)); }

@@ -77,6 +77,25 @@ func opTaskCancel(ctx *Context, params json.RawMessage) (any, error) {
 					"taskId": taskID,
 					"status": latest.Status,
 				})
+			case model.TaskStatusFailed:
+				if latest.Outcome != nil && latest.Outcome.Phase == "retrievable" {
+					if latest.Stage == model.TaskStageRecoveryStopped {
+						return map[string]any{
+							"taskId":         latest.ID,
+							"status":         latest.Status,
+							"previousStatus": before.Status,
+							"note":           "已停止后台自动取回；已提交任务的结果仍会保留，之后可随时手动继续取回。",
+						}, nil
+					}
+					return nil, Conflict("task_cancel_race", "任务状态在取消时发生变化，请重新查询任务状态后重试", map[string]any{
+						"taskId": taskID,
+						"status": latest.Status,
+					})
+				}
+				return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(latest.Status)+"，无法取消", map[string]any{
+					"taskId": taskID,
+					"status": latest.Status,
+				})
 			default:
 				return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(latest.Status)+"，无法取消", map[string]any{
 					"taskId": taskID,

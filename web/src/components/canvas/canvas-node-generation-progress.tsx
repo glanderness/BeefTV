@@ -52,8 +52,9 @@ export function CanvasNodeGenerationProgress({ node, theme, operation, onOpenTas
     const timing = metrics?.timing || (!fetching ? elapsed : "");
     const uncertain = !operation && Boolean(taskId) && isGenerationTaskSubmissionUncertain(displayTask);
     const controls = hasTaskIdentity && (!operation || displayTask.status !== "succeeded");
+    const deliveryStopped = displayTask.stage === "delivery_paused" || displayTask.stage === "delivery_timed_out";
     const stopAction = controls
-        ? (taskStopActionKind(displayTask) ?? (displayTask.status === "succeeded" ? "pause_download" : null))
+        ? (taskStopActionKind(displayTask) ?? (displayTask.status === "succeeded" && !deliveryStopped ? "pause_download" : null))
         : null;
     const stopLabel = stopAction ? taskStopActionLabel(stopAction) : "取消";
     const stopAriaLabel = stopAction === "pause_download"

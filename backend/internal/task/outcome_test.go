@@ -470,3 +470,14 @@ func TestComputeOutcomeKeepsRecoveryStoppedTasksRetrievable(t *testing.T) {
 		})
 	}
 }
+
+func TestPersistedFailureViewTreatsRecoveryStoppedLikeSubmissionUnknown(t *testing.T) {
+	wantMsg, wantCode := PersistedFailureView("raw upstream error", "submission_unknown", "")
+	gotMsg, gotCode := PersistedFailureView("raw upstream error", model.TaskStageRecoveryStopped, "")
+	if gotMsg != wantMsg || gotCode != wantCode {
+		t.Fatalf("PersistedFailureView(recovery_stopped) = (%q, %q), want (%q, %q)", gotMsg, gotCode, wantMsg, wantCode)
+	}
+	if SafePersistedFailureMessage("raw upstream error", model.TaskStageRecoveryStopped) != SafePersistedFailureMessage("raw upstream error", "submission_unknown") {
+		t.Fatalf("SafePersistedFailureMessage(recovery_stopped) diverged from submission_unknown")
+	}
+}

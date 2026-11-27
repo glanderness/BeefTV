@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 // This is a proposal precondition, not a scheduler. The frontend submits every
@@ -228,7 +230,8 @@ func (g generationDependencyGraph) ready(id string, visited map[string]bool) boo
 	if submission == "accepted" && status != "succeeded" && status != "failed" && status != "cancelled" {
 		return false
 	}
-	if meta["resourceReloadAvailable"] == true || dependencyString(meta, "taskStage") == "submission_unknown" {
+	taskStage := dependencyString(meta, "taskStage")
+	if meta["resourceReloadAvailable"] == true || taskStage == "submission_unknown" || taskStage == model.TaskStageRecoveryStopped {
 		return false
 	}
 	switch dependencyString(meta, "generationErrorCode") {

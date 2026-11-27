@@ -633,6 +633,7 @@ export function formatReconcileDeadlineCopy(reconcileDeadline?: string, nowMs = 
 
 export type TaskOutcomeCopyOptions = {
     providerCancelStatus?: string;
+    stage?: string;
 };
 
 /**
@@ -692,6 +693,16 @@ export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()
             };
         }
         case "retrievable": {
+            if (options?.stage === "recovery_stopped") {
+                const reason = "已停止自动取回，原任务结果仍会保留";
+                const action = "可随时点击继续取回，不要重复生成";
+                return {
+                    badge: "待取回结果",
+                    reason,
+                    action,
+                    message: `${reason}，${action}。`,
+                };
+            }
             let reason = "上次生成结果已保留，系统正在自动取回";
             if (outcome.reason === "image_recovery_pending") {
                 reason = "正在查询并取回上次生成的图片结果";

@@ -65,7 +65,7 @@ export function taskOutcomeCopyForTask(
     task: Pick<GenerationTask, "status" | "stage" | "errorCode" | "error" | "providerRequestId" | "providerCancelStatus" | "outcome" | "type" | "outputs">,
     outcome = readTaskOutcome(task),
 ) {
-    return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus });
+    return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus, stage: task.stage });
 }
 
 /**

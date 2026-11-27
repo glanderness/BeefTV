@@ -229,11 +229,16 @@ func TaskForOutput(task model.Task) *model.Task {
 	return &task
 }
 
+func isUnconfirmedSubmissionStage(stage string) bool {
+	return stage == "submission_unknown" || stage == model.TaskStageRecoveryStopped
+}
+
 // PersistedFailureView 是任务失败对外的文案与类目：优先使用失败当时保存的类目与脱敏文案。
 // 旧任务没有该类目时才按文案重新归类；未确认/未发出两个阶段保持按阶段给出的固定文案。
 func PersistedFailureView(message, stage, errorCode string) (string, string) {
-	preserveTimeout := stage == "submission_unknown" && strings.TrimSpace(errorCode) == string(generation.CategoryTimeout)
-	if strings.TrimSpace(errorCode) != "" && strings.TrimSpace(message) != "" && ((stage != "submission_unknown" && stage != taskruntime.StageRequestNotSent) || preserveTimeout) {
+	unconfirmed := isUnconfirmedSubmissionStage(stage)
+	preserveTimeout := unconfirmed && strings.TrimSpace(errorCode) == string(generation.CategoryTimeout)
+	if strings.TrimSpace(errorCode) != "" && strings.TrimSpace(message) != "" && ((!unconfirmed && stage != taskruntime.StageRequestNotSent) || preserveTimeout) {
 		// A saved unknown is a conclusion too; the API keeps reporting it as no category.
 		if category := generation.PersistedFailure(message, errorCode).Category; category != generation.CategoryUnknown {
 			return message, string(category)
@@ -254,7 +259,7 @@ func SafePersistedFailureMessage(message, stage string) string {
 	if strings.TrimSpace(message) == "" {
 		return ""
 	}
-	if stage == "submission_unknown" {
+	if isUnconfirmedSubmissionStage(stage) {
 		return (generation.Failure{Category: generation.CategorySubmissionUncertain}).UserMessage()
 	}
 	return generation.ClassifyText(message).UserMessage()

@@ -4,6 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { CanvasActiveTaskPanel } from "@/components/canvas/canvas-active-task-panel";
 import { CanvasNode } from "@/components/canvas/canvas-node";
+import { CanvasNodeGenerationProgress } from "@/components/canvas/canvas-node-generation-progress";
+import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
+import { canvasThemes } from "@/lib/canvas-theme";
+import { generationTaskStageLabel, generationTaskStatusLabel } from "@/lib/generation-task-display";
 import {
     deliveryPendingTaskOutcome,
     fetchingTaskOutcome,
@@ -210,5 +214,50 @@ describe("#297 task outcome panel visibility, stop actions, and node status badg
 
     test("CanvasProjectStatusDialogs exports cleanly with taskStopActionKind wiring", () => {
         expect(typeof CanvasProjectStatusDialogs).toBe("function");
+    });
+
+    test("recovery_stopped uses single-source taskOutcomeCopy and never overrides non-retrievable outcome", () => {
+        const stoppedNode = makeNode("n-stopped-copy", {
+            status: "error",
+            taskId: "t-stopped-copy",
+            taskStatus: "failed",
+            taskStage: "recovery_stopped",
+            generationErrorCode: "submission_uncertain",
+            errorDetails: "系统正在自动取回结果",
+            taskOutcome: submissionUnknownTaskOutcome(),
+        });
+        const view = canvasNodeFailureView(stoppedNode);
+        expect(view.copy.badge).toBe("待取回结果");
+        expect(view.copy.reason).toContain("已停止自动取回");
+        expect(view.explanation.reason).toContain("已停止自动取回");
+        expect(view.explanation.reason).not.toContain("系统正在自动取回");
+        expect(view.explanation.action).toContain("继续取回");
+
+        // When outcome has transitioned to terminal failed, stale stage="recovery_stopped" must NOT override outcome.
+        const staleStageFailedTask = makeTask("t-stale-stage", {
+            status: "failed",
+            stage: "recovery_stopped",
+            outcome: notChargedTaskOutcome(),
+        });
+        expect(generationTaskStatusLabel(staleStageFailedTask)).toBe("生成失败");
+        expect(generationTaskStageLabel(staleStageFailedTask)).toContain("未扣费");
+        expect(generationTaskStageLabel(staleStageFailedTask)).not.toContain("已停止自动取回");
+
+        // Paused/timed-out delivery loading card must not offer pause_download button.
+        for (const stoppedStage of ["delivery_paused", "delivery_timed_out"]) {
+            const pausedProgressHtml = renderToStaticMarkup(
+                createElement(CanvasNodeGenerationProgress, {
+                    node: makeNode(`n-${stoppedStage}`, {
+                        status: "loading",
+                        taskId: `t-${stoppedStage}`,
+                        taskStatus: "succeeded",
+                        taskStage: stoppedStage,
+                    }),
+                    theme: canvasThemes.dark,
+                    onCancelTask: () => undefined,
+                }),
+            );
+            expect(pausedProgressHtml).not.toContain('aria-label="停止取回结果"');
+        }
     });
 });

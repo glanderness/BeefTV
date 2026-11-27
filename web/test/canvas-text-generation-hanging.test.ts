@@ -7,7 +7,7 @@ import {
 import { executeTextGeneration } from "@/pages/canvas/canvas-text-generation-executor";
 import * as generationTaskApi from "@/services/api/generation-task";
 import { ApiError } from "@/services/api/request";
-import type { GenerationTask, WaitForGenerationTaskOptions } from "@/services/api/task-center";
+import { waitForGenerationTask, type GenerationTask, type WaitForGenerationTaskOptions } from "@/services/api/task-center";
 import { bindBackendCanvasGenerationResult } from "@/services/canvas-generation-consumer";
 import * as generationTarget from "@/services/canvas-generation-target";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -223,6 +223,70 @@ describe("#356 canvas text generation streaming, bounded timeout, and non-media 
             runTaskMock.mockRestore();
             prepareTargetMock.mockRestore();
             useCanvasStore.setState({ projects: [] });
+        }
+    });
+
+    test("waitForGenerationTask enforces timeoutMs inside an open SSE stream sending heartbeats forever", async () => {
+        const encoder = new TextEncoder();
+        let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+        let streamCancelled = false;
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async () => {
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(encoder.encode(": heartbeat\n\n"));
+                    heartbeatTimer = setInterval(() => {
+                        try {
+                            controller.enqueue(encoder.encode(": heartbeat\n\n"));
+                        } catch {
+                            if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer);
+                        }
+                    }, 15);
+                },
+                cancel() {
+                    streamCancelled = true;
+                    if (heartbeatTimer !== undefined) {
+                        clearInterval(heartbeatTimer);
+                        heartbeatTimer = undefined;
+                    }
+                },
+            });
+            return new Response(stream, {
+                status: 200,
+                headers: { "Content-Type": "text/event-stream" },
+            });
+        }) as unknown as typeof fetch;
+
+        const runningTask: GenerationTask = {
+            id: "task-sse-forever",
+            type: "canvas_text",
+            status: "running",
+            stage: "生成中",
+            createdAt: "2026-11-27T00:00:00.000Z",
+            updatedAt: "2026-11-27T00:00:01.000Z",
+        };
+
+        const startedAt = Date.now();
+        try {
+            let caught: unknown;
+            try {
+                await waitForGenerationTask(runningTask.id, {
+                    initialTask: runningTask,
+                    useTextEvents: true,
+                    timeoutMs: 50,
+                });
+            } catch (error) {
+                caught = error;
+            }
+            const elapsed = Date.now() - startedAt;
+            expect(caught).toBeInstanceOf(Error);
+            expect((caught as Error).name).not.toBe("AbortError");
+            expect((caught as Error).message).toContain("超时");
+            expect(elapsed).toBeLessThan(500);
+            expect(streamCancelled).toBe(true);
+        } finally {
+            if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer);
+            globalThis.fetch = originalFetch;
         }
     });
 });
