@@ -46,6 +46,18 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
     };
     const latestFit = useRef(fit);
     latestFit.current = fit;
+    const latestCancelConnection = useRef(onCancelConnection);
+    latestCancelConnection.current = onCancelConnection;
+    const resetPointerInteraction = () => {
+        if (linkGesture.current) {
+            linkGesture.current = undefined;
+            setLinkPoint(undefined);
+            latestCancelConnection.current();
+        }
+        gesture.current = undefined;
+        setPreview(undefined);
+        setPanning(false);
+    };
     useLayoutEffect(() => {
         if (!container.current) return;
         const observer = new ResizeObserver(() => { if (!navigated.current) latestFit.current(); });
@@ -89,6 +101,7 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
         const handleBlur = () => {
             spacePressedRef.current = false;
             setSpacePressed(false);
+            resetPointerInteraction();
         };
         window.addEventListener("keydown", handleKeyDown);
         window.addEventListener("keyup", handleKeyUp);
@@ -172,10 +185,10 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                 else setView(old => ({ ...old, x: g.initialX + dx, y: g.initialY + dy }));
             }}
             onPointerUp={event => {
-                if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
                 const link = linkGesture.current;
                 if (link) {
                     linkGesture.current = undefined;
+                    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
                     if (link.moved) {
                         const hit = document.elementFromPoint(event.clientX, event.clientY);
                         const target = hit?.closest<HTMLElement>("[data-workflow-editor-node]");
@@ -184,17 +197,22 @@ export function CanvasWorkflowEditorGraph({ definition, operations, selected, co
                         else onCancelConnection();
                         setLinkPoint(undefined);
                     }
-                } else if (gesture.current?.pointerId === event.pointerId) {
-                    const g = gesture.current;
-                    if (g.id) onMove(g.id, { x: g.initialX + (event.clientX - g.x) / view.k, y: g.initialY + (event.clientY - g.y) / view.k });
-                    gesture.current = undefined; setPreview(undefined); setPanning(false);
                     return;
                 }
+                if (gesture.current && gesture.current.pointerId !== event.pointerId) return;
+                if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                const g = gesture.current;
+                if (g?.id) onMove(g.id, { x: g.initialX + (event.clientX - g.x) / view.k, y: g.initialY + (event.clientY - g.y) / view.k });
                 gesture.current = undefined; setPreview(undefined); setPanning(false);
             }}
             onPointerCancel={event => {
+                if (!linkGesture.current && gesture.current && gesture.current.pointerId !== event.pointerId) return;
                 if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-                linkGesture.current = undefined; setLinkPoint(undefined); onCancelConnection(); gesture.current = undefined; setPreview(undefined); setPanning(false);
+                resetPointerInteraction();
+            }}
+            onLostPointerCapture={event => {
+                if (!linkGesture.current && gesture.current && gesture.current.pointerId !== event.pointerId) return;
+                resetPointerInteraction();
             }}>
             <div data-workflow-editor-viewport className="absolute inset-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
                 <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1" aria-label="工作流连线">

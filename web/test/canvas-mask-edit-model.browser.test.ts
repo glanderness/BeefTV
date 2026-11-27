@@ -94,3 +94,32 @@ test("mask edit surfaces model selector in the bottom bar, persists model choice
     await page.getByRole("button", { name: "下架 Seedream 并重开" }).click();
     expect(await pickerButton.textContent()).toContain("GPT Image 2");
 }, 25_000);
+
+test("pressing Escape after clicking bottom-bar ModelPicker closes only the picker first, then cancels mask edit on second Escape", async () => {
+    await page.goto(server.url.toString(), { waitUntil: "domcontentloaded" });
+    await page.locator("[data-mask-edit-model-selector]").waitFor({ state: "visible", timeout: 10_000 });
+
+    const pickerButton = page.locator("[data-mask-edit-model-selector] button");
+    const settingsButton = page.getByRole("button", { name: "局部重绘设置" });
+    const cancelCount = page.getByTestId("cancel-count");
+    expect(await cancelCount.textContent()).toBe("0");
+
+    // Open settings first, then click the bottom-bar ModelPicker — settings popover should close cleanly
+    await settingsButton.click();
+    await page.locator(".image-settings-panel").waitFor({ state: "visible", timeout: 5_000 });
+    await pickerButton.click();
+    await page.locator(".image-settings-panel").waitFor({ state: "hidden", timeout: 5_000 });
+
+    const option = page.getByRole("option", { name: "GPT Image 2" });
+    await option.waitFor({ state: "visible", timeout: 5_000 });
+
+    // 1st Escape: closes only the ModelPicker menu; mask editor stays open (onCancel NOT called)
+    await page.keyboard.press("Escape");
+    await option.waitFor({ state: "hidden", timeout: 5_000 });
+    expect(await page.locator('[data-image-mask-edit-inline="true"]').isVisible()).toBe(true);
+    expect(await cancelCount.textContent()).toBe("0");
+
+    // 2nd Escape: now invokes onCancel to exit mask editing
+    await page.keyboard.press("Escape");
+    expect(await cancelCount.textContent()).toBe("1");
+}, 25_000);

@@ -117,7 +117,12 @@ export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel
                 <input aria-label="局部重绘要求" type="text" value={prompt} placeholder="描述选中区域需要如何修改…" onChange={(event) => { setPrompt(event.target.value); setError(""); }} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") void submit(); }} className="block h-9 w-full rounded-xl border px-3 text-sm outline-none placeholder:opacity-50" style={{ background: theme.toolbar.itemHover, borderColor: theme.node.stroke, color: theme.node.text }} />
                 {error || compatibilityError || capabilityNotice ? <div role="status" className="absolute left-1 top-[calc(100%+8px)] whitespace-nowrap rounded-lg border px-2 py-1 text-xs font-medium shadow-lg" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.accent.danger }}>{error || compatibilityError || capabilityNotice}</div> : null}
             </div>
-            <div className="w-40 min-w-0 shrink-0" data-mask-edit-model-selector>
+            <div
+                className="w-[min(10rem,34vw)] min-w-0 shrink-0"
+                data-mask-edit-model-selector
+                onPointerDownCapture={() => { if (settingsOpen) setSettingsOpen(false); }}
+                onClickCapture={() => { if (settingsOpen) setSettingsOpen(false); }}
+            >
                 <ModelPicker variant="canvas" config={generationConfig} value={generationConfig.imageModel || generationConfig.model} capability="image" requirements={editRequirements} fullWidth className="text-xs" onChange={handleModelChange} />
             </div>
             <div className="relative">

@@ -238,7 +238,7 @@ function TextEditorToolbar({ editor }: { editor: Editor | null }) {
                 placement="bottom"
                 content={<div className="flex w-72 gap-2"><Input size="small" value={linkValue} placeholder="https://example.com" onChange={(event) => setLinkValue(event.target.value)} onPressEnter={applyLink} /><Button size="small" type="primary" onClick={applyLink}>应用</Button></div>}
             >
-                <span><EditorToolButton label="插入链接" active={Boolean(editor?.isActive("link"))}><Link2 /></EditorToolButton></span>
+                <span><EditorToolButton label="插入链接" active={Boolean(editor?.isActive("link"))} expanded={linkOpen}><Link2 /></EditorToolButton></span>
             </Popover>
             <ToolbarDivider />
             <Tooltip title="文字颜色">
@@ -276,11 +276,11 @@ function TextEditorToolbar({ editor }: { editor: Editor | null }) {
     );
 }
 
-function EditorToolButton({ label, active = false, children, onClick }: { label: string; active?: boolean; children: ReactNode; onClick?: () => void }) {
+function EditorToolButton({ label, active = false, expanded, children, onClick }: { label: string; active?: boolean; expanded?: boolean; children: ReactNode; onClick?: () => void }) {
     const theme = canvasThemes[useActiveTheme()];
     return (
         <Tooltip title={label}>
-            <button type="button" aria-label={label} aria-pressed={active} className="grid size-8 shrink-0 place-items-center rounded-md outline-none transition hover:bg-black/5 focus-visible:ring-2 dark:hover:bg-white/8 [&_svg]:size-3.5" style={{ background: active ? theme.toolbar.activeBg : undefined, color: active ? theme.accent.primary : undefined }} onClick={onClick}>{children}</button>
+            <button type="button" aria-label={label} aria-pressed={active} aria-expanded={expanded} className="grid size-8 shrink-0 place-items-center rounded-md outline-none transition hover:bg-black/5 focus-visible:ring-2 dark:hover:bg-white/8 [&_svg]:size-3.5" style={{ background: active ? theme.toolbar.activeBg : undefined, color: active ? theme.accent.primary : undefined }} onClick={onClick}>{children}</button>
         </Tooltip>
     );
 }

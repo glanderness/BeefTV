@@ -32,6 +32,7 @@ function buildConfig(includeSeedream: boolean): AiConfig {
 function Harness() {
     const [sessionKey, setSessionKey] = useState(1);
     const [includeSeedream, setIncludeSeedream] = useState(true);
+    const [cancelCount, setCancelCount] = useState(0);
     const remembered = useCreationPreferencesStore((state) => state.preferences.maskEditModel || "");
 
     return (
@@ -51,6 +52,7 @@ function Harness() {
                         下架 Seedream 并重开
                     </button>
                     <span data-testid="remembered-model">{remembered}</span>
+                    <span data-testid="cancel-count">{cancelCount}</span>
                 </div>
                 <div style={{ position: "relative", width: 320, height: 320 }}>
                     <CanvasImageMaskEditor
@@ -58,7 +60,7 @@ function Harness() {
                         imageDimensions={{ width: 512, height: 512 }}
                         scale={1}
                         config={buildConfig(includeSeedream)}
-                        onCancel={() => {}}
+                        onCancel={() => setCancelCount((count) => count + 1)}
                         onConfirm={() => {}}
                     />
                 </div>

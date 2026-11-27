@@ -227,6 +227,23 @@ test("workflow graph pans via wheel, blank drag, middle drag, and Space drag, zo
         expect(Math.abs(afterEdit.x - beforeEdit.x)).toBeLessThan(1);
         expect(Math.abs(afterEdit.y - beforeEdit.y)).toBeLessThan(1);
         expect(Math.abs(afterEdit.k - beforeEdit.k)).toBeLessThan(0.001);
+
+        // 7. Window blur during an active pan immediately clears panning overlay so nodes remain clickable
+        await editor.getByRole("button", { name: "适合工作流设定图" }).click();
+        await editor.mouse.move(blankX, blankY);
+        await editor.mouse.down({ button: "left" });
+        await editor.mouse.move(blankX + 30, blankY + 20, { steps: 2 });
+        expect(await region.getAttribute("data-workflow-panning")).toBe("true");
+        await editor.evaluate(() => window.dispatchEvent(new Event("blur")));
+        expect(await region.getAttribute("data-workflow-panning")).toBeNull();
+        await editor.mouse.up({ button: "left" });
+
+        const outputHeader = editor.locator('[data-workflow-editor-node="output"] [role="button"]');
+        const outputTitle = await outputHeader.getAttribute("title");
+        await outputHeader.click();
+        expect(outputTitle).toBeTruthy();
+        expect(outputTitle).not.toBe("源视频-已修改");
+        expect(await titleInput.inputValue()).toBe(outputTitle!);
     } finally {
         await editor.close();
     }
