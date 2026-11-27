@@ -144,3 +144,117 @@ test("删除工作流连线时保留图中选中的节点", async () => {
         await editor.close();
     }
 }, 15000);
+
+test("workflow graph pans via wheel, blank drag, middle drag, and Space drag, zooms with Ctrl+wheel, and stays still when editing the selected node", async () => {
+    const editor = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+        await editor.goto(new URL("?edge-delete", server.url).toString(), { waitUntil: "domcontentloaded" });
+        const region = editor.getByRole("region", { name: "工作流节点图" });
+        await region.waitFor({ timeout: 10_000 });
+        const viewportEl = editor.locator("[data-workflow-editor-viewport]");
+        const readTransform = () =>
+            viewportEl.evaluate((el) => {
+                const match = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)\s*scale\(([-\d.]+)\)/.exec(el.style.transform);
+                if (!match) throw new Error(`unexpected transform: ${el.style.transform}`);
+                return { x: Number(match[1]), y: Number(match[2]), k: Number(match[3]) };
+            });
+        const waitForTransform = async (predicate: (t: { x: number; y: number; k: number }) => boolean) => {
+            const deadline = Date.now() + 3_000;
+            let last = await readTransform();
+            while (!predicate(last) && Date.now() < deadline) {
+                await editor.waitForTimeout(20);
+                last = await readTransform();
+            }
+            return last;
+        };
+
+        const initial = await readTransform();
+        const regionBox = (await region.boundingBox())!;
+
+        // 1. Trackpad two-finger scroll pans smoothly without zooming
+        await region.evaluate((el) => {
+            el.dispatchEvent(new WheelEvent("wheel", { deltaX: 40, deltaY: 30, deltaMode: 0, bubbles: true, cancelable: true }));
+        });
+        const afterWheelPan = await waitForTransform((t) => Math.abs(t.x - (initial.x - 40)) < 1 && Math.abs(t.y - (initial.y - 30)) < 1);
+        expect(Math.abs(afterWheelPan.x - (initial.x - 40))).toBeLessThan(1);
+        expect(Math.abs(afterWheelPan.y - (initial.y - 30))).toBeLessThan(1);
+        expect(Math.abs(afterWheelPan.k - initial.k)).toBeLessThan(0.001);
+
+        // 2. Ctrl + wheel zooms around cursor
+        await region.evaluate((el, box) => {
+            el.dispatchEvent(new WheelEvent("wheel", { deltaY: -60, deltaMode: 0, ctrlKey: true, clientX: box.x + 200, clientY: box.y + 200, bubbles: true, cancelable: true }));
+        }, regionBox);
+        const afterZoom = await waitForTransform((t) => t.k > afterWheelPan.k);
+        expect(afterZoom.k).toBeGreaterThan(afterWheelPan.k);
+
+        // 3. Blank-area left drag pans smoothly
+        const blankX = regionBox.x + regionBox.width - 140;
+        const blankY = regionBox.y + 40;
+        await editor.mouse.move(blankX, blankY);
+        await editor.mouse.down({ button: "left" });
+        await editor.mouse.move(blankX + 90, blankY + 60, { steps: 4 });
+        await editor.mouse.up({ button: "left" });
+        const afterBlankDrag = await readTransform();
+        expect(Math.abs(afterBlankDrag.x - (afterZoom.x + 90))).toBeLessThan(2);
+        expect(Math.abs(afterBlankDrag.y - (afterZoom.y + 60))).toBeLessThan(2);
+
+        // 4. Middle-button drag over a node pans the canvas without moving the node
+        const sourceNode = editor.locator('[data-workflow-editor-node="source"]');
+        const nodePosBeforeMiddle = await sourceNode.evaluate((el) => ({ left: el.style.left, top: el.style.top }));
+        const sourceBox = (await sourceNode.boundingBox())!;
+        await editor.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + 20);
+        await editor.mouse.down({ button: "middle" });
+        await editor.mouse.move(sourceBox.x + sourceBox.width / 2 + 80, sourceBox.y + 70, { steps: 4 });
+        await editor.mouse.up({ button: "middle" });
+        const afterMiddleDrag = await readTransform();
+        expect(Math.abs(afterMiddleDrag.x - (afterBlankDrag.x + 80))).toBeLessThan(2);
+        expect(Math.abs(afterMiddleDrag.y - (afterBlankDrag.y + 50))).toBeLessThan(2);
+        expect(await sourceNode.evaluate((el) => ({ left: el.style.left, top: el.style.top }))).toEqual(nodePosBeforeMiddle);
+
+        // 5. Space + left drag over a node pans the canvas without moving the node
+        const sourceBoxForSpace = (await sourceNode.boundingBox())!;
+        await region.focus();
+        await editor.keyboard.down("Space");
+        await editor.mouse.move(sourceBoxForSpace.x + sourceBoxForSpace.width / 2, sourceBoxForSpace.y + 20);
+        await editor.mouse.down({ button: "left" });
+        await editor.mouse.move(sourceBoxForSpace.x + sourceBoxForSpace.width / 2 - 200, sourceBoxForSpace.y - 30, { steps: 4 });
+        await editor.mouse.up({ button: "left" });
+        await editor.keyboard.up("Space");
+        const afterSpaceDrag = await readTransform();
+        expect(Math.abs(afterSpaceDrag.x - (afterMiddleDrag.x - 200))).toBeLessThan(2);
+        expect(Math.abs(afterSpaceDrag.y - (afterMiddleDrag.y - 50))).toBeLessThan(2);
+        expect(await sourceNode.evaluate((el) => ({ left: el.style.left, top: el.style.top }))).toEqual(nodePosBeforeMiddle);
+
+        // 6. Pan the selected node far offscreen, then edit its title — viewport must NOT jump back
+        await region.evaluate((el) => {
+            el.dispatchEvent(new WheelEvent("wheel", { deltaX: 900, deltaY: 0, deltaMode: 0, bubbles: true, cancelable: true }));
+        });
+        const beforeEdit = await waitForTransform((t) => Math.abs(t.x - (afterSpaceDrag.x - 900)) < 2);
+        expect(Math.abs(beforeEdit.x - (afterSpaceDrag.x - 900))).toBeLessThan(2);
+        const titleInput = editor.getByRole("textbox", { name: "工作流节点名称" });
+        await titleInput.fill("源视频-已修改");
+        const afterEdit = await readTransform();
+        expect(Math.abs(afterEdit.x - beforeEdit.x)).toBeLessThan(1);
+        expect(Math.abs(afterEdit.y - beforeEdit.y)).toBeLessThan(1);
+        expect(Math.abs(afterEdit.k - beforeEdit.k)).toBeLessThan(0.001);
+
+        // 7. Window blur during an active pan immediately clears panning overlay so nodes remain clickable
+        await editor.getByRole("button", { name: "适合工作流设定图" }).click();
+        await editor.mouse.move(blankX, blankY);
+        await editor.mouse.down({ button: "left" });
+        await editor.mouse.move(blankX + 30, blankY + 20, { steps: 2 });
+        expect(await region.getAttribute("data-workflow-panning")).toBe("true");
+        await editor.evaluate(() => window.dispatchEvent(new Event("blur")));
+        expect(await region.getAttribute("data-workflow-panning")).toBeNull();
+        await editor.mouse.up({ button: "left" });
+
+        const outputHeader = editor.locator('[data-workflow-editor-node="output"] [role="button"]');
+        const outputTitle = await outputHeader.getAttribute("title");
+        await outputHeader.click();
+        expect(outputTitle).toBeTruthy();
+        expect(outputTitle).not.toBe("源视频-已修改");
+        expect(await titleInput.inputValue()).toBe(outputTitle!);
+    } finally {
+        await editor.close();
+    }
+}, 25_000);

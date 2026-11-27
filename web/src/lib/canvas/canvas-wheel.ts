@@ -11,6 +11,12 @@ export function parseCanvasWheelBehavior(value: string | null | undefined): Canv
     return value === "zoom" || value === "pan" ? value : "auto";
 }
 
+export function wheelDeltaToPixels(delta: number, deltaMode: number) {
+    if (deltaMode === 1) return delta * 16;
+    if (deltaMode === 2) return delta * 720;
+    return delta;
+}
+
 export function canvasWheelIntent(
     event: WheelInput,
     previous: { intent: "pan" | "zoom"; at: number } | null,

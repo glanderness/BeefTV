@@ -3,6 +3,7 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { defaultConfig } from "@/stores/use-config-store";
+import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { createCanvasStageOverlayProps, makeCanvasNode } from "./helpers/canvas-stage-overlays-fixture";
 
@@ -33,6 +34,7 @@ const { CanvasProjectStageOverlays } = await import("@/pages/canvas/canvas-proje
 beforeEach(() => {
     panelOverlayCalls.length = 0;
     toolbarCalls.length = 0;
+    useCreationPreferencesStore.setState({ preferences: {} });
 });
 
 describe("inline canvas mask editing", () => {
@@ -64,8 +66,51 @@ describe("inline canvas mask editing", () => {
         expect(html).toContain('aria-label="局部重绘要求"');
         expect(html).not.toContain('<textarea aria-label="局部重绘要求"');
         expect(html).toContain('aria-label="局部重绘设置"');
+        expect(html).toContain('data-mask-edit-model-selector="true"');
         expect(html).toContain('aria-label="AI 修改"');
         expect(html).not.toContain("#242424");
+    });
+
+    test("surfaces active model selector in the bottom bar and honors remembered mask-edit preference with fallback", () => {
+        const config = {
+            ...defaultConfig,
+            model: "custom::gpt-image-2",
+            imageModel: "custom::gpt-image-2",
+            imageModels: ["custom::gpt-image-2", "custom::doubao-seedream-5-0-260128"],
+            channels: [{
+                id: "custom",
+                name: "Custom",
+                models: ["gpt-image-2", "doubao-seedream-5-0-260128"],
+                interfaceType: "openai-image" as const,
+                modelProfiles: [
+                    { model: "gpt-image-2", displayName: "GPT Image 2" },
+                    { model: "doubao-seedream-5-0-260128", displayName: "Seedream 5.0" },
+                ],
+            }],
+        };
+
+        // No remembered preference -> shows node's model directly in the bottom bar
+        const defaultHtml = renderToStaticMarkup(createElement(CanvasImageMaskEditor, {
+            imageDimensions: { width: 512, height: 512 }, scale: 1, config,
+            onCancel: () => undefined, onConfirm: () => undefined,
+        }));
+        expect(defaultHtml).toContain("GPT Image 2");
+
+        // Remembered preference -> overrides node model directly in the bottom bar
+        useCreationPreferencesStore.getState().rememberMaskEditModel("custom::doubao-seedream-5-0-260128");
+        const rememberedHtml = renderToStaticMarkup(createElement(CanvasImageMaskEditor, {
+            imageDimensions: { width: 512, height: 512 }, scale: 1, config,
+            onCancel: () => undefined, onConfirm: () => undefined,
+        }));
+        expect(rememberedHtml).toContain("Seedream 5.0");
+
+        // Unavailable remembered preference -> falls back cleanly to node model
+        useCreationPreferencesStore.getState().rememberMaskEditModel("deleted::unavailable-model");
+        const fallbackHtml = renderToStaticMarkup(createElement(CanvasImageMaskEditor, {
+            imageDimensions: { width: 512, height: 512 }, scale: 1, config,
+            onCancel: () => undefined, onConfirm: () => undefined,
+        }));
+        expect(fallbackHtml).toContain("GPT Image 2");
     });
 
     test("hides the ordinary node toolbar and prompt panel while mask editing", () => {

@@ -120,8 +120,18 @@ export function ModelPicker({
             if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
             setOpen(false);
         };
+        const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+            if (event.key !== "Escape" || event.defaultPrevented) return;
+            event.preventDefault();
+            setOpen(false);
+            triggerRef.current?.focus();
+        };
         window.addEventListener("pointerdown", closeOnOutsidePointer, true);
-        return () => window.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+        document.addEventListener("keydown", closeOnEscape);
+        return () => {
+            window.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+            document.removeEventListener("keydown", closeOnEscape);
+        };
     }, [open]);
 
     const setPickerOpen = (nextOpen: boolean) => {

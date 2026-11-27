@@ -57,12 +57,31 @@ describe("image resolution tiers", () => {
         expect(supportsImageResolutionPresets({ parameter: "size", values: ["auto", ...sizes], allowCustom: true })).toBe(true);
     });
 
-    test("默认图片能力为 OpenAI 兼容模型提供完整 1K、2K、4K 档位", () => {
+    test("默认图片能力为 OpenAI 兼容模型提供完整 1K、2K、4K 档位，且默认 2K 均不超过 2048x2048 像素", () => {
         const profile = defaultImageCapabilityConfig("openai-image", "gpt-image-2-4K");
 
         expect(supportsImageResolutionPresets(profile.size)).toBe(true);
         expect(imageResolutionChoices(profile.size.values)).toEqual(["auto", "1k", "2k", "4k"]);
-        expect(buildImageResolutionOptions(profile.size.values)).toHaveLength(30);
+        const options = buildImageResolutionOptions(profile.size.values);
+        expect(options).toHaveLength(30);
+        const twoKOptions = options.filter((item) => item.tier === "2k");
+        expect(twoKOptions).toHaveLength(10);
+        for (const option of twoKOptions) {
+            expect(option.width * option.height).toBeLessThanOrEqual(2048 * 2048);
+        }
+        expect(imageSizeForResolution(options, "2k", "16:9")).toBe("2560x1440");
+        expect(imageSizeForResolution(options, "2k", "9:16")).toBe("1440x2560");
+        expect(imageSizeForResolution(options, "2k", "21:9")).toBe("3024x1296");
+    });
+
+    test("历史保存的旧 2K 尺寸仍能正确识别为 2K 档位与对应比例", () => {
+        const legacyOptions = buildImageResolutionOptions(["2752x1536", "1536x2752", "3136x1344"]);
+        expect(imageResolutionOption(legacyOptions, "2752x1536")).toMatchObject({ tier: "2k", ratio: "16:9" });
+        expect(imageResolutionOption(legacyOptions, "1536x2752")).toMatchObject({ tier: "2k", ratio: "9:16" });
+        expect(imageResolutionOption(legacyOptions, "3136x1344")).toMatchObject({ tier: "2k", ratio: "21:9" });
+        expect(formatImageResolutionSize("2752x1536", legacyOptions)).toBe("16:9 · 2K");
+        expect(formatImageResolutionSize("1536x2752", legacyOptions)).toBe("9:16 · 2K");
+        expect(formatImageResolutionSize("3136x1344", legacyOptions)).toBe("21:9 · 2K");
     });
 
     // Agnes 图像的 size 是官方必填项，但取分辨率档位，画面比例走独立的 ratio 字段，

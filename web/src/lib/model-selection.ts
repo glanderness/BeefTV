@@ -4,7 +4,7 @@ import { sanitizeMediaCapabilities, type MediaCapability } from "@/lib/media-cap
 import { defaultImageCapabilityConfig, hasUserModelCapability, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, videoReferencesForOperation, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { normalizeVideoBoolean } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
-import { channelModelProfile, filterModelsByCapability, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { channelModelProfile, filterModelsByCapability, modelOptionName, normalizeModelOptionValue, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 export type ModelInputSummary = {
     textCount: number;
@@ -294,8 +294,26 @@ export function normalizeMaskEditSize(size: string | undefined, supportedValues:
     return defaultSize;
 }
 
-export function initialMaskEditConfig(config: AiConfig): AiConfig {
-    const targetModel = resolveMaskEditModel(config, config.imageModel || config.model);
+const MASK_EDIT_MODEL_REQUIREMENTS: ModelRequirements = {
+    capability: "image",
+    input: { textCount: 0, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 },
+};
+
+export function resolvePreferredMaskEditModel(config: AiConfig, preferredModel?: string) {
+    const requested = preferredModel?.trim();
+    if (!requested) return "";
+    const selectable = selectableModelsByCapability(config, "image");
+    if (!selectable.length) return "";
+    const normalized = normalizeModelOptionValue(requested, config.channels || []);
+    if (!normalized || !selectable.includes(normalized)) return "";
+    if (modelCompatibilityError(config, normalized, MASK_EDIT_MODEL_REQUIREMENTS)) return "";
+    if (modelCapabilityConfigFor(config, normalized).image?.references.maxImages === 0) return "";
+    return normalized;
+}
+
+export function initialMaskEditConfig(config: AiConfig, preferredModel?: string): AiConfig {
+    const remembered = resolvePreferredMaskEditModel(config, preferredModel);
+    const targetModel = remembered || resolveMaskEditModel(config, config.imageModel || config.model);
     const defaults = defaultImageParamsForModel(config, targetModel);
     const image = modelCapabilityConfigFor(config, targetModel).image;
     const size = normalizeMaskEditSize(config.size, image?.size.values, defaults.size, image?.size.allowCustom);

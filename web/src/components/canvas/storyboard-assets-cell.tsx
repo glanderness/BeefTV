@@ -107,13 +107,11 @@ export function StoryboardAssetsCell({
                             type="button"
                             data-canvas-no-zoom
                             aria-label="关联画布资产"
+                            aria-expanded={pickerOpen}
                             className="inline-flex h-7 shrink-0 items-center rounded-md border border-dashed border-foreground/20 px-2 text-[var(--fs-caption)] font-medium text-[var(--user-ink-muted)] outline-none transition hover:border-foreground/40 hover:bg-foreground/[0.04] hover:text-[var(--user-ink)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                             onMouseDown={(event) => event.stopPropagation()}
                             onPointerDown={(event) => event.stopPropagation()}
-                            onClick={(event) => {
-                                event.stopPropagation();
-                                setPickerOpen((current) => !current);
-                            }}
+                            onClick={(event) => event.stopPropagation()}
                         >
                             + 关联
                         </button>

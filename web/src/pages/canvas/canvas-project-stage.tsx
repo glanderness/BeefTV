@@ -385,7 +385,7 @@ export function CanvasProjectStage(props: CanvasProjectStageProps) {
                                     onCancelAnnotation={cancelAnnotation}
                                     onConfirmAnnotation={saveAnnotatedImageNode}
                                     maskEditNodeId={maskEditNodeId}
-                                    maskEditConfig={maskEditNode ? { ...effectiveConfig, model: maskEditNode.metadata?.model || effectiveConfig.model, imageModel: maskEditNode.metadata?.model || effectiveConfig.imageModel, size: maskEditNode.metadata?.size || effectiveConfig.size, quality: maskEditNode.metadata?.quality || effectiveConfig.quality, count: String(maskEditNode.metadata?.count || effectiveConfig.count) } : effectiveConfig}
+                                    maskEditConfig={maskEditNode ? { ...effectiveConfig, model: maskEditNode.metadata?.model || effectiveConfig.imageModel || effectiveConfig.model, imageModel: maskEditNode.metadata?.model || effectiveConfig.imageModel, size: maskEditNode.metadata?.size || effectiveConfig.size, quality: maskEditNode.metadata?.quality || effectiveConfig.quality, count: String(maskEditNode.metadata?.count || effectiveConfig.count) } : effectiveConfig}
                                     onCancelMaskEdit={cancelMaskEdit}
                                     onConfirmMaskEdit={maskEditImageNode}
                                     videoCropNodeId={videoCropNodeId}

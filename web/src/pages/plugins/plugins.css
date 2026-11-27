@@ -28,7 +28,7 @@
 .plugins-page .collection-header .assets-kind-row { flex-wrap: wrap; }
 .plugins-page .collection-header { margin-bottom: 24px; }
 .plugins-page .collection-header .assets-kind-tabs { flex-wrap: wrap; }
-.plugin-enabled-label { margin-right: auto; color: var(--user-ink-muted); font-size: var(--fs-caption); }
+.plugin-enabled-label { flex: 0 0 auto; margin-right: auto; color: var(--user-ink-muted); font-size: var(--fs-caption); line-height: 1.5; white-space: nowrap; }
 
 .plugins-sections {
     display: grid;
@@ -229,6 +229,7 @@
 
 .plugin-card-actions {
     display: flex;
+    flex-wrap: wrap;
     min-width: 0;
     align-items: center;
     gap: var(--space-2);
@@ -291,7 +292,7 @@
 .plugin-market-registry { min-width: min(100%, 224px); max-width: 100%; }
 .plugin-market-search { display: flex; gap: 12px; }
 .plugin-market-search input { flex: 1; }
-.plugin-market-button { padding: 8px 16px; border: 0; border-radius: var(--user-radius-control); background: var(--user-surface-hover); color: var(--foreground); font-size: var(--fs-body); font-weight: 500; line-height: 20px; cursor: pointer; }
+.plugin-market-button { flex: 0 0 auto; padding: 8px 16px; border: 0; border-radius: var(--user-radius-control); background: var(--user-surface-hover); color: var(--foreground); font-size: var(--fs-body); font-weight: 500; line-height: 20px; white-space: nowrap; cursor: pointer; }
 .plugin-market-button:disabled { opacity: 0.5; cursor: default; }
 .plugin-market-install { background: var(--foreground); color: var(--background); }
 .plugin-market-empty, .plugin-market-notice { margin: 0; color: var(--user-ink-muted); line-height: 1.75; }
@@ -711,10 +712,6 @@
         min-height: 0;
     }
 
-    .plugin-card-actions {
-        flex-wrap: wrap;
-    }
-
     .plugin-upload-panel {
         padding: var(--space-3);
     }
@@ -724,12 +721,13 @@
     }
 
     .plugin-card-actions .plugin-enabled-label {
+        flex: 0 0 100%;
         width: 100%;
         margin-right: 0;
     }
 
     .plugin-settings-button {
-        flex: 1 1 0;
+        flex: 1 1 auto;
     }
 
 }
