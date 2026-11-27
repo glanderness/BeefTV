@@ -79,6 +79,7 @@ type AssistantRuntimeEvidence struct {
 	Status        string    `json:"status,omitempty"`
 	Reason        string    `json:"reason,omitempty"`
 	FailureReason string    `json:"failureReason,omitempty"`
+	RawStopReason string    `json:"rawStopReason,omitempty"`
 	OperationID   string    `json:"operationId,omitempty"`
 	RequestID     string    `json:"requestId,omitempty"`
 	Model         string    `json:"model,omitempty"`

@@ -2,7 +2,7 @@
 // 与模型请求前后的钩子装配进官方 Durable Registry。
 import crypto from 'node:crypto';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { defineExtension, defineTool, GenerationTask, hook } from '@earendil-works/pi-durable';
+import { CompactionEntry, defineExtension, defineTool, GenerationTask, hook, LiveDoc, SystemEntry, UserEntry } from '@earendil-works/pi-durable';
 import { createToolSearchExtension } from '@earendil-works/pi-durable/tool-search';
 import { createCodemodeExtension } from '@earendil-works/pi-durable/codemode';
 import { officialNativeHistory } from './native-history.mjs';
@@ -14,7 +14,13 @@ import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, l
 import { missingSkillResources, restoredSkillMessage } from './active-skills.mjs';
 import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, publicPlan, renderPlanSection } from './plan.mjs';
 import { withCurrentStudio } from './studio-digest.mjs';
-import { normalizeModelTransportError } from './model-transport-error.mjs';
+import {
+  PARTIAL_OUTPUT_STREAM_INTERRUPTED,
+  guardPartialOutputRetry,
+  hasProducedContent,
+  normalizeModelTransportError,
+  sanitizeRawStopReason,
+} from './model-transport-error.mjs';
 
 const CTX = BACKGROUND_CONTEXT;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
@@ -220,6 +226,7 @@ export async function installDurableExtensions({
   getModels,
   extensions,
   codemodeSandbox = null,
+  dispatchDiagnostics = null,
 }) {
   const { readSkillContext, resolveActiveSkills, prepareSkillContext } = skillController;
   const skillHashPattern = /^[a-f0-9]{64}$/;
@@ -497,7 +504,35 @@ export async function installDurableExtensions({
         return adapted === payload ? undefined : { payload: adapted };
       },
       afterResponse: async (message, ...rest) => {
-        normalizeModelTransportError(message, ...rest);
+        if (message?.stopReason === 'error' && entry.budget?.failure?.reason) {
+          // Budget refusal thrown inside fetch can be wrapped by SDKs as a retryable "Connection error."
+          // Surface the terminal machine code so Pi Durable never wastes retries after budget exhaustion.
+          message.errorMessage = entry.budget.failure.reason;
+        }
+        const normalized = normalizeModelTransportError(message, ...rest);
+        if (dispatchDiagnostics?.record && message && (message.stopReason === 'error' || message.stopReason === 'length')) {
+          const baseDiag = {
+            turnId: entry.turn?.turnId,
+            canvasId: entry.canvasId,
+            sessionId: entry.sessionId,
+            requestId: entry.input?.requestId,
+            model: message.model,
+            status: 'error',
+            rawStopReason: normalized?.rawStopReason ?? sanitizeRawStopReason(message.rawStopReason, message.stopReason),
+          };
+          if (message.stopReason === 'length') {
+            dispatchDiagnostics.record({ ...baseDiag, reason: 'model_output_truncated', rawStopReason: baseDiag.rawStopReason || 'length' });
+          } else if (normalized?.kind === 'content_filtered') {
+            dispatchDiagnostics.record({ ...baseDiag, reason: 'model_content_filtered', rawStopReason: 'content_filter' });
+          } else if (normalized?.kind === 'partial_output_interrupted') {
+            if (normalized.originalReason && normalized.originalReason !== PARTIAL_OUTPUT_STREAM_INTERRUPTED && normalized.originalReason !== 'model_error') {
+              dispatchDiagnostics.record({ ...baseDiag, reason: normalized.originalReason });
+            }
+            dispatchDiagnostics.record({ ...baseDiag, reason: PARTIAL_OUTPUT_STREAM_INTERRUPTED });
+          } else if (normalized?.originalReason && normalized.originalReason !== 'model_error') {
+            dispatchDiagnostics.record({ ...baseDiag, reason: normalized.originalReason });
+          }
+        }
         // 本次响应是否带提方案调用：同批的 plan_update 也要请求结束本轮，否则官方 Durable 因为
         // 「不是所有调用都请求结束」而多发一轮只为总结的请求。写进 Durable 文档而不是内存，
         // 重启后从工具阶段接着跑时（不会再触发本钩子）仍然生效；每次响应都会重新写。
@@ -506,6 +541,9 @@ export async function installDurableExtensions({
         if (((await state(entry))?.roundProposes === true) !== proposes) await update(entry, (doc) => { doc.roundProposes = proposes; });
       },
       beforeRequest: async (request, _runtime, context) => {
+        if (entry.budget?.failure?.reason || (entry.budget?.maxRequests > 0 && entry.budget.requests >= entry.budget.maxRequests)) {
+          return;
+        }
         for (;;) {
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
           if (entry.generation.pendingInput?.state === 'pending') await entry.generation.pendingInput.promise;
@@ -602,7 +640,8 @@ export async function installDurableExtensions({
           return;
         }
       },
-      onYield: async () => {
+      onYield: async (message) => {
+        if (message?.stopReason === 'length') return;
         if (entry.generation.aborted || entry.generation.pendingInput?.state === 'pending' || entry.generation.pendingInputError) return;
         if (entry.turn.proposals?.length || (entry.turn.scriptProposals || []).some((item) => item?.status === 'pending')) return;
         const doc = await state(entry);
@@ -744,6 +783,62 @@ export async function installDurableExtensions({
       await persistEffects(entry).catch(() => {});
     });
   }
+
+  // Path B zero-double-billing guard: after a host crash (interrupted() -> convertPartial -> attempt > 1)
+  // or a mid-stream graceful restart (request() -> convertPartial -> same GenerationTask),
+  // short-circuit before issuing any duplicate upstream HTTP call, while leaving compaction
+  // and user-initiated continue/new inputs (which always start a new GenerationTask) unblocked.
+  models = guardPartialOutputRetry(models, {
+    shouldBlock: async (_model, requestContext) => {
+      if (entry.compacting && !entry.busy) return false;
+      if (!entry.root || !entry.harness) return false;
+      if (!entry.generation.preparedRequests?.has(requestSignature(requestContext?.messages || []))) return false;
+      const live = await entry.harness.snapshot(LiveDoc, entry.root.id, CTX);
+      const attempt = Number(live?.generation?.attempt || 0);
+      const currentRunTaskId = live?.run?.taskId;
+      if (!(attempt > 1) && currentRunTaskId == null) return false;
+      let cursor;
+      for (;;) {
+        const page = await entry.root.entries({ order: 'descending' }, 64, cursor, CTX);
+        const items = page?.items || [];
+        if (items.length === 0) return false;
+        for (const item of items) {
+          if (!item || item.kind === CompactionEntry.kind || item.kind === SystemEntry.kind) continue;
+          const msgs = Array.isArray(item.model) ? item.model : [];
+          if (item.kind === UserEntry.kind || msgs.some((m) => m?.role === 'user' || m?.role === 'toolResult')) {
+            return false;
+          }
+          for (let i = msgs.length - 1; i >= 0; i -= 1) {
+            const msg = msgs[i];
+            if (msg?.role !== 'assistant') continue;
+            if (msg.stopReason === 'aborted' && hasProducedContent(msg)) {
+              const sameGenerationTask = currentRunTaskId != null && item.byTaskId === currentRunTaskId;
+              const retryFallbackWithoutTaskId = attempt > 1 && (currentRunTaskId == null || item.byTaskId == null);
+              if (sameGenerationTask || retryFallbackWithoutTaskId) {
+                return { blocked: true, rawStopReason: 'aborted' };
+              }
+            } else if (msg.stopReason && msg.stopReason !== 'error' && msg.stopReason !== 'aborted') {
+              return false;
+            }
+          }
+        }
+        if (page?.next === undefined) return false;
+        cursor = page.next;
+      }
+    },
+    onBlocked: async ({ model, rawStopReason }) => {
+      dispatchDiagnostics?.record?.({
+        turnId: entry.turn?.turnId,
+        canvasId: entry.canvasId,
+        sessionId: entry.sessionId,
+        requestId: entry.input?.requestId,
+        model: model?.id,
+        status: 'error',
+        reason: PARTIAL_OUTPUT_STREAM_INTERRUPTED,
+        rawStopReason,
+      });
+    },
+  });
 
   return { tools: [...selectedHostTools, ...builtinExtensionTools, ...entry.pluginTools], models };
 }

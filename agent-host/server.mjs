@@ -245,6 +245,7 @@ const durable = createDurableSessionStore({
   sessionRoot: SESSION_ROOT, workspaceRoot: WORKSPACE_ROOT, buildTools: ops.buildTools,
   legacy,
   telemetry: hostTelemetry.telemetry,
+  dispatchDiagnostics,
   extensions: () => combinedExtensions(),
   getModels: entry => {
     const models = createModels();

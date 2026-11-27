@@ -118,12 +118,25 @@ func TestAssistantCollectorPreservesDistinctCoverageReasons(t *testing.T) {
 }
 
 func TestAssistantFailureReasonIsAllowlistedAcrossExportAndOfflineAnalysis(t *testing.T) {
-	for _, code := range []string{"skill_context_unavailable", "skill_context_unavailable token=PRIVATE_SECRET", "PRIVATE_UNKNOWN_REASON"} {
-		t.Run(code, func(t *testing.T) {
+	for _, tc := range []struct {
+		code          string
+		rawStop       string
+		expectedCode  string
+		expectedStop  string
+		expectedCause string
+	}{
+		{"skill_context_unavailable", "", "skill_context_unavailable", "", "skill_context_unavailable"},
+		{"partial_output_stream_interrupted", "aborted", "partial_output_stream_interrupted", "aborted", "partial_output_stream_interrupted"},
+		{"model_content_filtered", "content_filter", "model_content_filtered", "content_filter", "model_content_filtered"},
+		{"stream_ended_without_finish_reason", "PRIVATE_STOP_LEAK", "stream_ended_without_finish_reason", "", "stream_ended_without_finish_reason"},
+		{"skill_context_unavailable token=PRIVATE_SECRET", "PRIVATE_STOP", "", "", "model_attempt_failed"},
+		{"PRIVATE_UNKNOWN_REASON", "", "", "", "model_attempt_failed"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
 			db := evidenceDB(t)
 			now := time.Now().UTC()
 			createEvidence(t, db, &model.AssistantTurn{TurnID: "business-turn", UserID: "owner", CanvasID: "canvas", DurableSessionID: "session", State: "settled", CreatedAt: now, UpdatedAt: now})
-			provider := runtimeCoverageFixture{coverage: CollectorCoverage{Status: "partial", Reason: "runtime_history_partial"}, records: []AssistantRuntimeEvidence{{ID: "response", SessionID: "session", CanvasID: "canvas", Kind: "model_call", Name: "model.response", Status: "error", Reason: "turn_link_not_recorded", FailureReason: code, Timestamp: now}}}
+			provider := runtimeCoverageFixture{coverage: CollectorCoverage{Status: "partial", Reason: "runtime_history_partial"}, records: []AssistantRuntimeEvidence{{ID: "response", SessionID: "session", CanvasID: "canvas", Kind: "model_call", Name: "model.response", Status: "error", Reason: "turn_link_not_recorded", FailureReason: tc.code, RawStopReason: tc.rawStop, Timestamp: now}}}
 			svc := New(Dependencies{Store: repository.New(db), AssistantEvidence: provider})
 			bundle, err := svc.Export("owner", ExportRequest{})
 			if err != nil {
@@ -134,13 +147,8 @@ func TestAssistantFailureReasonIsAllowlistedAcrossExportAndOfflineAnalysis(t *te
 			if err := json.Unmarshal([]byte(strings.TrimSpace(files["backend/assistant-runtime.jsonl"])), &record); err != nil {
 				t.Fatal(err)
 			}
-			expectedCode := ""
-			expectedReason := "model_attempt_failed"
-			if code == "skill_context_unavailable" {
-				expectedCode, expectedReason = code, code
-			}
-			if record.FailureReason != expectedCode || record.Reason != "turn_link_not_recorded" {
-				t.Fatalf("unsafe or lost reason: %+v", record)
+			if record.FailureReason != tc.expectedCode || record.RawStopReason != tc.expectedStop || record.Reason != "turn_link_not_recorded" {
+				t.Fatalf("unsafe or lost reason/rawStopReason: %+v", record)
 			}
 			for _, body := range files {
 				if strings.Contains(body, "PRIVATE_") {
@@ -153,7 +161,7 @@ func TestAssistantFailureReasonIsAllowlistedAcrossExportAndOfflineAnalysis(t *te
 			}
 			found := false
 			for _, finding := range findings {
-				if finding.Reason == expectedReason && finding.Status == "confirmed" {
+				if finding.Reason == tc.expectedCause && finding.Status == "confirmed" {
 					found = true
 					if !slices.Contains(finding.MissingEvidence, "assistant_turn_link") {
 						t.Fatal("machine cause hid missing turn linkage")
@@ -161,7 +169,7 @@ func TestAssistantFailureReasonIsAllowlistedAcrossExportAndOfflineAnalysis(t *te
 				}
 			}
 			if !found {
-				t.Fatalf("no usable failure observation for %q", expectedReason)
+				t.Fatalf("no usable failure observation for %q", tc.expectedCause)
 			}
 		})
 	}

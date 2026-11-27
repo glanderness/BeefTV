@@ -1,6 +1,11 @@
 // 这一回合唯一的展示投影：可见正文与可读思考都从同一份官方事件里出。
 // 实时、终态与重开历史共用这里的形状，界面不另建只会拼字符串的 reasoning reducer。
 import { businessLifecycle } from './business-progress.mjs';
+import {
+  PARTIAL_OUTPUT_STREAM_INTERRUPTED,
+  classifyModelFailureReason,
+  sanitizeRawStopReason,
+} from './model-transport-error.mjs';
 
 const COMPACTION_ENTRY_KIND = 'pi.compaction';
 const isUserInputEntry = (entry) => Boolean(
@@ -8,7 +13,12 @@ const isUserInputEntry = (entry) => Boolean(
   && (entry.role === 'user' || (entry.model || []).some((message) => message?.role === 'user')),
 );
 
-const visibleTextOf = (message) => message?.role === 'assistant' && message.stopReason !== 'error'
+const isPreservedPartialError = (message) =>
+  message?.role === 'assistant'
+  && message.stopReason === 'error'
+  && message.errorMessage === PARTIAL_OUTPUT_STREAM_INTERRUPTED;
+
+const visibleTextOf = (message) => message?.role === 'assistant' && (message.stopReason !== 'error' || isPreservedPartialError(message))
   ? (message.content || []).filter((block) => block?.type === 'text').map((block) => block.text || '').join('') : '';
 
 // 只留展示需要的字段：签名、redacted 载荷、工具参数与上游错误都不进投影。
@@ -20,7 +30,12 @@ function projectBlock(block) {
 
 function projectMessage(message) {
   return message?.role === 'assistant'
-    ? { role: 'assistant', ...(message.stopReason !== undefined ? { stopReason: message.stopReason } : {}), content: (message.content || []).map(projectBlock) }
+    ? {
+      role: 'assistant',
+      ...(message.stopReason !== undefined ? { stopReason: message.stopReason } : {}),
+      ...(message.errorMessage === PARTIAL_OUTPUT_STREAM_INTERRUPTED ? { errorMessage: PARTIAL_OUTPUT_STREAM_INTERRUPTED } : {}),
+      content: (message.content || []).map(projectBlock),
+    }
     : null;
 }
 
@@ -178,6 +193,21 @@ export function createDurableTurnProjection() {
   };
 }
 
+const PUBLIC_TURN_ERROR_TEXT = {
+  model_error: '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。',
+  provider_error: '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。',
+  model_network_error: '无法连接模型服务。若开启了系统代理，可在「通用设置 → 网络代理」切为不使用代理后重试；已完成的改动会保留。',
+  turn_interrupted: '上一轮执行中断，请核对已落地的改动。',
+  partial_output_stream_interrupted: '模型输出中途中断，已保留已生成内容，可点击继续处理',
+  model_output_truncated: '回复达到长度上限被截断，已保留现有内容，可点击继续处理',
+  model_content_filtered: '上游模型触发了安全审核拦截，请调整措辞后重试',
+  stream_ended_without_finish_reason: '模型回复中途异常结束，未返回完成标记。已完成的改动会保留，可点击继续处理',
+  upstream_eof_before_first_byte: '模型服务连接在返回首字节前中断。已完成的改动会保留，可点击继续处理',
+  stream_idle_timeout: '模型输出长时间无响应，连接已超时中断。已完成的改动会保留，可点击继续处理',
+  provider_rate_limited: '模型服务当前请求较多（触发限流），请稍后点击继续处理',
+  provider_unavailable: '模型服务暂时繁忙或不可用，已完成的改动会保留，请稍后点击继续处理',
+};
+
 export function publicDurableTurn(active, running = false) {
   if (!active) return null;
   // Go canonicalizes continuationId from a claimed receipt before forwarding.
@@ -186,58 +216,81 @@ export function publicDurableTurn(active, running = false) {
   // thinking while streaming and lose it on reload.
   const keys = ['permissionMode', 'turnId', 'requestId', 'submissionId', 'continuationId', 'userText', 'selectedNodeIds', 'attachments', 'skills',
     'references', 'supplements', 'supplementInputs', 'createdAt', 'reply', 'toolCalls', 'change', 'proposals', 'proposalsInvalidated', 'scriptProposals', 'plan',
-    'reasoning', 'cancelled', 'error', 'errorReason', 'sessionId', 'status'];
+    'reasoning', 'cancelled', 'error', 'errorReason', 'rawStopReason', 'sessionId', 'status'];
   const result = Object.fromEntries(keys.filter((key) => active[key] !== undefined).map((key) => [key, active[key]]));
+  if ('rawStopReason' in result) {
+    const safeStop = sanitizeRawStopReason(result.rawStopReason);
+    if (safeStop) result.rawStopReason = safeStop;
+    else delete result.rawStopReason;
+  }
   // Keep provider detail in the internal record; streams and old history share
   // the same public projection so an upstream body cannot become UI copy.
-  if (result.error && ['model_error', 'provider_error'].includes(result.errorReason)) {
-    result.error = '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。';
-  } else if (result.error && result.errorReason === 'model_network_error') {
-    result.error = '无法连接模型服务。若开启了系统代理，可在「通用设置 → 网络代理」切为不使用代理后重试；已完成的改动会保留。';
-  } else if (result.error && result.errorReason === 'turn_interrupted') {
-    result.error = '上一轮执行中断，请核对已落地的改动。';
+  if (result.error && PUBLIC_TURN_ERROR_TEXT[result.errorReason]) {
+    result.error = PUBLIC_TURN_ERROR_TEXT[result.errorReason];
   }
   if (running) { delete result.toolCalls; result.status = 'running'; }
   return result;
 }
 
-const CONNECTION_FAILURE_PATTERN = /\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ERR_PROXY_CONNECTION_FAILED|UND_ERR_CONNECT_TIMEOUT)\b|fetch failed|connection error|proxy response|tunneling socket|failed to connect/i;
-
-function isConnectionFailureDetail(detail) {
-  return CONNECTION_FAILURE_PATTERN.test(String(detail || ''));
-}
+const extractAssistantText = (assistant) =>
+  (assistant?.content || []).filter((block) => block?.type === 'text').map((block) => block.text || '').join('');
 
 export function durableCompletion(settled, assistant, budgetFailure, stopped = false, replyText = undefined) {
   const cancelled = Boolean(stopped || settled.reason === 'aborted');
-  const fallbackText = assistant?.stopReason === 'error' ? '' : (assistant?.content?.filter((block) => block.type === 'text').map((block) => block.text).join('') || '');
+  const rawStopReason = sanitizeRawStopReason(assistant?.rawStopReason, assistant?.stopReason);
+  const withRawStop = (value, effectiveStop = rawStopReason) => (effectiveStop ? { ...value, rawStopReason: effectiveStop } : value);
+  const fallbackText = assistant?.stopReason === 'error' && assistant?.errorMessage !== PARTIAL_OUTPUT_STREAM_INTERRUPTED
+    ? ''
+    : extractAssistantText(assistant);
   const text = replyText !== undefined ? replyText : fallbackText;
-  if (cancelled) return { reply: text, cancelled, error: null, errorReason: null };
+  if (cancelled) return withRawStop({ reply: text, cancelled, error: null, errorReason: null });
   if (settled.status !== 'done') {
     const interrupted = !budgetFailure && ['interrupted', 'restart_limit'].includes(settled.reason);
     const interruptedReply = replyText !== undefined ? replyText : (assistant?.stopReason === 'aborted' ? fallbackText : '');
     const baseReason = budgetFailure?.reason || (interrupted ? 'turn_interrupted' : settled.reason) || 'agent_run_failed';
     const detail = String(budgetFailure?.message || settled.detail || (interrupted ? '上一轮执行中断，请核对已落地的改动。' : settled.reason) || 'agent_run_failed');
-    const errorReason = !budgetFailure && !interrupted && (baseReason === 'model_error' || baseReason === 'provider_error') && isConnectionFailureDetail(detail)
-      ? 'model_network_error'
-      : baseReason;
-    return {
-      reply: interrupted ? interruptedReply : '',
+    const classified = !budgetFailure && !interrupted && (baseReason === 'model_error' || baseReason === 'provider_error')
+      ? classifyModelFailureReason(detail, assistant)
+      : null;
+    const errorReason = classified || baseReason;
+    const preservePartial = interrupted || errorReason === PARTIAL_OUTPUT_STREAM_INTERRUPTED;
+    const partialReply = interrupted
+      ? interruptedReply
+      : (replyText !== undefined ? replyText : extractAssistantText(assistant));
+    const effectiveRawStop = rawStopReason || (errorReason === 'model_content_filtered' ? 'content_filter' : undefined);
+    return withRawStop({
+      reply: preservePartial ? partialReply : '',
       cancelled: false,
       error: detail,
       errorReason,
-    };
+    }, effectiveRawStop);
+  }
+  if (assistant?.stopReason === 'length') {
+    return withRawStop({
+      reply: text,
+      cancelled: false,
+      error: 'model_output_truncated',
+      errorReason: 'model_output_truncated',
+    }, rawStopReason || 'length');
   }
   if (!assistant || ['error', 'aborted'].includes(assistant.stopReason)) {
     const detail = assistant?.errorMessage || 'agent_answer_missing';
-    return {
-      reply: '',
+    const errorReason = classifyModelFailureReason(detail, assistant) || 'provider_error';
+    const preservePartial = errorReason === PARTIAL_OUTPUT_STREAM_INTERRUPTED;
+    const effectiveRawStop = rawStopReason || (errorReason === 'model_content_filtered' ? 'content_filter' : undefined);
+    return withRawStop({
+      reply: preservePartial ? (replyText !== undefined ? replyText : extractAssistantText(assistant)) : '',
       cancelled: false,
       error: detail,
-      errorReason: isConnectionFailureDetail(detail) ? 'model_network_error' : 'provider_error',
-    };
+      errorReason,
+    }, effectiveRawStop);
   }
-  return { reply: text,
-    cancelled: false, error: null, errorReason: null };
+  return withRawStop({
+    reply: text,
+    cancelled: false,
+    error: null,
+    errorReason: null,
+  });
 }
 
 // Official retry text can carry upstream bodies. The panel only receives one of these reasons.

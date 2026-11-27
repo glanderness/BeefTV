@@ -11,6 +11,7 @@ import {
   durableTurnReplyText,
   publicDurableTurn,
 } from './durable-turn-projection.mjs';
+import { PARTIAL_OUTPUT_STREAM_INTERRUPTED } from './model-transport-error.mjs';
 import {
   createDurableDetachedReconciler,
   isTerminalSubmissionStatus,
@@ -119,11 +120,20 @@ export function createDurableTurnLifecycle({
       const partial = turnEntries.flatMap((item) => item.model || [])
         .filter((message) => message.role === 'assistant' && message.stopReason === 'aborted').at(-1);
       if (partial) assistant = partial;
+    } else if (!assistant && settled.status !== 'done') {
+      // Unanswered model errors have no settled.answer; read the failed assistant entry strictly within turnEntries.
+      const failedAssistant = turnEntries.flatMap((item) => item.model || [])
+        .filter((message) => message.role === 'assistant' && (message.stopReason === 'error' || message.stopReason === 'aborted')).at(-1);
+      if (failedAssistant) assistant = failedAssistant;
     }
     const skillFailure = entry.generation.skillContextFailure || active.skillContextFailure || null;
     const scopedEntries = turnEntries.length ? turnEntries : (answer ? [{ id: settled.answer ?? 0, ...answer }] : []);
     const replyText = durableTurnReplyText(scopedEntries)
-      || ((active.stopped || ['aborted', 'interrupted', 'restart_limit'].includes(settled.reason) || entry.generation.pendingInputError || skillFailure) && assistant
+      || ((active.stopped
+        || ['aborted', 'interrupted', 'restart_limit'].includes(settled.reason)
+        || assistant?.errorMessage === PARTIAL_OUTPUT_STREAM_INTERRUPTED
+        || entry.generation.pendingInputError
+        || skillFailure) && assistant
         ? durableTurnReplyText([{ id: settled.answer ?? 0, model: [assistant] }])
         : '');
     const preparationError = entry.generation.pendingInputError || skillFailure;
@@ -567,11 +577,17 @@ export function createDurableTurnLifecycle({
             : null;
           if (assistant) {
             if (assistant.stopReason === 'error') {
-              liveMessage = null;
-              if (!activeRetry && !live.generation?.retry && live.run !== undefined && !live.runFailure) {
-                const retryAttempt = Math.max(1, (live.generation?.attempt || 2) - 1);
-                events.push({ type: 'auto_retry_start', attempt: retryAttempt, at: Date.now(), errorMessage: assistant.errorMessage || '' });
-                events.push({ type: 'auto_retry_end', attempt: retryAttempt });
+              if (assistant.errorMessage === PARTIAL_OUTPUT_STREAM_INTERRUPTED) {
+                if (!liveMessage) events.push({ type: 'message_start', message: assistant });
+                events.push({ type: 'message_end', entry: item });
+                liveMessage = null;
+              } else {
+                liveMessage = null;
+                if (!activeRetry && !live.generation?.retry && live.run !== undefined && !live.runFailure) {
+                  const retryAttempt = Math.max(1, (live.generation?.attempt || 2) - 1);
+                  events.push({ type: 'auto_retry_start', attempt: retryAttempt, at: Date.now(), errorMessage: assistant.errorMessage || '' });
+                  events.push({ type: 'auto_retry_end', attempt: retryAttempt });
+                }
               }
             } else {
               if (!liveMessage) events.push({ type: 'message_start', message: assistant });

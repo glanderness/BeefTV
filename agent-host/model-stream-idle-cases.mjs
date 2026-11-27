@@ -38,6 +38,7 @@ test('95s production default; partial then comment and empty delta cannot extend
 });
 for(const [path,body,progress,empty,terminal] of [
   ['/chat/completions',{messages:[],stream:true},{choices:[{delta:{reasoning_content:'thinking',tool_calls:[{function:{arguments:'{"x":'}}]}}]}, {choices:[{delta:{role:'assistant'}}]}, {choices:[{delta:{},finish_reason:'stop'}]}],
+  ['/chat/completions',{messages:[],stream:true},{choices:[{delta:{reasoning_details:[{type:'reasoning.encrypted',id:'rs_1',data:'opaque'}]}}]}, {choices:[{delta:{reasoning_details:[]}}]}, {choices:[{delta:{},finish_reason:'stop'}]}],
   ['/responses',{input:[],stream:true},{type:'response.function_call_arguments.delta',delta:'value'}, {type:'response.created'}, {type:'response.completed'}],
   ['/messages',{messages:[],stream:true},{type:'content_block_delta',delta:{type:'thinking_delta',thinking:'think'}},{type:'ping'},{type:'message_stop'}],
   ['/messages',{messages:[],stream:true},{type:'content_block_delta',delta:{type:'signature_delta',signature:'sig'}},{type:'ping'},{type:'message_stop'}],
@@ -86,14 +87,14 @@ for(const [path,body,type] of [['/models/gemini:streamGenerateContent',{stream:t
   const f=await fixture(t,res=>setTimeout(()=>res.end('unchanged'),80),type);
   const result=await read(await fetchModelWithProgressIdle(f.url+path,request(path,body).options,{timeoutMs:20}));assert(!result.error);assert.equal(result.text,'unchanged');
 });
-test('official Durable retries idle body with partial retained, one completed tool and SQLite history reopen', {timeout:20000}, async t=>{
+test('official Durable retries zero-output idle body with one completed tool and SQLite history reopen', {timeout:20000}, async t=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'beeftv-model-idle-'));let calls=0;const toolIds=[];let store;
   const server=http.createServer(async(req,res)=>{
     let raw='';for await(const chunk of req)raw+=chunk;const payload=JSON.parse(raw);calls++;
     res.writeHead(200,{'content-type':'text/event-stream'});
     const frame=(delta,finish_reason=null)=>res.write(event({id:'fixture',object:'chat.completion.chunk',created:1,model:'fixture',choices:[{index:0,delta,finish_reason}]}));
     if(calls===1){frame({role:'assistant',tool_calls:[{index:0,id:'one-stable-tool',type:'function',function:{name:'canvas_nodes_create',arguments:'{}'}}]});frame({},'tool_calls');res.end('data: [DONE]\n\n');}
-    else if(calls===2){assert(payload.messages.some(message=>message.role==='tool'));frame({role:'assistant',content:'retained current partial'});frame({tool_calls:[{index:0,id:'unfinished-tool',type:'function',function:{name:'canvas_nodes_create',arguments:'{"unfinished":'}}]});const timer=setInterval(()=>res.write(': keepalive\n\n'),20);res.on('close',()=>clearInterval(timer));}
+    else if(calls===2){assert(payload.messages.some(message=>message.role==='tool'));const timer=setInterval(()=>res.write(': keepalive\n\n'),20);res.on('close',()=>clearInterval(timer));}
     else {
       assert(calls===3 || calls===4);
       const wireCalls=payload.messages.flatMap(message=>message.tool_calls || []).map(call=>call.id);
@@ -112,7 +113,7 @@ test('official Durable retries idle body with partial retained, one completed to
   const models=createModels();models.setProvider(runtime.getProvider('fixture'));
   const makeStore=()=>createDurableSessionStore({sessionRoot:path.join(directory,'sessions'),workspaceRoot:path.join(directory,'workspace'),getModels:()=>models,getModelRef:()=>({provider:'fixture',modelId:'fixture'}),
     buildTools:()=>[{name:'canvas_nodes_create',label:'canvas.nodes.create',description:'synthetic local write',parameters:{type:'object',properties:{}},execute:async id=>{toolIds.push(id);return {content:[{type:'text',text:'one synthetic write'}]};}}],
-    authorizeTurn:async()=>({turnId:'idle-turn',canvasId:'canvas',permissionMode:'canvas',open:true}),completeTurn:async()=>{},settings:{retry:{maxRetries:1,baseDelayMs:1}}});
+    authorizeTurn:async()=>({turnId:'idle-turn',canvasId:'canvas',permissionMode:'canvas',open:true}),completeTurn:async()=>{},settings:{retry:{enabled:true,maxRetries:1,baseDelayMs:1}}});
   store=makeStore();const entry=await store.ensureSession('canvas');
   const submission=await store.submit(entry,{turnId:'idle-turn',permissionMode:'canvas',content:'write once then summarize',userText:'write once then summarize',revisionBefore:1});
   const events=[];const record=await store.wait(entry,submission,{onEvent:event=>{events.push(event);}});
@@ -122,14 +123,57 @@ test('official Durable retries idle body with partial retained, one completed to
   const progress=events.flatMap(durableStreamEvents).filter(line=>line.type==='lifecycle'&&line.phase.startsWith('retry'));
   assert.deepEqual(progress,[{type:'lifecycle',phase:'retry',attempt:1,reason:'timeout'},{type:'lifecycle',phase:'retry_end',attempt:1}]);
   assert(!JSON.stringify(progress).includes('idle'));
-  const view=await entry.root.context(BACKGROUND_CONTEXT);const errors=view.entries.flatMap(item=>item.model||[]).filter(message=>message.role==='assistant'&&message.stopReason==='error');
-  assert(errors.some(message=>JSON.stringify(message.content).includes('retained current partial')&&/idle timeout/.test(message.errorMessage)));
-  assert(errors.some(message=>message.content.some(part=>part.type==='toolCall'&&part.id==='unfinished-tool')),'the regression must retain an actual partial call in the audit transcript');
-  assert(!view.messages.some(message=>message.toolCallId==='unfinished-tool'||(Array.isArray(message.content)&&message.content.some(part=>part.type==='toolCall'&&part.id==='unfinished-tool'))),'official context excludes the failed call');
   const sessionId=entry.sessionId;await store.disposeAll();store=makeStore();const history=await store.history('canvas',sessionId);assert.equal(history.turns[0].reply,record.reply);assert.equal(calls,3);assert.equal(toolIds.length,1);
   const reopened=await store.ensureSession('canvas',sessionId);
   const next=await store.submit(reopened,{turnId:'idle-turn-2',permissionMode:'canvas',content:'summarize the preserved result',userText:'summarize the preserved result',revisionBefore:1});
   assert.equal((await store.wait(reopened,next)).error,null);assert.equal(calls,4);assert.equal(toolIds.length,1);
+});
+test('partial-output idle body never double-bills or retries, retains partial reply and excludes unfinished tool from next explicit turn', {timeout:20000}, async t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'beeftv-model-idle-partial-'));let calls=0;const toolIds=[];let store;
+  const server=http.createServer(async(req,res)=>{
+    let raw='';for await(const chunk of req)raw+=chunk;const payload=JSON.parse(raw);calls++;
+    res.writeHead(200,{'content-type':'text/event-stream'});
+    const frame=(delta,finish_reason=null)=>res.write(event({id:'fixture',object:'chat.completion.chunk',created:1,model:'fixture',choices:[{index:0,delta,finish_reason}]}));
+    if(calls===1){frame({role:'assistant',tool_calls:[{index:0,id:'one-stable-tool',type:'function',function:{name:'canvas_nodes_create',arguments:'{}'}}]});frame({},'tool_calls');res.end('data: [DONE]\n\n');}
+    else if(calls===2){assert(payload.messages.some(message=>message.role==='tool'));frame({role:'assistant',content:'retained current partial'});frame({tool_calls:[{index:0,id:'unfinished-tool',type:'function',function:{name:'canvas_nodes_create',arguments:'{"unfinished":'}}]});const timer=setInterval(()=>res.write(': keepalive\n\n'),20);res.on('close',()=>clearInterval(timer));}
+    else {
+      const wireCalls=payload.messages.flatMap(message=>message.tool_calls || []).map(call=>call.id);
+      const wireResults=payload.messages.filter(message=>message.role==='tool').map(message=>message.tool_call_id);
+      assert.deepEqual(wireCalls,['one-stable-tool']);
+      assert.deepEqual(wireResults,wireCalls,'reopen and follow-up must not send an orphan result for a partial call');
+      frame({role:'assistant',content:'continued after partial interruption'});frame({},'stop');res.end('data: [DONE]\n\n');
+    }
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const realFetch=globalThis.fetch;
+  globalThis.fetch=(input,options)=>fetchModelWithProgressIdle(input,options,{fetch:realFetch,timeoutMs:150});
+  t.after(async()=>{globalThis.fetch=realFetch;await store?.disposeAll();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));fs.rmSync(directory,{recursive:true,force:true});});
+  const runtime=await ModelRuntime.create({authPath:path.join(directory,'auth.json'),modelsPath:null,refreshOnCreate:false});
+  runtime.registerProvider('fixture',{api:'openai-completions',apiKey:'fixture',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,models:[{id:'fixture',name:'fixture',reasoning:false,input:['text'],contextWindow:200000,maxTokens:1024,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}}]});
+  const models=createModels();models.setProvider(runtime.getProvider('fixture'));
+  const makeStore=()=>createDurableSessionStore({sessionRoot:path.join(directory,'sessions'),workspaceRoot:path.join(directory,'workspace'),getModels:()=>models,getModelRef:()=>({provider:'fixture',modelId:'fixture'}),
+    buildTools:()=>[{name:'canvas_nodes_create',label:'canvas.nodes.create',description:'synthetic local write',parameters:{type:'object',properties:{}},execute:async id=>{toolIds.push(id);return {content:[{type:'text',text:'one synthetic write'}]};}}],
+    authorizeTurn:async()=>({turnId:'idle-partial-turn',canvasId:'canvas',permissionMode:'canvas',open:true}),completeTurn:async()=>{},settings:{retry:{enabled:true,maxRetries:2,baseDelayMs:1}}});
+  store=makeStore();const entry=await store.ensureSession('canvas');
+  const submission=await store.submit(entry,{turnId:'idle-partial-turn',permissionMode:'canvas',content:'write once then summarize',userText:'write once then summarize',revisionBefore:1});
+  const events=[];const record=await store.wait(entry,submission,{onEvent:event=>{events.push(event);}});
+  assert.equal(record.errorReason,'partial_output_stream_interrupted');
+  assert.equal(record.reply,'retained current partial');
+  assert.equal(calls,2,'must not auto-retry after partial output');
+  assert.equal(toolIds.length,1);
+  assert.deepEqual(events.filter(event=>event.type==='auto_retry_start'),[]);
+  const view=await entry.root.context(BACKGROUND_CONTEXT);
+  const errors=view.entries.flatMap(item=>item.model||[]).filter(message=>message.role==='assistant'&&message.stopReason==='error');
+  assert(errors.some(message=>JSON.stringify(message.content).includes('retained current partial')&&message.errorMessage==='partial_output_stream_interrupted'));
+  assert(errors.some(message=>message.content.some(part=>part.type==='toolCall'&&part.id==='unfinished-tool')));
+  assert(!view.messages.some(message=>message.toolCallId==='unfinished-tool'||(Array.isArray(message.content)&&message.content.some(part=>part.type==='toolCall'&&part.id==='unfinished-tool'))),'official context excludes the failed call');
+  const sessionId=entry.sessionId;await store.disposeAll();store=makeStore();const history=await store.history('canvas',sessionId);
+  assert.equal(history.turns[0].reply,'retained current partial');
+  assert.equal(history.turns[0].errorReason,'partial_output_stream_interrupted');
+  const reopened=await store.ensureSession('canvas',sessionId);
+  const next=await store.submit(reopened,{turnId:'idle-partial-turn-2',permissionMode:'canvas',content:'continue after partial',userText:'continue after partial',revisionBefore:1});
+  const resumed=await store.wait(reopened,next);
+  assert.equal(resumed.error,null);assert.equal(resumed.reply,'continued after partial interruption');assert.equal(calls,3);assert.equal(toolIds.length,1);
 });
 test('Anthropic SSE forwards cache usage unchanged now that channel affinity is pinned',async t=>{
   const f=await fixture(t,res=>{

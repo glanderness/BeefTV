@@ -489,7 +489,23 @@ export function assistantLifecycleText(event: Pick<AgentLifecycleEvent, "phase" 
 
 /** 这里只提供继续对话入口，不重发原请求，也不保证后台任务已恢复。 */
 export function assistantTurnCanContinue(reason: string | null | undefined): boolean {
-    return ["turn_timeout", "turn_interrupted", "turn_request_budget_exhausted", "turn_tool_step_budget_exhausted", "model_request_failed", "model_error", "model_network_error", "provider_error"].includes(reason || "");
+    return [
+        "turn_timeout",
+        "turn_interrupted",
+        "turn_request_budget_exhausted",
+        "turn_tool_step_budget_exhausted",
+        "partial_output_stream_interrupted",
+        "model_output_truncated",
+        "stream_ended_without_finish_reason",
+        "upstream_eof_before_first_byte",
+        "stream_idle_timeout",
+        "provider_rate_limited",
+        "provider_unavailable",
+        "model_request_failed",
+        "model_error",
+        "model_network_error",
+        "provider_error",
+    ].includes(reason || "");
 }
 
 export const ASSISTANT_CONTINUE_PROMPT = "继续完成上一条要求。先检查当前画布和已经完成的操作，保留已有结果；不要重复创建节点或重新提交已开始的生成任务。";

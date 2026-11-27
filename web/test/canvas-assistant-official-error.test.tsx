@@ -70,3 +70,42 @@ test("unknown and fatal policy failures retain existing conservative action elig
     expect(networkHtml).toContain("继续处理");
     expect(networkHtml).toContain("网络代理");
 });
+
+test("stream interruption, truncation, content filter and transport reasons render plain Chinese copy and safe continue actions", () => {
+    const partialTurn: AssistantTurn = { ...makeTurn("partial_output_stream_interrupted"), reply: "已生成的半截分镜内容", rawStopReason: "error" };
+    const partialHtml = renderToStaticMarkup(
+        <CanvasAssistantTurnView turn={partialTurn} handledProposals={new Set()} onLocate={() => {}} onUndo={() => {}} onRunProposal={() => {}} onDismissProposal={() => {}} onContinue={() => {}} />,
+    );
+    expect(partialHtml).toContain("已生成的半截分镜内容");
+    expect(partialHtml).toContain("模型输出中途中断，已保留已生成内容，可点击继续处理");
+    expect(partialHtml).toContain("继续处理");
+    expect(assistantTurnCanContinue("partial_output_stream_interrupted")).toBe(true);
+
+    const truncatedTurn: AssistantTurn = { ...makeTurn("model_output_truncated"), reply: "达到长度上限前的现有内容", rawStopReason: "length" };
+    const truncatedHtml = renderToStaticMarkup(
+        <CanvasAssistantTurnView turn={truncatedTurn} handledProposals={new Set()} onLocate={() => {}} onUndo={() => {}} onRunProposal={() => {}} onDismissProposal={() => {}} onContinue={() => {}} />,
+    );
+    expect(truncatedHtml).toContain("达到长度上限前的现有内容");
+    expect(truncatedHtml).toContain("回复达到长度上限被截断，已保留现有内容，可点击继续处理");
+    expect(truncatedHtml).toContain("继续处理");
+    expect(assistantTurnCanContinue("model_output_truncated")).toBe(true);
+
+    const filteredTurn: AssistantTurn = { ...makeTurn("model_content_filtered"), rawStopReason: "content_filter" };
+    const filteredHtml = renderToStaticMarkup(
+        <CanvasAssistantTurnView turn={filteredTurn} handledProposals={new Set()} onLocate={() => {}} onUndo={() => {}} onRunProposal={() => {}} onDismissProposal={() => {}} onContinue={() => {}} />,
+    );
+    expect(filteredHtml).toContain("上游模型触发了安全审核拦截，请调整措辞后重试");
+    expect(filteredHtml).not.toContain(">继续处理<");
+    expect(assistantTurnCanContinue("model_content_filtered")).toBe(false);
+
+    for (const [reason, expected] of [
+        ["stream_ended_without_finish_reason", "未返回完成标记"],
+        ["upstream_eof_before_first_byte", "返回首字节前中断"],
+        ["stream_idle_timeout", "长时间无响应"],
+        ["provider_rate_limited", "触发限流"],
+        ["provider_unavailable", "暂时繁忙或不可用"],
+    ] as const) {
+        expect(agentAssistantFailureText(reason)).toContain(expected);
+        expect(assistantTurnCanContinue(reason)).toBe(true);
+    }
+});

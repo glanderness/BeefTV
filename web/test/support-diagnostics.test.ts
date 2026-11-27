@@ -16,11 +16,17 @@ test("generation copy adds real support identities without weakening original-ta
 });
 
 test("assistant failure copy has actual session and turn ids, safely identifies missing evidence and omits all model payloads", () => {
-    const turn = { turnId: "turn-1", cancelled: true, error: "api_key=canary", errorReason: "assistant_interrupted", createdAt: "2026-10-21T06:00:00Z", toolCalls: [{ tool: "canvas_read", args: { prompt: "private prompt" }, isError: true, error: "https://secret.example/private" }], reply: "private reply", userText: "private user prompt" } as AssistantTurn;
+    const turn = { turnId: "turn-1", cancelled: true, error: "api_key=canary", errorReason: "assistant_interrupted", rawStopReason: "https://secret.example/private", createdAt: "2026-10-21T06:00:00Z", toolCalls: [{ tool: "canvas_read", args: { prompt: "private prompt" }, isError: true, error: "https://secret.example/private" }], reply: "private reply", userText: "private user prompt" } as AssistantTurn;
     const text = formatAssistantDiagnostics(turn, { canvasId: "canvas-1", assistantSessionId: "durable:session-1" });
     expect(text).toContain("助手会话 ID：durable:session-1"); expect(text).toContain("助手轮次 ID：turn-1");
+    expect(text).toContain("终止原因：未记录");
     expect(text).toContain("关联证据未记录：Trace ID"); expect(text).toContain("失败数：1");
     expect(text).not.toMatch(/canary|secret\.example|private prompt|private reply|private user/);
+
+    const validStop = { ...turn, cancelled: false, errorReason: "partial_output_stream_interrupted", rawStopReason: "aborted" } as AssistantTurn;
+    const validText = formatAssistantDiagnostics(validStop, { canvasId: "canvas-1", assistantSessionId: "durable:session-1" });
+    expect(validText).toContain("原因代码：partial_output_stream_interrupted");
+    expect(validText).toContain("终止原因：aborted");
 });
 
 test("history records an interruption only when the server positively supplies turn_interrupted", () => {

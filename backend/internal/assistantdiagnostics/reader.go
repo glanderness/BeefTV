@@ -169,8 +169,8 @@ func readLedger(reader io.Reader, allowed map[string]diagnostics.AssistantTurnEv
 	scanner.Buffer(make([]byte, 4096), 8192)
 	for scanner.Scan() {
 		var row struct {
-			ID, At, TurnID, CanvasID, SessionID, RequestID, Model, Status, Reason string
-			DurationMs                                                            int64
+			ID, At, TurnID, CanvasID, SessionID, RequestID, Model, Status, Reason, RawStopReason string
+			DurationMs                                                                           int64
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
 			return errors.New("dispatch_record_invalid")
@@ -211,6 +211,7 @@ func readLedger(reader io.Reader, allowed map[string]diagnostics.AssistantTurnEv
 			out.Records = append(out.Records, diagnostics.AssistantRuntimeEvidence{
 				ID: "outcome:" + row.ID, SessionID: turn.SessionID, TurnID: turn.ID, CanvasID: turn.CanvasID,
 				Kind: "model_call", Name: "model.outcome", Status: status, Reason: reason,
+				RawStopReason: diagnostics.SanitizeRawStopReason(row.RawStopReason),
 				RequestID: row.RequestID, Model: row.Model, Timestamp: stamp, DurationMs: durationMs,
 			})
 		}

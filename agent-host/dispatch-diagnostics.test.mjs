@@ -42,7 +42,8 @@ test('model outcome classification and ledger keep only allowlisted machine code
   assert.equal(classifyModelHttpStatus(502), 'http_502');
   assert.equal(classifyModelHttpStatus(418), 'http_4xx');
   assert.equal(classifyModelFetchError(new Error('Model stream idle timeout: no text for 95000 ms')), 'stream_idle_timeout');
-  assert.equal(classifyModelFetchError(new Error('upstream stream ended before first response: unexpected EOF')), 'network_eof');
+  assert.equal(classifyModelFetchError(new Error('upstream stream ended before first response: unexpected EOF')), 'upstream_eof_before_first_byte');
+  assert.equal(classifyModelFetchError(new Error('Stream ended without finish_reason')), 'stream_ended_without_finish_reason');
   assert.equal(classifyModelFetchError(Object.assign(new Error('aborted'), { name: 'AbortError' })), 'aborted');
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'outcome-evidence-'));
@@ -51,20 +52,27 @@ test('model outcome classification and ledger keep only allowlisted machine code
   const recorder = createDispatchDiagnostics(file, 'launch-1');
   assert.equal(recorder.record({
     turnId: '1122334455667788', canvasId: 'canvas-1', sessionId: 'durable:11111111-2222-3333-4444-555555555555',
-    model: 'deepseek-v4.1-flash', status: 'error', httpStatus: 429, reason: 'http_429', durationMs: 321,
+    model: 'deepseek-v4.1-flash', status: 'error', httpStatus: 429, reason: 'http_429', rawStopReason: 'content_filter', durationMs: 321,
   }), true);
   assert.equal(recorder.record({
-    turnId: '1122334455667788', status: 'PRIVATE_STATUS', reason: 'PRIVATE_RAW_BODY', httpStatus: 9999, durationMs: -5,
+    turnId: '1122334455667788', status: 'PRIVATE_STATUS', reason: 'PRIVATE_RAW_BODY', rawStopReason: 'PRIVATE_STOP_BODY', httpStatus: 9999, durationMs: -5,
+  }), true);
+  assert.equal(recorder.record({
+    turnId: '1122334455667788', status: 'error', reason: 'partial_output_stream_interrupted', rawStopReason: 'aborted',
   }), true);
   const rows = fs.readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(rows[0].status, 'error');
   assert.equal(rows[0].reason, 'http_429');
+  assert.equal(rows[0].rawStopReason, 'content_filter');
   assert.equal(rows[0].httpStatus, 429);
   assert.equal(rows[0].durationMs, 321);
   assert.equal(rows[1].status, undefined);
   assert.equal(rows[1].reason, undefined);
+  assert.equal(rows[1].rawStopReason, undefined);
   assert.equal(rows[1].httpStatus, undefined);
   assert.equal(rows[1].durationMs, undefined);
+  assert.equal(rows[2].reason, 'partial_output_stream_interrupted');
+  assert.equal(rows[2].rawStopReason, 'aborted');
   assert.equal(/PRIVATE_/.test(JSON.stringify(rows)), false);
 });
 
@@ -161,6 +169,14 @@ test('SSE stream stall and premature EOF settle outcome as error rather than htt
 });
 
 test('MODEL_OUTCOME_REASONS loads from the single-source allowlist', () => {
-  assert.ok(Array.isArray(MODEL_OUTCOME_REASONS) && MODEL_OUTCOME_REASONS.length >= 10);
-  assert.ok(MODEL_OUTCOME_REASONS.includes('http_200') && MODEL_OUTCOME_REASONS.includes('stream_idle_timeout') && MODEL_OUTCOME_REASONS.includes('network_eof'));
+  assert.ok(Array.isArray(MODEL_OUTCOME_REASONS) && MODEL_OUTCOME_REASONS.length >= 20);
+  for (const code of [
+    'http_200', 'stream_idle_timeout', 'network_eof',
+    'partial_output_stream_interrupted', 'stream_ended_without_finish_reason',
+    'model_content_filtered', 'model_output_truncated',
+    'upstream_eof_before_first_byte', 'provider_rate_limited',
+    'provider_unavailable', 'model_network_error',
+  ]) {
+    assert.ok(MODEL_OUTCOME_REASONS.includes(code), `missing allowlisted code: ${code}`);
+  }
 });

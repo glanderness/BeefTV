@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-let child, log = '', modelCalls = 0;
+let child, log = '', modelCalls = 0, phase = 'crash';
 const readBody = async (req) => { let raw = ''; for await (const chunk of req) raw += chunk; return JSON.parse(raw || '{}'); };
 const listen = (server) => new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 function send(res, model, tool, args = {}) {
@@ -17,8 +17,13 @@ function send(res, model, tool, args = {}) {
 }
 const provider = createServer(async (req, res) => {
   const request = await readBody(req); modelCalls++;
-  if (modelCalls === 2) return; // Actual nodes committed; host killed while the model answers the next request.
-  send(res, request.model, 'canvas_nodes_create', { expectedRevision: 1, nodes: [{ type: 'video', title: 'one' }, { type: 'video', title: 'two' }] });
+  if (phase === 'crash' && modelCalls === 2) return; // Actual nodes committed; host killed before any bytes arrive on the next model request.
+  const results = request.messages.filter((message) => message.role === 'tool');
+  if (!results.length) return send(res, request.model, 'canvas_nodes_create', { expectedRevision: 1, nodes: [{ type: 'video', title: 'one' }, { type: 'video', title: 'two' }] });
+  const created = JSON.parse(results[0].content).result;
+  const edges = results.length - 1;
+  if (edges < 2) return send(res, request.model, 'canvas_edge_create', { expectedRevision: 2 + edges, fromNodeId: 'n1', toNodeId: created.created[edges].id });
+  send(res, request.model);
 });
 let base;
 const headers = { 'content-type': 'application/json', 'X-Beeftv-Agent-Token': config.hostToken };
@@ -61,15 +66,13 @@ try {
   await kill('SIGKILL'); await pending;
   // The same genuine Go turn remains open across the host process boundary.
   assert.equal((await backend('/assistant/runtime/turns/' + config.turnId)).value.data.open, true);
-  const interruptedAt = modelCalls;
+  phase = 'resume';
   await start();
   await api('/history?canvasId=' + config.canvasId);
   let history;
   await until(async () => { history = await (await api('/history?canvasId=' + config.canvasId)).json(); return history.turns?.length === 1; });
-  // 模型回答途中宿主被杀，算一次失败的模型请求；不重试的设置下本轮以「中断」收尾，
-  // 不重发请求，已落地的改动保留。
-  assert.equal(history.turns[0].turnId, config.turnId); assert.equal(history.turns[0].errorReason, 'turn_interrupted');
-  assert.equal(modelCalls, interruptedAt);
+  // 首字节前宿主崩溃（零输出），重启后单层 Durable 重试继续完成后续连线，不重复建节点。
+  assert.equal(history.turns[0].turnId, config.turnId); assert.equal(history.turns[0].error, null);
   assert.equal((await backend('/assistant/runtime/turns/' + config.turnId)).value.data.open, false);
   const before = modelCalls;
   await api('/history?canvasId=' + config.canvasId); assert.equal(modelCalls, before);

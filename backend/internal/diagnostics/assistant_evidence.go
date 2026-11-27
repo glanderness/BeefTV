@@ -64,7 +64,7 @@ func (s *Service) collectAssistantEvidence(userID string, c *collection) {
 		}
 		c.AssistantEvidence = append(c.AssistantEvidence, AssistantRuntimeEvidence{
 			ID: sanitizeIdentifier(record.ID), SessionID: turn.SessionID, TurnID: turn.ID, CanvasID: turn.CanvasID, Kind: record.Kind,
-			Name: sanitizeIdentifier(record.Name), Status: sanitizeIdentifier(record.Status), Reason: sanitizeIdentifier(record.Reason), FailureReason: sanitizeAssistantFailureReason(record.FailureReason), OperationID: sanitizeOperationID(record.OperationID),
+			Name: sanitizeIdentifier(record.Name), Status: sanitizeIdentifier(record.Status), Reason: sanitizeIdentifier(record.Reason), FailureReason: sanitizeAssistantFailureReason(record.FailureReason), RawStopReason: SanitizeRawStopReason(record.RawStopReason), OperationID: sanitizeOperationID(record.OperationID),
 			RequestID: sanitizeIdentifier(record.RequestID), Model: redactText(record.Model, 160), Timestamp: record.Timestamp, DurationMs: boundedInt64(record.DurationMs, 0, 86400000),
 		})
 	}
