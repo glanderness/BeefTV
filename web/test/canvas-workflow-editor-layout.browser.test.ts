@@ -158,6 +158,15 @@ test("workflow graph pans via wheel, blank drag, middle drag, and Space drag, zo
                 if (!match) throw new Error(`unexpected transform: ${el.style.transform}`);
                 return { x: Number(match[1]), y: Number(match[2]), k: Number(match[3]) };
             });
+        const waitForTransform = async (predicate: (t: { x: number; y: number; k: number }) => boolean) => {
+            const deadline = Date.now() + 3_000;
+            let last = await readTransform();
+            while (!predicate(last) && Date.now() < deadline) {
+                await editor.waitForTimeout(20);
+                last = await readTransform();
+            }
+            return last;
+        };
 
         const initial = await readTransform();
         const regionBox = (await region.boundingBox())!;
@@ -166,7 +175,7 @@ test("workflow graph pans via wheel, blank drag, middle drag, and Space drag, zo
         await region.evaluate((el) => {
             el.dispatchEvent(new WheelEvent("wheel", { deltaX: 40, deltaY: 30, deltaMode: 0, bubbles: true, cancelable: true }));
         });
-        const afterWheelPan = await readTransform();
+        const afterWheelPan = await waitForTransform((t) => Math.abs(t.x - (initial.x - 40)) < 1 && Math.abs(t.y - (initial.y - 30)) < 1);
         expect(Math.abs(afterWheelPan.x - (initial.x - 40))).toBeLessThan(1);
         expect(Math.abs(afterWheelPan.y - (initial.y - 30))).toBeLessThan(1);
         expect(Math.abs(afterWheelPan.k - initial.k)).toBeLessThan(0.001);
@@ -175,7 +184,7 @@ test("workflow graph pans via wheel, blank drag, middle drag, and Space drag, zo
         await region.evaluate((el, box) => {
             el.dispatchEvent(new WheelEvent("wheel", { deltaY: -60, deltaMode: 0, ctrlKey: true, clientX: box.x + 200, clientY: box.y + 200, bubbles: true, cancelable: true }));
         }, regionBox);
-        const afterZoom = await readTransform();
+        const afterZoom = await waitForTransform((t) => t.k > afterWheelPan.k);
         expect(afterZoom.k).toBeGreaterThan(afterWheelPan.k);
 
         // 3. Blank-area left drag pans smoothly
@@ -220,7 +229,8 @@ test("workflow graph pans via wheel, blank drag, middle drag, and Space drag, zo
         await region.evaluate((el) => {
             el.dispatchEvent(new WheelEvent("wheel", { deltaX: 900, deltaY: 0, deltaMode: 0, bubbles: true, cancelable: true }));
         });
-        const beforeEdit = await readTransform();
+        const beforeEdit = await waitForTransform((t) => Math.abs(t.x - (afterSpaceDrag.x - 900)) < 2);
+        expect(Math.abs(beforeEdit.x - (afterSpaceDrag.x - 900))).toBeLessThan(2);
         const titleInput = editor.getByRole("textbox", { name: "工作流节点名称" });
         await titleInput.fill("源视频-已修改");
         const afterEdit = await readTransform();
