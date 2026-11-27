@@ -644,6 +644,8 @@ function InfiniteCanvasPage() {
                                     onDuplicateProject={projectMenu.duplicateCurrentProject}
                                     versionsOpen={versions.open}
                                     onToggleVersions={toggleVersions}
+                                    onOpenTimeline={readOnly ? undefined : () => { dialogs.setTimelineNodeId(null); dialogs.setTimelineOpen(true); }}
+                                    timelineOpen={Boolean(dialogs.timelineOpen || dialogs.timelineNodeId)}
                                     onOpenWorkflows={readOnly ? undefined : () => workflowsRef.current?.toggleLibrary()}
                                     workflowsOpen={workflowLibraryOpen}
                                     assistantOpen={rightPanel === "assistant"}
@@ -779,6 +781,7 @@ function InfiniteCanvasPage() {
                                     addNodeToTimelineRef: timelineAssetInsert.timelineAddNodeRef,
                                     addMediaToTimelineRef: timelineAssetInsert.timelineMediaAddRef,
                                     onCreateAssembledNode: uploads.createVideoNodeFromBlob,
+                                    onCreateAssembledNodeFromResource: uploads.createVideoNodeFromResource,
                                 }}
                                 directorOnboardingScope={directorOnboardingScope}
                                 onDeleteNodes={deleteNodes}

@@ -109,7 +109,7 @@ class TimelinePreviewPlayback {
             return;
         }
         let next = this.lastTick === null ? this.position : Math.min(this.duration(), this.position + Math.max(0, now - this.lastTick));
-        const boundary = this.options.clips.filter(clip => clip.kind === "audio" || clip.kind === "video").flatMap(clip => [clip.startMs, clip.startMs + clip.durationMs]).filter(time => time > this.position && time <= next).sort((a, b) => a - b)[0];
+        const boundary = this.options.clips.filter(clip => clip.kind === "audio" || clip.kind === "video" || clip.kind === "image").flatMap(clip => [clip.startMs, clip.startMs + clip.durationMs]).filter(time => time > this.position && time <= next).sort((a, b) => a - b)[0];
         if (boundary !== undefined) next = boundary;
         this.position = next;
         this.lastTick = now;

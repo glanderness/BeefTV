@@ -33,6 +33,21 @@ function payloadToTimelineMedia(payload: InsertAssetPayload): TimelineDirectMedi
     if (payload.kind === "audio") {
         return { id: payload.assetId || `asset-${randomSuffix}`, kind: "audio", title: payload.title, assetId: payload.assetId, storageKey: payload.storageKey, url: payload.url, durationMs: payload.durationMs, bytes: payload.bytes, mimeType: payload.mimeType };
     }
+    if (payload.kind === "image") {
+        return {
+            id: payload.assetId || `asset-${randomSuffix}`,
+            kind: "image",
+            title: payload.title,
+            assetId: payload.assetId,
+            storageKey: payload.storageKey,
+            url: payload.url,
+            width: payload.width,
+            height: payload.height,
+            durationMs: 3_000,
+            bytes: payload.bytes,
+            mimeType: payload.mimeType,
+        };
+    }
     return null;
 }
 
@@ -60,7 +75,7 @@ export function useCanvasTimelineAssetInsert({
         async (payloads: InsertAssetPayload[]) => {
             if (assetInsertScope === "timeline") {
                 const media = payloads.map(payloadToTimelineMedia).filter((item): item is TimelineDirectMedia => Boolean(item));
-                if (media.length !== payloads.length) throw new Error("图片和文本素材暂不支持直接入轨，请先插入画布");
+                if (media.length !== payloads.length) throw new Error("文本素材暂不支持直接入轨，请先插入画布");
                 media.forEach((item) => timelineMediaAddRef.current?.(item));
                 return;
             }
@@ -81,7 +96,7 @@ export function useCanvasTimelineAssetInsert({
                         inserted += 1;
                     }
                 }
-                if (inserted < payloads.length) message.info("图片/文本/角色素材暂不支持直接入轨，仅音视频素材已加入时间线");
+                if (inserted < payloads.length) message.info("文本/角色素材暂不支持直接入轨，仅视频、音频与图片素材已加入时间线");
                 return;
             }
             const created = await handleProjectAssetsInsert(payloads, projectAssetInsertPosition);

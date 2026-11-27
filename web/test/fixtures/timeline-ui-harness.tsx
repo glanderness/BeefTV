@@ -59,11 +59,73 @@ Object.assign(window, {
     },
 });
 const mode = new URLSearchParams(location.search).get("mode");
-root.render(mode === "subtitle-theme" ? <SubtitleThemeHarness /> : <App>{mode === "canvas-drag" || mode === "canvas-layout" || mode === "canvas-mobile" ?
-    <CanvasTimelineDialog node={dragNode} nodes={[]} timeline={dragProject} open onClose={() => root.unmount()}
-        onSave={(timeline) => { receipt.saved.push(timeline); }} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
-        onCreateAssembledNode={async () => { receipt.created++; return dragNode; }} /> :
-    <CanvasTimelineDialog node={node} nodes={[]} timeline={project} open onClose={() => root.unmount()}
-        onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
-        onCreateAssembledNode={async () => { receipt.created++; return node; }} />
-}</App>);
+const renderBody = () => {
+    if (mode === "subtitle-theme") return <SubtitleThemeHarness />;
+    if (mode === "canvas-empty-native") {
+        return (
+            <App>
+                <CanvasTimelineDialog
+                    projectId="canvas-empty-1"
+                    node={null}
+                    nodes={[]}
+                    timeline={null}
+                    open
+                    onClose={() => root.unmount()}
+                    onSave={(saved) => { receipt.saved.push(saved); }}
+                    onSaveSubtitles={() => {}}
+                    onUploadLocalFiles={async (files) => files.map((file, index) => {
+                        const isImage = file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(file.name);
+                        const isAudio = file.type.startsWith("audio/") || /\.(mp3|wav|m4a|aac|flac|ogg|opus)$/i.test(file.name);
+                        const kind = isImage ? "image" : isAudio ? "audio" : "video";
+                        const id = `${kind}-${index + 1}`;
+                        return {
+                            id,
+                            kind,
+                            title: file.name.replace(/\.[^.]+$/, ""),
+                            storageKey: `resource:res-${id}`,
+                            mimeType: file.type || (isImage ? "image/png" : isAudio ? "audio/mp4" : "video/mp4"),
+                            durationMs: isImage ? 3000 : 4000,
+                            width: isImage ? 1080 : isAudio ? undefined : 1920,
+                            height: isImage ? 1920 : isAudio ? undefined : 1080,
+                        };
+                    })}
+                    onCreateAssembledNode={async () => { receipt.created++; return node; }}
+                    onCreateAssembledNodeFromResource={async (input) => {
+                        receipt.createdResources.push(input);
+                        return { ...node, id: "native-node-1", title: input.title };
+                    }}
+                />
+            </App>
+        );
+    }
+    return (
+        <App>
+            {mode === "canvas-drag" || mode === "canvas-layout" || mode === "canvas-mobile" ? (
+                <CanvasTimelineDialog
+                    node={dragNode}
+                    nodes={[]}
+                    timeline={dragProject}
+                    open
+                    onClose={() => root.unmount()}
+                    onSave={(timeline) => { receipt.saved.push(timeline); }}
+                    onSaveSubtitles={() => {}}
+                    onUploadLocalFiles={async () => []}
+                    onCreateAssembledNode={async () => { receipt.created++; return dragNode; }}
+                />
+            ) : (
+                <CanvasTimelineDialog
+                    node={node}
+                    nodes={[]}
+                    timeline={project}
+                    open
+                    onClose={() => root.unmount()}
+                    onSave={() => {}}
+                    onSaveSubtitles={() => {}}
+                    onUploadLocalFiles={async () => []}
+                    onCreateAssembledNode={async () => { receipt.created++; return node; }}
+                />
+            )}
+        </App>
+    );
+};
+root.render(renderBody());

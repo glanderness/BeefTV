@@ -54,6 +54,7 @@ export function useCanvasProjectDialogs(pageUi: CanvasPageUiStoreHook) {
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [subtitleNodeId, setSubtitleNodeId] = useState<string | null>(null);
     const [timelineNodeId, setTimelineNodeId] = useState<string | null>(null);
+    const [timelineOpen, setTimelineOpen] = useState(false);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
     const [scriptEditorNodeId, setScriptEditorNodeId] = useState<string | null>(null);
     const [directorNodeId, setDirectorNodeId] = useState<string | null>(null);
@@ -131,6 +132,8 @@ export function useCanvasProjectDialogs(pageUi: CanvasPageUiStoreHook) {
         setSubtitleNodeId,
         timelineNodeId,
         setTimelineNodeId,
+        timelineOpen,
+        setTimelineOpen,
         previewNodeId,
         setPreviewNodeId,
         scriptEditorNodeId,

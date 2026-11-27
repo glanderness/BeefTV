@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Select, Switch } from "antd";
 import { Pause, Play } from "lucide-react";
 
+import {
+    TIMELINE_FPS_OPTIONS,
+    TIMELINE_OUTPUT_PRESETS,
+    applyOutputPreset,
+    getOutputPresetKey,
+    type TimelineOutputPresetKey,
+} from "@/lib/timeline/timeline-output-presets";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
+import { resolveImageUrl } from "@/services/image-storage";
 import { formatTimelineTime, getTimelineClipTitle, getTimelinePreviewPlaceholder } from "@/lib/timeline/timeline-view";
 import { rasterizeTimelineSubtitle } from "@/lib/timeline/timeline-subtitle-image";
 import { useTimelinePreviewPlayback } from "@/hooks/use-timeline-preview-playback";
@@ -22,6 +31,7 @@ type CanvasTimelinePreviewProps = {
     onTogglePlay: () => void;
     onRequestPause: () => void;
     onPlayheadChange: (ms: number) => void;
+    onUpdateOutput?: (next: TimelineProject["output"]) => void;
 };
 
 const PREVIEW_WIDTH = 300;
@@ -29,29 +39,55 @@ const PREVIEW_HEIGHT = 168;
 const EMPTY_TRACKS: TimelineTrack[] = [];
 
 /**
- * 时间线弹窗的所见即所得预览：显示播放头所在视频片段，并叠加当前字幕。
- * 同一时钟同步视频与独立音轨；字幕按工程输出尺寸生成后缩放。
+ * 时间线弹窗的所见即所得预览：显示播放头所在视频或图片片段，并叠加当前字幕。
+ * 同一时钟同步视频、静帧与独立音轨；右侧就近提供画幅/帧率/字幕烧录输出规格。
  */
-export function CanvasTimelinePreview({ clips, tracks = EMPTY_TRACKS, output, nodes, playheadMs, playing, theme, onTogglePlay, onRequestPause, onPlayheadChange }: CanvasTimelinePreviewProps) {
+export function CanvasTimelinePreview({
+    clips,
+    tracks = EMPTY_TRACKS,
+    output,
+    nodes,
+    playheadMs,
+    playing,
+    theme,
+    onTogglePlay,
+    onRequestPause,
+    onPlayheadChange,
+    onUpdateOutput,
+}: CanvasTimelinePreviewProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const [resolvedVideo, setResolvedVideo] = useState({ key: "", url: "" });
+    const [resolvedImage, setResolvedImage] = useState({ key: "", url: "" });
     const [playbackError, setPlaybackError] = useState("");
     const [subtitleImage, setSubtitleImage] = useState<{ key: string; url?: string; error?: string } | null>(null);
     // Omitted output fields use the same defaults as Go's editing.NormalizeOptions.
     const outputWidth = output?.width || 1920;
     const outputHeight = output?.height || 1080;
     const visibleTracks = useMemo(() => new Map(tracks.map(track => [track.id, track.visible !== false])), [tracks]);
-    const videoClips = useMemo(() => clips.filter((clip) => clip.kind === "video" && visibleTracks.get(clip.trackId) !== false).sort((a, b) => a.startMs - b.startMs), [clips, visibleTracks]);
-    const activeVideoClip = useMemo(() => videoClips.find((clip) => playheadMs >= clip.startMs && playheadMs < clip.startMs + clip.durationMs) || null, [playheadMs, videoClips]);
-    const activeSubtitleClip = useMemo(() => clips.find((clip) => clip.kind === "subtitle" && visibleTracks.get(clip.trackId) !== false && playheadMs >= clip.startMs && playheadMs < clip.startMs + clip.durationMs && Boolean(clip.text?.trim())) || null, [clips, playheadMs, visibleTracks]);
-    const activeNode = useMemo(() => (activeVideoClip ? nodes.find((node) => node.id === activeVideoClip.nodeId) || null : null), [activeVideoClip, nodes]);
-    const media = activeVideoClip?.directMedia;
+    const visualClips = useMemo(
+        () => clips.filter((clip) => (clip.kind === "video" || clip.kind === "image") && visibleTracks.get(clip.trackId) !== false).sort((a, b) => a.startMs - b.startMs),
+        [clips, visibleTracks],
+    );
+    const activeVisualClip = useMemo(
+        () => visualClips.find((clip) => playheadMs >= clip.startMs && playheadMs < clip.startMs + clip.durationMs) || null,
+        [playheadMs, visualClips],
+    );
+    const activeVideoClip = activeVisualClip?.kind === "video" ? activeVisualClip : null;
+    const activeImageClip = activeVisualClip?.kind === "image" ? activeVisualClip : null;
+    const activeSubtitleClip = useMemo(
+        () => clips.find((clip) => clip.kind === "subtitle" && visibleTracks.get(clip.trackId) !== false && playheadMs >= clip.startMs && playheadMs < clip.startMs + clip.durationMs && Boolean(clip.text?.trim())) || null,
+        [clips, playheadMs, visibleTracks],
+    );
+    const activeNode = useMemo(() => (activeVisualClip ? nodes.find((node) => node.id === activeVisualClip.nodeId) || null : null), [activeVisualClip, nodes]);
+    const media = activeVisualClip?.directMedia;
     const storageKey = media ? media.storageKey || "" : activeNode?.metadata?.storageKey || "";
     const fallback = media ? media.url || media.dataUrl || media.content || "" : activeNode?.metadata?.content || "";
-    const videoSourceKey = JSON.stringify([activeVideoClip?.id, storageKey, fallback]);
-    const videoUrl = resolvedVideo.key === videoSourceKey ? resolvedVideo.url : "";
+    const visualSourceKey = JSON.stringify([activeVisualClip?.id, activeVisualClip?.kind, storageKey, fallback]);
+    const videoUrl = activeVideoClip && resolvedVideo.key === visualSourceKey ? resolvedVideo.url : "";
+    const imageUrl = activeImageClip && resolvedImage.key === visualSourceKey ? resolvedImage.url : "";
     const subtitleText = output?.burnSubtitles === false ? "" : activeSubtitleClip?.text || "";
     const subtitleKey = JSON.stringify([subtitleText, outputWidth, outputHeight]);
+
     useEffect(() => {
         if (!subtitleText) return;
         let cancelled = false;
@@ -68,24 +104,24 @@ export function CanvasTimelinePreview({ clips, tracks = EMPTY_TRACKS, output, no
             if (url) URL.revokeObjectURL(url);
         };
     }, [subtitleText, subtitleKey, outputWidth, outputHeight]);
+
     const currentSubtitleImage = subtitleText && subtitleImage?.key === subtitleKey ? subtitleImage : null;
     const previewPlaceholder = getTimelinePreviewPlaceholder({
-        hasClip: Boolean(activeVideoClip),
+        hasClip: Boolean(activeVisualClip),
         hasSource: Boolean(storageKey || fallback),
-        hasVideoUrl: Boolean(videoUrl),
+        hasVideoUrl: Boolean(videoUrl || imageUrl),
         failed: Boolean(playbackError),
     });
 
-    // 与画布共用当前源及兼容副本，避免剪辑单独读取旧的持久化视频缓存。
     useEffect(() => {
-        if (!storageKey && !fallback) return;
+        if (!activeVideoClip || (!storageKey && !fallback)) return;
         const controller = new AbortController();
         let release: (() => void) | undefined;
         setPlaybackError("");
         void acquireCanvasVideoSource(storageKey, fallback, controller.signal).then(source => {
             if (controller.signal.aborted) { source.release(); return; }
             release = source.release;
-            setResolvedVideo({ key: videoSourceKey, url: source.url });
+            setResolvedVideo({ key: visualSourceKey, url: source.url });
         }).catch(() => {
             if (!controller.signal.aborted) {
                 setPlaybackError("视频预览未能载入，请重新打开剪辑后重试。");
@@ -96,9 +132,32 @@ export function CanvasTimelinePreview({ clips, tracks = EMPTY_TRACKS, output, no
             controller.abort();
             release?.();
         };
-    }, [storageKey, fallback, videoSourceKey]);
-    const { syncVideoMetadata } = useTimelinePreviewPlayback({ clips, tracks, nodes, playheadMs, playing, videoRef,
-        activeVideoClipId: activeVideoClip?.id || null, onPlayheadChange, onRequestPause, onPlaybackError: setPlaybackError });
+    }, [activeVideoClip, storageKey, fallback, visualSourceKey]);
+
+    useEffect(() => {
+        if (!activeImageClip || (!storageKey && !fallback)) return;
+        let cancelled = false;
+        setPlaybackError("");
+        void resolveImageUrl(storageKey, fallback).then((url) => {
+            if (!cancelled && url) setResolvedImage({ key: visualSourceKey, url });
+        }).catch(() => {
+            if (!cancelled) setPlaybackError("图片预览未能载入，请检查原素材。");
+        });
+        return () => { cancelled = true; };
+    }, [activeImageClip, storageKey, fallback, visualSourceKey]);
+
+    const { syncVideoMetadata } = useTimelinePreviewPlayback({
+        clips,
+        tracks,
+        nodes,
+        playheadMs,
+        playing,
+        videoRef,
+        activeVideoClipId: activeVideoClip?.id || null,
+        onPlayheadChange,
+        onRequestPause,
+        onPlaybackError: setPlaybackError,
+    });
 
     const previewDisplay = useMemo(() => {
         const ratio = outputWidth / outputHeight;
@@ -111,12 +170,34 @@ export function CanvasTimelinePreview({ clips, tracks = EMPTY_TRACKS, output, no
         return { width: Math.round(width), height: Math.round(height) };
     }, [outputWidth, outputHeight]);
 
+    const presetKey = getOutputPresetKey(output);
+    const presetOptions = [
+        ...TIMELINE_OUTPUT_PRESETS.map((item) => ({ value: item.key, label: item.label })),
+        ...(presetKey === "custom" && output?.width && output?.height
+            ? [{ value: "custom" as const, label: `自定义 (${output.width}×${output.height})` }]
+            : []),
+    ];
+    const currentFps = output?.fps ?? 30;
+    const fpsOptions = TIMELINE_FPS_OPTIONS.includes(currentFps as (typeof TIMELINE_FPS_OPTIONS)[number])
+        ? TIMELINE_FPS_OPTIONS.map((fps) => ({ value: fps, label: `${fps} fps` }))
+        : [...TIMELINE_FPS_OPTIONS.map((fps) => ({ value: fps, label: `${fps} fps` })), { value: currentFps, label: `${currentFps} fps` }];
+    const burnSubtitles = output?.burnSubtitles !== false;
+
     return (
-        <div className="canvas-timeline-preview flex items-center gap-3 border-b px-4 py-2.5" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>
-            <div className="relative grid shrink-0 place-items-center overflow-hidden rounded-lg bg-black" style={{ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT }} data-canvas-no-zoom>
+        <div className="canvas-timeline-preview flex items-center gap-3 border-b px-4 py-2" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>
+            <div
+                className="canvas-timeline-preview-monitor relative grid shrink-0 place-items-center overflow-hidden rounded-lg bg-black"
+                style={{ width: "var(--timeline-preview-w, 300px)", height: "var(--timeline-preview-h, 168px)" }}
+                data-canvas-no-zoom
+            >
                 {videoUrl && activeVideoClip ? (
                     <div className="relative bg-black" data-timeline-output-frame style={previewDisplay}>
-                        <video key={videoSourceKey} ref={videoRef} className="block h-full w-full object-contain" src={videoUrl} playsInline preload="auto" onLoadedMetadata={syncVideoMetadata} />
+                        <video key={visualSourceKey} ref={videoRef} className="block h-full w-full object-contain" src={videoUrl} playsInline preload="auto" onLoadedMetadata={syncVideoMetadata} />
+                        {currentSubtitleImage?.url ? <img className="pointer-events-none absolute inset-0 h-full w-full" src={currentSubtitleImage.url} alt="" data-timeline-subtitle-preview /> : null}
+                    </div>
+                ) : imageUrl && activeImageClip ? (
+                    <div className="relative bg-black" data-timeline-output-frame style={previewDisplay}>
+                        <img key={visualSourceKey} className="block h-full w-full object-contain" src={imageUrl} alt={activeImageClip.title || "图片片段"} data-timeline-image-preview />
                         {currentSubtitleImage?.url ? <img className="pointer-events-none absolute inset-0 h-full w-full" src={currentSubtitleImage.url} alt="" data-timeline-subtitle-preview /> : null}
                     </div>
                 ) : (
@@ -137,18 +218,58 @@ export function CanvasTimelinePreview({ clips, tracks = EMPTY_TRACKS, output, no
                     </span>
                 </button>
             </div>
-            <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 text-xs">
-                    <span className="truncate font-semibold" style={{ color: theme.accent.primary }}>
-                        {activeVideoClip ? getTimelineClipTitle(activeVideoClip, nodes) : "无视频片段"}
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+                <div className="flex items-center gap-2 text-xs leading-[18px]">
+                    <span className="truncate font-medium" style={{ color: theme.accent.primary }}>
+                        {activeVisualClip ? getTimelineClipTitle(activeVisualClip, nodes) : "无画面片段"}
                     </span>
-                    <span className="opacity-45 tabular-nums">{activeVideoClip ? `${formatTimelineTime(activeVideoClip.startMs)} ~ ${formatTimelineTime(activeVideoClip.startMs + activeVideoClip.durationMs)}` : ""}</span>
+                    <span className="tabular-nums" style={{ color: theme.node.muted }}>
+                        {activeVisualClip ? `${formatTimelineTime(activeVisualClip.startMs)} ~ ${formatTimelineTime(activeVisualClip.startMs + activeVisualClip.durationMs)}` : ""}
+                    </span>
                 </div>
-                <div className="mt-1.5 max-h-16 min-h-10 overflow-y-auto rounded-lg border px-2.5 py-1.5 text-xs leading-5" style={{ borderColor: theme.toolbar.border, background: theme.node.fill }}>
-                    {activeSubtitleClip ? activeSubtitleClip.text : <span className="opacity-40">此处无字幕，点选字幕片段后在下方编辑</span>}
+                <div className="max-h-14 min-h-9 overflow-y-auto rounded-lg border px-2.5 py-1.5 text-xs leading-5" style={{ borderColor: theme.toolbar.border, background: theme.node.fill }}>
+                    {activeSubtitleClip ? activeSubtitleClip.text : <span style={{ color: theme.node.muted }}>此处无字幕，点选字幕片段后在下方编辑</span>}
                 </div>
-                {currentSubtitleImage?.error ? <div role="alert" className="mt-1 text-xs">{currentSubtitleImage.error}</div> : null}
-                {playbackError ? <div role="alert" className="mt-1 text-xs">{playbackError}</div> : null}
+                {onUpdateOutput ? (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs leading-[18px]">
+                        <span className="inline-flex items-center gap-1.5">
+                            <span className="font-medium" style={{ color: theme.node.muted }}>输出画幅</span>
+                            <Select
+                                size="small"
+                                aria-label="输出画幅"
+                                className="min-w-40"
+                                value={presetKey}
+                                options={presetOptions}
+                                onChange={(value: TimelineOutputPresetKey) => {
+                                    if (value === "custom") return;
+                                    onUpdateOutput(applyOutputPreset(output, value));
+                                }}
+                            />
+                        </span>
+                        <span className="inline-flex items-center gap-1.5">
+                            <span className="font-medium" style={{ color: theme.node.muted }}>帧率</span>
+                            <Select
+                                size="small"
+                                aria-label="输出帧率"
+                                className="w-24"
+                                value={currentFps}
+                                options={fpsOptions}
+                                onChange={(fps: number) => onUpdateOutput({ ...(output || {}), fps })}
+                            />
+                        </span>
+                        <label className="inline-flex cursor-pointer items-center gap-1.5">
+                            <Switch
+                                size="small"
+                                aria-label="烧录字幕"
+                                checked={burnSubtitles}
+                                onChange={(checked) => onUpdateOutput({ ...(output || {}), burnSubtitles: checked })}
+                            />
+                            <span className="font-medium" style={{ color: theme.node.muted }}>烧录字幕</span>
+                        </label>
+                    </div>
+                ) : null}
+                {currentSubtitleImage?.error ? <div role="alert" className="text-xs">{currentSubtitleImage.error}</div> : null}
+                {playbackError ? <div role="alert" className="text-xs">{playbackError}</div> : null}
             </div>
         </div>
     );

@@ -29,7 +29,7 @@ beforeAll(async () => {
         if (url.pathname === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         if (url.pathname === "/harness.css") return new Response(css, { headers: { "Content-Type": "text/css" } });
         const mode = url.searchParams.get("mode");
-        const extraHead = mode === "canvas-layout" || mode === "canvas-mobile" || mode === "subtitle-theme" ? mobileStyles : mode === "canvas-drag" ? dragStyles : "";
+        const extraHead = mode === "canvas-layout" || mode === "canvas-mobile" || mode === "subtitle-theme" || mode === "canvas-empty-native" ? mobileStyles : mode === "canvas-drag" ? dragStyles : "";
         return new Response(`<!doctype html><meta charset="UTF-8">${extraHead}<div id="root"></div><script type="module" src="/harness.js"></script>`, { headers: { "Content-Type": "text/html" } });
     } });
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
@@ -267,3 +267,110 @@ test("CanvasSubtitleDialog 跟随画布深浅主题切换，浅色下保持暗�
         await page.close();
     }
 }, 20_000);
+
+test("CanvasTimelineDialog 空画布直达：上传图文音、9:16 预设、音量淡入淡出、轨道静音隐藏、撤销重做与原生渲染直绑 resourceId", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+        await page.goto(`${server.url}?mode=canvas-empty-native`);
+        await page.locator("[data-timeline-empty-state]").waitFor();
+        await page.locator("[data-canvas-keyboard-scope]").waitFor();
+
+        // 空画布入口：导出/生成新片段初始禁用，文件上传 accept 覆盖视频/音频/图片格式
+        expect(await page.getByRole("button", { name: "导出成片", exact: true }).isDisabled()).toBe(true);
+        expect(await page.getByRole("button", { name: "生成新片段", exact: true }).isDisabled()).toBe(true);
+        const accept = await page.locator('input[type="file"]').getAttribute("accept");
+        for (const ext of [".mp4", ".mov", ".m4a", ".flac", ".ogg", ".opus", ".png", ".jpg", ".jpeg", ".webp"]) {
+            expect(accept).toContain(ext);
+        }
+
+        // 上传图片 + 音频 + 视频
+        await page.locator('input[type="file"]').setInputFiles([
+            { name: "poster.png", mimeType: "image/png", buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) },
+            { name: "bgm.m4a", mimeType: "audio/mp4", buffer: Buffer.from("fake-m4a") },
+            { name: "shot.mp4", mimeType: "video/mp4", buffer: Buffer.from("fake-mp4") },
+        ]);
+        await page.locator('[data-timeline-clip-kind="image"]').waitFor();
+        await page.locator('[data-timeline-clip-kind="audio"]').waitFor();
+        await page.locator('[data-timeline-clip-kind="video"]').waitFor();
+        expect(await page.locator("[data-timeline-empty-state]").count()).toBe(0);
+        expect(await page.getByRole("button", { name: "生成新片段", exact: true }).isDisabled()).toBe(false);
+
+        // 切换输出预设为 9:16 竖屏 (1080x1920)、24 fps、关闭烧录字幕
+        await page.locator('[aria-label="输出画幅"]').click();
+        await page.getByText("9:16 竖屏 (1080×1920)").click();
+        await page.locator('[aria-label="输出帧率"]').click();
+        await page.getByText("24 fps").click();
+        await page.getByRole("switch", { name: "烧录字幕" }).click();
+
+        // 选中音频片段并调整音量 150%、淡入 400ms、淡出 600ms
+        await page.locator('[data-timeline-clip-kind="audio"]').click();
+        const volumeInput = page.locator('input[aria-label="片段音量"]');
+        await volumeInput.fill("150");
+        await volumeInput.press("Enter");
+        const fadeInInput = page.locator('input[aria-label="淡入时长"]');
+        await fadeInInput.fill("400");
+        await fadeInInput.press("Enter");
+        const fadeOutInput = page.locator('input[aria-label="淡出时长"]');
+        await fadeOutInput.fill("600");
+        await fadeOutInput.press("Enter");
+
+        // 选中图片片段并调整静帧时长为 5000ms
+        await page.locator('[data-timeline-clip-kind="image"]').click();
+        const durationInput = page.locator('input[aria-label="片段时长"]');
+        await durationInput.fill("5000");
+        await durationInput.press("Enter");
+
+        // 轨道静音与隐藏切换
+        const audioMuteBtn = page.locator('[data-track-mute-toggle="audio-1"]');
+        await audioMuteBtn.click();
+        expect(await audioMuteBtn.getAttribute("aria-pressed")).toBe("true");
+        const videoHideBtn = page.locator('[data-track-visibility-toggle="video-1"]');
+        await videoHideBtn.click();
+        expect(await videoHideBtn.getAttribute("aria-pressed")).toBe("true");
+        expect(await page.locator('[data-timeline-track-row="video-1"]').getAttribute("data-track-hidden")).toBe("true");
+
+        // 弹窗内局部撤销/重做（Cmd/Ctrl+Z 撤销隐藏轨道，工具栏重做与再次撤销）
+        await page.locator(".canvas-timeline-toolbar").click({ position: { x: 4, y: 4 } });
+        const undoModifier = process.platform === "darwin" ? "Meta+z" : "Control+z";
+        await page.keyboard.press(undoModifier);
+        expect(await videoHideBtn.getAttribute("aria-pressed")).toBe("false");
+        await page.getByRole("button", { name: "重做", exact: true }).click();
+        expect(await videoHideBtn.getAttribute("aria-pressed")).toBe("true");
+        await page.getByRole("button", { name: "撤销", exact: true }).click();
+        expect(await videoHideBtn.getAttribute("aria-pressed")).toBe("false");
+
+        // 点击「生成新片段」：优先走 Go 原生 runOwnedTimelineRender，透传 9:16/24fps/burnSubtitles=false，直绑 resourceId 不回退 wasm/Blob 上传
+        await page.getByRole("button", { name: "生成新片段", exact: true }).click();
+        await page.waitForFunction(() => (window as any).timelineFixture.receipt.remote.length === 1);
+        const submitted = await snapshot(page);
+        expect(submitted.local).toHaveLength(0);
+        expect(submitted.remote[0].projectId).toBe("canvas-empty-1");
+        expect(submitted.remote[0].options).toEqual({ width: 1080, height: 1920, fps: 24, burnSubtitles: false });
+
+        await page.evaluate(() => (window as any).timelineFixture.receipt.resolveRemote("res-rendered-9x16"));
+        await page.waitForFunction(() => (window as any).timelineFixture.receipt.createdResources.length === 1);
+        const completed = await snapshot(page);
+        expect(completed.created).toBe(0);
+        expect(completed.createdResources[0]).toMatchObject({
+            resourceId: "res-rendered-9x16",
+            title: "成片-新片段",
+            width: 1080,
+            height: 1920,
+        });
+
+        // 保存并核对完整草稿字段
+        await page.getByRole("button", { name: /^保\s*存$/ }).click();
+        await page.waitForFunction(() => (window as any).timelineFixture.receipt.saved.length === 1);
+        const saved = (await snapshot(page)).saved[0];
+        expect(saved.output).toMatchObject({ width: 1080, height: 1920, fps: 24, burnSubtitles: false });
+        expect(saved.tracks.find((t: { id: string }) => t.id === "audio-1")?.muted).toBe(true);
+        const audioClip = saved.clips.find((c: { kind: string }) => c.kind === "audio");
+        expect(audioClip).toMatchObject({ volume: 1.5, fadeInMs: 400, fadeOutMs: 600 });
+        const imageClip = saved.clips.find((c: { kind: string }) => c.kind === "image");
+        expect(imageClip?.durationMs).toBe(5000);
+        const videoClip = saved.clips.find((c: { kind: string }) => c.kind === "video");
+        expect(videoClip?.startMs).toBe(5000);
+    } finally {
+        await page.close();
+    }
+}, 25_000);

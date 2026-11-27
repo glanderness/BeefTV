@@ -1,11 +1,15 @@
+import type { CanonicalPlanOptions } from "../../src/lib/timeline/timeline-canonical-plan";
 import type { TimelineProject } from "../../src/types/timeline";
 import type { TimelineRenderSource } from "../../src/lib/timeline/timeline-to-ffmpeg";
 
 // Fault injection at the encoder/task boundary; the mounted React handlers remain real.
 export const receipt = {
-    local: [] as TimelineRenderSource[][], remote: [] as TimelineProject[], saved: [] as TimelineProject[],
-    downloads: 0, created: 0, aborted: 0,
-    failLocal: () => {}, failRemote: () => {},
+    local: [] as TimelineRenderSource[][],
+    remote: [] as Array<{ projectId?: string; timeline: TimelineProject; options?: CanonicalPlanOptions; clientOperationId?: string }>,
+    saved: [] as TimelineProject[],
+    createdResources: [] as Array<{ resourceId: string; title: string; durationMs?: number; width?: number; height?: number }>,
+    downloads: 0, created: 0, aborted: 0, cancelledTasks: [] as string[],
+    failLocal: () => {}, failRemote: () => {}, resolveRemote: (_resourceId?: string) => {},
 };
 
 export function exportTimelineToMp4(_project: TimelineProject, sources: TimelineRenderSource[], options: { signal?: AbortSignal }) {
@@ -34,9 +38,22 @@ export async function compileTimelineRenderPlan(_input: unknown, signal?: AbortS
     };
 }
 
-export async function createTimelineRenderTask(input: { timeline: TimelineProject }) {
-    receipt.remote.push(input.timeline);
-    return { id: "render-fixture" };
+export async function createTimelineRenderTask(input: { projectId?: string; timeline: TimelineProject; options?: CanonicalPlanOptions; clientOperationId?: string }) {
+    receipt.remote.push(input);
+    return {
+        id: "render-fixture-" + receipt.remote.length,
+        type: "timeline_render",
+        status: "running",
+        stage: "正在渲染…",
+        progress: 45,
+        prompt: "时间线渲染",
+        attempts: 1,
+        createdAt: "2026-11-28T00:00:00.000Z",
+        updatedAt: "2026-11-28T00:00:00.000Z",
+    };
+}
+export async function cancelGenerationTask(id: string) {
+    receipt.cancelledTasks.push(id);
 }
 export async function createTimelineTranscriptionTask() {
     throw new Error("渲染界面验收不应提交转写任务");
@@ -50,9 +67,26 @@ export async function createGenerationTask() {
 export async function findGenerationTaskByOperation() {
     return null;
 }
-export function waitForGenerationTask() {
-    return new Promise((_resolve, reject) => {
+export function waitForGenerationTask(id: string, options?: { signal?: AbortSignal; onTaskUpdate?: (task: unknown) => void }) {
+    return new Promise((resolve, reject) => {
         receipt.failRemote = () => reject(new Error("服务端字幕字体缺失，渲染失败"));
+        receipt.resolveRemote = (resourceId = "res-rendered-native-1") => {
+            const done = {
+                id,
+                type: "timeline_render",
+                status: "succeeded",
+                stage: "渲染完成",
+                progress: 100,
+                resultJson: JSON.stringify({ resourceId, fileName: "timeline-render.mp4", durationMs: 6000, size: 4096 }),
+                outputs: [{ outputIndex: 0, mediaType: "video", resourceId }],
+            };
+            options?.onTaskUpdate?.(done);
+            resolve(done);
+        };
+        options?.signal?.addEventListener("abort", () => {
+            receipt.aborted++;
+            reject(new DOMException("导出已取消", "AbortError"));
+        }, { once: true });
     });
 }
 export function saveAs() { receipt.downloads++; }

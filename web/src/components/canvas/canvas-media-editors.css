@@ -184,6 +184,17 @@
     padding: 16px 20px;
     background: var(--editor-bg) !important;
 }
+.canvas-timeline-dialog .canvas-timeline-preview-monitor {
+    width: 300px;
+    height: 168px;
+}
+.canvas-timeline-dialog .canvas-timeline-inspector-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    white-space: nowrap;
+}
 .canvas-timeline-dialog [data-timeline-clip-id] {
     background: #303339 !important;
     color: var(--editor-clip-text, var(--editor-text)) !important;
@@ -232,7 +243,8 @@
     }
     .media-editor-toolbar,
     .media-editor-footer {
-        padding: 10px 12px;
+        padding: 8px 12px;
+        gap: 6px;
     }
     .media-editor-transcription {
         margin-inline: 12px;
@@ -243,6 +255,12 @@
     .canvas-timeline-dialog .canvas-timeline-preview {
         flex-direction: column;
         align-items: stretch;
+        gap: 6px;
+        padding: 8px 12px;
+    }
+    .canvas-timeline-dialog .canvas-timeline-preview-monitor {
+        --timeline-preview-w: 100%;
+        --timeline-preview-h: 96px;
     }
 }
 
