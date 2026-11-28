@@ -89,7 +89,7 @@ test("C05: malformed history is distinguished from genuine zero turns", async ()
     response = {};
     await expect(getAssistantHistory("a")).rejects.toThrow();
     response = { sessionId: "s1", turns: [], pausedTurnReason: "turn_model_frozen" };
-    expect(await getAssistantHistory("a")).toEqual({ sessionId: "s1", turns: [], active: undefined, plan: null, pausedTurnReason: "turn_model_frozen", thinkingLevel: undefined, contextUsage: null, forkedFrom: null });
+    expect(await getAssistantHistory("a")).toEqual({ sessionId: "s1", turns: [], active: undefined, plan: null, pausedTurnReason: "turn_model_frozen", thinkingLevel: undefined, contextUsage: null, forkedFrom: null, activeMandate: null, pendingApprovals: [] });
 });
 test("status, read, and mutation endpoints hit canonical /assistant/* routes with matching timeout budgets", async () => {
     expect(ASSISTANT_STATUS_TIMEOUT_MS).toBe(25_000);
