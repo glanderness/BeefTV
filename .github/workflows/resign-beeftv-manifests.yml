@@ -1,0 +1,270 @@
+name: Re-sign active release manifests for updates.beeftv.app
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: resign-beeftv-manifests
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  UPDATER_DOWNLOAD_BASE: https://updates.beeftv.app/beeftv
+  DOMESTIC_DOWNLOAD_BASE: https://cnb.cool/beeftv-downloads/desktop/-/releases/download
+  RELEASE_ENDPOINT: ${{ vars.BEEFTV_R2_ENDPOINT }}
+  RELEASE_REGION: auto
+  RELEASE_BUCKET: beeftv-releases
+
+jobs:
+  resign:
+    if: github.repository == 'glanderness/BeefTV' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BEEFTV_UPDATER_PRIVATE_KEY: ${{ secrets.BEEFTV_UPDATER_PRIVATE_KEY }}
+      BEEFTV_UPDATER_PUBLIC_KEY: ${{ vars.BEEFTV_UPDATER_PUBLIC_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.BEEFTV_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BEEFTV_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_PAGER: ""
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Build update-release tool
+        run: |
+          set -euo pipefail
+          cd backend
+          go build -o "$RUNNER_TEMP/update-release" ./cmd/update-release
+
+      - name: Re-sign v2.6.0 desktop update manifests and upload to R2 + GitHub
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/desktop-resign"
+          mkdir -p "$WORK/assets"
+
+          aws --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" s3api get-object \
+            --bucket "$RELEASE_BUCKET" --key "beeftv/desktop-update-v2.json" "$WORK/old-v2.json" >/dev/null
+
+          python3 - "$WORK" <<'PY'
+          import base64, hashlib, json, sys, urllib.request
+          from pathlib import Path
+
+          work = Path(sys.argv[1])
+          env = json.loads((work / "old-v2.json").read_text(encoding="utf-8"))
+          payload = json.loads(base64.b64decode(env["payload"]))
+          assert payload["version"] == "v2.6.0", payload["version"]
+          assert payload["commit"] == "fedc864f3b2475455950aa30a2c72bcdf593a8d0", payload["commit"]
+          (work / "notes.txt").write_text(payload["notes"], encoding="utf-8")
+
+          base = "https://updates.beeftv.app/beeftv/v2.6.0"
+          for plat, asset in sorted(payload["platforms"].items()):
+              for name, expected_size, expected_sha in [
+                  (f"BeefTV-v2.6.0-{plat}.zip", asset["size"], asset["sha256"]),
+                  *[
+                      (f"BeefTV-v2.6.0-{plat}-from-{fv}.delta.zip", d["size"], d["sha256"])
+                      for fv, d in sorted((asset.get("deltas") or {}).items())
+                  ],
+              ]:
+                  dest = work / "assets" / name
+                  req = urllib.request.Request(f"{base}/{name}", headers={"User-Agent": "BeefTV-Desktop-Updater/v2.6.0"})
+                  h = hashlib.sha256()
+                  n = 0
+                  with urllib.request.urlopen(req, timeout=180) as r, dest.open("wb") as out:
+                      assert r.status == 200, (name, r.status)
+                      while chunk := r.read(4 * 1024 * 1024):
+                          out.write(chunk)
+                          h.update(chunk)
+                          n += len(chunk)
+                  assert n == expected_size, (name, n, expected_size)
+                  assert h.hexdigest() == expected_sha, (name, h.hexdigest(), expected_sha)
+                  print(f"VERIFIED {name} size={n} sha256={expected_sha[:12]}")
+          PY
+
+          "$RUNNER_TEMP/update-release" sign \
+            --schema 1 \
+            --version "v2.6.0" \
+            --commit "fedc864f3b2475455950aa30a2c72bcdf593a8d0" \
+            --notes-file "$WORK/notes.txt" \
+            --download-base "$UPDATER_DOWNLOAD_BASE" \
+            --expect-public-key "$BEEFTV_UPDATER_PUBLIC_KEY" \
+            --require-platforms darwin-arm64,darwin-amd64,windows-amd64,linux-amd64 \
+            --asset "darwin-arm64=$WORK/assets/BeefTV-v2.6.0-darwin-arm64.zip" \
+            --asset "darwin-amd64=$WORK/assets/BeefTV-v2.6.0-darwin-amd64.zip" \
+            --asset "windows-amd64=$WORK/assets/BeefTV-v2.6.0-windows-amd64.zip" \
+            --asset "linux-amd64=$WORK/assets/BeefTV-v2.6.0-linux-amd64.zip" \
+            --output "$WORK/desktop-update.json"
+
+          "$RUNNER_TEMP/update-release" verify \
+            --envelope "$WORK/desktop-update.json" \
+            --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY"
+
+          delta_args=()
+          for platform in darwin-arm64 darwin-amd64 windows-amd64 linux-amd64; do
+            delta_args+=(--delta "${platform}=v2.5.1=$WORK/assets/BeefTV-v2.6.0-${platform}-from-v2.5.1.delta.zip")
+          done
+
+          "$RUNNER_TEMP/update-release" sign \
+            --schema 2 \
+            --version "v2.6.0" \
+            --from-envelope "$WORK/desktop-update.json" \
+            --download-base "$UPDATER_DOWNLOAD_BASE" \
+            --expect-public-key "$BEEFTV_UPDATER_PUBLIC_KEY" \
+            "${delta_args[@]}" \
+            --output "$WORK/desktop-update-v2-r2.json"
+
+          "$RUNNER_TEMP/update-release" verify \
+            --envelope "$WORK/desktop-update-v2-r2.json" \
+            --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY"
+
+          "$RUNNER_TEMP/update-release" sign \
+            --schema 2 \
+            --version "v2.6.0" \
+            --from-envelope "$WORK/desktop-update.json" \
+            --download-base "$UPDATER_DOWNLOAD_BASE" \
+            --domestic-download-base "$DOMESTIC_DOWNLOAD_BASE" \
+            --expect-public-key "$BEEFTV_UPDATER_PUBLIC_KEY" \
+            "${delta_args[@]}" \
+            --output "$WORK/desktop-update-v2.json"
+
+          "$RUNNER_TEMP/update-release" verify \
+            --envelope "$WORK/desktop-update-v2.json" \
+            --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY"
+
+          python3 - "$WORK" <<'PY'
+          import base64, json, sys
+          from pathlib import Path
+          work = Path(sys.argv[1])
+          for fn in ("desktop-update.json", "desktop-update-v2-r2.json", "desktop-update-v2.json"):
+              raw = base64.b64decode(json.loads((work / fn).read_text())["payload"]).decode()
+              assert "beefapi" not in raw and "1481187348" not in raw, fn
+              assert "https://updates.beeftv.app/beeftv/v2.6.0/" in raw, fn
+          print("DESKTOP_MANIFESTS_CLEAN")
+          PY
+
+          put_json() {
+            local key="$1" file="$2" cc="$3"
+            aws --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" s3api put-object \
+              --bucket "$RELEASE_BUCKET" --key "$key" --body "$file" \
+              --content-type "application/json" --cache-control "$cc" >/dev/null
+            echo "UPLOADED $key ($cc)"
+          }
+
+          put_json "beeftv/v2.6.0/desktop-update.json" "$WORK/desktop-update.json" "public, max-age=31536000, immutable"
+          put_json "beeftv/v2.6.0/desktop-update-v2-r2.json" "$WORK/desktop-update-v2-r2.json" "public, max-age=31536000, immutable"
+          put_json "beeftv/v2.6.0/desktop-update-v2.json" "$WORK/desktop-update-v2.json" "public, max-age=31536000, immutable"
+          put_json "beeftv/desktop-update.json" "$WORK/desktop-update.json" "no-store, max-age=0"
+          put_json "beeftv/desktop-update-v2.json" "$WORK/desktop-update-v2.json" "no-store, max-age=0"
+
+          gh release upload v2.6.0 "$WORK/desktop-update.json" --clobber
+
+      - name: Re-sign depth runtime manifests and upload to R2 + GitHub depth-runtime-mirrors-v1
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/depth-resign"
+          mkdir -p "$WORK"
+
+          aws --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" s3api get-object \
+            --bucket "$RELEASE_BUCKET" --key "beeftv/components/depth-runtime-v2/depth-runtime-manifest.v2.json" \
+            "$WORK/old-depth-v2.json" >/dev/null
+          aws --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" s3api get-object \
+            --bucket "$RELEASE_BUCKET" --key "beeftv/components/depth-runtime-v2/depth-runtime-manifest.json" \
+            "$WORK/depth-runtime-manifest.json" >/dev/null
+
+          "$RUNNER_TEMP/update-release" verify-depth --input "$WORK/old-depth-v2.json"
+
+          python3 - "$WORK" <<'PY'
+          import base64, json, sys
+          from pathlib import Path
+
+          work = Path(sys.argv[1])
+          mac_raw = (work / "depth-runtime-manifest.json").read_text(encoding="utf-8")
+          assert "beefapi" not in mac_raw and "1481187348" not in mac_raw, "mac manifest dirty"
+          assert "https://updates.beeftv.app/beeftv/components/depth-runtime-v2/" in mac_raw
+
+          env = json.loads((work / "old-depth-v2.json").read_text(encoding="utf-8"))
+          body = json.loads(base64.b64decode(env["payload"]))
+
+          def rewrite_urls(urls):
+              out = []
+              for u in urls:
+                  if "1481187348" in u:
+                      continue
+                  u = u.replace("https://updates.beefapi.com/beeftv/components/depth-runtime-v2/",
+                                "https://updates.beeftv.app/beeftv/components/depth-runtime-v2/")
+                  if u not in out:
+                      out.append(u)
+              return out
+
+          for rt in body["runtimes"].values():
+              if rt.get("urls"):
+                  rt["urls"] = rewrite_urls(rt["urls"])
+              for part in rt.get("parts") or []:
+                  part["urls"] = rewrite_urls(part["urls"])
+          body["model"]["urls"] = rewrite_urls(body["model"]["urls"])
+
+          raw = json.dumps(body, separators=(",", ":"))
+          assert "beefapi" not in raw and "1481187348" not in raw, raw
+          assert "https://updates.beeftv.app/beeftv/components/depth-runtime-v2/" in raw
+          (work / "depth-v2-payload.json").write_text(raw, encoding="utf-8")
+          print("DEPTH_PAYLOAD_CLEAN")
+          PY
+
+          "$RUNNER_TEMP/update-release" sign-depth \
+            --input "$WORK/depth-v2-payload.json" \
+            --output "$WORK/depth-runtime-manifest.v2.json"
+          "$RUNNER_TEMP/update-release" verify-depth \
+            --input "$WORK/depth-runtime-manifest.v2.json"
+
+          aws --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" s3api put-object \
+            --bucket "$RELEASE_BUCKET" \
+            --key "beeftv/components/depth-runtime-v2/depth-runtime-manifest.v2.json" \
+            --body "$WORK/depth-runtime-manifest.v2.json" \
+            --content-type "application/json" --cache-control "no-store, max-age=0" >/dev/null
+
+          gh release upload depth-runtime-mirrors-v1 \
+            "$WORK/depth-runtime-manifest.json" \
+            "$WORK/depth-runtime-manifest.v2.json" \
+            --clobber
+
+      - name: Public readback verification
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/verify-public"
+          mkdir -p "$WORK"
+          UA="BeefTV-Desktop-Updater/v2.6.0"
+
+          curl -fsSL -H "Cache-Control: no-cache" -A "$UA" "$UPDATER_DOWNLOAD_BASE/desktop-update.json" -o "$WORK/r2-v1.json"
+          curl -fsSL -H "Cache-Control: no-cache" -A "$UA" "$UPDATER_DOWNLOAD_BASE/desktop-update-v2.json" -o "$WORK/r2-v2.json"
+          curl -fsSL -H "Cache-Control: no-cache" -A "$UA" "$UPDATER_DOWNLOAD_BASE/components/depth-runtime-v2/depth-runtime-manifest.v2.json" -o "$WORK/r2-depth-v2.json"
+          curl -fsSL -H "Cache-Control: no-cache" -A "$UA" "https://github.com/glanderness/BeefTV/releases/download/v2.6.0/desktop-update.json" -o "$WORK/gh-v1.json"
+          curl -fsSL -H "Cache-Control: no-cache" -A "$UA" "https://github.com/glanderness/BeefTV/releases/download/depth-runtime-mirrors-v1/depth-runtime-manifest.v2.json" -o "$WORK/gh-depth-v2.json"
+
+          "$RUNNER_TEMP/update-release" verify --envelope "$WORK/r2-v1.json" --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY"
+          "$RUNNER_TEMP/update-release" verify --envelope "$WORK/r2-v2.json" --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY"
+          "$RUNNER_TEMP/update-release" verify --envelope "$WORK/gh-v1.json" --public-key-text "$BEEFTV_UPDATER_PUBLIC_KEY"
+          "$RUNNER_TEMP/update-release" verify-depth --input "$WORK/r2-depth-v2.json"
+          "$RUNNER_TEMP/update-release" verify-depth --input "$WORK/gh-depth-v2.json"
+
+          python3 - "$WORK" <<'PY'
+          import base64, json, sys
+          from pathlib import Path
+          work = Path(sys.argv[1])
+          for fn in ("r2-v1.json", "r2-v2.json", "gh-v1.json", "r2-depth-v2.json", "gh-depth-v2.json"):
+              raw = base64.b64decode(json.loads((work / fn).read_text())["payload"]).decode()
+              assert "beefapi" not in raw and "1481187348" not in raw, (fn, raw[:300])
+              assert "https://updates.beeftv.app/beeftv/" in raw, fn
+          print("ALL_PUBLIC_MANIFESTS_VERIFIED_CLEAN")
+          PY
