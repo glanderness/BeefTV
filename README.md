@@ -31,6 +31,7 @@
 
 <p align="center">
   <a href="README.en.md">English</a> ·
+  <a href="README.tr.md">Türkçe</a> ·
   <a href="#最近更新">最近更新</a> ·
   <a href="#产品演示">产品演示</a> ·
   <a href="#工作流">工作流</a> ·
