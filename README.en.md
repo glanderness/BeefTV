@@ -43,11 +43,11 @@
 
 ## Recent updates
 
+- **[v2.6.0](https://github.com/glanderness/BeefTV/releases/tag/v2.6.0)** — Promoted Canvas Timeline to the top bar with fast native local rendering and manual time entry for video trimming; upgraded the built-in assistant with per-canvas budget mandates, in-chat approval cards, multimodal media review, and audio transcription, and fixed text streaming, stop-retrieval, and canvas deletion issues.
 - **[v2.5.1](https://github.com/glanderness/BeefTV/releases/tag/v2.5.1)** — Added Midjourney v8.2 style controls with 1K/2K presets and prompt size sync; adjusted default 2K sizes to avoid 4K billing, improved mask-edit, workflow panning, storyboard linking, and project/assistant/Windows update stability.
 - **[v2.5.0](https://github.com/glanderness/BeefTV/releases/tag/v2.5.0)** — Redesigned built-in assistant with document/scanned PDF reading, file export, Creative Bible, session fork, multi-model confirm, and external MCP; added auto local project downloads, in-app proxy, and new model protocols.
 - **[v2.4.5](https://github.com/glanderness/BeefTV/releases/tag/v2.4.5)** — Improved built-in assistant reliability, and added automatic model and pricing sync for official compute, reference audio connections and direct upload, and automatic fallback playback for videos with sound but no picture.
 - **[v2.4.4](https://github.com/glanderness/BeefTV/releases/tag/v2.4.4)** — Fixed slow startup on large local workspaces, sped up large video uploads with support for saving files up to 2 GB, and made video upscale cost estimates faster.
-- **[v2.4.3](https://github.com/glanderness/BeefTV/releases/tag/v2.4.3)** — Kept your selected image model for inpainting, expression, and angle edits, added right-click Copy Image and Copy Video on the canvas, and fixed startup issues on older macOS versions.
 
 [All releases and detailed notes](https://github.com/glanderness/BeefTV/releases)
 
