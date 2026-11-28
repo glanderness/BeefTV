@@ -202,7 +202,7 @@ export function CanvasTimelinePreview({
                         {currentSubtitleImage?.url ? <img className="pointer-events-none absolute inset-0 h-full w-full" src={currentSubtitleImage.url} alt="" data-timeline-subtitle-preview /> : null}
                     </div>
                 ) : (
-                    <div className="px-4 text-center text-xs opacity-55">{previewPlaceholder}</div>
+                    <div className="px-4 text-center text-xs text-white/70">{previewPlaceholder}</div>
                 )}
                 <button
                     type="button"
