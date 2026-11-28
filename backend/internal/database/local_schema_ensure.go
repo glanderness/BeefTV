@@ -390,3 +390,154 @@ func requireAssistantTurnsSchema(db *gorm.DB) error {
 	}
 	return nil
 }
+
+func migrateAssistantProductionMandates(tx *gorm.DB) error {
+	if err := ensureAssistantProductionMandatesTables(tx); err != nil {
+		return err
+	}
+	return requireAssistantProductionMandatesSchema(tx)
+}
+
+func ensureAssistantProductionMandatesTables(tx *gorm.DB) error {
+	if tx.Migrator().HasTable("assistant_production_mandates") {
+		for _, col := range []struct{ name, definition string }{
+			{"user_id", "TEXT NOT NULL DEFAULT ''"},
+			{"canvas_id", "TEXT NOT NULL DEFAULT ''"},
+			{"session_id", "TEXT NOT NULL DEFAULT ''"},
+			{"max_amount_cny", "REAL NOT NULL DEFAULT 0"},
+			{"spent_amount_cny", "REAL NOT NULL DEFAULT 0"},
+			{"reserved_amount_cny", "REAL NOT NULL DEFAULT 0"},
+			{"max_unquoted_count", "INTEGER NOT NULL DEFAULT 0"},
+			{"used_unquoted_count", "INTEGER NOT NULL DEFAULT 0"},
+			{"allowed_kinds_json", "TEXT NOT NULL DEFAULT '[]'"},
+			{"status", "TEXT NOT NULL DEFAULT 'active'"},
+			{"version", "INTEGER NOT NULL DEFAULT 1"},
+			{"approved_by", "TEXT NOT NULL DEFAULT ''"},
+			{"expires_at", "DATETIME"},
+			{"created_at", "DATETIME"},
+			{"updated_at", "DATETIME"},
+		} {
+			if err := ensureSQLiteColumn(tx, "assistant_production_mandates", col.name, col.definition); err != nil {
+				return err
+			}
+		}
+	} else {
+		if err := tx.Exec(`CREATE TABLE assistant_production_mandates (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			canvas_id TEXT NOT NULL,
+			session_id TEXT NOT NULL DEFAULT '',
+			max_amount_cny REAL NOT NULL DEFAULT 0,
+			spent_amount_cny REAL NOT NULL DEFAULT 0,
+			reserved_amount_cny REAL NOT NULL DEFAULT 0,
+			max_unquoted_count INTEGER NOT NULL DEFAULT 0,
+			used_unquoted_count INTEGER NOT NULL DEFAULT 0,
+			allowed_kinds_json TEXT NOT NULL DEFAULT '[]',
+			status TEXT NOT NULL DEFAULT 'active',
+			version INTEGER NOT NULL DEFAULT 1,
+			approved_by TEXT NOT NULL DEFAULT '',
+			expires_at DATETIME,
+			created_at DATETIME,
+			updated_at DATETIME
+		)`).Error; err != nil {
+			return fmt.Errorf("创建助手制作预算包表: %w", err)
+		}
+	}
+	if err := ensureSQLiteIndex(tx, "assistant_production_mandates", "idx_assistant_mandates_user_canvas",
+		"CREATE INDEX idx_assistant_mandates_user_canvas ON assistant_production_mandates(user_id, canvas_id, session_id)"); err != nil {
+		return err
+	}
+	if tx.Migrator().HasTable("assistant_mandate_reservations") {
+		for _, col := range []struct{ name, definition string }{
+			{"mandate_id", "TEXT NOT NULL DEFAULT ''"},
+			{"user_id", "TEXT NOT NULL DEFAULT ''"},
+			{"task_id", "TEXT NOT NULL DEFAULT ''"},
+			{"call_id", "TEXT NOT NULL DEFAULT ''"},
+			{"kind", "TEXT NOT NULL DEFAULT ''"},
+			{"amount_cny", "REAL NOT NULL DEFAULT 0"},
+			{"unquoted", "NUMERIC NOT NULL DEFAULT 0"},
+			{"status", "TEXT NOT NULL DEFAULT 'reserved'"},
+			{"created_at", "DATETIME"},
+			{"updated_at", "DATETIME"},
+		} {
+			if err := ensureSQLiteColumn(tx, "assistant_mandate_reservations", col.name, col.definition); err != nil {
+				return err
+			}
+		}
+	} else {
+		if err := tx.Exec(`CREATE TABLE assistant_mandate_reservations (
+			id TEXT PRIMARY KEY,
+			mandate_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			task_id TEXT NOT NULL DEFAULT '',
+			call_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			amount_cny REAL NOT NULL DEFAULT 0,
+			unquoted NUMERIC NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'reserved',
+			created_at DATETIME,
+			updated_at DATETIME
+		)`).Error; err != nil {
+			return fmt.Errorf("创建助手制作预算预留表: %w", err)
+		}
+	}
+	if err := ensureSQLiteIndex(tx, "assistant_mandate_reservations", "idx_assistant_mandate_res_call",
+		"CREATE UNIQUE INDEX idx_assistant_mandate_res_call ON assistant_mandate_reservations(mandate_id, call_id)"); err != nil {
+		return err
+	}
+	return ensureSQLiteIndex(tx, "assistant_mandate_reservations", "idx_assistant_mandate_res_task",
+		"CREATE INDEX idx_assistant_mandate_res_task ON assistant_mandate_reservations(task_id)")
+}
+
+func requireAssistantProductionMandatesSchema(db *gorm.DB) error {
+	if !db.Migrator().HasTable("assistant_production_mandates") {
+		return fmt.Errorf("本地助手制作预算包表缺失，请启用自动迁移")
+	}
+	for _, col := range []string{
+		"id", "user_id", "canvas_id", "session_id", "max_amount_cny", "spent_amount_cny",
+		"reserved_amount_cny", "max_unquoted_count", "used_unquoted_count", "allowed_kinds_json",
+		"status", "version", "approved_by", "expires_at", "created_at", "updated_at",
+	} {
+		has, err := sqliteHasColumn(db, "assistant_production_mandates", col)
+		if err != nil {
+			return err
+		}
+		if !has {
+			return fmt.Errorf("本地助手制作预算包表缺失列 %s", col)
+		}
+	}
+	if err := requireSQLitePrimaryKey(db, "assistant_production_mandates", []string{"id"}); err != nil {
+		return err
+	}
+	if !db.Migrator().HasTable("assistant_mandate_reservations") {
+		return fmt.Errorf("本地助手制作预算预留表缺失，请启用自动迁移")
+	}
+	for _, col := range []string{
+		"id", "mandate_id", "user_id", "task_id", "call_id", "kind",
+		"amount_cny", "unquoted", "status", "created_at", "updated_at",
+	} {
+		has, err := sqliteHasColumn(db, "assistant_mandate_reservations", col)
+		if err != nil {
+			return err
+		}
+		if !has {
+			return fmt.Errorf("本地助手制作预算预留表缺失列 %s", col)
+		}
+	}
+	if err := requireSQLitePrimaryKey(db, "assistant_mandate_reservations", []string{"id"}); err != nil {
+		return err
+	}
+	valid, err := matchesSQLiteIndex(db, sqliteIndexContract{
+		table:   "assistant_mandate_reservations",
+		name:    "idx_assistant_mandate_res_call",
+		columns: []string{"mandate_id", "call_id"},
+		unique:  true,
+	})
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return fmt.Errorf("本地数据库索引 idx_assistant_mandate_res_call 定义不完整")
+	}
+	return nil
+}

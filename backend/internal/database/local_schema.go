@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 32
+const CurrentSchemaVersion int64 = 33
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -59,6 +59,7 @@ func LocalModels() []any {
 		&model.WorkflowTemplateVersion{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{}, &model.WorkflowStepTask{}, &model.ProductionTaskLink{},
 		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.AgentOpRecord{},
 		&model.AssistantTurn{}, &model.MCPCall{}, &model.TaskEffect{},
+		&model.AssistantProductionMandate{}, &model.AssistantMandateReservation{},
 		&model.AssistantContinuation{},
 		&model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{},
 		&model.CreationConversation{},
@@ -207,6 +208,7 @@ func canonicalLocalMigrations() []localMigration {
 			).Error
 		}},
 		{version: 32, name: "assistant-referenced-resources", apply: migrateAssistantReferencedResources},
+		{version: 33, name: "assistant-production-mandates", apply: migrateAssistantProductionMandates},
 	}
 }
 
@@ -688,6 +690,11 @@ func requireReconciledSchema(db *gorm.DB) error {
 	}
 	if version >= 32 {
 		if err := requireAssistantReferencedResources(db); err != nil {
+			return err
+		}
+	}
+	if version >= 33 {
+		if err := requireAssistantProductionMandatesSchema(db); err != nil {
 			return err
 		}
 	}

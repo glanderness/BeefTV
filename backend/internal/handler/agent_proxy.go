@@ -344,6 +344,22 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 					}
 					labelAssistantSkills(active, pins, installed)
 				}
+				historyCanvasID := strings.TrimSpace(c.Query("canvasId"))
+				historySessionID, _ := history["sessionId"].(string)
+				if historySessionID == "" {
+					historySessionID = strings.TrimSpace(c.Query("sessionId"))
+				}
+				if db := svc.Database(); db != nil && historyCanvasID != "" {
+					if mandate, mErr := operations.FindActiveMandateInTx(db, c.GetString("agentUserId"), historyCanvasID, historySessionID, time.Now().UTC()); mErr == nil && mandate != nil {
+						history["activeMandate"] = operations.ProjectProductionMandate(*mandate)
+					}
+					if approvals, aErr := operations.ListPendingToolApprovalsInTx(db, c.GetString("agentUserId"), historyCanvasID, historySessionID); aErr == nil && len(approvals) > 0 {
+						history["pendingApprovals"] = approvals
+						if active, ok := history["active"].(map[string]any); ok {
+							active["pendingApprovals"] = approvals
+						}
+					}
+				}
 			}
 		}
 		ok(c, decoded)
@@ -369,6 +385,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc agentProxyService, clients *age
 	registerAssistantSkillContextRoutes(r, svc, guard, hostJSON)
 	registerAssistantContinuationRoutes(r, svc, guard)
 	registerAssistantSkillScriptRoutes(r, svc, host, guard, requireOwnedCanvas)
+	registerAssistantMandateRoutes(r, svc, host, guard, requireOwnedCanvas)
 	r.GET("/assistant/sessions", func(c *gin.Context) {
 		if !guard(c, false) {
 			return

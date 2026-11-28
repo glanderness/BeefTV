@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { ASSISTANT_PROPOSAL_INVALIDATED_TEXT, ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantScriptProposal, type AssistantTurn } from "@/services/api/agent-assistant";
+import { ASSISTANT_PROPOSAL_INVALIDATED_TEXT, ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantScriptProposal, type AssistantTurn, type CreateAssistantMandateInput } from "@/services/api/agent-assistant";
+import { formatMandateCny } from "./canvas-assistant-approval-card";
 import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantOrderTargetLines, assistantProductionProposalParts, assistantProposalConfirmLabel, assistantProposalText, assistantProposalProgress, assistantScriptProposalLines, assistantScriptResultStatusText, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
 import type { CanvasNodeData } from "@/types/canvas";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
@@ -28,10 +29,11 @@ type Props = {
     /** Proposals whose 生成 click is still being checked or submitted. */
     runningProposalIds?: ReadonlySet<string>;
     generationDisabled?: boolean;
+    hasActiveMandate?: boolean;
     onLocate: (nodeIds: string[]) => void;
     onUndo: (turnId: string) => void;
     onFork?: (turnId: string) => void;
-    onRunProposal: (proposal: AssistantGenerationProposal, turnId: string) => void;
+    onRunProposal: (proposal: AssistantGenerationProposal, turnId: string, createMandate?: CreateAssistantMandateInput) => void;
     onRunScriptProposal?: (proposal: AssistantScriptProposal, turnId: string, alwaysAllowSession: boolean) => void;
     runningScriptProposalIds?: ReadonlySet<string>;
     scriptProposalFeedback?: Record<string, string>;
@@ -73,7 +75,7 @@ export function CanvasAssistantUserMessage({ text, selectedCount, continuationId
     );
 }
 
-export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, onLocate, onUndo, onFork, onRunProposal, onRunScriptProposal, runningScriptProposalIds, scriptProposalFeedback, onDismissProposal, onContinue, nodes, onCheckResults, reasoningOpen, onReasoningOpenChange }: Props) {
+export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, hasActiveMandate, onLocate, onUndo, onFork, onRunProposal, onRunScriptProposal, runningScriptProposalIds, scriptProposalFeedback, onDismissProposal, onContinue, nodes, onCheckResults, reasoningOpen, onReasoningOpenChange }: Props) {
     const { message } = App.useApp();
     const [copiedReply, setCopiedReply] = useState(false);
     const copyTimerRef = useRef<number | null>(null);
@@ -311,6 +313,25 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                                 <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={generationDisabled} onClick={() => onRunProposal(proposal, turn.turnId)}>
                                     {assistantProposalConfirmLabel(proposal)}
                                 </Button>
+                                {!proposal.regenerate && !hasActiveMandate && estimateUnknown === 0 ? (() => {
+                                    const suggestedCap = typeof proposal.suggestedCapCny === "number" && Number.isFinite(proposal.suggestedCapCny) && proposal.suggestedCapCny > 0
+                                        ? Math.ceil(proposal.suggestedCapCny)
+                                        : 20;
+                                    return (
+                                        <Button
+                                            size="small"
+                                            autoInsertSpace={false}
+                                            loading={running}
+                                            disabled={generationDisabled}
+                                            onClick={() => onRunProposal(proposal, turn.turnId, {
+                                                maxAmountCny: suggestedCap,
+                                                maxUnquotedCount: 0,
+                                            })}
+                                        >
+                                            {`批准本片预算包（上限 ${formatMandateCny(suggestedCap)}）`}
+                                        </Button>
+                                    );
+                                })() : null}
                                 <Button size="small" disabled={running} onClick={() => onDismissProposal(proposal.proposalId)}>
                                     先不用
                                 </Button>

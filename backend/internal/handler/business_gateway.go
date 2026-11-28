@@ -94,10 +94,13 @@ func (g *localBusinessGateway) CallBusinessTool(ctx context.Context, _ string, r
 		return nil, operations.NotFound("business_tool_not_found", "未找到工作区接口: "+req.Tool)
 	}
 	if kind, reason, msg, blocked := found.AssistantBlockPolicy(); blocked {
-		if kind == "invalid" {
-			return nil, operations.InvalidArg(reason, msg)
+		allowMandatedTranscribe := found.Method == http.MethodPost && found.Path == "/timeline/transcriptions" && operations.IsAuthorizedCloudTranscription(ctx)
+		if !allowMandatedTranscribe {
+			if kind == "invalid" {
+				return nil, operations.InvalidArg(reason, msg)
+			}
+			return nil, operations.PermissionDenied(reason, msg)
 		}
-		return nil, operations.PermissionDenied(reason, msg)
 	}
 
 	targetPath, err := substituteBusinessPath(found.Path, req.Path)

@@ -167,7 +167,11 @@ func (r *Repository) UpdateTaskBeefImageSettlement(taskID string, billingState *
 			updates["beef_reconcile_deadline"] = trimmed
 		}
 	}
-	return r.db.Model(&model.Task{}).Where("id = ?", taskID).Updates(updates).Error
+	if err := r.db.Model(&model.Task{}).Where("id = ?", taskID).Updates(updates).Error; err != nil {
+		return err
+	}
+	r.notifyTaskChanged(taskID)
+	return nil
 }
 
 // 仅持有失败任务恢复租约的同键重放可以跳过旧 worker 的 12 次限制。

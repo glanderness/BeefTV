@@ -48,6 +48,7 @@ func (r *Repository) FinishFailedVideoRecovery(task model.Task, outcome *string,
 	if result.RowsAffected != 1 {
 		return ErrTaskStateConflict
 	}
+	r.notifyTaskChanged(task.ID)
 	return nil
 }
 
@@ -72,7 +73,11 @@ func (r *Repository) UpdateTaskBeefVideoSettlement(taskID string, usageState *st
 			updates["beef_reconcile_deadline"] = trimmed
 		}
 	}
-	return r.db.Model(&model.Task{}).Where("id = ?", taskID).Updates(updates).Error
+	if err := r.db.Model(&model.Task{}).Where("id = ?", taskID).Updates(updates).Error; err != nil {
+		return err
+	}
+	r.notifyTaskChanged(taskID)
+	return nil
 }
 
 func pendingVideoUsage(state string) bool {

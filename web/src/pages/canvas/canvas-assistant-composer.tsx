@@ -4,7 +4,8 @@ import { useRef, useState } from "react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import type { AssistantContextUsage, AssistantPermissionMode, AssistantThinkingLevel } from "@/services/api/agent-assistant";
+import type { AssistantContextUsage, AssistantPermissionMode, AssistantProductionMandate, AssistantThinkingLevel, CreateAssistantMandateInput } from "@/services/api/agent-assistant";
+import { formatMandateCny } from "./canvas-assistant-approval-card";
 import { CanvasAssistantModelPicker } from "./canvas-assistant-model-picker";
 import "./canvas-assistant-composer.css";
 
@@ -12,12 +13,11 @@ const LINE_HEIGHT = 21;
 const MIN_LINES = 2;
 const MAX_LINES = 7;
 
-const AUTO_CONFIRM_OPTIONS = [
-    { value: 0, label: "手动确认", desc: "每次点击确认" },
-    { value: 2, label: "免确认 ¥2", desc: "单会话 ¥2 内" },
-    { value: 5, label: "免确认 ¥5", desc: "单会话 ¥5 内" },
-    { value: 10, label: "免确认 ¥10", desc: "单会话 ¥10 内" },
-    { value: 20, label: "免确认 ¥20", desc: "单会话 ¥20 内" },
+const MANDATE_PRESET_OPTIONS = [
+    { value: 20, label: "预算包 ¥20", desc: "适合几镜首帧试拍" },
+    { value: 50, label: "预算包 ¥50", desc: "适合短片首帧与视频" },
+    { value: 100, label: "预算包 ¥100", desc: "适合完整多镜制作" },
+    { value: 200, label: "预算包 ¥200", desc: "适合长镜头批量制作" },
 ] as const;
 
 const THINKING_SHORT_LABEL: Record<AssistantThinkingLevel, string> = {
@@ -110,8 +110,10 @@ type Props = {
     onPermissionChange?: (mode: AssistantPermissionMode) => void;
     thinkingLevel?: AssistantThinkingLevel;
     onThinkingLevelChange?: (level: AssistantThinkingLevel) => void;
-    autoConfirmMaxCny?: number;
-    onAutoConfirmMaxCnyChange?: (limit: number) => void;
+    activeMandate?: AssistantProductionMandate | null;
+    mandateBusy?: boolean;
+    onCreateMandate?: (input: CreateAssistantMandateInput) => void;
+    onRevokeMandate?: () => void;
     contextUsage?: AssistantContextUsage | null;
     canCompact?: boolean;
     compacting?: boolean;
@@ -147,8 +149,10 @@ export function CanvasAssistantComposer({
     onPermissionChange,
     thinkingLevel = "low",
     onThinkingLevelChange,
-    autoConfirmMaxCny = 0,
-    onAutoConfirmMaxCnyChange,
+    activeMandate = null,
+    mandateBusy = false,
+    onCreateMandate,
+    onRevokeMandate,
     contextUsage,
     canCompact,
     compacting,
@@ -156,7 +160,8 @@ export function CanvasAssistantComposer({
     onCompact,
 }: Props) {
     const [contentHeight, setContentHeight] = useState(LINE_HEIGHT);
-    const [autoConfirmOpen, setAutoConfirmOpen] = useState(false);
+    const [mandateOpen, setMandateOpen] = useState(false);
+    const [mandateAllowUnquoted, setMandateAllowUnquoted] = useState(false);
     const fileInput = useRef<HTMLInputElement>(null);
     const height = Math.min(MAX_LINES * LINE_HEIGHT, Math.max(MIN_LINES * LINE_HEIGHT, contentHeight));
     const canSend = !disabled && !compacting && (!streaming || canSupplement) && !supplementBusy && !inputBusy && (Boolean(value.trim()) || Boolean(hasAttachments));
@@ -171,8 +176,8 @@ export function CanvasAssistantComposer({
         { value: "medium" as const, label: "标准思考", title: "适合分镜拆解和多步修改" },
         { value: "high" as const, label: "深度思考", title: "适合复杂整片策划与排查" },
     ];
-    const autoConfirmActive = autoConfirmMaxCny > 0;
-    const autoConfirmLabel = autoConfirmActive ? `免 ¥${autoConfirmMaxCny}` : "手动";
+    const mandateActive = Boolean(activeMandate && activeMandate.status === "active");
+    const mandateLabel = mandateActive && activeMandate ? `余 ${formatMandateCny(activeMandate.remainingCny)}` : "预算包";
 
     return (
         <div className="canvas-assistant-composer-wrap">
@@ -359,31 +364,38 @@ export function CanvasAssistantComposer({
                     </Tooltip>
                 ) : null}
 
-                {onAutoConfirmMaxCnyChange ? (
+                {onCreateMandate ? (
                     <Popover
-                        open={autoConfirmOpen && !disabled}
-                        onOpenChange={(next) => setAutoConfirmOpen(next && !disabled)}
+                        open={mandateOpen && !disabled}
+                        onOpenChange={(next) => setMandateOpen(next && !disabled)}
                         trigger="click"
                         placement="topRight"
                         content={
-                            <div className="canvas-assistant-autoconfirm-menu" role="group" aria-label="小额免确认额度选项">
+                            <div className="canvas-assistant-autoconfirm-menu" role="group" aria-label="本片制作预算包">
                                 <div className="canvas-assistant-autoconfirm-menu-head">
-                                    <div className="canvas-assistant-autoconfirm-menu-title">单会话小额免确认</div>
-                                    <div className="canvas-assistant-autoconfirm-menu-sub">额度内已知报价自动发起，超额或原地重做仍需确认。</div>
+                                    <div className="canvas-assistant-autoconfirm-menu-title">本片制作预算包</div>
+                                    <div className="canvas-assistant-autoconfirm-menu-sub">
+                                        {mandateActive && activeMandate
+                                            ? `上限 ${formatMandateCny(activeMandate.maxAmountCny)} · 已用 ${formatMandateCny(activeMandate.spentAmountCny)} · 预留 ${formatMandateCny(activeMandate.reservedAmountCny)}`
+                                            : "授权后由服务端按事务台账扣减预留，额度内自动连续出片，超额自动暂停询问。"}
+                                    </div>
                                 </div>
-                                {AUTO_CONFIRM_OPTIONS.map((opt) => {
-                                    const selected = autoConfirmMaxCny === opt.value;
+                                {MANDATE_PRESET_OPTIONS.map((opt) => {
+                                    const selected = mandateActive && activeMandate?.maxAmountCny === opt.value;
                                     return (
                                         <button
                                             key={opt.value}
                                             type="button"
                                             className="canvas-assistant-autoconfirm-option"
                                             aria-pressed={selected}
-                                            disabled={disabled}
+                                            disabled={disabled || mandateBusy}
                                             onClick={() => {
-                                                if (disabled) return;
-                                                onAutoConfirmMaxCnyChange(opt.value);
-                                                setAutoConfirmOpen(false);
+                                                if (disabled || mandateBusy) return;
+                                                onCreateMandate({
+                                                    maxAmountCny: opt.value,
+                                                    maxUnquotedCount: mandateAllowUnquoted ? 4 : 0,
+                                                });
+                                                setMandateOpen(false);
                                             }}
                                         >
                                             <span className="inline-flex items-center gap-1.5">
@@ -394,19 +406,43 @@ export function CanvasAssistantComposer({
                                         </button>
                                     );
                                 })}
+                                <label className="canvas-assistant-autoconfirm-menu-sub inline-flex items-center gap-1.5 px-2 py-1.5 cursor-pointer select-none">
+                                    <input
+                                        type="checkbox"
+                                        checked={mandateAllowUnquoted}
+                                        disabled={disabled || mandateBusy}
+                                        onChange={(event) => setMandateAllowUnquoted(event.target.checked)}
+                                    />
+                                    <span>允许无报价/自带 Key 调用（限 4 次，不计入 ¥ 上限）</span>
+                                </label>
+                                {mandateActive && onRevokeMandate ? (
+                                    <button
+                                        type="button"
+                                        className="canvas-assistant-autoconfirm-option"
+                                        disabled={disabled || mandateBusy}
+                                        onClick={() => {
+                                            if (disabled || mandateBusy) return;
+                                            onRevokeMandate();
+                                            setMandateOpen(false);
+                                        }}
+                                    >
+                                        <span>撤销预算包</span>
+                                        <span className="canvas-assistant-autoconfirm-option-desc">恢复逐次确认</span>
+                                    </button>
+                                ) : null}
                             </div>
                         }
                     >
-                        <Tooltip styles={PASSIVE_TOOLTIP_STYLES} title={autoConfirmOpen && !disabled ? "" : "单会话小额生成免确认额度"}>
+                        <Tooltip styles={PASSIVE_TOOLTIP_STYLES} title={mandateOpen && !disabled ? "" : "本片制作预算包（服务端额度授权）"}>
                             <button
                                 type="button"
                                 className="canvas-assistant-autoconfirm-btn"
-                                aria-label="小额免确认额度"
-                                data-active={autoConfirmActive ? "true" : undefined}
-                                disabled={disabled}
+                                aria-label="本片制作预算包"
+                                data-active={mandateActive ? "true" : undefined}
+                                disabled={disabled || mandateBusy}
                             >
-                                {autoConfirmActive ? <span className="canvas-assistant-autoconfirm-dot" aria-hidden="true" /> : <Zap size={12} aria-hidden="true" />}
-                                <span>{autoConfirmLabel}</span>
+                                {mandateActive ? <span className="canvas-assistant-autoconfirm-dot" aria-hidden="true" /> : <Zap size={12} aria-hidden="true" />}
+                                <span>{mandateLabel}</span>
                             </button>
                         </Tooltip>
                     </Popover>

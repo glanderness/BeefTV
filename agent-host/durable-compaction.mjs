@@ -6,6 +6,7 @@
 import { CompactionTask, ProviderDoc, UsageDoc, defineExtension, hook } from '@earendil-works/pi-durable';
 import { renderPlanSection } from './plan.mjs';
 import { formatActiveSkillPointers } from './active-skills.mjs';
+import { MediaRetentionDoc } from './studio-digest.mjs';
 
 const TOOL_RESULT_MAX_CHARS = 2400;
 
@@ -254,6 +255,17 @@ export function createCreativeCompactionExtension({ entry, state, skills, resolv
           if (!rawSummary) {
             // 非 stop、含工具调用或空摘要时返回 undefined，交回官方 CompactionTask 瞬态重试循环。
             return undefined;
+          }
+          // 压缩成功生成摘要后，单调更新 MediaRetentionDoc 游标到本次被压缩片段的最后一条 entry id。
+          const compactBoundaryEntryId = Number(compaction?.entries?.at?.(-1)?.id ?? 0);
+          if (Number.isFinite(compactBoundaryEntryId) && compactBoundaryEntryId > 0) {
+            await api.commit(async (tx) => {
+              const retention = await tx.doc(MediaRetentionDoc, api.conversationId);
+              if (compactBoundaryEntryId > (retention.cutoffEntryId || 0)) {
+                retention.cutoffEntryId = Math.trunc(compactBoundaryEntryId);
+              }
+              return undefined;
+            }, context).catch(() => {});
           }
           return {
             summary: appendMissingAnchors(rawSummary, {

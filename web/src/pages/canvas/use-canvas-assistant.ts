@@ -7,7 +7,6 @@ import { emitPluginEvent } from "@/lib/plugins/plugin-events";
 import { ApiError } from "@/services/api/request";
 import { getActiveUserScope, onStorageNamespaceChange, scopedLocalStorage } from "@/lib/user-scope";
 import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
-import { getAssistantSettings, updateAssistantSettings } from "@/services/api/assistant-settings";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { saveCanvasForAssistant } from "@/services/assistant-canvas-save";
 import {
@@ -20,17 +19,23 @@ import {
     cancelAgentChat,
     compactAssistantSession,
     configureAssistantSession,
+    createAssistantMandate,
     createAssistantSession,
+    decideAssistantApproval,
     getAssistantHistory,
+    listAssistantMandates,
     listAssistantSessions,
+    revokeAssistantMandate,
     streamAgentChat,
     steerAgentChat,
     type AgentChatReference,
     type AssistantAttachment,
     type AssistantSkillSelection,
     type AssistantPermissionMode,
+    type AssistantProductionMandate,
     type AssistantThinkingLevel,
     type AssistantTurn,
+    type CreateAssistantMandateInput,
 } from "@/services/api/agent-assistant";
 import { assistantChangedNodeIds, assistantLifecycleText } from "./canvas-assistant-copy";
 import { waitForAssistant } from "./assistant-readiness";
@@ -49,6 +54,7 @@ import {
     readStoredProposals,
     shouldAutoLoadHistory,
     shouldSuppressAssistantHistoryError,
+    upsertPendingApproval,
     type AssistantTurnStatus,
     type CanvasRun,
 } from "./canvas-assistant-recovery";
@@ -272,6 +278,10 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.pausedStatusKey = run.pausedTurnReason ? statusKeyAtRequest : null;
             run.thinkingLevel = history.thinkingLevel ?? null;
             run.contextUsage = history.contextUsage ?? null;
+            run.activeMandate = history.activeMandate ?? null;
+            if (!history.active) {
+                run.pendingApprovals = Array.isArray(history.pendingApprovals) ? history.pendingApprovals : [];
+            }
             run.turns = [...history.turns, ...recent];
             // A history read started before turn_end may omit that newer turn and its plan.
             if (run.plan === planAtRequest) run.plan = recent.length ? recent.at(-1)!.plan ?? null : history.plan ?? null;
@@ -470,6 +480,18 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     run.lifecycleNotice = assistantLifecycleText(event);
                     rerenderIfActive(targetCanvas);
                 },
+                onApprovalRequired: (approval) => {
+                    if (!isLiveRun(originNamespace, targetCanvas, run)) return;
+                    run.pendingApprovals = upsertPendingApproval(run.pendingApprovals, approval);
+                    run.lifecycleNotice = "等待你确认继续执行。";
+                    rerenderIfActive(targetCanvas);
+                },
+                onHeartbeat: ({ pendingApprovals }) => {
+                    if (!isLiveRun(originNamespace, targetCanvas, run) || !Array.isArray(pendingApprovals)) return;
+                    run.pendingApprovals = pendingApprovals;
+                    if (pendingApprovals.length > 0) run.lifecycleNotice = "等待你确认继续执行。";
+                    rerenderIfActive(targetCanvas);
+                },
                 onTurnEnd: (end) => {
                     if (!isLiveRun(originNamespace, targetCanvas, run)) return;
                     const turnId = end.turnId || `${targetCanvas}:${Date.now()}`;
@@ -516,6 +538,12 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     if (turn.change?.canvasChanges?.length) {
                         for (const changed of turn.change.canvasChanges) onCanvasChangedRef.current?.(changed.canvasId, assistantChangedNodeIds(changed));
                     } else onCanvasChangedRef.current?.(targetCanvas, assistantChangedNodeIds(turn.change));
+                    // 回合结束后立即刷新预算包台账余额，避免用户看到过期的剩余/预留额度。
+                    void listAssistantMandates(targetCanvas, run.sessionId ?? undefined).then((mandateRes) => {
+                        if (!isLiveRun(originNamespace, targetCanvas, run)) return;
+                        run.activeMandate = mandateRes.activeMandate ?? null;
+                        rerenderIfActive(targetCanvas);
+                    }).catch(() => {});
                     rerenderIfActive(targetCanvas);
                 },
             }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, sessionId: run.sessionId ?? undefined, requestId, attachments, skills, permissionMode });
@@ -692,30 +720,143 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         rememberProposal,
     });
 
-    const [autoConfirmMaxCny, setAutoConfirmMaxCnyState] = useState<number>(0);
-    useEffect(() => {
-        let cancelled = false;
-        void getAssistantSettings()
-            .then((settings) => {
-                if (!cancelled && typeof settings?.autoConfirmMaxCny === "number" && Number.isFinite(settings.autoConfirmMaxCny)) {
-                    setAutoConfirmMaxCnyState(Math.max(0, settings.autoConfirmMaxCny));
-                }
-            })
-            .catch(() => { /* ignore when assistant settings unavailable */ });
-        return () => { cancelled = true; };
-    }, [namespace]);
+    const [decidingApprovalIds, setDecidingApprovalIds] = useState<ReadonlySet<string>>(() => new Set());
+    const [approvalFeedback, setApprovalFeedback] = useState<Record<string, string>>({});
+    const [mandateBusy, setMandateBusy] = useState(false);
 
-    const setAutoConfirmMaxCny = useCallback(async (limit: number) => {
-        const clean = Number.isFinite(limit) && limit > 0 ? limit : 0;
-        const previous = autoConfirmMaxCny;
-        setAutoConfirmMaxCnyState(clean);
+    const applyActiveMandate = useCallback((mandate: AssistantProductionMandate | null) => {
+        const targetCanvas = activeCanvasRef.current;
+        const run = runFor(targetCanvas);
+        run.activeMandate = mandate;
+        rerenderIfActive(targetCanvas);
+    }, [rerenderIfActive, runFor]);
+
+    const refreshMandate = useCallback(async () => {
+        const originNamespace = namespaceRef.current;
+        const targetCanvas = activeCanvasRef.current;
+        const run = runFor(targetCanvas);
         try {
-            const saved = await updateAssistantSettings({ autoConfirmMaxCny: clean });
-            setAutoConfirmMaxCnyState(typeof saved?.autoConfirmMaxCny === "number" ? saved.autoConfirmMaxCny : clean);
+            const res = await listAssistantMandates(targetCanvas, run.sessionId ?? undefined);
+            if (!isLiveRun(originNamespace, targetCanvas, run)) return;
+            run.activeMandate = res.activeMandate ?? null;
+            rerenderIfActive(targetCanvas);
         } catch {
-            setAutoConfirmMaxCnyState(previous);
+            // 预算包查询失败不打断当前对话展示
         }
-    }, [autoConfirmMaxCny]);
+    }, [isLiveRun, rerenderIfActive, runFor]);
+
+    const createMandate = useCallback(async (input: CreateAssistantMandateInput) => {
+        const originNamespace = namespaceRef.current;
+        const targetCanvas = activeCanvasRef.current;
+        const run = runFor(targetCanvas);
+        setMandateBusy(true);
+        try {
+            const res = await createAssistantMandate({
+                ...input,
+                canvasId: input.canvasId || targetCanvas,
+                ...(input.sessionId || run.sessionId ? { sessionId: input.sessionId || run.sessionId || undefined } : {}),
+            });
+            if (!isLiveRun(originNamespace, targetCanvas, run)) return null;
+            run.activeMandate = res.mandate ?? null;
+            rerenderIfActive(targetCanvas);
+            return res.mandate ?? null;
+        } catch (error) {
+            if (isLiveRun(originNamespace, targetCanvas, run)) {
+                const reason = error instanceof ApiError ? error.reason : undefined;
+                run.error = agentAssistantFailureText(reason, error instanceof Error ? error.message : "没能启用预算包，请稍后重试。");
+                rerenderIfActive(targetCanvas);
+            }
+            return null;
+        } finally {
+            setMandateBusy(false);
+        }
+    }, [isLiveRun, rerenderIfActive, runFor]);
+
+    const revokeActiveMandate = useCallback(async () => {
+        const originNamespace = namespaceRef.current;
+        const targetCanvas = activeCanvasRef.current;
+        const run = runFor(targetCanvas);
+        const mandateId = run.activeMandate?.id;
+        if (!mandateId) return;
+        setMandateBusy(true);
+        try {
+            await revokeAssistantMandate(mandateId);
+            if (!isLiveRun(originNamespace, targetCanvas, run)) return;
+            run.activeMandate = null;
+            rerenderIfActive(targetCanvas);
+        } catch (error) {
+            if (isLiveRun(originNamespace, targetCanvas, run)) {
+                const reason = error instanceof ApiError ? error.reason : undefined;
+                run.error = agentAssistantFailureText(reason, error instanceof Error ? error.message : "没能撤销预算包，请稍后重试。");
+                rerenderIfActive(targetCanvas);
+            }
+        } finally {
+            setMandateBusy(false);
+        }
+    }, [isLiveRun, rerenderIfActive, runFor]);
+
+    const decidePendingApproval = useCallback(async (
+        proposalId: string,
+        decision: "approve" | "reject",
+        options?: { createMandate?: CreateAssistantMandateInput; reason?: string },
+    ) => {
+        const originNamespace = namespaceRef.current;
+        const targetCanvas = activeCanvasRef.current;
+        const run = runFor(targetCanvas);
+        setDecidingApprovalIds((cur) => new Set(cur).add(proposalId));
+        setApprovalFeedback((cur) => ({ ...cur, [proposalId]: "" }));
+        try {
+            const createMandatePayload = options?.createMandate
+                ? {
+                    ...options.createMandate,
+                    canvasId: options.createMandate.canvasId || targetCanvas,
+                    ...(options.createMandate.sessionId || run.sessionId
+                        ? { sessionId: options.createMandate.sessionId || run.sessionId || undefined }
+                        : {}),
+                }
+                : undefined;
+            const res = await decideAssistantApproval(proposalId, {
+                decision,
+                ...(options?.reason ? { reason: options.reason } : {}),
+                ...(createMandatePayload ? { createMandate: createMandatePayload } : {}),
+            });
+            if (!isLiveRun(originNamespace, targetCanvas, run)) return;
+            if (res.mandate) run.activeMandate = res.mandate;
+            if (res.signaled === false) {
+                setApprovalFeedback((cur) => ({ ...cur, [proposalId]: "审批已失效，请让助手重试。" }));
+                rerenderIfActive(targetCanvas);
+                return;
+            }
+            run.pendingApprovals = run.pendingApprovals.filter((item) => item.proposalId !== proposalId);
+            if (run.pendingApprovals.length === 0 && run.lifecycleNotice === "等待你确认继续执行。") {
+                run.lifecycleNotice = decision === "approve" ? "已确认，正在继续执行…" : "已拒绝该操作，等待助手回应…";
+            }
+            rerenderIfActive(targetCanvas);
+        } catch (error) {
+            if (!isLiveRun(originNamespace, targetCanvas, run)) return;
+            const reason = error instanceof ApiError ? error.reason : undefined;
+            const text = agentAssistantFailureText(reason, error instanceof Error ? error.message : "审批提交失败，请重试。");
+            setApprovalFeedback((cur) => ({ ...cur, [proposalId]: text }));
+        } finally {
+            setDecidingApprovalIds((cur) => {
+                const next = new Set(cur);
+                next.delete(proposalId);
+                return next;
+            });
+        }
+    }, [isLiveRun, rerenderIfActive, runFor]);
+
+    const approvePendingTool = useCallback(
+        (proposalId: string, options?: { createMandate?: CreateAssistantMandateInput }) =>
+            decidePendingApproval(proposalId, "approve", options),
+        [decidePendingApproval],
+    );
+
+    const rejectPendingTool = useCallback(
+        (proposalId: string, reason?: string) =>
+            decidePendingApproval(proposalId, "reject", { reason }),
+        [decidePendingApproval],
+    );
 
     const run = runFor(canvasId);
     const nsPrefix = `${namespace}:`;
@@ -733,6 +874,17 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         sessionId: run.sessionId,
         turns: run.turns,
         plan: run.plan,
+        activeMandate: run.activeMandate,
+        pendingApprovals: run.pendingApprovals,
+        decidingApprovalIds,
+        approvalFeedback,
+        mandateBusy,
+        applyActiveMandate,
+        refreshMandate,
+        createMandate,
+        revokeActiveMandate,
+        approvePendingTool,
+        rejectPendingTool,
         historyLoaded: run.historyLoaded,
         historyError: shouldSuppressAssistantHistoryError(status, run) ? null : run.historyError,
         sessionBusy: run.sessionBusy,
@@ -747,8 +899,6 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         setPermissionMode,
         thinkingLevel: run.thinkingLevel ?? preferredThinkingLevel ?? "low",
         setThinkingLevel,
-        autoConfirmMaxCny,
-        setAutoConfirmMaxCny,
         contextUsage: run.contextUsage,
         compacting: run.compacting,
         compactNotice: run.compactNotice,

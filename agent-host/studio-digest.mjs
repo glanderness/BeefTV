@@ -1,7 +1,28 @@
 // 制作现场：把整张画布压成助手每轮都能一眼看懂的几百字，
 // 以及“上一次对话结束后别人（用户、生成任务）又改了什么”的差异说明。
 // 纯函数、无 IO、结果确定（同一画布状态永远得到同一段文字），便于提示词缓存与测试。
+import { defineDoc } from '@earendil-works/pi-durable';
 import { getCurrentSystemMessage } from '@earendil-works/pi-ai/utils/transcript';
+
+export const MediaRetentionDoc = defineDoc({
+  kind: 'beeftv.media_retention',
+  version: 1,
+  scope: 'conversation',
+  history: 'latest',
+  fork: 'current',
+  initial: () => ({
+    cutoffEntryId: 0,
+    cutoffMessageIndex: 0,
+  }),
+  checkpointWhen: () => true,
+});
+
+// 单调媒体裁剪总内联图字符阈值（默认 ~4MB base64 ≈ 3MB 原始图片字节）：
+// 仅在压缩或累计内联图体积超出阈值时单调推进 cutoff，正常相邻视觉轮次绝不改写历史前缀，保护 KV Prompt Cache。
+export const DEFAULT_MAX_INLINE_IMAGE_CHARS = (() => {
+  const raw = Number(process.env.BEEFTV_AGENT_MAX_INLINE_IMAGE_CHARS || 0);
+  return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 4 * 1024 * 1024;
+})();
 
 const TYPE_LABEL = {
   image: '图片', video: '视频', audio: '音频', text: '文本', markdown: '文档', script: '分镜板',
@@ -67,106 +88,139 @@ function hasPrunableImagePart(message, minChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS)
   return Array.isArray(message?.content) && message.content.some((part) => isPrunableImagePart(part, minChars));
 }
 
-function isSupplementUserMessage(message) {
-  if (!message || message.role !== 'user') return false;
-  return extractMessageText(message).includes('[BEEFTV_INPUT:');
+function inlineImageCharsOfMessage(message, minChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS) {
+  if (!isToolResultMessage(message) || !Array.isArray(message?.content)) return 0;
+  let total = 0;
+  for (const part of message.content) {
+    if (isPrunableImagePart(part, minChars)) total += part.data.length;
+  }
+  return total;
 }
 
-function assistantToolNames(message) {
-  if (!message || message.role !== 'assistant') return [];
-  const names = [];
-  if (Array.isArray(message.content)) {
-    for (const part of message.content) {
-      if (part?.type === 'toolCall' && typeof part.name === 'string') {
-        names.push(part.name);
+function foldToolImagesInMessage(message, minChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS) {
+  if (!isToolResultMessage(message) || !hasPrunableImagePart(message, minChars)) return message;
+  const omittedText = isFileReadToolResult(message)
+    ? HISTORICAL_FILE_IMAGE_OMITTED_TEXT
+    : HISTORICAL_TOOL_IMAGE_OMITTED_TEXT;
+  return {
+    ...message,
+    content: message.content.map((part) =>
+      isPrunableImagePart(part, minChars) ? { type: 'text', text: omittedText } : part,
+    ),
+  };
+}
+
+// 计算单调递增的媒体裁剪游标：
+// - cutoffEntryId / cutoffMessageIndex 只增不减；
+// - 当游标之后累计内联大图字符数未超出 maxInlineImageChars 时游标纹丝不动（相邻视觉轮次前缀 100% 字节一致）；
+// - 超出预算时仅从最旧的视觉 toolResult 单调前推到满足预算为止，始终保留最新一条视觉消息。
+export function evaluateMonotoneMediaCutoff(messages = [], {
+  cutoffEntryId = 0,
+  cutoffMessageIndex = 0,
+  messageEntryId = null,
+  maxInlineImageChars = DEFAULT_MAX_INLINE_IMAGE_CHARS,
+  minImageChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS,
+} = {}) {
+  const useEntryIds = messageEntryId instanceof Map && messageEntryId.size > 0;
+  let nextCutoffEntryId = Number.isFinite(cutoffEntryId) && cutoffEntryId > 0 ? Math.trunc(cutoffEntryId) : 0;
+  let nextCutoffMessageIndex = Number.isFinite(cutoffMessageIndex) && cutoffMessageIndex > 0 ? Math.trunc(cutoffMessageIndex) : 0;
+
+  const retained = [];
+  let retainedChars = 0;
+  for (let idx = 0; idx < messages.length; idx += 1) {
+    const message = messages[idx];
+    const chars = inlineImageCharsOfMessage(message, minImageChars);
+    if (chars <= 0) continue;
+    const entryId = useEntryIds ? messageEntryId.get(message) : undefined;
+    const alreadyFolded = useEntryIds && typeof entryId === 'number'
+      ? entryId <= nextCutoffEntryId
+      : idx < nextCutoffMessageIndex;
+    if (alreadyFolded) continue;
+    retained.push({ idx, entryId, chars });
+    retainedChars += chars;
+  }
+
+  const limit = Number.isFinite(maxInlineImageChars) && maxInlineImageChars > 0
+    ? maxInlineImageChars
+    : DEFAULT_MAX_INLINE_IMAGE_CHARS;
+
+  let advanced = false;
+  if (retainedChars > limit && retained.length > 1) {
+    let remaining = retainedChars;
+    // 至少保留最新 1 条视觉 toolResult，避免单张超大图把当前正在看的图片也折叠掉。
+    for (let i = 0; i < retained.length - 1 && remaining > limit; i += 1) {
+      const item = retained[i];
+      remaining -= item.chars;
+      if (useEntryIds && typeof item.entryId === 'number') {
+        if (item.entryId > nextCutoffEntryId) {
+          nextCutoffEntryId = item.entryId;
+          advanced = true;
+        }
+      } else {
+        const candidateIdx = item.idx + 1;
+        if (candidateIdx > nextCutoffMessageIndex) {
+          nextCutoffMessageIndex = candidateIdx;
+          advanced = true;
+        }
       }
     }
   }
-  if (Array.isArray(message.tool_calls)) {
-    for (const call of message.tool_calls) {
-      const name = call?.function?.name || call?.name;
-      if (typeof name === 'string') names.push(name);
-    }
-  }
-  return names;
+
+  return {
+    cutoffEntryId: nextCutoffEntryId,
+    cutoffMessageIndex: nextCutoffMessageIndex,
+    advanced,
+    retainedImageChars: retainedChars,
+  };
 }
 
-const NON_MUTATING_CONTINUATION_TOOLS = new Set([
-  'plan_update',
-  'plan.update',
-  'canvas_get',
-  'canvas.get',
-  'file_read',
-  'file.read',
-  'skill_load',
-  'skill.load',
-  'task_list',
-  'task.list',
-  'task_get',
-  'task.get',
-]);
-
-function isKeepImageContinuationTool(name) {
-  if (typeof name !== 'string') return false;
-  return name.startsWith('media_') || name.startsWith('media.') || NON_MUTATING_CONTINUATION_TOOLS.has(name);
-}
-
-// 仅在当轮模型尚未完成画面消费（或仍在连续 media_* 探查及 plan_update/canvas_get 只读核对链内）时保留
-// toolResult 中的内联大图；一旦进入下一轮用户消息，或模型已基于画面发起画布写入/生成提案或收到新一批图片，
-// 就将历史 toolResult 中的 base64 大图替换为简短说明（不改写 SQLite 持久记录），避免重复上传数 MB base64。
-export function pruneHistoricalToolImages(messages = [], { minImageChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS } = {}) {
+// 依据已持久化的单调游标折叠旧媒体预览图（纯函数，不原地修改原消息数组）。
+export function applyMonotoneMediaCutoff(messages = [], {
+  cutoffEntryId = 0,
+  cutoffMessageIndex = 0,
+  messageEntryId = null,
+  minImageChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS,
+} = {}) {
+  const useEntryIds = messageEntryId instanceof Map && messageEntryId.size > 0;
+  const entryCutoff = Number.isFinite(cutoffEntryId) && cutoffEntryId > 0 ? Math.trunc(cutoffEntryId) : 0;
+  const indexCutoff = Number.isFinite(cutoffMessageIndex) && cutoffMessageIndex > 0 ? Math.trunc(cutoffMessageIndex) : 0;
+  if (entryCutoff <= 0 && indexCutoff <= 0) return messages;
   return messages.map((message, idx) => {
     if (!isToolResultMessage(message) || !hasPrunableImagePart(message, minImageChars)) return message;
-    const isScannedFileRead = isFileReadToolResult(message);
-    let firstAssistantAfter = -1;
-    let shouldPrune = false;
-    for (let j = idx + 1; j < messages.length; j++) {
-      const later = messages[j];
-      if (!later) continue;
-      if (later.role === 'user' && !isTransientStudioTailMessage(later) && !isSupplementUserMessage(later)) {
-        shouldPrune = true;
-        break;
-      }
-      if (later.role === 'assistant') {
-        firstAssistantAfter = j;
-        break;
-      }
-    }
-    if (!shouldPrune && firstAssistantAfter >= 0) {
-      for (let k = firstAssistantAfter; k < messages.length; k++) {
-        const later = messages[k];
-        if (!later) continue;
-        if (later.role === 'user' && !isTransientStudioTailMessage(later) && !isSupplementUserMessage(later)) {
-          shouldPrune = true;
-          break;
-        }
-        if (k > firstAssistantAfter && isToolResultMessage(later) && hasPrunableImagePart(later, minImageChars)) {
-          shouldPrune = true;
-          break;
-        }
-        // file_read 扫描件的画面本身就是文档正文：同轮内写文件/改画布后不能立即折叠，
-        // 否则推理模型在生成最终回复时看不到文档内容，会误判自己此前调用的参数为幻觉并覆写成果；
-        // 跨轮（下一条用户消息）或读入新一批大图时照常折叠以省流量。
-        if (!isScannedFileRead && later.role === 'assistant') {
-          const names = assistantToolNames(later);
-          if (names.length === 0 || names.some((name) => !isKeepImageContinuationTool(name))) {
-            shouldPrune = true;
-            break;
-          }
-        }
-      }
-    }
-    if (!shouldPrune) return message;
-    const omittedText = isScannedFileRead
-      ? HISTORICAL_FILE_IMAGE_OMITTED_TEXT
-      : HISTORICAL_TOOL_IMAGE_OMITTED_TEXT;
-    return {
-      ...message,
-      content: message.content.map((part) =>
-        isPrunableImagePart(part, minImageChars) ? { type: 'text', text: omittedText } : part,
-      ),
-    };
+    const entryId = useEntryIds ? messageEntryId.get(message) : undefined;
+    const shouldFold = useEntryIds && typeof entryId === 'number'
+      ? entryId <= entryCutoff
+      : idx < indexCutoff;
+    return shouldFold ? foldToolImagesInMessage(message, minImageChars) : message;
   });
+}
+
+// 读取并按需单调推进持久化 MediaRetentionDoc 游标。
+export async function syncMonotoneMediaCutoff(runtime, context, messages, messageEntryId, {
+  maxInlineImageChars = DEFAULT_MAX_INLINE_IMAGE_CHARS,
+  minImageChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS,
+} = {}) {
+  const snap = await runtime.snapshot(MediaRetentionDoc, runtime.conversationId, context).catch(() => null);
+  const cutoffEval = evaluateMonotoneMediaCutoff(messages, {
+    cutoffEntryId: snap?.cutoffEntryId || 0,
+    cutoffMessageIndex: snap?.cutoffMessageIndex || 0,
+    messageEntryId,
+    maxInlineImageChars,
+    minImageChars,
+  });
+  if (cutoffEval.advanced) {
+    await runtime.commit(async (tx) => {
+      const retention = await tx.doc(MediaRetentionDoc, runtime.conversationId);
+      if (cutoffEval.cutoffEntryId > (retention.cutoffEntryId || 0)) {
+        retention.cutoffEntryId = cutoffEval.cutoffEntryId;
+      }
+      if (cutoffEval.cutoffMessageIndex > (retention.cutoffMessageIndex || 0)) {
+        retention.cutoffMessageIndex = cutoffEval.cutoffMessageIndex;
+      }
+      return undefined;
+    }, context).catch(() => {});
+  }
+  return cutoffEval;
 }
 
 // Pin stable system sections from the initial system message in deterministic
@@ -210,11 +264,21 @@ export function withCurrentStudio(messages, digest, options = {}) {
     includeStudio = true,
     planText = '',
     restoredSkillsText = '',
+    mediaCutoffEntryId = 0,
+    mediaCutoffMessageIndex = 0,
+    messageEntryId = null,
+    minImageChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS,
   } = options || {};
-  const normalized = pruneHistoricalToolImages(
+  const normalized = applyMonotoneMediaCutoff(
     normalizeSystemHeaderMessages(messages).filter(
       (message, idx, arr) => !(idx === arr.length - 1 && message?.transientStudioTail === true),
     ),
+    {
+      cutoffEntryId: mediaCutoffEntryId,
+      cutoffMessageIndex: mediaCutoffMessageIndex,
+      messageEntryId,
+      minImageChars,
+    },
   );
   const tailBlocks = [];
   if (typeof restoredSkillsText === 'string' && restoredSkillsText.trim()) {
@@ -417,4 +481,45 @@ export function describeChangesSince(previous, current, { limit = 420 } = {}) {
   if (failed.length) parts.push(`${list(failed)}生成失败`);
   if (!parts.length) return '';
   return clip(`自上次对话结束后：${parts.join('；')}。以此为准，不要覆盖这些变化。`, limit);
+}
+
+// 检查本轮新建的媒体节点是否已回写分镜行且视频节点已连线首帧图；未补齐时返回单行提醒。
+export function buildUnboundMediaReminder(canvas, createdNodeIds) {
+  if (!canvas || !Array.isArray(createdNodeIds) || createdNodeIds.length === 0) return '';
+  const nodes = Array.isArray(canvas.nodes) ? canvas.nodes : [];
+  const connections = Array.isArray(canvas.connections) ? canvas.connections : [];
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const scriptNodes = nodes.filter((n) => n.type === 'script' && (n.metadata?.storyboard?.rows?.length || 0) > 0);
+  if (scriptNodes.length === 0) return '';
+  const boundIds = new Set();
+  for (const s of scriptNodes) {
+    for (const r of s.metadata?.storyboard?.rows || []) {
+      if (r.imageNodeId) boundIds.add(r.imageNodeId);
+      if (r.videoNodeId) boundIds.add(r.videoNodeId);
+    }
+  }
+  const createdSet = new Set(createdNodeIds);
+  const unboundMedia = nodes.filter(
+    (n) => createdSet.has(n.id) && (n.type === 'image' || n.type === 'video') && !boundIds.has(n.id),
+  );
+  const createdImages = nodes.filter((n) => createdSet.has(n.id) && n.type === 'image');
+  const unlinkedVideos = createdImages.length > 0
+    ? nodes.filter(
+        (n) =>
+          createdSet.has(n.id) &&
+          n.type === 'video' &&
+          !connections.some((e) => e.toNodeId === n.id && byId.get(e.fromNodeId)?.type === 'image'),
+      )
+    : [];
+  if (unboundMedia.length === 0 && unlinkedVideos.length === 0) return '';
+  const hints = [];
+  if (unboundMedia.length > 0) {
+    const list = unboundMedia.map((n) => `${n.id}「${n.title || n.type}」`).join('、');
+    hints.push(`本轮新建的媒体节点（${list}）尚未通过 canvas_script_row_update 的 imageNodeId/videoNodeId 写回对应分镜行`);
+  }
+  if (unlinkedVideos.length > 0) {
+    const vList = unlinkedVideos.map((n) => `${n.id}「${n.title || n.type}」`).join('、');
+    hints.push(`本轮新建的视频节点（${vList}）尚未通过 canvas_edge_create 连接对应的首帧图节点`);
+  }
+  return `[制作现场检查] ${hints.join('；')}（当前画布 expectedRevision=${canvas.revision}）。请先补齐上述绑定/连线后再回复用户。`;
 }

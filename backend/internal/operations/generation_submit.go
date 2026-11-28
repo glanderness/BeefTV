@@ -436,6 +436,9 @@ func admitGeneration(ctx *Context, raw json.RawMessage, mode generationAdmission
 		}
 		return out, nil
 	}
+	if out, handled, err := tryAdmitAssistantGenerationViaMandateInTx(ctx, args.CanvasID, proposalID, nodes, targets, mode == generationRegenerate); handled {
+		return out, err
+	}
 	if mode == generationRegenerate {
 		port, ok := ctx.Domain.(AuthorizedGenerationRegenerator)
 		if !ok {

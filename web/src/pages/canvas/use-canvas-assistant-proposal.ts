@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-import { autoConfirmAssistantProduction, confirmAssistantProduction, confirmAssistantProposalRunnable, type AssistantGenerationProposal } from "@/services/api/agent-assistant";
+import { confirmAssistantProduction, confirmAssistantProposalRunnable, createAssistantMandate, type AssistantGenerationProposal, type AssistantProductionMandate, type CreateAssistantMandateInput } from "@/services/api/agent-assistant";
 import { ApiError } from "@/services/api/request";
 import { armAssistantContinuation, registerAssistantSubmission } from "@/services/api/assistant-continuation";
 import { refreshLocalCanvasProjectIfChanged } from "@/services/local-workspace-repository";
@@ -26,6 +26,7 @@ type UseCanvasAssistantProposalOptions = {
     continuationSessionId?: string | null;
     continuePlan?: boolean;
     onContinuationArmed?: () => void;
+    onMandateUpdated?: (mandate?: AssistantProductionMandate | null) => void;
 };
 
 export function productionConfirmationErrorMessage(error: unknown): string {
@@ -55,6 +56,7 @@ export function useCanvasAssistantProposal({
     continuationSessionId,
     continuePlan,
     onContinuationArmed,
+    onMandateUpdated,
 }: UseCanvasAssistantProposalOptions) {
     const claimsRef = useRef(new Set<string>());
     const attemptedProductionsRef = useRef(new Set<string>());
@@ -73,12 +75,19 @@ export function useCanvasAssistantProposal({
     const { lifetime } = useCanvasOwnerLifetime(projectId);
 
     const runAssistantProposal = useCallback(
-        (proposal: AssistantGenerationProposal, turnId: string) => {
+        (proposal: AssistantGenerationProposal, turnId: string, createMandate?: CreateAssistantMandateInput) => {
             const owner = lifetime.capture(projectId);
             const generateForThisRun = handleGenerateNodeRef.current;
             const proposalId = proposal.proposalId;
             const sessionId = continuationSessionId;
             let continuationId: string | undefined;
+            const mandateInput = createMandate
+                ? {
+                    ...createMandate,
+                    canvasId: createMandate.canvasId || owner.canvasId,
+                    ...(createMandate.sessionId || sessionId ? { sessionId: createMandate.sessionId || sessionId || undefined } : {}),
+                }
+                : undefined;
             setAssistantProposalFeedback((current) => ({ ...current, [proposalId]: "" }));
             setRunningProposalIds((current) => new Set(current).add(proposalId));
             if (proposal.production) {
@@ -100,12 +109,18 @@ export function useCanvasAssistantProposal({
                     // An unknown HTTP result is recovered using the same immutable
                     // plan. The backend rechecks it and reuses accepted task IDs.
                     attemptedProductionsRef.current.add(confirmationKey);
-                    await confirmAssistantProduction(owner.canvasId, turnId, proposal, true);
+                    const confirmed = await confirmAssistantProduction(owner.canvasId, turnId, proposal, true, mandateInput);
                     await refreshLocalCanvasProjectIfChanged(owner.canvasId);
                     if (!lifetime.matches(owner, projectIdRef.current)) return;
                     markHandledRef.current(proposalId);
                     onContinuationArmed?.();
-                    setAssistantProposalFeedback(current => ({ ...current, [proposalId]: "正在按已确认方案制作，素材保存后会自动继续。" }));
+                    if (confirmed.mandate) onMandateUpdated?.(confirmed.mandate);
+                    setAssistantProposalFeedback(current => ({
+                        ...current,
+                        [proposalId]: confirmed.mandate
+                            ? `已启用本片预算包（上限 ¥${confirmed.mandate.maxAmountCny}），正在按方案制作，后续镜头将在额度内自动推进。`
+                            : "正在按已确认方案制作，素材保存后会自动继续。",
+                    }));
                 })().catch(error => {
                     if (!lifetime.matches(owner, projectIdRef.current)) return;
                     if (error instanceof AssistantProposalBlockedError && error.reason === "canvas_saving") recordAssistantProposalCanvasRejection(owner.canvasId);
@@ -144,14 +159,19 @@ export function useCanvasAssistantProposal({
                                 && Number(node.metadata?.seedreamMaxImages ?? 1) <= 1;
                         });
                     if (!canConfirmViaOrder) {
+                        if (mandateInput) {
+                            const created = await createAssistantMandate(mandateInput);
+                            if (created.mandate) onMandateUpdated?.(created.mandate);
+                        }
                         if (continuePlan && sessionId) {
                             continuationId = (await armAssistantContinuation(owner.canvasId, sessionId, turnId, proposal)).id;
                             onContinuationArmed?.();
                         }
                         return null;
                     }
-                    const result = await confirmAssistantProduction(owner.canvasId, turnId, proposal, Boolean(continuePlan && sessionId));
+                    const result = await confirmAssistantProduction(owner.canvasId, turnId, proposal, Boolean(continuePlan && sessionId), mandateInput);
                     await refreshLocalCanvasProjectIfChanged(owner.canvasId);
+                    if (result.mandate) onMandateUpdated?.(result.mandate);
                     if (result.continuationId) {
                         continuationId = result.continuationId;
                         onContinuationArmed?.();
@@ -172,52 +192,8 @@ export function useCanvasAssistantProposal({
                 });
             });
         },
-        [connectionsRef, lifetime, nodesRef, projectId, continuationSessionId, continuePlan, onContinuationArmed],
+        [connectionsRef, lifetime, nodesRef, projectId, continuationSessionId, continuePlan, onContinuationArmed, onMandateUpdated],
     );
 
-    const autoConfirmAssistantProposal = useCallback(
-        async (proposal: AssistantGenerationProposal, turnId: string) => {
-            const owner = lifetime.capture(projectId);
-            const proposalId = proposal.proposalId;
-            if (claimsRef.current.has(proposalId) || handledRef.current.has(proposalId)) return false;
-            claimsRef.current.add(proposalId);
-            setRunningProposalIds((current) => new Set(current).add(proposalId));
-            try {
-                await prepareAssistantProposalSnapshot(
-                    proposal,
-                    () => readAssistantProposalSourceState(owner.canvasId, nodesRef.current, connectionsRef.current, addedSkillsRef.current),
-                    () => readPersistedAssistantProposalSource(owner.canvasId),
-                );
-                if (!lifetime.matches(owner, projectIdRef.current)) return false;
-                const result = await autoConfirmAssistantProduction(owner.canvasId, turnId, proposal, Boolean(proposal.production || (continuePlan && continuationSessionId)));
-                await refreshLocalCanvasProjectIfChanged(owner.canvasId);
-                if (!lifetime.matches(owner, projectIdRef.current)) return false;
-                markHandledRef.current(proposalId);
-                if (proposal.production || result.continuationId) onContinuationArmed?.();
-                const estLabel = typeof result.estimatedCny === "number" ? `预计 ¥${result.estimatedCny.toFixed(2)}` : "";
-                const limitLabel = typeof result.limitCny === "number" ? `¥${result.limitCny.toFixed(2)}` : "";
-                setAssistantProposalFeedback((current) => ({
-                    ...current,
-                    [proposalId]: `已按本会话 ${limitLabel} 免确认额度自动发起${estLabel ? `（${estLabel}）` : ""}。`,
-                }));
-                return true;
-            } catch (error) {
-                if (!lifetime.matches(owner, projectIdRef.current)) return false;
-                if (error instanceof ApiError && error.reason !== "auto_confirm_disabled" && error.message) {
-                    setAssistantProposalFeedback((current) => ({ ...current, [proposalId]: error.message }));
-                }
-                return false;
-            } finally {
-                claimsRef.current.delete(proposalId);
-                setRunningProposalIds((current) => {
-                    const next = new Set(current);
-                    next.delete(proposalId);
-                    return next;
-                });
-            }
-        },
-        [connectionsRef, continuationSessionId, continuePlan, lifetime, nodesRef, onContinuationArmed, projectId],
-    );
-
-    return { runAssistantProposal, autoConfirmAssistantProposal, assistantProposalFeedback, runningProposalIds };
+    return { runAssistantProposal, assistantProposalFeedback, runningProposalIds };
 }

@@ -14,6 +14,7 @@ import {
     type AgentLifecycleEvent,
     type AgentTurnEnd,
     type AssistantAttachment,
+    type AssistantPendingApproval,
     type AssistantPlan,
     type AssistantReasoningSegment,
     type StreamHandlers,
@@ -128,6 +129,30 @@ async function readAgentTurnStream(
         }
         if (payload.type === "lifecycle") {
             handlers.onLifecycle?.(payload as unknown as AgentLifecycleEvent);
+            return;
+        }
+        if (payload.type === "approval_required" && typeof payload.proposalId === "string" && payload.proposalId) {
+            handlers.onApprovalRequired?.(payload as unknown as AssistantPendingApproval);
+            return;
+        }
+        if (payload.type === "tool_parked" && payload.approval && typeof payload.approval === "object") {
+            const approval = payload.approval as Record<string, unknown>;
+            if (typeof approval.proposalId === "string" && approval.proposalId) {
+                handlers.onApprovalRequired?.({
+                    ...(approval as unknown as AssistantPendingApproval),
+                    ...(typeof payload.toolCallId === "string" ? { toolCallId: payload.toolCallId } : {}),
+                    ...(typeof payload.toolName === "string" ? { toolName: payload.toolName } : {}),
+                    ...(typeof payload.durableTaskId === "number" ? { durableTaskId: payload.durableTaskId } : {}),
+                });
+            }
+            return;
+        }
+        if (payload.type === "heartbeat") {
+            handlers.onHeartbeat?.({
+                pendingApprovals: Array.isArray(payload.pendingApprovals)
+                    ? (payload.pendingApprovals as AssistantPendingApproval[])
+                    : undefined,
+            });
             return;
         }
         if (payload.type === "agent_end") {

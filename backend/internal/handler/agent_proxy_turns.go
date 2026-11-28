@@ -19,6 +19,7 @@ import (
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/assistantturns"
+	"infinite-canvas/backend/internal/operations"
 	"infinite-canvas/backend/internal/skills"
 )
 
@@ -118,12 +119,20 @@ func registerAgentProxyTurnRoutes(
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
+		if payload.CreateMandate != nil && strings.TrimSpace(payload.CreateMandate.CanvasID) != "" {
+			if _, allowed := requireOwnedCanvas(c, payload.CreateMandate.CanvasID); !allowed {
+				return
+			}
+		}
 		if !assistantProposalIDPattern.MatchString(c.Param("proposalId")) {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("生成建议标识无效"))
 			return
 		}
 		payload.ProposalID = c.Param("proposalId")
 		payload.AutoBudget = autoBudget
+		if autoBudget {
+			payload.CreateMandate = nil
+		}
 		result, err := svc.ConfirmAssistantProduction(c.GetString("agentUserId"), c.Param("turnId"), payload)
 		if err != nil {
 			failAssistantProposal(c, err)
@@ -469,6 +478,9 @@ func registerAgentProxyTurnRoutes(
 		if err := svc.AssistantTurns().CancelContinuations(c.GetString("agentUserId"), payload.CanvasID, cancelSession, false); err != nil {
 			failService(c, err)
 			return
+		}
+		if db := svc.Database(); db != nil {
+			_ = operations.ClosePendingApprovalsForCanvasSessionInTx(db, c.GetString("agentUserId"), payload.CanvasID, cancelSession)
 		}
 		body, err := json.Marshal(target)
 		if err != nil {

@@ -33,8 +33,8 @@ describe('Phase 2.1 Pi 1.6.0 harness upgrades and Phase 1 fixes', () => {
         },
       ],
     };
-    const shifted = adaptProviderPromptCache(mergedAnthropic, 'anthropic-messages', { sessionId: 'durable:test-1' });
-    expect(shifted.metadata).toEqual({ user_id: 'durable:test-1' });
+    const shifted = adaptProviderPromptCache(mergedAnthropic, 'anthropic-messages');
+    expect(shifted.metadata).toBeUndefined();
     expect(shifted.messages[2].content[1].cache_control).toBeUndefined();
     expect(shifted.messages[2].content[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
 

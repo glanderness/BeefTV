@@ -1,7 +1,7 @@
-// 提示词缓存与会话亲和性：走官方 GenerationTask.beforeProviderRequest 钩子。
-// 1. Anthropic 会话固定 metadata.user_id 维持渠道亲和性；
-// 2. 把 pi-ai 落在末尾易变 <beeftv_studio>/<beeftv_plan> 尾块上的 cache_control
-//    前移到紧邻的前一个稳定历史块上，避免每次画布 revision 推进都整段缓存失效。
+// 提示词缓存前移：走官方 GenerationTask.beforeProviderRequest 钩子。
+// 把 pi-ai 落在末尾易变 <beeftv_studio>/<beeftv_plan> 尾块上的 cache_control
+// 前移到紧邻的前一个稳定历史块上，避免每次画布 revision 推进都整段缓存失效。
+// （Anthropic 会话亲和键 metadata.user_id 已直接通过 Pi 原生 settings.stream.metadata 传入。）
 import { isTransientStudioTailText } from './studio-digest.mjs';
 
 const VALID_CACHE_RETENTIONS = new Set(['none', 'short', 'long']);
@@ -44,15 +44,9 @@ function attachCacheControlToMessage(message, api, marker) {
   return null;
 }
 
-export function adaptProviderPromptCache(payload, api, { sessionId = '' } = {}) {
+export function adaptProviderPromptCache(payload, api) {
   if (!payload || typeof payload !== 'object') return payload;
-  let next = payload;
-  if (api === 'anthropic-messages' && sessionId && !payload.metadata?.user_id) {
-    next = {
-      ...next,
-      metadata: { ...(payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {}), user_id: sessionId },
-    };
-  }
+  const next = payload;
   if (api !== 'anthropic-messages' && api !== 'openai-completions') return next;
   const messages = next.messages;
   if (!Array.isArray(messages) || messages.length === 0) return next;

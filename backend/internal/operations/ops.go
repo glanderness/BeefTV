@@ -278,6 +278,7 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		targetsSummary[i]["estimate"] = orderEstimate.Items[i]
 	}
 	approvalMode := ctx.Caller.EffectiveApprovalMode()
+	suggestedBase := orderEstimate.Summary.Amount
 	result := map[string]any{
 		"proposalId": proposalID, "orderId": proposalID, "kind": effectiveKind, "nodeIds": nodeIDs,
 		"model": effectiveModel, "modelKey": effectiveModelKey, "pricing": effectivePricing,
@@ -306,12 +307,16 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		}
 		proposedTargets = targets
 		productionEstimate := EstimateGenerationCost(ctx.Domain, estimateGenerationTargets(owned, targets))
+		if productionEstimate.Summary.Amount > suggestedBase {
+			suggestedBase = productionEstimate.Summary.Amount
+		}
 		estimated := make([]estimatedGenerationTarget, len(targets))
 		for i, target := range targets {
 			estimated[i] = estimatedGenerationTarget{GenerationTarget: target, Estimate: productionEstimate.Items[i]}
 		}
 		result["production"] = map[string]any{"targets": estimated, "estimate": productionEstimate.Summary}
 	}
+	result["suggestedCapCny"] = suggestedMandateCap(suggestedBase)
 	_, hasOrderRecorder := ctx.Domain.(GenerationOrderRecorder)
 	if len(proposedTargets) == 0 {
 		if strings.TrimSpace(ctx.TurnID) != "" || (hasOrderRecorder && !ctx.Caller.ReadOnly) {

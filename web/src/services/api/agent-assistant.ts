@@ -17,12 +17,15 @@ import {
     type AssistantContextUsage,
     type AssistantGenerationProposal,
     type AssistantHistory,
+    type AssistantPendingApproval,
+    type AssistantProductionMandate,
     type AssistantScriptProposal,
     type AssistantScriptRunResult,
     type AssistantSessionList,
     type AssistantThinkingLevel,
     type AssistantUndoFailure,
     type AssistantUndoResult,
+    type CreateAssistantMandateInput,
     type GenerationOrder,
 } from "./agent-assistant-types";
 
@@ -55,29 +58,73 @@ export async function confirmAssistantScriptProposal(
     );
 }
 
-export async function confirmAssistantProduction(canvasId: string, turnId: string, proposal: AssistantGenerationProposal, continuePlan = false) {
-    const normalized = normalizeAssistantProposal(proposal);
-    return http.post<{ taskIds: string[]; continuationId: string; orderId?: string; order?: GenerationOrder }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(normalized.proposalId)}/production`, {
-        canvasId, kind: normalized.kind, nodeIds: normalized.nodeIds, targets: normalized.production?.targets, continuePlan,
-        ...(normalized.regenerate ? { regenerate: true } : {}),
-    }, { ...(await uiSessionConfig()), timeout: PRODUCTION_CONFIRM_TIMEOUT_MS });
-}
-
-export async function autoConfirmAssistantProduction(canvasId: string, turnId: string, proposal: AssistantGenerationProposal, continuePlan = false) {
+export async function confirmAssistantProduction(
+    canvasId: string,
+    turnId: string,
+    proposal: AssistantGenerationProposal,
+    continuePlan = false,
+    createMandate?: CreateAssistantMandateInput,
+) {
     const normalized = normalizeAssistantProposal(proposal);
     return http.post<{
         taskIds: string[];
-        continuationId?: string;
+        continuationId: string;
         orderId?: string;
         order?: GenerationOrder;
-        autoConfirmed?: boolean;
-        estimatedCny?: number;
-        sessionSpentCny?: number;
-        limitCny?: number;
-    }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(normalized.proposalId)}/auto-confirm`, {
-        canvasId, kind: normalized.kind, nodeIds: normalized.nodeIds, targets: normalized.production?.targets, continuePlan,
+        mandate?: AssistantProductionMandate;
+    }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(normalized.proposalId)}/production`, {
+        canvasId,
+        kind: normalized.kind,
+        nodeIds: normalized.nodeIds,
+        targets: normalized.production?.targets,
+        continuePlan,
         ...(normalized.regenerate ? { regenerate: true } : {}),
+        ...(createMandate ? { createMandate } : {}),
     }, { ...(await uiSessionConfig()), timeout: PRODUCTION_CONFIRM_TIMEOUT_MS });
+}
+
+export async function listAssistantMandates(canvasId: string, sessionId?: string) {
+    const query = new URLSearchParams({ canvasId });
+    if (sessionId) query.set("sessionId", sessionId);
+    return http.get<{
+        mandates: AssistantProductionMandate[];
+        activeMandate: AssistantProductionMandate | null;
+    }>(`/assistant/mandates?${query.toString()}`, await uiSessionConfig());
+}
+
+export async function createAssistantMandate(input: CreateAssistantMandateInput) {
+    return http.post<{ mandate: AssistantProductionMandate }>(
+        "/assistant/mandates",
+        input,
+        await uiSessionConfig(),
+    );
+}
+
+export async function revokeAssistantMandate(mandateId: string) {
+    return http.post<{ mandate: AssistantProductionMandate }>(
+        `/assistant/mandates/${encodeURIComponent(mandateId)}/revoke`,
+        {},
+        await uiSessionConfig(),
+    );
+}
+
+export async function decideAssistantApproval(
+    proposalId: string,
+    payload: {
+        decision: "approve" | "reject";
+        reason?: string;
+        createMandate?: CreateAssistantMandateInput;
+    },
+) {
+    return http.post<{
+        approval: AssistantPendingApproval;
+        mandate?: AssistantProductionMandate;
+        signaled?: boolean;
+    }>(
+        `/assistant/approvals/${encodeURIComponent(proposalId)}/decide`,
+        payload,
+        { ...(await uiSessionConfig()), timeout: PRODUCTION_CONFIRM_TIMEOUT_MS },
+    );
 }
 
 export async function listGenerationOrders(canvasId: string) {
@@ -152,6 +199,8 @@ export async function getAssistantHistory(canvasId: string, sessionId?: string):
         thinkingLevel: data.thinkingLevel ? assistantThinkingLevel(data.thinkingLevel) : undefined,
         contextUsage: data.contextUsage ?? null,
         forkedFrom: data.forkedFrom ?? null,
+        activeMandate: data.activeMandate ?? null,
+        pendingApprovals: Array.isArray(data.pendingApprovals) ? data.pendingApprovals : [],
         turns: data.turns.map((turn) => ({
             ...turn,
             proposals: Array.isArray(turn.proposals) ? turn.proposals.map(normalizeAssistantProposal) : [],

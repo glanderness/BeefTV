@@ -10,7 +10,7 @@
 //   （cli/setup.js、rpc-entry.js、modes/interactive/interactive-mode.js:1562），本宿主的
 //   Durable 路径不会安装它；即便安装，undici bodyTimeout 按「每收到一段 body 就重置」，
 //   SSE 心跳（`: ping`）同样算一段，识别不出「只有心跳、没有内容」。
-// 因此保留本实现：只有实际文本/工具进展才重置计时（Durable 路径经 globalThis.fetch 包装生效）。
+// 因此保留本实现：只有实际文本/工具进展才重置计时（Durable 路径经 provider 局部 options.fetch 注入生效）。
 export const DEFAULT_MODEL_STREAM_IDLE_MS = 95000;
 
 function protocolFor(input, options) {
@@ -139,21 +139,6 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
     }
   }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid model stream idle timeout');
-  if (protocol === 'anthropic' && typeof options.body === 'string' && options.body.includes('"tools"')) {
-    const beta = 'fine-grained-tool-streaming-2025-05-14';
-    if (options.headers instanceof Headers) {
-      const headers = new Headers(options.headers);
-      const cur = headers.get('anthropic-beta') || '';
-      if (!cur.includes(beta)) headers.set('anthropic-beta', cur ? `${cur},${beta}` : beta);
-      options = { ...options, headers };
-    } else if (options.headers && typeof options.headers === 'object') {
-      const headers = { ...options.headers };
-      const key = Object.keys(headers).find(k => k.toLowerCase() === 'anthropic-beta') || 'anthropic-beta';
-      const cur = String(headers[key] || '').trim();
-      if (!cur.includes(beta)) headers[key] = cur ? `${cur},${beta}` : beta;
-      options = { ...options, headers };
-    }
-  }
   const local = new AbortController();
   let response;
   try {

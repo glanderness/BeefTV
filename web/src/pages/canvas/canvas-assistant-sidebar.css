@@ -396,6 +396,40 @@
 .canvas-assistant-feedback { display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 1.65; }
 .canvas-assistant-change .ant-btn { color: var(--muted-foreground); padding-inline: 6px; }
 .canvas-assistant-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.canvas-assistant-mandate-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--bg-secondary);
+}
+.dark .canvas-assistant-mandate-bar { background: var(--card); }
+.canvas-assistant-mandate-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.canvas-assistant-mandate-caps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.canvas-assistant-cap-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-full);
+    background: var(--background);
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+.canvas-assistant-cap-chip:hover:not(:disabled) { background: var(--surface-hover); color: var(--foreground); }
+.canvas-assistant-cap-chip[data-active="true"] {
+    border-color: var(--foreground);
+    background: var(--foreground);
+    color: var(--background);
+}
 .canvas-assistant-meta { font-size: 12px; color: var(--muted-foreground); line-height: 18px; font-variant-numeric: tabular-nums; }
 .canvas-assistant-failed { color: var(--destructive); line-height: 1.65; }
 .canvas-assistant-incomplete { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-secondary); color: var(--foreground); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }

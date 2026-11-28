@@ -14,14 +14,15 @@ import (
 )
 
 type AssistantProductionConfirmation struct {
-	CanvasID     string                        `json:"canvasId"`
-	ProposalID   string                        `json:"proposalId"`
-	Kind         string                        `json:"kind"`
-	NodeIDs      []string                      `json:"nodeIds"`
-	Targets      []operations.GenerationTarget `json:"targets"`
-	ContinuePlan bool                          `json:"continuePlan,omitempty"`
-	Regenerate   bool                          `json:"regenerate,omitempty"`
-	AutoBudget   bool                          `json:"-"`
+	CanvasID      string                                   `json:"canvasId"`
+	ProposalID    string                                   `json:"proposalId"`
+	Kind          string                                   `json:"kind"`
+	NodeIDs       []string                                 `json:"nodeIds"`
+	Targets       []operations.GenerationTarget            `json:"targets"`
+	ContinuePlan  bool                                     `json:"continuePlan,omitempty"`
+	Regenerate    bool                                     `json:"regenerate,omitempty"`
+	CreateMandate *operations.CreateProductionMandateInput `json:"createMandate,omitempty"`
+	AutoBudget    bool                                     `json:"-"`
 }
 
 func (s *Service) ConfirmAssistantProduction(userID, turnID string, input AssistantProductionConfirmation) (any, error) {
@@ -85,21 +86,9 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		if err = operations.ValidateTurnOrderConflictInTx(tx, userID, input.CanvasID, turnID, plan); err != nil {
 			return err
 		}
-		batch := []operations.GenerationTarget{}
-		wanted := map[string]bool{}
-		for _, id := range input.NodeIDs {
-			wanted[id] = true
-		}
-		for _, target := range current {
-			if wanted[target.NodeID] {
-				if input.Kind != "" && input.Kind != "mixed" && target.Kind != input.Kind {
-					return operations.InvalidArg("invalid_kind", "首批素材类型不一致")
-				}
-				batch = append(batch, target)
-			}
-		}
-		if len(batch) == 0 || len(batch) != len(wanted) {
-			return operations.InvalidArg("invalid_batch", "首批素材不在制作计划内")
+		batch, err := operations.SelectProductionBatchTargets(current, input.NodeIDs, input.Kind)
+		if err != nil {
+			return err
 		}
 		if shouldRegenerate {
 			if err = domain.releaseUnadmittedEndedTargets(userID, input.CanvasID, plan, batch); err != nil {
@@ -109,6 +98,11 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		result, err = domain.admitProductionTargets(userID, input.CanvasID, plan, batch)
 		if err != nil {
 			return err
+		}
+		if input.CreateMandate != nil && !input.AutoBudget {
+			if err = operations.AttachMandateForProductionConfirmInTx(tx, domain, userID, input.CanvasID, source.DurableSessionID, input.ProposalID, approvedBy, input.CreateMandate, doc, batch, result); err != nil {
+				return err
+			}
 		}
 		operations.AttachAutoConfirmResult(result, autoEval)
 		var continuationID string

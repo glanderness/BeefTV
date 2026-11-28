@@ -5,8 +5,10 @@ import {
     type AssistantAttachment,
     type AssistantContextUsage,
     type AssistantHistory,
+    type AssistantPendingApproval,
     type AssistantPermissionMode,
     type AssistantPlan,
+    type AssistantProductionMandate,
     type AssistantReasoningSegment,
     type AssistantSessionSummary,
     type AssistantSkillSelection,
@@ -38,6 +40,8 @@ export type CanvasRun = {
     sessions: AssistantSessionSummary[];
     turns: AssistantTurn[];
     plan: AssistantPlan | null;
+    activeMandate: AssistantProductionMandate | null;
+    pendingApprovals: AssistantPendingApproval[];
     historyLoaded: boolean;
     historyInFlight: number;
     historyNeedsReload: boolean;
@@ -92,6 +96,7 @@ export function markStoppedBeforeSend(run: CanvasRun, text = ASSISTANT_STOPPED_B
     run.reasoning = [];
     delete run.reasoningOpen[ASSISTANT_LIVE_TURN_KEY];
     run.lifecycleNotice = null;
+    run.pendingApprovals = [];
     run.recovery = null;
     run.error = text;
 }
@@ -102,6 +107,8 @@ export const createCanvasRun = (): CanvasRun => ({
     sessions: [],
     turns: [],
     plan: null,
+    activeMandate: null,
+    pendingApprovals: [],
     historyLoaded: false,
     historyInFlight: 0,
     historyNeedsReload: false,
@@ -213,6 +220,14 @@ export function applyHistoryActiveTurn(run: CanvasRun, history: AssistantHistory
     run.pendingPermissionMode = assistantPermissionMode(active.permissionMode);
     if (!run.controller && typeof active.streamed === "string") run.streamed = active.streamed;
     if (!run.controller && Array.isArray(active.reasoning)) run.reasoning = active.reasoning;
+    const recoveredApprovals = Array.isArray(history.pendingApprovals) && history.pendingApprovals.length > 0
+        ? history.pendingApprovals
+        : Array.isArray(active.pendingApprovals)
+            ? active.pendingApprovals
+            : [];
+    if (!run.controller || recoveredApprovals.length > 0) {
+        run.pendingApprovals = recoveredApprovals;
+    }
     run.supplements = active.supplementInputs?.length ? active.supplementInputs.map(input => ({ text: input.message, attachments: input.attachments, skills: input.skills, status: "accepted" })) : (active.supplements || []).map(text => ({ text, status: "accepted" }));
     run.recovery = { sessionId: nextSession, turnId: active.turnId, knownTurnIds: history.turns.map(turn => turn.turnId), text: active.userText, selectedNodeIds: active.selectedNodeIds || [] };
     run.requestId = active.requestId ?? null;
@@ -229,6 +244,19 @@ export function clearRunPendingDraft(run: CanvasRun) {
     run.streamed = "";
     run.reasoning = [];
     run.lifecycleNotice = null;
+    run.pendingApprovals = [];
+}
+
+export function upsertPendingApproval(
+    current: AssistantPendingApproval[],
+    incoming: AssistantPendingApproval,
+): AssistantPendingApproval[] {
+    if (!incoming?.proposalId) return current;
+    const idx = current.findIndex((item) => item.proposalId === incoming.proposalId);
+    if (idx < 0) return [...current, incoming];
+    const next = current.slice();
+    next[idx] = { ...next[idx], ...incoming };
+    return next;
 }
 
 export function assistantStatusResumeKey(status: AgentHostStatus | null | undefined): string {

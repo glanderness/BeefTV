@@ -11,6 +11,7 @@ import { extractParkedToolsFromLive } from './durable-turn-projection.mjs';
 const CTX = BACKGROUND_CONTEXT;
 
 export const BUSINESS_TASK_SETTLED_SIGNAL = 'business_task_settled';
+export const APPROVAL_DECISION_SIGNAL = 'approval_decision';
 
 // 业务生成/渲染任务到达终态（成功物化完成、失败、取消或物化永久失败）时由 Go 侧投递。
 export const BusinessTaskSettled = defineSignal({
@@ -26,10 +27,23 @@ export const BusinessTaskSettled = defineSignal({
   }, { open: true }),
 });
 
+// 付费工具/预算包审批结果信号：用户在界面点击「批准本次 / 批准本片预算包 / 拒绝」后由 Go 侧写库并投递，
+// 在原回合原地唤醒休眠中的 beforeTool 门控（执行时 Go 仍重新原子核验 SQLite 真源）。
+export const ApprovalDecision = defineSignal({
+  name: APPROVAL_DECISION_SIGNAL,
+  version: 1,
+  schema: obj({
+    decision: str(),
+    proposalId: opt(str()),
+    mandateId: opt(str()),
+    reason: opt(str()),
+  }, { open: true }),
+});
+
 // 静态白名单：严格映射到 defineSignal() 构建出的 token 实例（满足 Pi signals.js internalsOf WeakMap 校验）。
-// PR-5 的审批决策信号（如 ApprovalDecision）可按同一模式直接登记于此。
 const SIGNAL_TOKENS = new Map([
   [BUSINESS_TASK_SETTLED_SIGNAL, BusinessTaskSettled],
+  [APPROVAL_DECISION_SIGNAL, ApprovalDecision],
 ]);
 
 export function resolveSignalToken(signalName) {
@@ -201,6 +215,7 @@ export function updateParkedToolsState(entry, event) {
   if (event?.type === 'snapshot') {
     const live = event.docs?.['pi.live'] || event;
     entry.parkedTools = extractParkedToolsFromLive(live);
+    entry.pendingApprovals = entry.parkedTools.filter((item) => item?.approval).map((item) => item.approval);
     return;
   }
   if (event?.type === 'tool_parked') {
@@ -213,15 +228,18 @@ export function updateParkedToolsState(entry, event) {
       ...(event.stage ? { stage: event.stage } : {}),
       ...(event.saved !== undefined ? { saved: event.saved } : {}),
       ...(event.total !== undefined ? { total: event.total } : {}),
+      ...(event.approval ? { approval: event.approval } : {}),
     };
     const idx = list.findIndex((item) => item.toolCallId === next.toolCallId);
     if (idx >= 0) list[idx] = next;
     else list.push(next);
     entry.parkedTools = list;
+    entry.pendingApprovals = list.filter((item) => item?.approval).map((item) => item.approval);
     return;
   }
   if (event?.type === 'tool_execution_end' && event.toolCallId && Array.isArray(entry.parkedTools)) {
     entry.parkedTools = entry.parkedTools.filter((item) => item.toolCallId !== event.toolCallId);
+    entry.pendingApprovals = entry.parkedTools.filter((item) => item?.approval).map((item) => item.approval);
   }
 }
 
@@ -232,12 +250,16 @@ export function attachParkedStreamHeartbeat(res, entry, { turnId, intervalMs, li
       return;
     }
     if (!Array.isArray(entry.parkedTools) || entry.parkedTools.length === 0) return;
+    const pendingApprovals = Array.isArray(entry.pendingApprovals)
+      ? entry.pendingApprovals
+      : entry.parkedTools.filter((item) => item?.approval).map((item) => item.approval);
     sendLine(res, {
       type: 'heartbeat',
       parked: true,
       sessionId: entry.sessionId,
       turnId,
       parkedTools: entry.parkedTools,
+      ...(pendingApprovals.length > 0 ? { pendingApprovals } : {}),
       at: Date.now(),
     });
   }, intervalMs);

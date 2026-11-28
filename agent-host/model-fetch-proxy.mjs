@@ -1,3 +1,6 @@
+// 局部模型请求 Fetch 包装器：通过 provider.stream / streamSimple 的 options.fetch 注入，
+// 绝不覆写进程级 globalThis.fetch，同时在真实出站边界保留 URL 改写、原生素材二次鉴权、
+// 请求预算硬拒绝、派发诊断账本、自定义请求头与 SSE 进展空闲看门狗。
 import { resolveHostModelRequestUrl } from './canvas-turn.mjs';
 import { budgetError, spendModelRequest } from './request-budget.mjs';
 import { adaptMediaRequest, trustedMediaSources } from './media-content.mjs';
@@ -5,7 +8,7 @@ import { nativeSourceKey } from './native-history.mjs';
 import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
 import { classifyModelFetchError, classifyModelHttpStatus } from './dispatch-diagnostics.mjs';
 
-export function installModelFetchProxy({
+export function createModelFetchProxy({
   baseUrl,
   isRawBaseUrl,
   modelApi,
@@ -16,13 +19,14 @@ export function installModelFetchProxy({
   lifetimeBudget,
   dispatchDiagnostics,
   getOps,
+  baseFetch = globalThis.fetch,
 }) {
   const outbound = [];
   let dispatched = 0;
   const baseOrigin = baseUrl ? new URL(baseUrl).origin : '';
-  const realFetch = globalThis.fetch;
+  const realFetch = typeof baseFetch === 'function' ? baseFetch : globalThis.fetch;
 
-  globalThis.fetch = async (input, options = {}) => {
+  const modelFetch = async (input, options = {}) => {
     const raw = typeof input === 'string' ? input : input.url;
     const resolvedRaw = resolveHostModelRequestUrl(raw, { baseUrl, isRaw: isRawBaseUrl, api: modelApi });
     if (resolvedRaw !== raw) {
@@ -134,7 +138,25 @@ export function installModelFetchProxy({
   };
 
   return {
+    fetch: modelFetch,
     outbound,
     getDispatched: () => dispatched,
+  };
+}
+
+// 将局部 modelFetch 仅注入目标 provider 的 stream / streamSimple options.fetch，不触碰全局 fetch。
+export function wrapProviderWithModelFetch(provider, modelFetch, runInContext = (fn) => fn()) {
+  if (!provider || typeof provider !== 'object') return provider;
+  const wrapMethod = (fn) => {
+    if (typeof fn !== 'function') return fn;
+    return (model, context, options) => runInContext(() => fn.call(provider, model, context, {
+      ...(options && typeof options === 'object' ? options : {}),
+      fetch: options?.fetch ?? modelFetch,
+    }));
+  };
+  return {
+    ...provider,
+    ...(typeof provider.stream === 'function' ? { stream: wrapMethod(provider.stream) } : {}),
+    ...(typeof provider.streamSimple === 'function' ? { streamSimple: wrapMethod(provider.streamSimple) } : {}),
   };
 }
