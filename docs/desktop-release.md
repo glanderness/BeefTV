@@ -191,7 +191,7 @@ export BEEFTV_UPDATER_PUBLIC_KEY="$(tr -d '[:space:]' < /path/to/beeftv-updater.
 
 脚本会把下面两个链接期变量写进二进制：
 
-- `infinite-canvas/backend/internal/desktopupdate.FeedURL` = `https://updates.beefapi.com/beeftv/desktop-update-v2.json`（`v2.1.0+`；`v2.0.6` 及以前为 `desktop-update.json`）
+- `infinite-canvas/backend/internal/desktopupdate.FeedURL` = `https://updates.beeftv.app/beeftv/desktop-update-v2.json`（`v2.1.0+`；`v2.0.6` 及以前为 `desktop-update.json`）
 - `infinite-canvas/backend/internal/desktopupdate.PublicKey` = 公钥 Base64
 
 两个都为空时，应用里的更新器保持关闭，但仍显示当前版本。
@@ -227,8 +227,8 @@ zip 里的布局：
 新版本更新清单和安装包使用 Cloudflare R2（国内源镜像同步至 CNB `https://cnb.cool/beeftv-downloads/desktop`）：
 
 ```text
-https://updates.beefapi.com/beeftv/desktop-update.json
-https://updates.beefapi.com/beeftv/desktop-update-v2.json
+https://updates.beeftv.app/beeftv/desktop-update.json
+https://updates.beeftv.app/beeftv/desktop-update-v2.json
 ```
 
 `v2.0.6` 及更早客户端使用 `desktop-update.json`（`schema: 1`，严格解码，只含单 `url`）；`v2.1.0` 起使用 `desktop-update-v2.json`（`schema: 2`，含 `urls: [国内源, R2]` 或 `[R2]`，并可选携带 `deltas[fromVersion]` 增量包）。客户端按系统时区或语言判断：中国大陆优先连接国内源（CNB），其他地区优先 R2；任一源连接失败、超时或持续低速时自动切换另一源并从已下载字节续传，最终以同一份 `sha256` 校验为准。
@@ -239,11 +239,11 @@ https://updates.beefapi.com/beeftv/desktop-update-v2.json
 
 Linux 发布任务会从最终 ZIP 解压执行随包 CLI，并在 Xvfb 中启动桌面程序，确认本地后端和可见窗口。当 PR 修改了打包脚本、媒体运行时或桌面更新器路径时，`Desktop installer checks` 工作流会提前执行原生打包、Xvfb 启动与 `.deb` 安装校验，不发布版本，也不调用付费模型。
 
-`v1.5.6` 及以前的更新器内置 GitHub 清单地址；早期过渡版本曾内置旧版对象存储清单地址，该历史清单入口现已停更（停留在最后一次同步的版本，不再随新发版更新）。仍指向历史清单地址的旧客户端读取不会报错，但检查更新不会收到后续新版本；只需手动安装一次带 `updates.beefapi.com` 更新源的新版安装包，之后即可继续应用内更新（用户数据目录保持不变）。已无工作流引用的旧版对象存储发布密钥可在仓库配置中吊销。
+`v1.5.6` 及以前的更新器内置 GitHub 清单地址；早期过渡版本曾内置旧版对象存储清单地址，该历史清单入口现已停更（停留在最后一次同步的版本，不再随新发版更新）。仍指向历史清单地址的旧客户端读取不会报错，但检查更新不会收到后续新版本；只需手动安装一次带 `updates.beeftv.app` 更新源的新版安装包，之后即可继续应用内更新（用户数据目录保持不变）。已无工作流引用的旧版对象存储发布密钥可在仓库配置中吊销。
 
 ### R2 发布配置
 
-使用 `beeftv-releases` 桶及自定义域名 `updates.beefapi.com`，只存放公开发行文件。Actions 使用 Secret `BEEFTV_R2_ACCESS_KEY_ID`、`BEEFTV_R2_SECRET_ACCESS_KEY` 和 Variable `BEEFTV_R2_ENDPOINT`，region 为 `auto`。更新签名密钥保持不变。版本对象长期缓存且不可变，最新清单禁止缓存；生产下载不使用限流的 `r2.dev` 开发域名。
+使用 `beeftv-releases` 桶及自定义域名 `updates.beeftv.app`，只存放公开发行文件。Actions 使用 Secret `BEEFTV_R2_ACCESS_KEY_ID`、`BEEFTV_R2_SECRET_ACCESS_KEY` 和 Variable `BEEFTV_R2_ENDPOINT`，region 为 `auto`。更新签名密钥保持不变。版本对象长期缓存且不可变，最新清单禁止缓存；生产下载不使用限流的 `r2.dev` 开发域名。
 
 `scripts/publish-desktop-r2.py` 面向 R2 发布（`check-store`、`stage`、`activate`、`activate-v2`），复用 `update-release verify` 验签，并在每次操作前用随机探测对象验证存储端原生 `If-None-Match` / `If-Match` 条件写，检测到失效立即停发。由于自定义域名的 CDN 缓存命中可能忽略 `If-Match`，`stage` 和 `activate` 均从公开地址完整读取文件并核对大小与 SHA-256。
 

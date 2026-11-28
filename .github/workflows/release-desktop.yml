@@ -22,8 +22,8 @@ permissions:
 
 env:
   GOTOOLCHAIN: local
-  BEEFTV_UPDATER_FEED_URL: https://updates.beefapi.com/beeftv/desktop-update-v2.json
-  UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+  BEEFTV_UPDATER_FEED_URL: https://updates.beeftv.app/beeftv/desktop-update-v2.json
+  UPDATER_DOWNLOAD_BASE: https://updates.beeftv.app/beeftv
   RELEASE_ENDPOINT: ${{ vars.BEEFTV_R2_ENDPOINT }}
   RELEASE_REGION: auto
   RELEASE_BUCKET: beeftv-releases

@@ -29,7 +29,7 @@ IMMUTABLE = "public, max-age=31536000, immutable"
 REVALIDATE = "no-store, max-age=0"
 MAX_MANIFEST = 2 * 1024 * 1024
 GITHUB_LATEST_FEED = "https://github.com/glanderness/BeefTV/releases/latest/download/desktop-update.json"
-R2_PUBLIC_BASE = "https://updates.beefapi.com/beeftv"
+R2_PUBLIC_BASE = "https://updates.beeftv.app/beeftv"
 CNB_PUBLIC_BASE = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download"
 
 
@@ -388,10 +388,13 @@ class Publisher:
             previous = Path(directory) / "previous-v2.json"
             etag = self.store.get(LATEST_V2, previous)
             if etag is not None:
-                old = self.load_v2(previous)
+                old = signed_payload(previous, self.verifier)
+                if old.get("schema") != 2 or not isinstance(old.get("platforms"), dict):
+                    raise PublishError("Previous latest v2 feed is not a valid schema 2 manifest")
                 if version_tuple(old["version"]) > version_tuple(payload["version"]):
                     raise PublishError("Refusing to downgrade latest v2 feed")
                 if version_tuple(old["version"]) == version_tuple(payload["version"]):
+                    old = self.load_v2(previous)
                     if fingerprint(previous) == fingerprint(manifest):
                         self.public.check(f"{self.public_base}/desktop-update-v2.json",
                                           *fingerprint(manifest), version=payload["version"])

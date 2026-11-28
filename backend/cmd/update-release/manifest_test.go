@@ -84,7 +84,7 @@ func TestSignVerifyRoundTripAndTamper(t *testing.T) {
 		t.Fatalf("notes %q", body.Notes)
 	}
 	asset := body.Platforms[platformDarwinARM64]
-	if asset.URL != "https://updates.beefapi.com/beeftv/v1.6.0/BeefTV-v1.6.0-darwin-arm64.zip" {
+	if asset.URL != "https://updates.beeftv.app/beeftv/v1.6.0/BeefTV-v1.6.0-darwin-arm64.zip" {
 		t.Fatalf("url %q", asset.URL)
 	}
 	if asset.Size <= 0 || len(asset.SHA256) != 64 {
@@ -270,7 +270,7 @@ func TestSignSchema2AndFromEnvelopeWithDomesticMirror(t *testing.T) {
 	}
 	wantURLs := []string{
 		"https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip",
-		"https://updates.beefapi.com/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip",
+		"https://updates.beeftv.app/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip",
 	}
 	gotURLs := domBody.Platforms[platformDarwinARM64].URLs
 	if len(gotURLs) != 2 || gotURLs[0] != wantURLs[0] || gotURLs[1] != wantURLs[1] {
@@ -362,7 +362,7 @@ func TestSignSchema2AndFromEnvelopeWithDomesticMirror(t *testing.T) {
 	gotDeltaURLs := deltaDomBody.Platforms[platformDarwinARM64].Deltas["v2.0.6"].URLs
 	wantDeltaURLs := []string{
 		"https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.1.0/BeefTV-v2.1.0-darwin-arm64-from-v2.0.6.delta.zip",
-		"https://updates.beefapi.com/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64-from-v2.0.6.delta.zip",
+		"https://updates.beeftv.app/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64-from-v2.0.6.delta.zip",
 	}
 	if len(gotDeltaURLs) != 2 || gotDeltaURLs[0] != wantDeltaURLs[0] || gotDeltaURLs[1] != wantDeltaURLs[1] {
 		t.Fatalf("got delta URLs %v, want %v", gotDeltaURLs, wantDeltaURLs)

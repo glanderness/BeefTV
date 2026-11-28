@@ -82,9 +82,8 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 				Parts: []ArtifactPart{
 					{
 						URLs: []string{
-							"https://updates.beefapi.com/beeftv/components/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
+							"https://updates.beeftv.app/beeftv/components/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
 							"https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
-							"https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
 						},
 						Size: 10, SHA256: hash,
 					},
@@ -97,10 +96,9 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 		},
 		Model: Artifact{
 			URLs: []string{
-				"https://updates.beefapi.com/beeftv/components/depth-runtime-v2/video_depth_anything_vits.pth",
+				"https://updates.beeftv.app/beeftv/components/depth-runtime-v2/video_depth_anything_vits.pth",
 				"https://huggingface.co/depth-anything/Video-Depth-Anything-Small/resolve/main/video_depth_anything_vits.pth",
 				"https://github.com/glanderness/BeefTV/releases/download/v1.5.5/video_depth_anything_vits.pth",
-				"https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/video_depth_anything_vits.pth",
 			},
 			Size: 10, SHA256: hash,
 		},
@@ -141,7 +139,7 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 		cnbDepthCacheMu.Unlock()
 	})
 
-	// 1. Before CNB depth-runtime-v2 sync completes (404 record): COS leads, zero unverified CNB 404 URLs.
+	// 1. Before CNB depth-runtime-v2 sync completes (404 record): R2 leads, zero unverified CNB 404 URLs.
 	depthCNBRecordURL = server.URL + "/cnb-missing"
 	manifestNoCNB, artifactNoCNB, err := loadArtifacts(context.Background(), EnsureOptions{
 		Platform:         "windows-amd64",
@@ -153,8 +151,7 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 		t.Fatalf("loadArtifacts (no CNB): %v", err)
 	}
 	wantPart1NoCNB := []string{
-		"https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
-		"https://updates.beefapi.com/beeftv/components/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
+		"https://updates.beeftv.app/beeftv/components/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
 		"https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
 	}
 	if !reflect.DeepEqual(artifactNoCNB.Parts[0].URLs, wantPart1NoCNB) {
@@ -164,7 +161,7 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 		t.Fatalf("expected unverified CNB URL omitted from model URLs, got %#v", manifestNoCNB.Model.URLs)
 	}
 
-	// 2. Once CNB verification record matches size + SHA-256: CNB is promoted to #1 ahead of COS.
+	// 2. Once CNB verification record matches size + SHA-256: CNB is promoted to #1 ahead of R2.
 	depthCNBRecordURL = server.URL + "/cnb-verified"
 	manifest, artifact, err := loadArtifacts(context.Background(), EnsureOptions{
 		Platform:         "windows-amd64",
@@ -177,8 +174,7 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 	}
 	wantPart1 := []string{
 		"https://cnb.cool/beeftv-downloads/desktop/-/releases/download/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
-		"https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
-		"https://updates.beefapi.com/beeftv/components/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
+		"https://updates.beeftv.app/beeftv/components/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
 		"https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001",
 	}
 	if !reflect.DeepEqual(artifact.Parts[0].URLs, wantPart1) {
@@ -189,8 +185,7 @@ func TestLoadArtifactsPrioritizesDomesticMirrorsForOfficialSourcesWithoutRewriti
 	}
 	wantModel := []string{
 		"https://cnb.cool/beeftv-downloads/desktop/-/releases/download/depth-runtime-v2/video_depth_anything_vits.pth",
-		"https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/video_depth_anything_vits.pth",
-		"https://updates.beefapi.com/beeftv/components/depth-runtime-v2/video_depth_anything_vits.pth",
+		"https://updates.beeftv.app/beeftv/components/depth-runtime-v2/video_depth_anything_vits.pth",
 		"https://github.com/glanderness/BeefTV/releases/download/v1.5.5/video_depth_anything_vits.pth",
 		"https://huggingface.co/depth-anything/Video-Depth-Anything-Small/resolve/main/video_depth_anything_vits.pth",
 	}

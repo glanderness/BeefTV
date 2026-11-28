@@ -18,8 +18,8 @@ var (
 )
 
 const (
-	DefaultFeedURL  = "https://updates.beefapi.com/beeftv/desktop-update-v2.json"
-	LegacyFeedURL   = "https://updates.beefapi.com/beeftv/desktop-update.json"
+	DefaultFeedURL  = "https://updates.beeftv.app/beeftv/desktop-update-v2.json"
+	LegacyFeedURL   = "https://updates.beeftv.app/beeftv/desktop-update.json"
 	helperFlag      = "--beeftv-update-helper"
 	appBundleName   = "BeefTV.app"
 	linuxBundleName = "BeefTV-linux"
@@ -177,7 +177,7 @@ func isDomesticArtifactURL(rawURL string) bool {
 		return false
 	}
 	host := strings.ToLower(parsed.Hostname())
-	return host == "cnb.cool" || host == "asset.cnb.cool" || strings.HasSuffix(host, ".myqcloud.com")
+	return host == "cnb.cool" || host == "asset.cnb.cool"
 }
 
 func orderArtifactURLs(urls []string, preferDomestic bool) []string {

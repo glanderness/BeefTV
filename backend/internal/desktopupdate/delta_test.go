@@ -151,9 +151,9 @@ func TestEnvelopeDeltaSchemaValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	validSHA := strings.Repeat("a", 64)
-	r2Full := "https://updates.beefapi.com/beeftv/v2.1.1/BeefTV-v2.1.1-darwin-arm64.zip"
+	r2Full := "https://updates.beeftv.app/beeftv/v2.1.1/BeefTV-v2.1.1-darwin-arm64.zip"
 	cnbDelta := "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.1.1/BeefTV-v2.1.1-darwin-arm64-from-v2.1.0.delta.zip"
-	r2Delta := "https://updates.beefapi.com/beeftv/v2.1.1/BeefTV-v2.1.1-darwin-arm64-from-v2.1.0.delta.zip"
+	r2Delta := "https://updates.beeftv.app/beeftv/v2.1.1/BeefTV-v2.1.1-darwin-arm64-from-v2.1.0.delta.zip"
 
 	// Schema 1 must reject deltas.
 	v1WithDelta := Payload{
@@ -399,8 +399,8 @@ func newDeltaTestServer(
 ) *httptest.Server {
 	t.Helper()
 	const (
-		fullURL  = "https://updates.beefapi.com/beeftv/v2.1.1/BeefTV-v2.1.1-darwin-arm64.zip"
-		deltaURL = "https://updates.beefapi.com/beeftv/v2.1.1/BeefTV-v2.1.1-darwin-arm64-from-v2.1.0.delta.zip"
+		fullURL  = "https://updates.beeftv.app/beeftv/v2.1.1/BeefTV-v2.1.1-darwin-arm64.zip"
+		deltaURL = "https://updates.beeftv.app/beeftv/v2.1.1/BeefTV-v2.1.1-darwin-arm64-from-v2.1.0.delta.zip"
 	)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -472,7 +472,7 @@ func newDeltaTestEngine(t *testing.T, pub string, server *httptest.Server, appPa
 		CurrentVersion: "v2.1.0",
 		DataDir:        t.TempDir(),
 		StagingRoot:    t.TempDir(),
-		FeedURL:        "https://updates.beefapi.com/beeftv/desktop-update-v2.json",
+		FeedURL:        "https://updates.beeftv.app/beeftv/desktop-update-v2.json",
 		PublicKey:      pub,
 		Platform:       "darwin-arm64",
 		Locale:         "en-US",
@@ -615,7 +615,7 @@ func TestWindowsEngineIncrementalUpdateAndFallback(t *testing.T) {
 			CurrentVersion: "v2.1.0",
 			DataDir:        t.TempDir(),
 			StagingRoot:    t.TempDir(),
-			FeedURL:        "https://updates.beefapi.com/beeftv/desktop-update-v2.json",
+			FeedURL:        "https://updates.beeftv.app/beeftv/desktop-update-v2.json",
 			PublicKey:      pub,
 			Platform:       "windows-amd64",
 			Locale:         "zh-CN",

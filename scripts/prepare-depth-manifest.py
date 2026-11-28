@@ -5,15 +5,14 @@ from pathlib import Path
 import sys
 
 CNB_BASE = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/depth-runtime-v2/"
-COS_BASE = "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/"
-R2_BASE = "https://updates.beefapi.com/beeftv/components/depth-runtime-v2/"
+R2_BASE = "https://updates.beeftv.app/beeftv/components/depth-runtime-v2/"
 GITHUB_BASE = "https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/"
 MODEL_NAME = "video_depth_anything_vits.pth"
 MODEL_GITHUB_URL = f"https://github.com/glanderness/BeefTV/releases/download/v1.5.5/{MODEL_NAME}"
 
 
 def component_urls(name, include_cnb=False):
-    urls = [COS_BASE + name, R2_BASE + name, GITHUB_BASE + name]
+    urls = [R2_BASE + name, GITHUB_BASE + name]
     return [CNB_BASE + name, *urls] if include_cnb else urls
 
 
@@ -55,7 +54,7 @@ def prepare(root, include_cnb=False):
             artifact = verify_file(root, meta, include_cnb=include_cnb)
         artifact.update(files=meta["files"], expandedSize=meta["expandedSize"])
         runtimes[f"windows-amd64/{variant}"] = artifact
-    model_urls = [COS_BASE + MODEL_NAME, R2_BASE + MODEL_NAME, MODEL_GITHUB_URL]
+    model_urls = [R2_BASE + MODEL_NAME, MODEL_GITHUB_URL]
     if include_cnb:
         model_urls.insert(0, CNB_BASE + MODEL_NAME)
     return {"version": 2, "runtimes": runtimes, "model": {

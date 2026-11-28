@@ -21,8 +21,7 @@ import (
 const (
 	officialCNBBase       = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/depth-runtime-v2/"
 	officialCNBRecordName = "beeftv-depth-mirror.json"
-	officialCOSBase       = "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/depth-runtime-v2/"
-	officialR2Base        = "https://updates.beefapi.com/beeftv/components/depth-runtime-v2/"
+	officialR2Base        = "https://updates.beeftv.app/beeftv/components/depth-runtime-v2/"
 	officialGHBase        = "https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/"
 	officialModelGH       = "https://github.com/glanderness/BeefTV/releases/download/v1.5.5/video_depth_anything_vits.pth"
 )
@@ -317,7 +316,7 @@ func normalizeOfficialURLs(urls []string, expectedSize int64, expectedSHA256 str
 		return urls
 	}
 	var fileName string
-	var buckets [5][]string
+	var buckets [4][]string
 	for _, raw := range urls {
 		bucket, name, ok := classifyOfficialDepthURL(raw)
 		if !ok {
@@ -337,20 +336,19 @@ func normalizeOfficialURLs(urls []string, expectedSize int64, expectedSHA256 str
 	if cnbOK && cnbMatch.Size == expectedSize && strings.EqualFold(cnbMatch.SHA256, strings.TrimSpace(expectedSHA256)) {
 		buckets[0] = append([]string{officialCNBBase + fileName}, buckets[0]...)
 	} else {
-		// Unverified CNB URLs are never placed ahead of live COS/R2 mirrors.
+		// Unverified CNB URLs are never placed ahead of live R2/GitHub mirrors.
 		buckets[0] = nil
 	}
-	buckets[1] = append([]string{officialCOSBase + fileName}, buckets[1]...)
-	buckets[2] = append([]string{officialR2Base + fileName}, buckets[2]...)
-	if len(buckets[3]) == 0 {
+	buckets[1] = append([]string{officialR2Base + fileName}, buckets[1]...)
+	if len(buckets[2]) == 0 {
 		if fileName == "video_depth_anything_vits.pth" {
-			buckets[3] = []string{officialModelGH}
+			buckets[2] = []string{officialModelGH}
 		} else {
-			buckets[3] = []string{officialGHBase + fileName}
+			buckets[2] = []string{officialGHBase + fileName}
 		}
 	}
-	seen := make(map[string]struct{}, len(urls)+4)
-	ordered := make([]string, 0, len(urls)+4)
+	seen := make(map[string]struct{}, len(urls)+3)
+	ordered := make([]string, 0, len(urls)+3)
 	for _, group := range buckets {
 		for _, candidate := range group {
 			if _, exists := seen[candidate]; exists {
@@ -375,14 +373,12 @@ func classifyOfficialDepthURL(rawURL string) (bucket int, fileName string, ok bo
 	switch {
 	case parsed.Host == "cnb.cool" && strings.HasPrefix(parsed.Path, "/beeftv-downloads/"):
 		return 0, base, true
-	case parsed.Host == "beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com":
+	case parsed.Host == "updates.beeftv.app" && strings.HasPrefix(parsed.Path, "/beeftv/components/depth-runtime-v2/"):
 		return 1, base, true
-	case parsed.Host == "updates.beefapi.com":
-		return 2, base, true
 	case parsed.Host == "github.com" && strings.HasPrefix(parsed.Path, "/glanderness/BeefTV/"):
-		return 3, base, true
+		return 2, base, true
 	case parsed.Host == "huggingface.co":
-		return 4, base, true
+		return 3, base, true
 	default:
 		return -1, "", false
 	}

@@ -110,7 +110,7 @@ func TestVerifyEnvelopeV2MultiSourceAndStrictDomainValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	cnbURL := "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip"
-	r2URL := "https://updates.beefapi.com/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip"
+	r2URL := "https://updates.beeftv.app/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip"
 	valid := Payload{
 		Schema:  payloadSchemaV2,
 		Version: "v2.1.0",
@@ -250,7 +250,7 @@ func TestLegacySchema1EnvelopeReadableByV206StrictParser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r2URL := "https://updates.beefapi.com/beeftv/v2.1.0/BeefTV-v2.1.0-windows-amd64.zip"
+	r2URL := "https://updates.beeftv.app/beeftv/v2.1.0/BeefTV-v2.1.0-windows-amd64.zip"
 	v1Payload := testPayload("v2.1.0", "windows-amd64", r2URL, strings.Repeat("cd", 32), 280362215, "兼容 v2.0.6 旧客户端")
 	raw, err := SignEnvelope(priv, v1Payload)
 	if err != nil {
@@ -293,7 +293,7 @@ func TestLegacySchema1EnvelopeReadableByV206StrictParser(t *testing.T) {
 
 func TestSourceOrderingByMainlandChinaLocaleAndTimezone(t *testing.T) {
 	cnbURL := "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip"
-	r2URL := "https://updates.beefapi.com/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip"
+	r2URL := "https://updates.beeftv.app/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip"
 	input := []string{r2URL, cnbURL}
 
 	cases := []struct {
