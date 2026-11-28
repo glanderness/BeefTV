@@ -1,6 +1,7 @@
 package modelcatalog
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 
@@ -31,11 +32,15 @@ var assistantProtocols = map[string]string{
 }
 
 type AssistantModelProfile struct {
-	Model         string `json:"model"`
-	Capability    string `json:"capability"`
-	Protocol      string `json:"protocol"`
-	ContextWindow int    `json:"contextWindow,omitempty"`
-	MaxTokens     int    `json:"maxTokens,omitempty"`
+	Model                  string                 `json:"model"`
+	Capability             string                 `json:"capability"`
+	Protocol               string                 `json:"protocol"`
+	ContextWindow          int                    `json:"contextWindow,omitempty"`
+	MaxTokens              int                    `json:"maxTokens,omitempty"`
+	InputModalities        []string               `json:"inputModalities,omitempty"`
+	SupportedRequestFields []string               `json:"supportedRequestFields,omitempty"`
+	CapabilityConfig       *ModelCapabilityConfig `json:"capabilityConfig,omitempty"`
+	MediaCapabilities      json.RawMessage        `json:"mediaCapabilities,omitempty"`
 }
 
 type AssistantChannel struct {

@@ -16,8 +16,9 @@ const mcpToolBase = name => typeof name === 'string' ? name.replace(/_[a-f0-9]{1
 const mediaReviewTool = mcpOperationName('media.review')
 const submitToolPattern = /^mcp__beeftv__canvas_generation_submit(?:_[a-f0-9]{12})?$/
 const regenerateToolPattern = /^mcp__beeftv__canvas_generation_regenerate(?:_[a-f0-9]{12})?$/
-// submit 与 regenerate 都会创建付费任务；两者提交成功后都要等结果并唤醒。
-const generationSubmissionPattern = /^mcp__beeftv__canvas_generation_(?:submit|regenerate)(?:_[a-f0-9]{12})?$/
+// submit / regenerate 会创建付费生成任务，canvas.timeline.render / deliver 会创建异步渲染任务；
+// 提交成功后都要等结果并唤醒。
+const asyncTaskSubmissionPattern = /^mcp__beeftv__(?:canvas_generation_(?:submit|regenerate)|canvas_timeline_(?:render|deliver))(?:_[a-f0-9]{12})?$/
 
 // 连接时从操作目录收集「执行即创建付费生成任务」的工具名。
 // 已知的 submit / regenerate 另有按名兜底，目录缺失或漏标时也不会漏审批。
@@ -217,65 +218,35 @@ function resultPayload(result) {
   }
 }
 
-// 成功提交的返回里可能有 taskIds（整批）或 taskId（单个）。重复提交复用同一任务时也只认一次。
-// 原地重做和普通提交一样会创建任务；「每次问我」返回 pending_approval 时还没生成、没扣费，
-// 不能当成提交成功去等结果或唤醒。
+// 成功提交的返回里可能有 taskIds（整批）、taskId（单个，含 canvas.timeline.render）或 renderTaskId（canvas.timeline.deliver）。
+// 重复提交复用同一任务时也只认一次；「每次问我」返回 pending_approval 时还没生成、没扣费，不能进入等待或唤醒。
 export function submittedTaskIds(name, result) {
-  if (!generationSubmissionPattern.test(name) || result?.isError) return []
+  if (!asyncTaskSubmissionPattern.test(name) || result?.isError) return []
   const payload = resultPayload(result)
   if (payload?.status === 'pending_approval') return []
-  const values = Array.isArray(payload?.taskIds) ? payload.taskIds : payload?.taskId ? [payload.taskId] : []
+  const values = Array.isArray(payload?.taskIds)
+    ? payload.taskIds
+    : payload?.taskId
+      ? [payload.taskId]
+      : payload?.renderTaskId
+        ? [payload.renderTaskId]
+        : []
   return [...new Set(values.filter(id => typeof id === 'string' && id))]
 }
 
-function taskPhase(task) {
-  return typeof task?.outcome?.phase === 'string' ? task.outcome.phase : ''
-}
+const pendingWaitStates = new Set(['downloading', 'retrying', 'waiting', 'saving', 'fetching', 'running', 'pending', 'queued'])
+const succeededWaitStates = new Set(['succeeded', 'success', 'completed', 'ready'])
+const incompleteWaitStates = new Set(['incomplete', 'materialization_failed'])
+const failedWaitStates = new Set(['failed', 'error', 'cancelled', 'canceled'])
+const incompleteBaseReason = '结果没有保存成功，只能重新保存，不能重新生成'
 
-function resultStateReady(task) {
-  if (typeof task?.resultState !== 'string' || !task.resultState) return true
-  const normalized = task.resultState.toLowerCase()
-  return normalized === 'ready' || normalized === 'succeeded'
-}
-
-function taskSaved(task) {
-  if (task?.status !== 'succeeded') return false
-  const phase = taskPhase(task)
-  if (phase && phase !== 'ready') return false
-  if (!resultStateReady(task)) return false
-  return Boolean(task.outputs?.length && task.outputs.every(output => output?.resourceId && !output?.materializationErrorCode))
-}
-
-// 与内置 await-business-tasks 一致：任务本身成功但产物没能保存，是「未完成入库」，
-// 不是生成失败；这类结果只能重新保存，不能重新生成。
-function taskIncomplete(task) {
-  if (task?.status !== 'succeeded') return false
-  // 结果还在下载/重试入库时不能提前说「没保存成功」，否则模型会重复保存或重新生成。
-  if (taskDeliveryPending(task)) return false
-  const phase = taskPhase(task)
-  if (phase === 'failed') return true
-  if (typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_permanent') return true
-  // failed_retryable 表示后端还在重试入库，不能提前当成「保存失败」。
-  if (typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_retryable') return false
-  if (phase === 'fetching' || phase === 'retrievable') return false
-  return Boolean(task?.outputs?.length && task.outputs.every(output => output?.resourceId || output?.materializationErrorCode) &&
-    task.outputs.some(output => output?.materializationErrorCode))
+function normalizedLower(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
 }
 
 function taskDeliveryPending(task) {
   const outputs = task?.delivery?.outputs
   return Array.isArray(outputs) && outputs.some(output => ['downloading', 'retrying', 'waiting'].includes(output?.state))
-}
-
-function taskFailed(task) {
-  if (task?.status === 'cancelled') return true
-  const phase = taskPhase(task)
-  if (phase === 'retrievable' || phase === 'fetching' || phase === 'running') return false
-  // failed_retryable 只对已成功的生成表示「结果还在下载/重试入库」；失败任务的可重试标记仍是终态失败。
-  if (task?.status === 'succeeded' && typeof task?.resultState === 'string' && task.resultState.toLowerCase() === 'failed_retryable') return false
-  // /ops/task.get 不一定带 outcome.phase；投递还在下载或重试时不能当成终态失败。
-  if (taskDeliveryPending(task)) return false
-  return task?.status === 'failed'
 }
 
 // 后端 reason 与入库错误码是内部值，拼进对话前先换成用户能看懂的短句；认不出的内部码不展示。
@@ -308,6 +279,7 @@ function failureReason(task) {
     typeof error === 'string' ? error : undefined,
     typeof error?.message === 'string' ? error.message : undefined,
     typeof error?.msg === 'string' ? error.msg : undefined,
+    task?.outcome?.reason,
     task?.reason,
     task?.note,
   ]
@@ -318,76 +290,104 @@ function failureReason(task) {
   const materialized = Array.isArray(task?.outputs) && task.outputs.find(output => output?.materializationErrorCode)
   const materializedText = materialized ? readableReason(String(materialized.materializationErrorCode)) : ''
   if (materializedText) return materializedText
-  if (task?.status === 'cancelled') return '已取消'
+  if (normalizedLower(task?.status) === 'cancelled' || normalizedLower(task?.status) === 'canceled') return '已取消'
   return ''
 }
 
-// 判定照搬内置 await-business-tasks：成功、产物已保存、可绑定才算完成。
-export function taskOutcome(task, taskId = task?.taskId) {
-  if (taskSaved(task)) return { taskId, state: 'succeeded', reason: '' }
-  if (taskFailed(task)) return { taskId, state: 'failed', reason: failureReason(task) }
-  if (taskIncomplete(task)) return { taskId, state: 'incomplete', reason: '结果没有保存成功，只能重新保存，不能重新生成' }
-  return { taskId, state: 'pending', reason: '' }
+function incompleteReason(task) {
+  const original = failureReason(task)
+  return original ? `${incompleteBaseReason}（${original}）` : incompleteBaseReason
 }
 
-// task.wait 超时返回 pending；任务详情退回用同一套判定，不把暂时读不到当成失败。
-function listedTaskState(value, taskId) {
-  const listed = Array.isArray(value?.tasks) ? value.tasks.find(task => task?.taskId === taskId) || (value.tasks.length === 1 ? value.tasks[0] : undefined) : undefined
-  // 仍在下载/重试入库的结果不能按 listed.status=succeeded 直接算完成。
-  if (listed && taskDeliveryPending(listed)) return { taskId, state: 'pending', reason: '' }
-  // 保存/下载中的中间态继续等，不能因为带了 materializationErrorCode 就提前下结论。
-  const listedState = typeof listed?.state === 'string' ? listed.state.toLowerCase() : ''
-  if (['downloading', 'retrying', 'waiting', 'saving', 'fetching', 'running', 'pending', 'queued'].includes(listedState)) {
+function outputsSettledWithMaterializationError(outputs) {
+  return Array.isArray(outputs) && outputs.length > 0
+    && outputs.every(output => output?.resourceId || output?.materializationErrorCode)
+    && outputs.some(output => output?.materializationErrorCode)
+}
+
+function outputsSaved(outputs) {
+  return Array.isArray(outputs) && outputs.length > 0
+    && outputs.every(output => output?.resourceId && !output?.materializationErrorCode)
+}
+
+// 统一任务终态判定：以 Go 后端权威的 task.outcome.phase 与 task.wait state/reason 为唯一事实源，
+// 仅在老后端省略这两个字段时回退到 status / resultState / outputs 的兼容判定。
+function classifyTaskRecord(task, taskId, { fromWait = false } = {}) {
+  if (!task || typeof task !== 'object') return undefined
+  const status = normalizedLower(task.status)
+  const waitState = normalizedLower(task.state)
+  const phase = normalizedLower(task.outcome?.phase)
+  const reason = normalizedLower(task.reason || task.outcome?.reason)
+  const resultState = normalizedLower(task.resultState)
+
+  if (status === 'cancelled' || status === 'canceled' || waitState === 'cancelled' || waitState === 'canceled') {
+    return { taskId, state: 'failed', reason: failureReason(task) || '已取消' }
+  }
+  // 投递仍在下载/重试、Go 权威 phase 为运行/取回中、或 task.wait 给出进行中状态时一律继续等。
+  if (taskDeliveryPending(task) || phase === 'running' || phase === 'fetching' || phase === 'retrievable' || pendingWaitStates.has(waitState)) {
     return { taskId, state: 'pending', reason: '' }
   }
-  // 真实 task.wait 对「生成成功但产物永久保存失败」返回 state=failed + reason=materialization_failed；
-  // 这只能重新保存，不能当成生成失败让模型重新生成。
-  const reason = typeof listed?.reason === 'string' ? listed.reason.toLowerCase() : ''
-  const resultState = typeof listed?.resultState === 'string' ? listed.resultState.toLowerCase() : ''
-  const successful = listed?.status === 'succeeded' || ['succeeded', 'success', 'completed', 'ready'].includes(listedState)
-  // 只有已成功的生成还在重试入库时才继续等；失败任务的重试标记仍是终态失败。
-  if (successful && resultState === 'failed_retryable') return { taskId, state: 'pending', reason: '' }
-  // 失败任务也可能带 FAILED_PERMANENT（表示重试被阻断），不能当成物化失败；只有成功的生成才讨论「结果没保存」。
-  const materialization = successful && (reason === 'materialization_failed' || resultState === 'failed_permanent'
-    || (Array.isArray(listed?.outputs) && listed.outputs.some(output => output?.materializationErrorCode)))
-  if (materialization) {
-    const original = failureReason(listed)
-    const base = '结果没有保存成功，只能重新保存，不能重新生成'
-    return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
+
+  const succeeded = status === 'succeeded' || succeededWaitStates.has(waitState)
+  // 已成功的生成仍在重试入库（failed_retryable）时继续等；失败任务的可重试标记仍是终态失败。
+  if (succeeded && resultState === 'failed_retryable') {
+    return { taskId, state: 'pending', reason: '' }
   }
-  const raw = typeof listed?.state === 'string' ? listed.state : typeof listed?.status === 'string' ? listed.status : ''
-  const state = raw.toLowerCase()
-  if (['succeeded', 'success', 'completed', 'ready'].includes(state)) return { taskId, state: 'succeeded', reason: '' }
-  if (['incomplete', 'materialization_failed'].includes(state)) {
-    const original = failureReason(listed)
-    const base = '结果没有保存成功，只能重新保存，不能重新生成'
-    return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
+  // 生成成功但产物永久未入库：一律归为 incomplete（只能重新保存，禁止重新生成）。
+  if (incompleteWaitStates.has(waitState) || (succeeded && (
+    phase === 'failed'
+    || reason === 'materialization_failed'
+    || resultState === 'failed_permanent'
+    || (fromWait
+      ? Array.isArray(task.outputs) && task.outputs.some(output => output?.materializationErrorCode)
+      : outputsSettledWithMaterializationError(task.outputs))
+  ))) {
+    return { taskId, state: 'incomplete', reason: incompleteReason(task) }
   }
-  if (['failed', 'error', 'cancelled', 'canceled'].includes(state)) return { taskId, state: 'failed', reason: failureReason(listed) || (state.startsWith('cancel') ? '已取消' : '') }
-  // saving/downloading 等还在入库或下载的中间态，以及认不出的新状态，都按未完成处理，不提前下结论。
-  if (state) return { taskId, state: 'pending', reason: '' }
+  if (phase === 'failed' || failedWaitStates.has(waitState) || status === 'failed') {
+    return { taskId, state: 'failed', reason: failureReason(task) }
+  }
+  if (phase === 'ready' || succeededWaitStates.has(waitState)) {
+    if (!resultState || resultState === 'ready' || resultState === 'succeeded') {
+      return { taskId, state: 'succeeded', reason: '' }
+    }
+    return { taskId, state: 'pending', reason: '' }
+  }
+  if (status === 'succeeded') {
+    if (fromWait) return { taskId, state: 'succeeded', reason: '' }
+    if ((!resultState || resultState === 'ready' || resultState === 'succeeded') && outputsSaved(task.outputs)) {
+      return { taskId, state: 'succeeded', reason: '' }
+    }
+    return { taskId, state: 'pending', reason: '' }
+  }
+  if (waitState || status) return { taskId, state: 'pending', reason: '' }
   return undefined
 }
 
+// 统一走 Go 权威的 task.outcome / status 判定；无权威 phase 时要求已成功且产物全部入库。
+export function taskOutcome(task, taskId = task?.taskId) {
+  return classifyTaskRecord(task, taskId, { fromWait: false }) || { taskId, state: 'pending', reason: '' }
+}
+
+// task.wait 超时返回 pending；任务行与单任务详情共用同一权威分类器，消除两套平行推导漂移。
 export function waitOutcome(value, taskId) {
-  const status = typeof value?.status === 'string' ? value.status.toLowerCase() : ''
-  // 后端可能返回单个状态，也可能返回整批的 tasks/pending/completed/failed 汇总；两种都认。
-  const listed = Array.isArray(value?.tasks) ? value.tasks.find(task => task?.taskId === taskId) || (value.tasks.length === 1 ? value.tasks[0] : undefined) : undefined
-  if (status === 'succeeded' || status === 'success' || status === 'completed' || status === 'ready') return { taskId, state: 'succeeded', reason: '' }
-  if (status === 'incomplete' || status === 'materialization_failed') {
-    const original = failureReason(listed || value?.task || value)
-    const base = '结果没有保存成功，只能重新保存，不能重新生成'
-    return { taskId, state: 'incomplete', reason: original ? `${base}（${original}）` : base }
+  const status = normalizedLower(value?.status)
+  const listed = Array.isArray(value?.tasks)
+    ? value.tasks.find(task => task?.taskId === taskId) || (value.tasks.length === 1 ? value.tasks[0] : undefined)
+    : undefined
+  if (succeededWaitStates.has(status)) return { taskId, state: 'succeeded', reason: '' }
+  if (incompleteWaitStates.has(status)) {
+    return { taskId, state: 'incomplete', reason: incompleteReason(listed || value?.task || value) }
   }
   if (status === 'failed' || status === 'error') {
-    // 顶层说 failed，但按任务看其实是「产物没保存」时，仍按 incomplete 处理，避免模型重新生成。
-    const listedOutcome = listedTaskState(value, taskId)
-    if (listedOutcome?.state === 'incomplete') return listedOutcome
+    // 顶层说 failed，但任务项按权威判定属于 incomplete 或仍在 retrievable 取回中时，以任务项为准。
+    const listedOutcome = classifyTaskRecord(listed, taskId, { fromWait: true })
+    if (listedOutcome?.state === 'incomplete' || listedOutcome?.state === 'pending') return listedOutcome
     return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
   }
   if (status === 'cancelled' || status === 'canceled') return { taskId, state: 'failed', reason: '已取消' }
-  if (status === 'pending' || status === 'running' || status === 'queued') return { taskId, state: 'pending', reason: '' }
-  const listedOutcome = listedTaskState(value, taskId)
+  if (pendingWaitStates.has(status)) return { taskId, state: 'pending', reason: '' }
+  const listedOutcome = classifyTaskRecord(listed, taskId, { fromWait: true })
   if (listedOutcome) return listedOutcome
   if (value?.cancelled === true || listed?.cancelled === true) return { taskId, state: 'failed', reason: '已取消' }
   if (Array.isArray(value?.failedTaskIds) && value.failedTaskIds.includes(taskId)) return { taskId, state: 'failed', reason: failureReason(listed) }
@@ -399,7 +399,9 @@ export function waitOutcome(value, taskId) {
   if (failedCount > 0 && completedCount > 0) return { taskId, state: 'pending', reason: '' }
   if (value?.failed === true || failedCount > 0) return { taskId, state: 'failed', reason: failureReason(listed) }
   if (value?.completed === true || completedCount > 0) return { taskId, state: 'succeeded', reason: '' }
-  if (value && typeof value === 'object' && ('status' in value || 'taskId' in value || 'outcome' in value || 'outputs' in value)) return taskOutcome(value, taskId)
+  if (value && typeof value === 'object' && ('status' in value || 'taskId' in value || 'outcome' in value || 'outputs' in value)) {
+    return taskOutcome(value, taskId)
+  }
   return { taskId, state: 'pending', reason: '' }
 }
 

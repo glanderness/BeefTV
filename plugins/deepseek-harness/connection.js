@@ -46,7 +46,20 @@ function recordToolActivity(runtime, exec, result) {
   runtime.activity = { seq: (runtime.activity?.seq || 0) + 1, kind, canvasId }
 }
 
-export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingReady = Promise.resolve(), hasActiveToolCalls = () => false, runtimeStore = createRuntimeStore({ pluginHome, bundledDir: bundledRuntimeDir }) }) {
+export const defaultHealthCheckTimeoutMs = 5_000
+export const defaultHealthFailureThreshold = 3
+
+export function createConnection({
+  ctx,
+  pluginHome,
+  runner,
+  stepLimit,
+  awaitingReady = Promise.resolve(),
+  hasActiveToolCalls = () => false,
+  runtimeStore = createRuntimeStore({ pluginHome, bundledDir: bundledRuntimeDir }),
+  healthCheckTimeoutMs = defaultHealthCheckTimeoutMs,
+  healthFailureThreshold = defaultHealthFailureThreshold,
+}) {
   const settingsPath = join(pluginHome, 'connection.json')
   const pluginSettingsPath = join(pluginHome, 'settings.json')
   let current = null
@@ -367,6 +380,10 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
     return status()
   }
 
+  function runtimeProcessExited(runtime) {
+    return Boolean(runtime?.child && (runtime.child.exitCode != null || runtime.child.signalCode != null))
+  }
+
   async function refreshConnection() {
     await awaitingReady
     if (switching || updatingRuntime) return status()
@@ -374,15 +391,20 @@ export function createConnection({ ctx, pluginHome, runner, stepLimit, awaitingR
       const previous = current
       if (previous) {
         try {
-          const health = await workspaceJSON(previous, '/api/health', { signal: AbortSignal.timeout(2000) })
+          const health = await workspaceJSON(previous, '/api/health', { signal: AbortSignal.timeout(healthCheckTimeoutMs) })
           if (!health.ready || !health.schema?.ready) throw new Error('工作区尚未就绪')
+          previous.consecutiveHealthFailures = 0
         } catch {
           if (current !== previous || switching) return status()
-          current = null
-          contexts.clear()
-          error = 'BeefTV 连接已中断，等待本机应用恢复'
-          runner.dispatch({ type: 'workspaceLost' })
-          await release(previous)
+          previous.consecutiveHealthFailures = (previous.consecutiveHealthFailures || 0) + 1
+          const threshold = Math.max(1, Number.isInteger(healthFailureThreshold) ? healthFailureThreshold : defaultHealthFailureThreshold)
+          if (runtimeProcessExited(previous) || previous.consecutiveHealthFailures >= threshold) {
+            current = null
+            contexts.clear()
+            error = 'BeefTV 连接已中断，等待本机应用恢复'
+            runner.dispatch({ type: 'workspaceLost' })
+            await release(previous)
+          }
         }
       }
       if (!current && desiredMode === 'local' && !switching) {

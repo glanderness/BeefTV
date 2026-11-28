@@ -16,8 +16,7 @@ import {
   hook,
   hookTask,
 } from '@earendil-works/pi-durable';
-import { createFitImagesExtension } from '@earendil-works/pi-durable/images/fit';
-import { createNodePhotonImages } from '@earendil-works/pi-durable/images/node';
+import { createPhotonImageManager } from './extensions/pi-creative-media/fit-images.mjs';
 import { ApprovalDecision } from './durable-signals.mjs';
 import { toolOperationId } from './session-identity.mjs';
 
@@ -149,36 +148,18 @@ async function roundProducedProposal(results, api, entry, context) {
   return hasSuccessfulProposal;
 }
 
-let sharedPhotonPromise = null;
-let sharedPhotonInstance = null;
+const sharedPhotonManager = createPhotonImageManager({ idleMs: 30_000 });
 
-export async function getSharedPhotonImages() {
-  if (!sharedPhotonPromise) {
-    sharedPhotonPromise = createNodePhotonImages({ idleMs: 30_000 })
-      .then((processor) => {
-        sharedPhotonInstance = processor;
-        return processor;
-      })
-      .catch((error) => {
-        sharedPhotonPromise = null;
-        throw error;
-      });
-  }
-  return sharedPhotonPromise;
+export function getSharedPhotonImages() {
+  return sharedPhotonManager.getProcessor();
 }
 
-export async function createSharedFitImagesExtension() {
-  const processor = await getSharedPhotonImages();
-  return createFitImagesExtension(processor);
+export function createSharedFitImagesExtension() {
+  return sharedPhotonManager.createExtension();
 }
 
-export async function closeSharedPhotonImages() {
-  const instance = sharedPhotonInstance;
-  sharedPhotonInstance = null;
-  sharedPhotonPromise = null;
-  if (instance && typeof instance.close === 'function') {
-    await instance.close().catch(() => {});
-  }
+export function closeSharedPhotonImages() {
+  return sharedPhotonManager.close();
 }
 
 export function resolvePaidOpForTool(call) {
@@ -186,6 +167,10 @@ export function resolvePaidOpForTool(call) {
   if (name === 'canvas_generation_submit') return 'canvas.generation.submit';
   if (name === 'canvas_generation_regenerate') return 'canvas.generation.regenerate';
   if (name === 'media_review') return 'media.review';
+  if (name === 'media_transcribe') {
+    const model = String(call?.arguments?.model || '').trim();
+    return model !== '' ? 'media.transcribe' : '';
+  }
   if (name === 'business_call') {
     const args = call?.arguments && typeof call.arguments === 'object' ? call.arguments : {};
     const targetTool = String(args.tool || '').trim();
@@ -289,7 +274,7 @@ export function createDurableApprovalExtension({
             }
 
             const currentMode = entry?.permissionMode || entry?.generation?.permissionMode || 'canvas';
-            if (currentMode === 'read-only' && !isAllowedInReadOnlyMode(entry, call.name)) {
+            if (currentMode === 'read-only' && (!isAllowedInReadOnlyMode(entry, call.name) || (call.name === 'media_transcribe' && String(call?.arguments?.model || '').trim() !== ''))) {
               return blockCall(`scope_denied: 本轮助手只能读取（禁止调用 ${call.name}）`);
             }
 

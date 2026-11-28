@@ -97,6 +97,7 @@ export function createDurableSessionStore({
   precheckTool = null,
   enableImageFitting = true,
   maxInlineImageChars = undefined,
+  nativePartStore = null,
 }) {
   if (!THINKING_LEVELS.includes(thinkingLevel)) throw fail('invalid_thinking_level');
   if (typeof authorizeTurn !== 'function') throw fail('durable_authorizer_required');
@@ -293,6 +294,7 @@ export function createDurableSessionStore({
     precheckTool,
     enableImageFitting,
     maxInlineImageChars,
+    nativePartStore,
   });
   const {
     currentPath,

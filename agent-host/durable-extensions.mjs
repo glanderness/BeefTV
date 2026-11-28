@@ -32,6 +32,7 @@ const requestSignature = (messages) => crypto.createHash('sha256').update(JSON.s
 const DEFERRED_HOST_TOOL_LABELS = new Set([
   'business.list',
   'business.call',
+  'media.transcribe',
   'project.bible.get',
   'project.bible.update',
   'skill.market.search',
@@ -234,6 +235,7 @@ export async function installDurableExtensions({
   precheckTool = null,
   enableImageFitting = true,
   maxInlineImageChars = undefined,
+  nativePartStore = null,
 }) {
   const { readSkillContext, resolveActiveSkills, prepareSkillContext } = skillController;
   const skillHashPattern = /^[a-f0-9]{64}$/;
@@ -334,7 +336,7 @@ export async function installDurableExtensions({
         executionMode: tool.readOnly === true && tool.label !== 'canvas.generation.propose' && tool.label !== 'skill.script.run' ? 'parallel' : 'sequential',
         ...(DEFERRED_HOST_TOOL_LABELS.has(tool.label) ? { deferred: true } : {}),
         ...(MODEL_ONLY_HOST_TOOL_LABELS.has(tool.label) ? { callers: ['model'] } : {}),
-        ...(['media.overview', 'media.inspect', 'media.check', 'media.review'].includes(tool.label)
+        ...(['media.overview', 'media.inspect', 'media.check', 'media.review', 'media.transcribe'].includes(tool.label)
           ? { outputLimits: { maxBytes: 64 * 1024 * 1024, maxLines: 100000 } }
           : tool.label === 'file.read'
             ? { outputLimits: { maxBytes: 16 * 1024 * 1024, maxLines: 4000 } }
@@ -592,6 +594,7 @@ export async function installDurableExtensions({
           }
           const cutoffEval = await syncMonotoneMediaCutoff(_runtime, context, baseMessages, messageEntryId, {
             maxInlineImageChars,
+            nativePartStore,
           });
           let restoredSkillsText = '';
           if (skills) {

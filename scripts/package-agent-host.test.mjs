@@ -113,6 +113,11 @@ test('bundled runtime, locked dependencies, and paths with spaces', () => {
     expect(existsSync(path.join(destination, 'plugin-packages.mjs'))).toBe(true);
     expect(existsSync(path.join(destination, 'business-progress.mjs'))).toBe(true);
     expect(existsSync(path.join(destination, 'canvas-write-view.mjs'))).toBe(true);
+    expect(existsSync(path.join(destination, 'extensions', 'pi-creative-media', 'index.mjs'))).toBe(true);
+    expect(existsSync(path.join(destination, 'extensions', 'pi-creative-media', 'compaction.mjs'))).toBe(true);
+    expect(existsSync(path.join(destination, 'extensions', 'pi-creative-media', 'fit-images.mjs'))).toBe(true);
+    expect(existsSync(path.join(destination, 'extensions', 'pi-creative-media', 'media-payload.mjs'))).toBe(true);
+    expect(existsSync(path.join(destination, 'extensions', 'pi-creative-media', 'stream-idle.mjs'))).toBe(true);
     expect(existsSync(path.join(destination, 'model-outcome-reasons.json'))).toBe(true);
     expect(JSON.parse(readFileSync(path.join(destination, 'model-outcome-reasons.json'), 'utf8'))).toEqual(
       JSON.parse(readFileSync(new URL('../backend/internal/assistantdiagnostics/model_outcome_reasons.json', import.meta.url), 'utf8')),

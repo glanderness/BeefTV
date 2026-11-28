@@ -85,6 +85,7 @@ type mediaArgs struct {
 	Mode            string                `json:"mode"`
 	Evidence        *mediaEvidenceRequest `json:"evidence,omitempty"`
 	ImageCrop       *MediaImageCrop       `json:"imageCrop,omitempty"`
+	BurnTimestamp   bool                  `json:"burnTimestamp,omitempty"`
 }
 
 type mediaEvidenceRequest struct {
@@ -114,6 +115,7 @@ func ValidateMediaReference(domain Domain, userID, canvasID, nodeID, assetID, re
 
 func registerMediaOps(r *Registry) {
 	registerMediaReview(r)
+	registerMediaTranscribe(r)
 	summaries := map[string]string{
 		"media.overview": "获取媒体版本、时长与概览（可选15秒内 evidence）；概览不能替代连续影音审查",
 		"media.inspect":  "读取媒体片段（每次最多 15 秒；图片可用 imageCrop 分区查看）",
@@ -450,41 +452,7 @@ func (p preparedMedia) read(ctx context.Context, operation string, args mediaArg
 		return result, nil
 	}
 	if mode == "frames" {
-		if !facts.HasVideo {
-			return MediaResult{}, InvalidArg("media_no_video", "这个素材没有画面")
-		}
-		count := 4
-		if operation == "media.overview" {
-			count = 3
-		}
-		for i := 0; i < count; i++ {
-			at := args.StartMs + (args.EndMs-args.StartMs)*int64(2*i+1)/int64(2*count)
-			output := filepath.Join(dir, fmt.Sprintf("frame-%d.jpg", i))
-			command := []string{"-nostdin", "-v", "error", "-i", input}
-			if !image {
-				command = append(command, "-ss", mediaSeconds(at))
-			}
-			command = append(command, "-frames:v", "1", "-vf", "scale=640:640:force_original_aspect_ratio=decrease", "-y", output)
-			if _, err := mediaCommand(ctx, bin, command...); err != nil {
-				return MediaResult{}, err
-			}
-			part, err := mediaFilePart(output, "image", "image/jpeg", result.Source)
-			if err != nil {
-				return MediaResult{}, err
-			}
-			part.Source.StartMs = at
-			part.Source.EndMs = at
-			part.Source.TimestampKind = "requested_seek"
-			result.Content = append(result.Content, part)
-			var total int
-			for _, item := range result.Content {
-				total += base64.StdEncoding.DecodedLen(len(item.Data))
-			}
-			if int64(total) > maxMediaPartBytes {
-				return MediaResult{}, PreconditionFailed("media_part_too_large", "媒体预览过大，请缩小检查区间", nil)
-			}
-		}
-		return result, nil
+		return p.extractVideoFrames(ctx, bin, operation, args, result, maxMediaPartBytes)
 	}
 	if mode != "video" && mode != "audio" {
 		return MediaResult{}, InvalidArg("invalid_media_mode", "mode 必须是 frames、video 或 audio")

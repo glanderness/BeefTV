@@ -3,6 +3,11 @@
 // 纯函数、无 IO、结果确定（同一画布状态永远得到同一段文字），便于提示词缓存与测试。
 import { defineDoc } from '@earendil-works/pi-durable';
 import { getCurrentSystemMessage } from '@earendil-works/pi-ai/utils/transcript';
+import {
+  DEFAULT_MAX_REQUEST_BYTES,
+  formatDegradedMediaPlaceholder,
+} from './extensions/pi-creative-media/media-payload.mjs';
+import { MEDIA_PART_MARKER, MEDIA_REFERENCE_MARKER } from './media-content.mjs';
 
 export const MediaRetentionDoc = defineDoc({
   kind: 'beeftv.media_retention',
@@ -97,29 +102,114 @@ function inlineImageCharsOfMessage(message, minChars = DEFAULT_MIN_PRUNE_IMAGE_C
   return total;
 }
 
-function foldToolImagesInMessage(message, minChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS) {
-  if (!isToolResultMessage(message) || !hasPrunableImagePart(message, minChars)) return message;
+function nativeMediaBytesOfText(text, nativePartStore = null) {
+  if (typeof text !== 'string' || (!text.includes(MEDIA_REFERENCE_MARKER) && !text.includes(MEDIA_PART_MARKER))) return 0;
+  let total = 0;
+  for (const line of text.split('\n')) {
+    if (line.startsWith(MEDIA_REFERENCE_MARKER)) {
+      try {
+        const ref = JSON.parse(line.slice(MEDIA_REFERENCE_MARKER.length));
+        const size = typeof nativePartStore?.statSize === 'function' ? nativePartStore.statSize(ref?.id) : 0;
+        total += size > 0 ? size : 0;
+      } catch { /* ignore malformed */ }
+    } else if (line.startsWith(MEDIA_PART_MARKER)) {
+      try {
+        const part = JSON.parse(line.slice(MEDIA_PART_MARKER.length));
+        if (typeof part?.data === 'string') total += Math.floor(part.data.length * 3 / 4);
+      } catch { /* ignore malformed */ }
+    }
+  }
+  return total;
+}
+
+function nativeMediaBytesOfMessage(message, nativePartStore = null) {
+  if (!isToolResultMessage(message)) return 0;
+  if (typeof message.content === 'string') return nativeMediaBytesOfText(message.content, nativePartStore);
+  if (!Array.isArray(message.content)) return 0;
+  let total = 0;
+  for (const part of message.content) {
+    if (part?.type === 'text' && typeof part.text === 'string') {
+      total += nativeMediaBytesOfText(part.text, nativePartStore);
+    }
+  }
+  return total;
+}
+
+function foldNativeMediaMarkersInText(text) {
+  if (typeof text !== 'string' || (!text.includes(MEDIA_REFERENCE_MARKER) && !text.includes(MEDIA_PART_MARKER))) return text;
+  let changed = false;
+  const lines = text.split('\n').map((line) => {
+    if (line.startsWith(MEDIA_REFERENCE_MARKER)) {
+      try {
+        const ref = JSON.parse(line.slice(MEDIA_REFERENCE_MARKER.length));
+        changed = true;
+        return formatDegradedMediaPlaceholder(ref, 'budget_exceeded');
+      } catch {
+        return line;
+      }
+    }
+    if (line.startsWith(MEDIA_PART_MARKER)) {
+      try {
+        const part = JSON.parse(line.slice(MEDIA_PART_MARKER.length));
+        changed = true;
+        return formatDegradedMediaPlaceholder(part, 'budget_exceeded');
+      } catch {
+        return line;
+      }
+    }
+    return line;
+  });
+  return changed ? lines.join('\n') : text;
+}
+
+function hasNativeMediaMarker(message) {
+  if (!isToolResultMessage(message)) return false;
+  if (typeof message.content === 'string') {
+    return message.content.includes(MEDIA_REFERENCE_MARKER) || message.content.includes(MEDIA_PART_MARKER);
+  }
+  return Array.isArray(message.content) && message.content.some(
+    (part) => part?.type === 'text' && typeof part.text === 'string'
+      && (part.text.includes(MEDIA_REFERENCE_MARKER) || part.text.includes(MEDIA_PART_MARKER)),
+  );
+}
+
+function foldToolMediaInMessage(message, minChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS) {
+  if (!isToolResultMessage(message)) return message;
+  const hasImg = hasPrunableImagePart(message, minChars);
+  const hasNative = hasNativeMediaMarker(message);
+  if (!hasImg && !hasNative) return message;
+  if (typeof message.content === 'string') {
+    return { ...message, content: foldNativeMediaMarkersInText(message.content) };
+  }
   const omittedText = isFileReadToolResult(message)
     ? HISTORICAL_FILE_IMAGE_OMITTED_TEXT
     : HISTORICAL_TOOL_IMAGE_OMITTED_TEXT;
   return {
     ...message,
-    content: message.content.map((part) =>
-      isPrunableImagePart(part, minChars) ? { type: 'text', text: omittedText } : part,
-    ),
+    content: message.content.map((part) => {
+      if (isPrunableImagePart(part, minChars)) return { type: 'text', text: omittedText };
+      if (part?.type === 'text' && typeof part.text === 'string') {
+        const folded = foldNativeMediaMarkersInText(part.text);
+        if (folded !== part.text) return { ...part, text: folded };
+      }
+      return part;
+    }),
   };
 }
 
-// 计算单调递增的媒体裁剪游标：
+// 计算单调递增的媒体裁剪游标（同时覆盖内联图片与原生音视频引用，共享同一持久化 MediaRetentionDoc）：
 // - cutoffEntryId / cutoffMessageIndex 只增不减；
-// - 当游标之后累计内联大图字符数未超出 maxInlineImageChars 时游标纹丝不动（相邻视觉轮次前缀 100% 字节一致）；
-// - 超出预算时仅从最旧的视觉 toolResult 单调前推到满足预算为止，始终保留最新一条视觉消息。
+// - 当游标之后累计内联大图字符数 <= maxInlineImageChars 且原生音视频字节 <= maxNativeMediaBytes 时
+//   游标纹丝不动（相邻视觉/视频轮次前缀 100% 字节一致，保护 KV Prompt Cache）；
+// - 超出预算时仅从最旧的媒体 toolResult 单调前推到满足预算为止，始终保留最新一条媒体消息。
 export function evaluateMonotoneMediaCutoff(messages = [], {
   cutoffEntryId = 0,
   cutoffMessageIndex = 0,
   messageEntryId = null,
   maxInlineImageChars = DEFAULT_MAX_INLINE_IMAGE_CHARS,
+  maxNativeMediaBytes = DEFAULT_MAX_REQUEST_BYTES,
   minImageChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS,
+  nativePartStore = null,
 } = {}) {
   const useEntryIds = messageEntryId instanceof Map && messageEntryId.size > 0;
   let nextCutoffEntryId = Number.isFinite(cutoffEntryId) && cutoffEntryId > 0 ? Math.trunc(cutoffEntryId) : 0;
@@ -127,30 +217,38 @@ export function evaluateMonotoneMediaCutoff(messages = [], {
 
   const retained = [];
   let retainedChars = 0;
+  let retainedNativeBytes = 0;
   for (let idx = 0; idx < messages.length; idx += 1) {
     const message = messages[idx];
     const chars = inlineImageCharsOfMessage(message, minImageChars);
-    if (chars <= 0) continue;
+    const nativeBytes = nativeMediaBytesOfMessage(message, nativePartStore);
+    if (chars <= 0 && nativeBytes <= 0) continue;
     const entryId = useEntryIds ? messageEntryId.get(message) : undefined;
     const alreadyFolded = useEntryIds && typeof entryId === 'number'
       ? entryId <= nextCutoffEntryId
       : idx < nextCutoffMessageIndex;
     if (alreadyFolded) continue;
-    retained.push({ idx, entryId, chars });
+    retained.push({ idx, entryId, chars, nativeBytes });
     retainedChars += chars;
+    retainedNativeBytes += nativeBytes;
   }
 
-  const limit = Number.isFinite(maxInlineImageChars) && maxInlineImageChars > 0
+  const imageLimit = Number.isFinite(maxInlineImageChars) && maxInlineImageChars > 0
     ? maxInlineImageChars
     : DEFAULT_MAX_INLINE_IMAGE_CHARS;
+  const nativeLimit = Number.isFinite(maxNativeMediaBytes) && maxNativeMediaBytes > 0
+    ? maxNativeMediaBytes
+    : DEFAULT_MAX_REQUEST_BYTES;
 
   let advanced = false;
-  if (retainedChars > limit && retained.length > 1) {
-    let remaining = retainedChars;
-    // 至少保留最新 1 条视觉 toolResult，避免单张超大图把当前正在看的图片也折叠掉。
-    for (let i = 0; i < retained.length - 1 && remaining > limit; i += 1) {
+  if ((retainedChars > imageLimit || retainedNativeBytes > nativeLimit) && retained.length > 1) {
+    let remainingChars = retainedChars;
+    let remainingNative = retainedNativeBytes;
+    // 至少保留最新 1 条媒体 toolResult，避免单条超标把当前正在看的媒体也折叠掉。
+    for (let i = 0; i < retained.length - 1 && (remainingChars > imageLimit || remainingNative > nativeLimit); i += 1) {
       const item = retained[i];
-      remaining -= item.chars;
+      remainingChars -= item.chars;
+      remainingNative -= item.nativeBytes;
       if (useEntryIds && typeof item.entryId === 'number') {
         if (item.entryId > nextCutoffEntryId) {
           nextCutoffEntryId = item.entryId;
@@ -171,10 +269,11 @@ export function evaluateMonotoneMediaCutoff(messages = [], {
     cutoffMessageIndex: nextCutoffMessageIndex,
     advanced,
     retainedImageChars: retainedChars,
+    retainedNativeBytes,
   };
 }
 
-// 依据已持久化的单调游标折叠旧媒体预览图（纯函数，不原地修改原消息数组）。
+// 依据已持久化的单调游标折叠旧媒体预览图与原生音视频引用（纯函数，不原地修改原消息数组）。
 export function applyMonotoneMediaCutoff(messages = [], {
   cutoffEntryId = 0,
   cutoffMessageIndex = 0,
@@ -186,19 +285,21 @@ export function applyMonotoneMediaCutoff(messages = [], {
   const indexCutoff = Number.isFinite(cutoffMessageIndex) && cutoffMessageIndex > 0 ? Math.trunc(cutoffMessageIndex) : 0;
   if (entryCutoff <= 0 && indexCutoff <= 0) return messages;
   return messages.map((message, idx) => {
-    if (!isToolResultMessage(message) || !hasPrunableImagePart(message, minImageChars)) return message;
+    if (!isToolResultMessage(message) || (!hasPrunableImagePart(message, minImageChars) && !hasNativeMediaMarker(message))) return message;
     const entryId = useEntryIds ? messageEntryId.get(message) : undefined;
     const shouldFold = useEntryIds && typeof entryId === 'number'
       ? entryId <= entryCutoff
       : idx < indexCutoff;
-    return shouldFold ? foldToolImagesInMessage(message, minImageChars) : message;
+    return shouldFold ? foldToolMediaInMessage(message, minImageChars) : message;
   });
 }
 
 // 读取并按需单调推进持久化 MediaRetentionDoc 游标。
 export async function syncMonotoneMediaCutoff(runtime, context, messages, messageEntryId, {
   maxInlineImageChars = DEFAULT_MAX_INLINE_IMAGE_CHARS,
+  maxNativeMediaBytes = DEFAULT_MAX_REQUEST_BYTES,
   minImageChars = DEFAULT_MIN_PRUNE_IMAGE_CHARS,
+  nativePartStore = null,
 } = {}) {
   const snap = await runtime.snapshot(MediaRetentionDoc, runtime.conversationId, context).catch(() => null);
   const cutoffEval = evaluateMonotoneMediaCutoff(messages, {
@@ -206,7 +307,9 @@ export async function syncMonotoneMediaCutoff(runtime, context, messages, messag
     cutoffMessageIndex: snap?.cutoffMessageIndex || 0,
     messageEntryId,
     maxInlineImageChars,
+    maxNativeMediaBytes,
     minImageChars,
+    nativePartStore,
   });
   if (cutoffEval.advanced) {
     await runtime.commit(async (tx) => {

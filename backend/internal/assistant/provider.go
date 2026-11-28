@@ -45,9 +45,11 @@ type Provider struct {
 	Protocol      string
 	BaseURL       string
 	APIKey        string
-	Headers       []outbound.OutboundHeader
-	ContextWindow int
-	MaxTokens     int
+	Headers                []outbound.OutboundHeader
+	ContextWindow          int
+	MaxTokens              int
+	InputModalities        []string
+	SupportedRequestFields []string
 }
 
 // Fingerprint 是「当前生效的供应商配置」的稳定指纹：变化即说明宿主环境已过期。

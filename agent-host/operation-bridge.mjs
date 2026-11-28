@@ -37,9 +37,10 @@ const SKILL_SCRIPT_REQUEST_TIMEOUT_MS = (SKILL_SCRIPT_MAX_TIMEOUT_SEC + 15) * 10
 const canvasMutation = descriptor => descriptor.id.startsWith('canvas.') &&
   (!descriptor.readOnly || descriptor.id === 'canvas.generation.propose');
 
-function assertToolGeneration(generation, descriptor, signal, turn, { resumingParked = false } = {}) {
+function assertToolGeneration(generation, descriptor, signal, turn, { resumingParked = false, args = null } = {}) {
   if (generation.aborted || signal?.aborted) throw new Error('aborted');
-  if (generation.permissionMode === 'read-only' && (!descriptor.readOnly || descriptor.id === 'canvas.generation.propose' || descriptor.id === 'skill.script.run')) throw new Error('scope_denied: 本轮助手只能读取');
+  const paidCloudTranscribe = descriptor.id === 'media.transcribe' && String(args?.model || '').trim() !== '';
+  if (generation.permissionMode === 'read-only' && (!descriptor.readOnly || descriptor.id === 'canvas.generation.propose' || descriptor.id === 'skill.script.run' || paidCloudTranscribe)) throw new Error('scope_denied: 本轮助手只能读取');
   if (resumingParked) {
     if (generation.pendingInputError) {
       throw new Error('turn_intent_changed: 已收到新的要求，先读取新要求再修改');
@@ -132,7 +133,13 @@ export function createOperationBridge({
   const resolvedOpsPipe = String(opsPipe || '').trim();
 
   async function opsRequest(method, apiPath, body, signal, turnId) {
-    const timeoutMs = apiPath === '/ops/skill.script.run' ? SKILL_SCRIPT_REQUEST_TIMEOUT_MS : apiPath.startsWith('/ops/media.') ? 95000 : 30000;
+    const timeoutMs = apiPath === '/ops/skill.script.run'
+      ? SKILL_SCRIPT_REQUEST_TIMEOUT_MS
+      : apiPath === '/ops/media.transcribe'
+        ? 600000
+        : apiPath.startsWith('/ops/media.')
+          ? 95000
+          : 30000;
     const combinedSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
     const headers = {
       'Content-Type': 'application/json',
@@ -218,7 +225,7 @@ export function createOperationBridge({
       execute: async (toolCallId, args, signal, api = {}) => {
         const parkedWait = PARKABLE_TASK_OPS.has(descriptor.id) ? api.durableApi?.checkpoint?.businessTaskWait : null;
         const resumingParked = Boolean(parkedWait);
-        try { assertToolGeneration(generation, descriptor, signal, turn, { resumingParked }); }
+        try { assertToolGeneration(generation, descriptor, signal, turn, { resumingParked, args }); }
         catch (error) {
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: args || {}, isError: true, error: error.message });
           throw error;
@@ -309,7 +316,7 @@ export function createOperationBridge({
           // Persist the first wire revision before Go can commit. A resumed
           // tool must reuse that revision, even after this turn's chain advances.
           if (chainWrite && generation.persistEffects) await generation.persistEffects();
-          assertToolGeneration(generation, descriptor, signal, turn, { resumingParked });
+          assertToolGeneration(generation, descriptor, signal, turn, { resumingParked, args: params });
           let data = parkedWait?.submittedData
             ? parkedWait.submittedData
             : await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
@@ -412,8 +419,13 @@ export function createOperationBridge({
             : descriptor.id === 'canvas.nodes.get'
               ? canvasNodesGetView(data)
               : canvasWriteView(data, descriptor.id, params);
-          const converted = mediaToolResult(projected, descriptor.id, { ...mediaModel, originTurnId:turn.turnId,
-            ...(generation.durable ? {nativePartStore} : {}) });
+          const converted = mediaToolResult(projected, descriptor.id, {
+            ...mediaModel,
+            originTurnId: turn.turnId,
+            canvasId: params.canvasId || canvasId,
+            sessionId: identityPrefix,
+            ...(generation.durable ? { nativePartStore } : {}),
+          });
           if (scannedPdfImageParts.length > 0 && Array.isArray(converted?.content)) {
             converted.content = [...converted.content, ...scannedPdfImageParts];
           }

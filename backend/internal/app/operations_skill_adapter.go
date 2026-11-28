@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"strings"
+
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/operations"
@@ -52,15 +54,17 @@ func (s *Service) checkAgentSkillRequirements(domain *skills.Service, userID str
 		switch capability {
 		case "beeftv.canvas":
 			continue
-		case "model.audio", "model.video":
+		case "model.audio", "model.video", "model.image":
 			if snapshot, err := s.assistantConfig(); err == nil {
-				if _, reason := modelcatalog.ResolveMediaReviewProvider(snapshot, s.assistantManagedCredentialLookup()); reason == "" {
+				if _, reason := modelcatalog.ResolveMediaReviewProviderForModality(snapshot, strings.TrimPrefix(capability, "model."), s.assistantManagedCredentialLookup()); reason == "" {
 					continue
 				}
 			}
-			message = "这个技能需要影音理解能力。请在模型配置中选择可用的默认多模态模型，再使用此技能。"
-		case "model.image":
-			message = "无法确认当前模型的图片输入支持。请暂时选择不要求图片理解的技能。"
+			if capability == "model.image" {
+				message = "无法确认当前模型的图片输入支持。请暂时选择不要求图片理解的技能。"
+			} else {
+				message = "这个技能需要影音理解能力。请在模型配置中选择可用的默认多模态模型，再使用此技能。"
+			}
 		default:
 			message = "这个技能要求尚未确认的能力：" + capability
 		}

@@ -251,6 +251,7 @@ const hostTelemetry = await openHostTelemetry(DATA_DIR);
 const durable = createDurableSessionStore({
   sessionRoot: SESSION_ROOT, workspaceRoot: WORKSPACE_ROOT, buildTools: ops.buildTools,
   opsRequest: ops.opsRequest,
+  nativePartStore,
   legacy,
   telemetry: hostTelemetry.telemetry,
   dispatchDiagnostics,

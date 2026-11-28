@@ -52,6 +52,10 @@ func TestAssistantScopeAllowsOnlyVerifiedResources(t *testing.T) {
 		{"额外画布不可委托审片", "media.review", `{"canvasId":"canvas-b","nodeId":"node-b"}`, true},
 		{"审片来源不可歧义", "media.review", `{"canvasId":"canvas-a","nodeId":"node-a","assetId":"asset-ref"}`, true},
 		{"审片来源不可缺失", "media.review", `{"canvasId":"canvas-a"}`, true},
+		{"当前节点可免费本地转写", "media.transcribe", `{"canvasId":"canvas-a","nodeId":"node-a"}`, false},
+		{"关联素材可免费本地转写", "media.transcribe", `{"canvasId":"canvas-a","assetId":"asset-ref"}`, false},
+		{"未引用素材不可转写", "media.transcribe", `{"canvasId":"canvas-a","assetId":"asset-other"}`, true},
+		{"额外画布不可转写", "media.transcribe", `{"canvasId":"canvas-b","nodeId":"node-b"}`, true},
 		{"关联任务可读", "task.get", `{"taskId":"task-1"}`, false},
 		{"无关任务不可读", "task.get", `{"taskId":"task-2"}`, true},
 		{"关联任务可取消", "task.cancel", `{"taskId":"task-1"}`, false},
@@ -196,11 +200,11 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 	agentops.RegisterDefaultOps(registry)
 	var typedNil *agentops.AssistantScope
 	listed := registry.List(agentops.Caller{Kind: agentops.CallerManual, Scope: typedNil})
-	if len(listed) != 59 {
+	if len(listed) != 60 {
 		t.Fatalf("空指针范围不应收窄目录，得到 %d", len(listed))
 	}
 	empty := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{}, false))
-	if len(empty) != 50 {
+	if len(empty) != 51 {
 		t.Fatalf("空助手范围应只露出助手集合，得到 %d", len(empty))
 	}
 	if got := registry.List(agentops.AssistantCaller(nil, false)); len(got) != 0 {
@@ -211,7 +215,7 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 func TestReferenceBindingCatalogPermissionModes(t *testing.T) {
 	registry := agentops.NewRegistry(nil, nil)
 	agentops.RegisterDefaultOps(registry)
-	for mode, want := range map[string]int{"read-only": 24, "canvas": 50, "full-access": 54} {
+	for mode, want := range map[string]int{"read-only": 25, "canvas": 51, "full-access": 55} {
 		descriptors := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{PermissionMode: mode}, false))
 		if len(descriptors) != want {
 			t.Fatalf("%s catalog=%d want=%d", mode, len(descriptors), want)
@@ -225,5 +229,24 @@ func TestReferenceBindingCatalogPermissionModes(t *testing.T) {
 		if bound != (mode != "read-only") {
 			t.Fatalf("%s binding visibility=%v", mode, bound)
 		}
+	}
+}
+
+func TestReadOnlyModeAllowsLocalTranscribeAndDeniesCloudTranscribe(t *testing.T) {
+	scope := &agentops.AssistantScope{
+		CanvasID:       "canvas-a",
+		PermissionMode: "read-only",
+		AssetIDs:       map[string]bool{"asset-ref": true},
+	}
+	op := registeredScopeOp(t, "media.transcribe")
+	if err := scope.Allows(op, json.RawMessage(`{"canvasId":"canvas-a","assetId":"asset-ref"}`)); err != nil {
+		t.Fatalf("read-only 模式应允许免费本地转写: %v", err)
+	}
+	err := scope.Allows(op, json.RawMessage(`{"canvasId":"canvas-a","assetId":"asset-ref","model":"whisper-1"}`))
+	if err == nil {
+		t.Fatal("read-only 模式必须拒绝付费云端转写")
+	}
+	if opErr := agentops.AsError(err); opErr.Code != agentops.CodePermissionDenied || opErr.Reason != "scope_denied" {
+		t.Fatalf("拒绝原因应为 permission_denied/scope_denied，得到 %v", err)
 	}
 }

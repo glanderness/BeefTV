@@ -97,7 +97,10 @@ func testMediaReviewAudio(t *testing.T, format string) {
 	}
 	config, _ := json.Marshal(map[string]any{"assistantModel": "main::claude-opus-5-5", "mediaReviewModel": "review::wand-vega-vl-1.0-flash",
 		"channels": []any{map[string]any{"id": "review", "enabled": true, "baseUrl": server.URL + "/v1", "apiKey": "review-fixture-key",
-			"models": []string{"wand-vega-vl-1.0-flash"}, "modelProfiles": []any{map[string]string{"model": "wand-vega-vl-1.0-flash", "capability": "text", "protocol": "chat-completion"}}}}})
+			"models": []string{"wand-vega-vl-1.0-flash"}, "modelProfiles": []any{map[string]any{
+				"model": "wand-vega-vl-1.0-flash", "capability": "text", "protocol": "chat-completion",
+				"inputModalities": []string{"video", "audio"}, "supportedRequestFields": []string{"thinking_enabled", "reasoning_effort"},
+			}}}}})
 	if err := store.SaveLocalModelConfig(config); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +259,10 @@ func TestMediaReviewAudioFailureIsNotRetried(t *testing.T) {
 			}
 			config, _ := json.Marshal(map[string]any{"assistantModel": "main::claude-opus-5-5", "mediaReviewModel": "review::wand-vega-vl-1.0-flash",
 				"channels": []any{map[string]any{"id": "review", "enabled": true, "baseUrl": server.URL + "/v1", "apiKey": "review-fixture-key",
-					"models": []string{"wand-vega-vl-1.0-flash"}, "modelProfiles": []any{map[string]string{"model": "wand-vega-vl-1.0-flash", "capability": "text", "protocol": "chat-completion"}}}}})
+					"models": []string{"wand-vega-vl-1.0-flash"}, "modelProfiles": []any{map[string]any{
+						"model": "wand-vega-vl-1.0-flash", "capability": "text", "protocol": "chat-completion",
+						"inputModalities": []string{"video", "audio"}, "supportedRequestFields": []string{"thinking_enabled", "reasoning_effort"},
+					}}}}})
 			if err := store.SaveLocalModelConfig(config); err != nil {
 				t.Fatal(err)
 			}

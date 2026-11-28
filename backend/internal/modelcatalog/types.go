@@ -27,6 +27,8 @@ type TextReferenceConfig struct {
 	MaxImageBytes  int64 `json:"maxImageBytes"`
 	MaxVideos      int   `json:"maxVideos"`
 	MaxVideoBytes  int64 `json:"maxVideoBytes"`
+	MaxAudios      int   `json:"maxAudios,omitempty"`
+	MaxAudioBytes  int64 `json:"maxAudioBytes,omitempty"`
 }
 
 type ImageCapabilityConfig struct {

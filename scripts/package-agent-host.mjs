@@ -9,7 +9,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const targets = { 'darwin/arm64': ['darwin', 'arm64'], 'darwin/amd64': ['darwin', 'x64'], 'windows/amd64': ['win32', 'x64'], 'linux/amd64': ['linux', 'x64'] };
 const runtimeModules = ['session-identity.mjs', 'canvas-turn.mjs', 'request-budget.mjs', 'durable-request-budget.mjs',
   'durable-session-owner.mjs', 'durable-session-repository.mjs', 'durable-turn-admission.mjs', 'durable-pointer-resolver.mjs', 'durable-detached-reconciler.mjs', 'durable-turn-projection.mjs', 'durable-extensions.mjs', 'durable-approval.mjs', 'durable-watch-observer.mjs', 'durable-signals.mjs', 'durable-compaction.mjs', 'durable-followup.mjs', 'durable-telemetry.mjs', 'prompt-cache.mjs', 'business-progress.mjs', 'durable-turn-budget.mjs', 'media-content.mjs', 'native-part-store.mjs', 'native-history.mjs', 'skill-resource.mjs', 'active-skills.mjs',
-  'operation-bridge.mjs', 'await-business-tasks.mjs', 'timeline-delivery.mjs', 'canvas-read-view.mjs', 'canvas-write-view.mjs', 'session-owner.mjs', 'system-prompt.mjs', 'model-stream-idle.mjs', 'model-transport-error.mjs', 'model-fetch-proxy.mjs', 'http-utils.mjs', 'events-route.mjs', 'plan.mjs', 'studio-digest.mjs', 'dispatch-diagnostics.mjs', 'plugin-packages.mjs', 'mcp-servers.mjs'];
+  'operation-bridge.mjs', 'await-business-tasks.mjs', 'timeline-delivery.mjs', 'canvas-read-view.mjs', 'canvas-write-view.mjs', 'session-owner.mjs', 'system-prompt.mjs', 'model-stream-idle.mjs', 'model-transport-error.mjs', 'model-fetch-proxy.mjs', 'http-utils.mjs', 'events-route.mjs', 'plan.mjs', 'studio-digest.mjs', 'dispatch-diagnostics.mjs', 'plugin-packages.mjs', 'mcp-servers.mjs',
+  'extensions/pi-creative-media/index.mjs', 'extensions/pi-creative-media/compaction.mjs', 'extensions/pi-creative-media/fit-images.mjs', 'extensions/pi-creative-media/media-payload.mjs', 'extensions/pi-creative-media/stream-idle.mjs'];
 const sourceFiles = ['server.mjs', 'plugin-host.mjs', ...runtimeModules, 'package.json', 'bun.lock'];
 const outcomeReasonsSource = path.join(root, 'backend', 'internal', 'assistantdiagnostics', 'model_outcome_reasons.json');
 
@@ -88,7 +89,11 @@ export function packageAgentHost({ runtime, target, destination, source = path.j
   if (!existsSync(outcomeReasonsSource)) throw new Error(`Missing model outcome reasons source: ${outcomeReasonsSource}`);
   const stage = mkdtempSync(path.join(tmpdir(), 'beeftv agent host '));
   try {
-    for (const name of sourceFiles) cpSync(path.join(source, name), path.join(stage, name));
+    for (const name of sourceFiles) {
+      const targetPath = path.join(stage, name);
+      mkdirSync(path.dirname(targetPath), { recursive: true });
+      cpSync(path.join(source, name), targetPath);
+    }
     cpSync(outcomeReasonsSource, path.join(stage, 'model-outcome-reasons.json'));
     // Install from the committed lock into a clean tree, never from developer node_modules.
     const bunBin = process.versions.bun ? process.execPath : (process.env.BUN_BIN || 'bun');

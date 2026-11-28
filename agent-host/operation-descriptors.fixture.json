@@ -2430,7 +2430,7 @@
   },
   {
     "id": "media.review",
-    "summary": "用独立多模态审片模型检查指定区间（可能收费，最多15秒）",
+    "summary": "独立多模态审片（可能收费，≤15秒）",
     "readOnly": true,
     "scope": "canvas",
     "params": {
@@ -2462,7 +2462,8 @@
           "type": "string",
           "enum": [
             "video",
-            "audio"
+            "audio",
+            "image"
           ]
         },
         "question": {
@@ -2475,6 +2476,47 @@
         "startMs",
         "endMs",
         "question"
+      ]
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "unsafe"
+  },
+  {
+    "id": "media.transcribe",
+    "summary": "把音视频转写为带时间戳的字幕与 SRT（省略 model 走本地免费 Whisper；指定 model 走云端付费转写，须预算包或用户批准）",
+    "readOnly": true,
+    "scope": "canvas",
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "assetId": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string",
+          "description": "可选 ISO 语言码，如 zh、en；省略自动识别"
+        },
+        "model": {
+          "type": "string",
+          "description": "可选云端转写模型；省略使用本地免费 whisper.cpp，指定则走付费云端转写"
+        }
+      },
+      "required": [
+        "canvasId"
       ]
     },
     "assistantModes": [

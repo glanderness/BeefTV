@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 
+	"infinite-canvas/backend/internal/operations"
+	localtask "infinite-canvas/backend/internal/task"
 	"infinite-canvas/backend/internal/transcription"
 )
 
@@ -26,8 +28,11 @@ func (o transcribeMediaOpener) Open(ctx context.Context, resourceID string) (tra
 }
 
 func (s *Service) transcriptionExecutor(userID, baseURL string) *transcription.Executor {
-	return &transcription.Executor{
-		Media:  transcribeMediaOpener{service: s, userID: userID},
-		Client: transcription.NewClient(baseURL),
-	}
+	return &transcription.Executor{Media: transcribeMediaOpener{service: s, userID: userID}, Client: transcription.NewClient(baseURL)}
 }
+
+func (s *operationSession) ResolveMediaTranscriptionClient(ctx context.Context, modelID string) (*transcription.Client, error) {
+	return localtask.ResolveTranscriptionClient(ctx, s.service.beefTV, modelID)
+}
+
+var _ operations.MediaTranscriptionClientResolver = (*operationSession)(nil)
