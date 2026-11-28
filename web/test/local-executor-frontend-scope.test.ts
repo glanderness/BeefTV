@@ -13,7 +13,7 @@ import {
     runOwnedTimelineRender,
     runOwnedTimelineTranscription,
     type LocalExecutorIntentState,
-} from "@/lib/plugins/builtin/editor/local-executor-session";
+} from "@/services/local-executor-session";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { apiClient, ApiError } from "@/services/api/request";
 import { createDepthCaptureTask } from "@/services/api/depth-capture";

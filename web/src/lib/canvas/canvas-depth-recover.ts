@@ -1,7 +1,7 @@
 import { depthCaptureTaskMetadata, depthCaptureWaitFailureMetadata, isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { canCanvasNodeAcceptGenerationTask } from "@/lib/canvas/canvas-generation-task-identity";
 import { equalSerializedValue } from "@/lib/canvas/canvas-node-metadata-contract";
-import { assertLocalExecutorSession, beginLocalExecutorSession, isLocalExecutorSessionStop, observeLocalExecutorTask, type LocalExecutorSession } from "@/lib/plugins/builtin/editor/local-executor-session";
+import { assertLocalExecutorSession, beginLocalExecutorSession, isLocalExecutorSessionStop, observeLocalExecutorTask, type LocalExecutorSession } from "@/services/local-executor-session";
 import type { GenerationTask } from "@/services/api/task-center";
 import { bindBackendCanvasGenerationResult } from "@/services/canvas-generation-consumer";
 import type { CanvasNodeData } from "@/types/canvas";

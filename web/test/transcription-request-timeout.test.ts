@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { AxiosError } from "axios";
 import { apiClient, ApiError } from "@/services/api/request";
 import { getTranscriptionModels, createTimelineTranscriptionTask } from "@/services/api/timeline-tasks";
-import { isUncertainLocalExecutorSubmit, localExecutorIntentAfterError, nextLocalExecutorClientOperationId } from "@/lib/plugins/builtin/editor/local-executor-session";
+import { isUncertainLocalExecutorSubmit, localExecutorIntentAfterError, nextLocalExecutorClientOperationId } from "@/services/local-executor-session";
 
 test("cloud catalog and admission allow the server catalog budget while preserving the signal", async () => {
     const previous = apiClient.defaults.adapter;

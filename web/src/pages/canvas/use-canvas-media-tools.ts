@@ -27,7 +27,7 @@ import { syncLocalCanvasSnapshot } from "@/services/local-workspace-sync";
 import { openLocalCanvasProjectFromBackend } from "@/services/local-workspace-repository";
 import { http } from "@/services/api/request";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { isLocalExecutorSessionStop } from "@/lib/plugins/builtin/editor/local-executor-session";
+import { isLocalExecutorSessionStop } from "@/services/local-executor-session";
 import { useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { createCanvasMediaOperation } from "./canvas-media-operation";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";

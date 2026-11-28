@@ -1,8 +1,5 @@
 import { createRoot } from "react-dom/client";
 import { App } from "antd";
-import { EditorStoreProvider } from "../../src/components/editor/editor-context";
-import { createEditorStore } from "../../src/stores/editor/editor-store";
-import { EditorExport } from "../../src/lib/plugins/builtin/editor/editor-export";
 import { CanvasTimelineDialog } from "../../src/components/canvas/canvas-timeline-dialog";
 import { exportTimelineToMp4 } from "../../src/lib/timeline/timeline-export";
 import type { CanvasNodeData } from "../../src/types/canvas";
@@ -18,8 +15,6 @@ project.clips.push({ id: "voice", nodeId: "voice", trackId: "voice", kind: "audi
 project.clips.push({ id: "bgm", nodeId: "bgm", trackId: "bgm", kind: "audio", startMs: 0, durationMs: 6000, volume: 0.2, directMedia: { id: "bgm", title: "bgm", kind: "audio", url: "/fixtures/bgm.wav" } });
 project.clips.push({ id: "sub", nodeId: "sub", trackId: "subtitle", kind: "subtitle", startMs: 500, durationMs: 5000, text: params.has("longSubtitle") ? "中文字幕".repeat(1000) : "中文字幕完整性验证" });
 const node = { id: "v0", type: "video", title: "Worker真实成片", metadata: {}, x: 0, y: 0, width: 320, height: 180 } as CanvasNodeData;
-const store = createEditorStore();
-store.getState().load(project);
 const root = createRoot(document.getElementById("root")!);
 const receipt = { created: 0, bytes: 0, progress: [] as string[], error: "", done: false };
 const sources = project.clips.filter((clip) => clip.directMedia).map((clip, index) => ({ nodeId: clip.nodeId, fileName: `input-${index}.mp4`, durationMs: 6000, url: clip.directMedia!.url }));
@@ -37,7 +32,7 @@ Object.assign(window, { timelineWorker: {
         } catch (error) { receipt.error = `${(error as Error).name}: ${(error as Error).message}`; }
     },
 } });
-if (params.get("mode") !== "runtime") root.render(<App>{params.get("mode") === "canvas" ?
+if (params.get("mode") !== "runtime") root.render(<App>
     <CanvasTimelineDialog node={node} nodes={[]} timeline={project} open onClose={() => root.unmount()}
         onSave={() => {}} onSaveSubtitles={() => {}} onUploadLocalFiles={async () => []}
         onCreateAssembledNode={async (blob) => {
@@ -45,6 +40,5 @@ if (params.get("mode") !== "runtime") root.render(<App>{params.get("mode") === "
             // The persistence callback is an explicit test boundary. The supplied Blob is real worker output.
             const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "new-node.mp4"; a.click();
             return node;
-        }} /> :
-    <EditorStoreProvider store={store} host={{ projectId: "fixture", assets: [], refreshAssets: async () => [] }}><EditorExport /></EditorStoreProvider>
-}</App>);
+        }} />
+</App>);

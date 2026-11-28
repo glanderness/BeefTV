@@ -13,7 +13,7 @@ import {
     nextLocalExecutorClientOperationId,
     runOwnedTimelineTranscription,
     type LocalExecutorIntentState,
-} from "@/lib/plugins/builtin/editor/local-executor-session";
+} from "@/services/local-executor-session";
 import type { SrtEntry } from "@/types/timeline";
 
 export function CanvasTranscriptionControls({

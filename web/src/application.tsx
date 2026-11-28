@@ -3,8 +3,7 @@ import { createRoot } from "react-dom/client";
 import "antd/dist/reset.css";
 import "./styles/globals.css";
 import "./styles/beeftv-local-overrides.css";
-// 全局自举内置插件注册（editor-shell 等预设以模块副作用注册编辑器插槽）：
-// 冷启动直达编辑器时素材/时间线等插槽不再为空。
+// 启动已启用的客户端插件包。
 import "@/lib/plugins/builtin";
 import { RouterProvider } from "react-router";
 

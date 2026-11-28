@@ -7,10 +7,6 @@ var officialApplicationPolicies = map[string]ManagementView{
 		Origin: OriginOfficial, Kind: KindApplication,
 		ActivationScope: ScopeUser, ConfigurationScope: ConfigurationNone,
 	},
-	EditorShell: {
-		Origin: OriginOfficial, Kind: KindApplication,
-		ActivationScope: ScopeUser, ConfigurationScope: ConfigurationNone,
-	},
 }
 
 func Management(pluginID string, source string) ManagementView {

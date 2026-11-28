@@ -5,7 +5,6 @@ import {
     assertEditorPermission,
     checkEditorPermission,
     pluginMayRenderEditorSlot,
-    pluginPermissions,
     requiredPermissionForEditorSlot,
 } from "@/lib/plugins/plugin-permission-check";
 import { registerPlugin, unregisterPlugin } from "@/lib/plugins/plugin-registry";
@@ -117,18 +116,5 @@ describe("assertEditorPermission（命令代发断言）", () => {
     });
     it("权限齐备 → 通过（不抛）", () => {
         expect(() => assertEditorPermission(FAKE_FULL_ID, "export.run")).not.toThrow();
-    });
-});
-
-describe("editor-shell 真实回归（M5.2 接入后编辑器不得自我封锁）", () => {
-    // import 副作用注册 editor-shell；其 manifest 权限必须覆盖全部 8 个插槽的最小权限表。
-    it("editor-shell 全部 8 个插槽均可渲染", async () => {
-        await import("@/lib/plugins/builtin/editor/editor-shell");
-        const permissions = pluginPermissions("editor-shell");
-        expect(permissions).not.toBeNull();
-        for (const slot of ALL_SLOTS) {
-            const verdict = pluginMayRenderEditorSlot("editor-shell", slot);
-            expect(verdict.allowed, `editor-shell 渲染 ${slot} 应被允许`).toBe(true);
-        }
     });
 });

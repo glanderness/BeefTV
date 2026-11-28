@@ -20,16 +20,14 @@ const ProjectChaptersView = lazy(() => import("./detail/chapters"));
 const ProjectOverviewView = lazy(() => import("./detail/overview"));
 const ProjectSettingsView = lazy(() => import("./detail/settings"));
 const ProjectWorkflowView = lazy(() => import("./detail/workflow"));
-const ProjectEditorView = lazy(() => import("./detail/editor"));
 
-type DetailView = "overview" | "chapters" | "workflow" | "canvases" | "editor" | "assets" | "settings";
+type DetailView = "overview" | "chapters" | "workflow" | "canvases" | "assets" | "settings";
 
 const views: Array<{ key: DetailView; label: string }> = [
     { key: "overview", label: "制作概览" },
     { key: "chapters", label: "剧情章节" },
     { key: "workflow", label: "分镜制作" },
     { key: "canvases", label: "项目画布" },
-    { key: "editor", label: "剪辑成片" },
     { key: "assets", label: "角色与资产" },
     { key: "settings", label: "项目设置" },
 ];
@@ -125,9 +123,9 @@ export default function ProjectDetailPage() {
                 <CreativeBibleDrawer open={bibleOpen} onClose={() => setBibleOpen(false)} projectId={projectId} />
                 {detail.project.status === "archived" ? <Alert type="warning" showIcon banner message="项目已归档，恢复后才能创建画布和生成任务" className="!border-x-0 !border-t-0" /> : null}
                 <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                    <div className={!activePluginView && (activeView === "chapters" || activeView === "workflow" || activeView === "editor") ? "min-h-0 flex-1" : "thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5 lg:px-8 lg:py-7"}>
+                    <div className={!activePluginView && (activeView === "chapters" || activeView === "workflow") ? "min-h-0 flex-1" : "thin-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5 lg:px-8 lg:py-7"}>
                         <Suspense fallback={<WorkspaceLoadingState label="正在准备当前项目视图" detail="只加载当前使用的工作区模块" />}>
-                            <div className={!activePluginView && (activeView === "chapters" || activeView === "workflow" || activeView === "editor") ? "h-full w-full" : "w-full"}>
+                            <div className={!activePluginView && (activeView === "chapters" || activeView === "workflow") ? "h-full w-full" : "w-full"}>
                                 {ActivePluginViewComp ? <ActivePluginViewComp projectId={projectId} /> : null}
                                 {!ActivePluginViewComp && activeView === "overview" ? overviewQuery.isLoading ? <WorkspaceLoadingState label="正在统计制作进度" detail="只读取聚合数据，不加载全部镜头历史" /> : overviewQuery.data ? <ProjectOverviewView detail={detail} overview={overviewQuery.data} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : <WorkspaceErrorState title="制作概览读取失败" description="请稍后重试。" onRetry={() => void overviewQuery.refetch()} /> : null}
                                 {!ActivePluginViewComp && activeView === "chapters" ? workspaceQuery.isLoading ? <WorkspaceLoadingState label="正在读取当前章节" detail="正文与制作数据按章节加载" /> : workspaceQuery.isError ? <WorkspaceErrorState title="章节读取失败" description="当前章节可能已被删除，或服务暂时不可用。" onRetry={() => void workspaceQuery.refetch()} /> : <ProjectChaptersView detail={detail} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
@@ -135,7 +133,6 @@ export default function ProjectDetailPage() {
                                 {!ActivePluginViewComp && activeView === "canvases" ? <ProjectCanvasesView detail={detail} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
                                 {!ActivePluginViewComp && activeView === "assets" ? <ProjectAssetsView detail={detail} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
                                 {!ActivePluginViewComp && activeView === "settings" ? <ProjectSettingsView detail={detail} refreshProject={refreshProject} onCreateCanvas={createCanvas} /> : null}
-                                {!ActivePluginViewComp && activeView === "editor" ? <ProjectEditorView detail={detail} /> : null}
                             </div>
                         </Suspense>
                     </div>

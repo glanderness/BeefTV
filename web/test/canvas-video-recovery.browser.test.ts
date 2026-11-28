@@ -198,7 +198,7 @@ const enabled = process.env.BEEFTV_BROWSER_WORKER_TEST === "1";
 test.skipIf(!enabled)("所有视频入口按需准备预览，失败可重试，可播放原件不转码", async () => {
     const env = await startVideoHarnessEnv(0.4);
     try {
-        for (const surface of ["canvas", "editor", "attachment", "drawer", "thumbnail"]) {
+        for (const surface of ["canvas", "attachment", "drawer", "thumbnail"]) {
         for (const scenario of surface === "thumbnail" ? ["fallback", "missing", "direct"] : ["fallback", "missing", "retry", "direct"]) {
             env.state.mode = scenario; env.state.prepares = 0; env.state.status = env.state.mode === "missing" ? "ready" : "none";
             const context = await env.browser.newContext();
@@ -241,7 +241,7 @@ test.skipIf(!enabled)("所有视频入口按需准备预览，失败可重试，
 test.skipIf(!hasFfmpeg)("视频轨不可解码但音轨可播时（无 error 事件、videoWidth=0），各播放入口自动切兼容 H.264 副本且兼容仍无画面时停音报错", async () => {
     const env = await startVideoHarnessEnv(0.8);
     try {
-        for (const surface of ["canvas", "viewer", "creation", "workflow", "storyboard", "projectAsset", "assistantOutput", "editor", "attachment", "drawer", "thumbnail"]) {
+        for (const surface of ["canvas", "viewer", "creation", "workflow", "storyboard", "projectAsset", "assistantOutput", "attachment", "drawer", "thumbnail"]) {
             env.state.mode = "audio-only-video";
             env.state.prepares = 0;
             env.state.status = "none";
