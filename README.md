@@ -78,7 +78,7 @@
     </td>
   </tr>
   <tr>
-    <td align="center" valign="middle"><img src="assets/readme/partner-compshare.png" width="96" alt="优云智算标志"><br><strong>优云智算</strong></td>
+    <td align="center" valign="middle"><img src="assets/readme/partner-compshare-transparent.png" width="96" alt="优云智算标志"><br><strong>优云智算</strong></td>
     <td><a href="https://www.compshare.cn/video-studio?ytag=GPU_YY_YX_git_BeefTV">优云智算</a>提供高性价比 H3 视频生成服务，涵盖文生视频、首尾帧及全能参考。支持最长 30s 视频、4K 画质，768P 仅 0.08 元/秒。支持 API 调用、企业高并发、自助开票。通过<a href="https://www.compshare.cn/video-studio?ytag=GPU_YY_YX_git_BeefTV">专属链接注册</a>，即可领取免费赠送额度。</td>
   </tr>
   <tr>

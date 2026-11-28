@@ -78,7 +78,7 @@ If you would also like to sponsor the BeefTV open source project and contribute 
     </td>
   </tr>
   <tr>
-    <td align="center" valign="middle"><img src="assets/readme/partner-compshare.png" width="96" alt="CompShare by UCloud logo"><br><strong>CompShare by UCloud</strong></td>
+    <td align="center" valign="middle"><img src="assets/readme/partner-compshare-transparent.png" width="96" alt="CompShare by UCloud logo"><br><strong>CompShare by UCloud</strong></td>
     <td><a href="https://www.compshare.cn/video-studio?ytag=GPU_YY_YX_git_BeefTV">CompShare by UCloud</a> offers affordable H3 video generation with text-to-video, first- and last-frame controls, and all-in-one references. It supports videos up to 30 seconds long and up to 4K resolution, with 768p generation at CNY 0.08 per second. The service offers API access, high concurrency for enterprises, and self-service invoicing. <a href="https://www.compshare.cn/video-studio?ytag=GPU_YY_YX_git_BeefTV">Register through the exclusive referral link</a> to claim free credits.</td>
   </tr>
   <tr>
