@@ -78,6 +78,10 @@
     </td>
   </tr>
   <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-compshare.png" width="96" alt="优云智算标志"><br><strong>优云智算</strong></td>
+    <td><a href="https://www.compshare.cn/video-studio?ytag=GPU_YY_YX_git_BeefTV">优云智算</a>提供高性价比 H3 视频生成服务，涵盖文生视频、首尾帧及全能参考。支持最长 30s 视频、4K 画质，768P 仅 0.08 元/秒。支持 API 调用、企业高并发、自助开票。通过<a href="https://www.compshare.cn/video-studio?ytag=GPU_YY_YX_git_BeefTV">专属链接注册</a>，即可领取免费赠送额度。</td>
+  </tr>
+  <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="腾讯云图标"><br><strong>腾讯云</strong></td>
     <td><a href="https://cloud.tencent.com/">腾讯云</a>提供云计算、人工智能与音视频服务，覆盖媒体存储、处理和分发等场景，服务开发者与企业的应用建设。感谢腾讯云为本项目提供的算力支持以及生态扶持。</td>
   </tr>
