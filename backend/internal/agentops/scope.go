@@ -58,9 +58,13 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 		SkillID     string   `json:"skillId"`
 		VersionID   string   `json:"versionId"`
 		ContentHash string   `json:"contentHash"`
+		Model       string   `json:"model"`
 	}
 	if len(params) > 0 {
 		_ = json.Unmarshal(params, &args)
+	}
+	if op.ID == "media.transcribe" && strings.TrimSpace(args.Model) != "" && assistantturns.Mode(s.PermissionMode) == assistantturns.PermissionReadOnly {
+		return denied("本轮助手只能读取，不能调用云端付费转写")
 	}
 	// Broad modes rely on each shared domain handler's current ownership check.
 	// Skills remain pinned rather than discovering filesystem instructions.
@@ -127,7 +131,7 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 			return nil
 		}
 		return denied("这个素材与当前画布无关，也没有被本次对话引用")
-	case "media.overview", "media.inspect", "media.check", "media.review":
+	case "media.overview", "media.inspect", "media.check", "media.review", "media.transcribe":
 		if args.CanvasID != s.CanvasID {
 			return denied("只能检查当前画布关联的媒体")
 		}

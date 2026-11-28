@@ -402,6 +402,16 @@ async function workspaceServer(context) {
   return state
 }
 
+// 健康检查需要连续失败达到阈值才断开，避免单次抖动误杀运行中的后端。
+async function probeUntilDisconnected(call, maxAttempts = 3) {
+  let latest
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    latest = (await call('GET', '/beeftv/status')).body
+    if (!latest.connected) break
+  }
+  return latest
+}
+
 // Loads the real Host into a minimal DSH context and serves its handler on loopback.
 async function startHost(context, options = {}) {
   const workspace = await workspaceServer(context)
@@ -513,7 +523,7 @@ test('Host rejects context from missing or previous connection IDs and reattache
   assert.equal((await call('POST', '/beeftv/connect', { mode: 'local' })).body.connectionId, second)
   assert.equal((await call('GET', '/beeftv/status')).body.workspace.id, 'verified-workspace')
   workspace.available = false
-  assert.equal((await call('GET', '/beeftv/status')).body.connected, false)
+  assert.equal((await probeUntilDisconnected(call)).connected, false)
   assert.equal(prompt({ agent: { id: 'session' } }), '')
   workspace.available = true
   const restored = (await call('GET', '/beeftv/status')).body
@@ -618,9 +628,9 @@ test('a call during the switching window asks even when the operation catalog is
   // 连接在线时按目录判断：未来付费操作要审批，普通读取不拦。
   assert.equal((await preExecute(extend('workspace-session'), allow)).kind, 'ask')
   assert.deepEqual(await preExecute(toolCall('mcp__beeftv__canvas_get_ab092b275e46', 'workspace-session'), allow), { kind: 'allow' })
-  // 健康检查失败后 current 被清空，目录读不到；此时未知操作不能当成免审批。
+  // 健康检查连续失败后 current 被清空，目录读不到；此时未知操作不能当成免审批。
   workspace.available = false
-  assert.equal((await call('GET', '/beeftv/status')).body.connected, false)
+  assert.equal((await probeUntilDisconnected(call)).connected, false)
   assert.deepEqual(await preExecute(extend('workspace-session'), allow), { kind: 'ask', reason: unknownCatalogReason })
   assert.deepEqual(await preExecute(toolCall('mcp__beeftv__canvas_get_ab092b275e46', 'workspace-session'), allow), { kind: 'ask', reason: unknownCatalogReason })
   // 已知不产生费用的工具照旧放行；完全权限照旧直接执行。
@@ -1024,7 +1034,7 @@ test('an idle wake is not redelivered after the workspace connection drops', asy
   await until(() => injected.length === 1)
   // 断线窗口里 current 为 null；旧工作区的完成通知不能在这时补投给会话。
   workspace.available = false
-  assert.equal((await call('GET', '/beeftv/status')).body.connected, false)
+  assert.equal((await probeUntilDisconnected(call)).connected, false)
   agent.status = 'idle'
   listeners.get('agent/status')({ agent, status: 'idle' })
   await sleep(50)
@@ -1087,9 +1097,9 @@ test('a reconnect with an unknown old workspace defers the wake instead of dropp
   const { agent, wakes, injected } = fakeAgent('session', 'running')
   listeners.get('tools/result')({ name: submitName, arguments: {}, agent }, submitResult(['reconnect-1']))
   await until(() => injected.length === 1)
-  // 健康检查失败后 current 被清空，自动重连时旧工作区信息已不可用。
+  // 健康检查连续失败后 current 被清空，自动重连时旧工作区信息已不可用。
   workspace.available = false
-  assert.equal((await call('GET', '/beeftv/status')).body.connected, false)
+  assert.equal((await probeUntilDisconnected(call)).connected, false)
   workspace.available = true
   let releaseBootstrap
   workspace.bootstrapGate = new Promise(resolve => { releaseBootstrap = resolve })
@@ -1510,7 +1520,7 @@ test('closing the away notice while disconnected keeps other workspace counts', 
   await call('POST', '/beeftv/connect', { mode: 'standalone' })
   assert.equal((await call('GET', '/beeftv/status')).body.awayNotice, '有 1 个生成在你离开时完成。')
   workspace.available = false
-  assert.equal((await call('GET', '/beeftv/status')).body.connected, false)
+  assert.equal((await probeUntilDisconnected(call)).connected, false)
   assert.equal((await call('POST', '/beeftv/away-notice', { seen: true })).status, 200)
   const stored = JSON.parse(await fsPromises.readFile(join(home, 'storages', 'beeftv', 'awaiting.json'), 'utf8'))
   assert.deepEqual(stored.away.map(entry => ({ taskIds: entry.taskIds, resolvedCount: entry.resolvedCount })), [{ taskIds: [], resolvedCount: 1 }])
@@ -1793,4 +1803,106 @@ test('Host rolls back to previous managed runtime and discards broken candidate 
   const recovered = (await call('GET', '/beeftv/status')).body
   assert.equal(recovered.connected, true)
   assert.equal(recovered.standaloneRuntime.version, 'v2.4.2')
+})
+
+test('canvas.timeline.render and deliver enter automatic wait/wake without requiring paid generation approval', async context => {
+  const renderTool = 'mcp__beeftv__canvas_timeline_render_ab092b275e46'
+  const deliverTool = 'mcp__beeftv__canvas_timeline_deliver_ab092b275e46'
+  const renderResult = taskId => ({ content: [{ type: 'text', text: JSON.stringify({ op: 'canvas.timeline.render', result: { canvasId: 'c1', taskId, status: 'queued', local: true, charged: false } }) }] })
+  const deliverResult = renderTaskId => ({ content: [{ type: 'text', text: JSON.stringify({ op: 'canvas.timeline.deliver', result: { canvasId: 'c1', renderTaskId, status: 'queued', local: true, charged: false } }) }] })
+  assert.deepEqual(submittedTaskIds(renderTool, renderResult('render-1')), ['render-1'])
+  assert.deepEqual(submittedTaskIds(deliverTool, deliverResult('deliver-1')), ['deliver-1'])
+  assert.deepEqual(submittedTaskIds(renderTool, { ...renderResult('render-1'), isError: true }), [])
+
+  const { call, listeners, workspace } = await startHost(context, {
+    extraOps: [
+      { id: 'task.wait', readOnly: true },
+      { id: 'canvas.timeline.render', readOnly: false, replay: 'safe', submitsGeneration: false },
+    ],
+  })
+  workspace.taskWait = ({ taskId }) => ({ tasks: [{ taskId, status: 'succeeded', state: 'completed', reason: 'saved' }], pending: 0, completed: 1, failed: 0 })
+  await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  const decision = await listeners.get('tools/pre-execute')({ name: renderTool, arguments: { canvasId: 'c1', expectedRevision: 1 }, agent: { session: { id: 's1' } } }, async () => ({ kind: 'allow' }))
+  assert.deepEqual(decision, { kind: 'allow' })
+  const { agent, wakes } = fakeAgent('render-session')
+  listeners.get('tools/result')({ name: renderTool, arguments: { canvasId: 'c1' }, agent }, renderResult('render-task-1'))
+  await until(() => wakes.length === 1)
+  assert.match(wakes[0].content[0].text, /1 个成功.*render-task-1/)
+  assert.equal(workspace.calls.some(item => item.op === 'task.wait' && item.params.taskId === 'render-task-1'), true)
+})
+
+test('taskOutcome and waitOutcome classify Go authoritative task.outcome and task.wait states identically', () => {
+  // Go 权威 outcome.phase=ready 即使无 outputs 数组（如文本/无产物任务）也直接判完成。
+  assert.equal(taskOutcome({ taskId: 'text-1', status: 'succeeded', outcome: { phase: 'ready', reason: 'result_ready' } }).state, 'succeeded')
+  assert.equal(waitOutcome({ tasks: [{ taskId: 'text-1', status: 'succeeded', outcome: { phase: 'ready', reason: 'result_ready' } }] }, 'text-1').state, 'succeeded')
+  // Go task.wait 对成功生成但永久物化失败返回 status=succeeded + state=failed + reason=materialization_failed -> incomplete。
+  const realWaitMat = waitOutcome({ tasks: [{ taskId: 'mat-1', status: 'succeeded', state: 'failed', reason: 'materialization_failed' }], failed: 1, pending: 0 }, 'mat-1')
+  assert.equal(realWaitMat.state, 'incomplete')
+  assert.match(realWaitMat.reason, /只能重新保存/)
+  // 顶层 status=failed 但任务项带 outcome.phase=retrievable 时仍为 pending，不误判终态失败。
+  assert.equal(waitOutcome({ status: 'failed', tasks: [{ taskId: 'ret-1', status: 'failed', outcome: { phase: 'retrievable' } }] }, 'ret-1').state, 'pending')
+  assert.equal(waitOutcome({ tasks: [{ taskId: 'ret-2', status: 'failed', outcome: { phase: 'retrievable' } }] }, 'ret-2').state, 'pending')
+  // 顶层 status=succeeded 但任务项或 outcome 仍在 fetching/downloading/materialization_failed 时，必须以任务项权威状态为准。
+  assert.equal(waitOutcome({ status: 'succeeded', tasks: [{ taskId: 'fetch-1', status: 'succeeded', outcome: { phase: 'fetching' } }] }, 'fetch-1').state, 'pending')
+  assert.equal(waitOutcome({ status: 'succeeded', outcome: { phase: 'fetching' } }, 'fetch-2').state, 'pending')
+  assert.equal(waitOutcome({ status: 'succeeded', tasks: [{ taskId: 'dl-1', status: 'succeeded', state: 'downloading' }] }, 'dl-1').state, 'pending')
+  assert.equal(waitOutcome({ status: 'succeeded', tasks: [{ taskId: 'inc-1', status: 'succeeded', reason: 'materialization_failed' }] }, 'inc-1').state, 'incomplete')
+})
+
+test('transient /api/health failures do not kill a healthy running backend until consecutive threshold is reached', async context => {
+  const { call, workspace } = await startHost(context)
+  const initial = await call('POST', '/beeftv/connect', { mode: 'standalone' })
+  assert.equal(initial.status, 200)
+  const connId = initial.body.connectionId
+
+  // 第 1、2 次健康检查失败不应断开或杀掉运行中的后端。
+  workspace.available = false
+  const firstFail = (await call('GET', '/beeftv/status')).body
+  assert.equal(firstFail.connected, true)
+  assert.equal(firstFail.connectionId, connId)
+  const secondFail = (await call('GET', '/beeftv/status')).body
+  assert.equal(secondFail.connected, true)
+  assert.equal(secondFail.connectionId, connId)
+
+  // 中间恢复一次健康后，连续失败计数清零，再出现 1 次抖动仍不会断开。
+  workspace.available = true
+  const recovered = (await call('GET', '/beeftv/status')).body
+  assert.equal(recovered.connected, true)
+  assert.equal(recovered.connectionId, connId)
+
+  workspace.available = false
+  assert.equal((await call('GET', '/beeftv/status')).body.connected, true)
+  assert.equal((await call('GET', '/beeftv/status')).body.connected, true)
+  // 第 3 次连续失败后才断开连接并释放旧运行时。
+  const thirdFail = (await call('GET', '/beeftv/status')).body
+  assert.equal(thirdFail.connected, false)
+  assert.equal(thirdFail.connectionId, null)
+})
+
+test('local attach mode (owned=false with exited attach helper child) preserves 3-failure health tolerance', async context => {
+  const { call, workspace } = await startHost(context)
+  const realSpawn = childProcess.spawn
+  context.mock.method(childProcess, 'spawn', (...args) => {
+    const child = realSpawn(...args)
+    // 模拟真实 local attach 子进程打印就绪 JSON 后立刻 exitCode=0 退出（owned=false）。
+    child.exitCode = 0
+    return child
+  })
+  syncBuiltinESMExports()
+
+  const initial = await call('POST', '/beeftv/connect', { mode: 'local' })
+  assert.equal(initial.status, 200)
+  const connId = initial.body.connectionId
+
+  workspace.available = false
+  // 第 1、2 次健康检查失败不得因 owned=false 的 attach 子进程 exitCode=0 而提前断开！
+  const fail1 = (await call('GET', '/beeftv/status')).body
+  assert.equal(fail1.connected, true)
+  assert.equal(fail1.connectionId, connId)
+  const fail2 = (await call('GET', '/beeftv/status')).body
+  assert.equal(fail2.connected, true)
+  assert.equal(fail2.connectionId, connId)
+  // 第 3 次连续失败后正常断开。
+  const fail3 = (await call('GET', '/beeftv/status')).body
+  assert.equal(fail3.connected, false)
 })

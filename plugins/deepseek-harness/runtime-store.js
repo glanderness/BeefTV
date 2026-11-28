@@ -10,6 +10,7 @@ import { compareSemver } from './platform-app.js'
 import {
   DEFAULT_FEED_URL,
   DEFAULT_PUBLIC_KEY,
+  inspectZipSafety,
   isDomesticURL,
   MAX_FEED_BYTES,
   orderCandidateURLs,
@@ -22,6 +23,7 @@ import {
 export {
   DEFAULT_FEED_URL,
   DEFAULT_PUBLIC_KEY,
+  inspectZipSafety,
   orderCandidateURLs,
   preferDomesticMirror,
   verifyFeedEnvelope,
@@ -337,6 +339,7 @@ export function createRuntimeStore({
   publicKey = env?.BEEFTV_HARNESS_PUBLIC_KEY || DEFAULT_PUBLIC_KEY,
   fetchImpl = globalThis.fetch,
   extractImpl = extractZipArchive,
+  inspectZipImpl = inspectZipSafety,
 } = {}) {
   const platKey = platformKey(platform, arch)
   const runtimesDir = pluginHome ? join(pluginHome, 'runtimes') : null
@@ -551,6 +554,8 @@ export function createRuntimeStore({
         throw new Error(`下载 BeefTV 运行环境失败：${lastDownloadError?.message || '请检查网络连接后重试'}`)
       }
 
+      provision = { ...provision, phase: 'verifying', percent: 100 }
+      await inspectZipImpl(zipPath)
       if (signal?.aborted) throw formatAbortError(Object.assign(new Error('aborted'), { name: 'AbortError' }))
 
       provision = { ...provision, phase: 'extracting', percent: null }

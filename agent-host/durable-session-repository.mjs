@@ -53,6 +53,7 @@ export function createDurableSessionRepository({
   precheckTool = null,
   enableImageFitting = true,
   maxInlineImageChars = undefined,
+  nativePartStore = null,
 }) {
   const directory = (canvasId) => path.join(sessionRoot, canvasKey(canvasId));
   const durableDirectory = (canvasId) => path.join(directory(canvasId), 'durable');
@@ -191,6 +192,7 @@ export function createDurableSessionRepository({
       precheckTool,
       enableImageFitting,
       maxInlineImageChars,
+      nativePartStore,
     });
     openCount += 1;
     try {
@@ -644,6 +646,7 @@ export function createDurableSessionRepository({
           precheckTool,
           enableImageFitting,
           maxInlineImageChars,
+          nativePartStore,
         });
         openCount += 1;
         dstEntry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${newUuid}.sqlite`)), {
@@ -708,6 +711,7 @@ export function createDurableSessionRepository({
           forkedFrom,
         });
         await install(dstEntry);
+        try { nativePartStore?.copySessionRefs?.(canvasId, sessionId, newSessionId); } catch { /* non-fatal ref copy */ }
         return {
           sessionId: newSessionId,
           conversationId: forkedConv.id,
@@ -753,6 +757,10 @@ export function createDurableSessionRepository({
       for (const suffix of ['.json', '.sqlite', '.sqlite-wal', '.sqlite-shm', '.budget']) {
         fs.rmSync(path.join(dir, `${uuid}${suffix}`), { recursive: true, force: true });
       }
+      try {
+        nativePartStore?.releaseSession?.(canvasId, sessionId);
+        nativePartStore?.pruneUnreferenced?.({ isSessionAlive: (cId, sId) => hasSession(cId, sId) });
+      } catch { /* non-fatal part cleanup */ }
       const wasCurrent = current?.sessionId === sessionId || readSafeCurrentPointer(canvasId) === sessionId;
       if (wasCurrent) {
         const remaining = await listCanvasSessions(canvasId);

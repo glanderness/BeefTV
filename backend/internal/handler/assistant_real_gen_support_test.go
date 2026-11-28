@@ -39,7 +39,7 @@ func e2eModelConfig(baseURL string) []byte {
 				map[string]any{"model": textModelName(), "capability": "text", "protocol": "chat-completion"},
 				map[string]any{"model": "seedream-5-0-260128", "capability": "image", "protocol": "openai-image"},
 				map[string]any{"model": "seedance-2.0-fast", "capability": "video", "protocol": videoProtocol()},
-				map[string]any{"model": "gemini-3.8-flash", "capability": "text", "protocol": "chat-completion"},
+				map[string]any{"model": "gemini-3.8-flash", "capability": "text", "protocol": "chat-completion", "inputModalities": []string{"video", "audio", "image"}},
 			},
 		}},
 	}
@@ -533,7 +533,7 @@ func registerE2EGenerationEndpoints(mux *http.ServeMux, env *assistantTestEnv, u
 			writeJSON(w, map[string]any{"ok": false, "reason": "model_config_invalid"})
 			return
 		}
-		provider, reason := modelcatalog.ResolveMediaReviewProvider(snapshot, nil)
+		provider, reason := modelcatalog.ResolveMediaReviewProviderForModality(snapshot, "", nil)
 		writeJSON(w, map[string]any{"ok": reason == "", "model": provider.Model, "reason": reason})
 	})
 }

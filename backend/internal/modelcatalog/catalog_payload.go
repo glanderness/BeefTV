@@ -39,3 +39,30 @@ func NormalizeCatalogEndpointTypes(values []string) []string {
 	}
 	return normalized
 }
+
+func NormalizeCatalogInputModalities(groups ...[]string) []string {
+	seen := map[string]bool{}
+	var normalized []string
+	for _, group := range groups {
+		for _, raw := range group {
+			item := strings.ToLower(strings.TrimSpace(raw))
+			switch {
+			case item == "text" || item == "image" || item == "video" || item == "audio":
+			case item == "vision" || strings.HasPrefix(item, "image/"):
+				item = "image"
+			case item == "video/mp4":
+				item = "video"
+			case item == "audio/wav":
+				item = "audio"
+			default:
+				item = ""
+			}
+			if item == "" || seen[item] {
+				continue
+			}
+			seen[item] = true
+			normalized = append(normalized, item)
+		}
+	}
+	return normalized
+}

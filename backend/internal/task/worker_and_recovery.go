@@ -508,6 +508,36 @@ func BindTranscriptionModel(beef *beeftv.Service, modelID string) (string, error
 	return cred.TokenID, nil
 }
 
+// ResolveTranscriptionClient constructs a transcription.Client for either free
+// local whisper.cpp (modelID == "") or a catalog-verified paid cloud Whisper model.
+func ResolveTranscriptionClient(ctx context.Context, beef *beeftv.Service, modelID string) (*transcription.Client, error) {
+	_ = ctx
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		baseURL := strings.TrimSpace(os.Getenv(transcription.BaseURLEnv))
+		if baseURL == "" {
+			return nil, kernel.BadAuthRequest("未配置本地转写服务：请设置 CANVAS_WHISPER_BASE_URL 指向 whisper.cpp 服务")
+		}
+		return transcription.NewClient(baseURL), nil
+	}
+	tokenID, err := BindTranscriptionModel(beef, modelID)
+	if err != nil {
+		return nil, err
+	}
+	cred, err := beef.Resolve()
+	if err != nil || tokenID == "" || cred.TokenID != tokenID {
+		return nil, kernel.BadAuthRequest("BeefTV 连接已改变，请重新提交转写")
+	}
+	if _, err := outbound.ValidateOutboundURL(cred.BaseURL); err != nil {
+		return nil, kernel.BadAuthRequest("云端转写地址不可用，请重新连接 BeefTV")
+	}
+	client := transcription.NewClient(cred.BaseURL)
+	client.HTTP = outbound.OutboundHTTPClient(20 * time.Minute)
+	client.Model = modelID
+	client.APIKey = cred.APIKey
+	return client, nil
+}
+
 type TimelineRenderPlanRequest struct {
 	Timeline editing.Project      `json:"timeline"`
 	Sources  []editing.SourceMeta `json:"sources"`

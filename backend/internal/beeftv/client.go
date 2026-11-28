@@ -348,6 +348,7 @@ func (s *Service) fetchModelsConditional(ctx context.Context, apiKey, ifNoneMatc
 			DisplayName:              item.DisplayName,
 			ModelType:                item.ModelType,
 			SupportedEndpointTypes:   item.SupportedEndpointTypes,
+			InputModalities:          append([]string(nil), item.InputModalities...),
 			ImageCapabilities:        append(json.RawMessage(nil), item.ImageCapabilities...),
 			ImageCapabilitiesVersion: imageVersion,
 			VideoCapabilities:        append(json.RawMessage(nil), item.VideoCapabilities...),

@@ -1,11 +1,14 @@
 package operations
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"image"
+	"image/png"
 	"slices"
 	"strings"
 	"testing"
@@ -133,5 +136,38 @@ func TestMediaReviewSelectsReferencedResourceBeforeInference(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestMediaReviewSupportsImageModeAndRejectsNonZeroRange(t *testing.T) {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 24, 24))); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(encoded.Bytes())
+	d := &reviewDomain{mediaDomain: &mediaDomain{owner: "owner", data: encoded.Bytes(), mimeType: "image/png"}}
+	ctx := &Context{Context: context.Background(), UserID: "owner", Domain: d}
+
+	raw, _ := json.Marshal(mediaReviewArgs{
+		CanvasID: "canvas", NodeID: "node", ExpectedVersion: hex.EncodeToString(sum[:]),
+		StartMs: 0, EndMs: 0, Mode: "image", Question: "观察画面人物",
+	})
+	res, err := runMediaReview(ctx, raw)
+	if err != nil {
+		t.Fatalf("image review failed: %v", err)
+	}
+	if d.calls != 1 || d.part.MimeType != "image/png" {
+		t.Fatalf("unexpected image review part: calls=%d mime=%q", d.calls, d.part.MimeType)
+	}
+	if note, _ := res.(map[string]any)["note"].(string); !strings.Contains(note, "图片") {
+		t.Fatalf("expected image review note, got %q", note)
+	}
+
+	badRange, _ := json.Marshal(mediaReviewArgs{
+		CanvasID: "canvas", NodeID: "node", ExpectedVersion: hex.EncodeToString(sum[:]),
+		StartMs: 0, EndMs: 1000, Mode: "image", Question: "观察画面",
+	})
+	if _, err := runMediaReview(ctx, badRange); AsError(err) == nil || AsError(err).Reason != "invalid_media_review" {
+		t.Fatalf("non-zero image review range must fail, got %v", err)
 	}
 }

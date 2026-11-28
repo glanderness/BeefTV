@@ -391,3 +391,43 @@ func catalogNumber(value any) float64 {
 		return -1
 	}
 }
+
+func TestApplyCatalogSnapshotPropagatesInputModalitiesAndOfficialDefaults(t *testing.T) {
+	store, err := workspace.NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := []CatalogModel{
+		{ID: "omni-review-2", ModelType: "text", SupportedEndpointTypes: []string{"openai"}, InputModalities: []string{"text", "image", "video", "audio"}},
+		{ID: "wand-vega-vl-1.0-flash", ModelType: "text", SupportedEndpointTypes: []string{"openai"}},
+		{ID: "plain-chat", ModelType: "text", SupportedEndpointTypes: []string{"openai"}},
+	}
+	if _, _, err := applyCatalogSnapshot(store, models, "", "42", ""); err != nil {
+		t.Fatal(err)
+	}
+	omni, ok := lookupCatalogProfile(t, store, "omni-review-2")
+	if !ok {
+		t.Fatal("missing omni-review-2 profile")
+	}
+	wantOmni, _ := json.Marshal([]string{"text", "image", "video", "audio"})
+	gotOmni, _ := json.Marshal(omni["inputModalities"])
+	if string(gotOmni) != string(wantOmni) {
+		t.Fatalf("omni inputModalities=%s want=%s", gotOmni, wantOmni)
+	}
+	official, ok := lookupCatalogProfile(t, store, "wand-vega-vl-1.0-flash")
+	if !ok {
+		t.Fatal("missing wand-vega-vl-1.0-flash profile")
+	}
+	wantOfficial, _ := json.Marshal([]string{"image", "video", "audio"})
+	gotOfficial, _ := json.Marshal(official["inputModalities"])
+	if string(gotOfficial) != string(wantOfficial) {
+		t.Fatalf("official fallback inputModalities=%s want=%s", gotOfficial, wantOfficial)
+	}
+	plain, ok := lookupCatalogProfile(t, store, "plain-chat")
+	if !ok {
+		t.Fatal("missing plain-chat profile")
+	}
+	if plain["inputModalities"] != nil {
+		t.Fatalf("plain text model must not gain review inputModalities: %#v", plain["inputModalities"])
+	}
+}

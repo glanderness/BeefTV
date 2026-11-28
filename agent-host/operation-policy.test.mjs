@@ -101,7 +101,7 @@ test('Opus delegates independent audio to a non-replayable review and receives o
   await bridge.loadDescriptors();
   const turn=newTurnAccumulator(), log=[];
   const review=bridge.buildTools('canvas-a',log,{aborted:false,permissionMode:'read-only'},turn,'audio-session').find(tool=>tool.label==='media.review');
-  expect(review.parameters.properties.mode.enum).toEqual(['video','audio']);
+  expect(review.parameters.properties.mode.enum).toEqual(['video','audio','image']);
   expect(durableToolReplay(review)).toBe('unsafe');
   const args={assetId:'audio-asset',expectedVersion:'a'.repeat(64),startMs:200,endMs:1200,mode:'audio',question:'What can be heard?'};
   const result=await review.execute('audio-call',args);

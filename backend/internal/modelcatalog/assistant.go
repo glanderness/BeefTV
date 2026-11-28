@@ -31,11 +31,13 @@ var assistantProtocols = map[string]string{
 }
 
 type AssistantModelProfile struct {
-	Model         string `json:"model"`
-	Capability    string `json:"capability"`
-	Protocol      string `json:"protocol"`
-	ContextWindow int    `json:"contextWindow,omitempty"`
-	MaxTokens     int    `json:"maxTokens,omitempty"`
+	Model            string                 `json:"model"`
+	Capability       string                 `json:"capability"`
+	Protocol         string                 `json:"protocol"`
+	ContextWindow    int                    `json:"contextWindow,omitempty"`
+	MaxTokens        int                    `json:"maxTokens,omitempty"`
+	InputModalities  []string               `json:"inputModalities,omitempty"`
+	CapabilityConfig *ModelCapabilityConfig `json:"capabilityConfig,omitempty"`
 }
 
 type AssistantChannel struct {

@@ -97,7 +97,10 @@ func testMediaReviewAudio(t *testing.T, format string) {
 	}
 	config, _ := json.Marshal(map[string]any{"assistantModel": "main::claude-opus-5-5", "mediaReviewModel": "review::wand-vega-vl-1.0-flash",
 		"channels": []any{map[string]any{"id": "review", "enabled": true, "baseUrl": server.URL + "/v1", "apiKey": "review-fixture-key",
-			"models": []string{"wand-vega-vl-1.0-flash"}, "modelProfiles": []any{map[string]string{"model": "wand-vega-vl-1.0-flash", "capability": "text", "protocol": "chat-completion"}}}}})
+			"models": []string{"wand-vega-vl-1.0-flash"}, "modelProfiles": []any{map[string]any{
+				"model": "wand-vega-vl-1.0-flash", "capability": "text", "protocol": "chat-completion",
+				"inputModalities": []string{"video", "audio"}, "supportedRequestFields": []string{"thinking_enabled", "reasoning_effort"},
+			}}}}})
 	if err := store.SaveLocalModelConfig(config); err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +226,7 @@ func TestMediaReviewAudioFailureIsNotRetried(t *testing.T) {
 					return
 				}
 				if body["model"] != "wand-vega-vl-1.0-flash" || body["stream"] != false || body["max_tokens"] != float64(8192) ||
-					body["thinking_enabled"] != false || body["reasoning_effort"] != "none" || body["tools"] != nil {
+					body["thinking_enabled"] != nil || body["reasoning_effort"] != nil || body["tools"] != nil {
 					t.Error("audio changed bounded inference settings")
 				}
 				parts := body["messages"].([]any)[1].(map[string]any)["content"].([]any)
@@ -256,7 +259,10 @@ func TestMediaReviewAudioFailureIsNotRetried(t *testing.T) {
 			}
 			config, _ := json.Marshal(map[string]any{"assistantModel": "main::claude-opus-5-5", "mediaReviewModel": "review::wand-vega-vl-1.0-flash",
 				"channels": []any{map[string]any{"id": "review", "enabled": true, "baseUrl": server.URL + "/v1", "apiKey": "review-fixture-key",
-					"models": []string{"wand-vega-vl-1.0-flash"}, "modelProfiles": []any{map[string]string{"model": "wand-vega-vl-1.0-flash", "capability": "text", "protocol": "chat-completion"}}}}})
+					"models": []string{"wand-vega-vl-1.0-flash"}, "modelProfiles": []any{map[string]any{
+						"model": "wand-vega-vl-1.0-flash", "capability": "text", "protocol": "chat-completion",
+						"inputModalities": []string{"video", "audio"}, "supportedRequestFields": []string{"thinking_enabled", "reasoning_effort"},
+					}}}}})
 			if err := store.SaveLocalModelConfig(config); err != nil {
 				t.Fatal(err)
 			}

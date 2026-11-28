@@ -39,6 +39,8 @@ type catalogPayloadItem struct {
 	DisplayName              string                   `json:"display_name"`
 	ModelType                string                   `json:"model_type"`
 	SupportedEndpointTypes   []string                 `json:"supported_endpoint_types"`
+	InputModalities          []string                 `json:"input_modalities"`
+	InputModalitiesCamel     []string                 `json:"inputModalities"`
 	DefaultParameters        catalogPayloadParameters `json:"default_parameters"`
 	Options                  catalogPayloadOptions    `json:"options"`
 	SupportsImages           *bool                    `json:"supports_images"`
@@ -156,6 +158,7 @@ func ParseChannelModelCatalog(data []byte, apiFormat string) ([]ChannelModelCata
 			DisplayName:            strings.TrimSpace(item.DisplayName),
 			ModelType:              NormalizeCatalogModelType(item.ModelType),
 			SupportedEndpointTypes: NormalizeCatalogEndpointTypes(item.SupportedEndpointTypes),
+			InputModalities:        NormalizeCatalogInputModalities(item.InputModalities, item.InputModalitiesCamel),
 			DefaultParameters: ChannelModelCatalogDefaultParameters{
 				AspectRatio:     strings.TrimSpace(item.DefaultParameters.AspectRatio),
 				DurationSeconds: strings.TrimSpace(item.DefaultParameters.DurationSeconds),

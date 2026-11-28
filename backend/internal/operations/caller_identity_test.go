@@ -235,8 +235,8 @@ func TestAssistantCannotUseWorkspaceWideOps(t *testing.T) {
 		t.Fatalf("canvas.create descriptor 应透出 noTurnCanvas=true: %+v", desc)
 	}
 	manual := h.registry.List(operations.ManualCaller(false))
-	if len(manual) != 59 {
-		t.Fatalf("手工 UI 应看到完整 59 项能力: %d", len(manual))
+	if len(manual) != 60 {
+		t.Fatalf("手工 UI 应看到完整 60 项能力: %d", len(manual))
 	}
 	foundDocumentCommit := false
 	for _, descriptor := range manual {

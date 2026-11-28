@@ -267,11 +267,13 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
                 : (nextCapability === "image" || nextCapability === "video") && usable
                   ? defaultModelCapabilityConfig(usable.value, item.id, protocols)
                   : undefined;
+            const inputModalities = item.inputModalities?.length ? item.inputModalities : existing.inputModalities;
             return {
                 ...existing,
                 displayName: item.displayName || existing.displayName,
                 capability: nextCapability,
                 protocol: usable?.value ?? existing.protocol,
+                ...(inputModalities?.length ? { inputModalities } : {}),
                 authType: usable ? usable.authType : existing.authType,
                 capabilitySource: keepUser ? "user" : undefined,
                 capabilityConfig: nextConfig,
@@ -288,13 +290,17 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
             projectedWorkflowConfig && JSON.stringify(projectedWorkflowConfig) !== JSON.stringify(existing.capabilityConfig)
                 ? projectedWorkflowConfig
                 : existing.capabilityConfig;
+        const nextInputModalities = item.inputModalities?.length ? item.inputModalities : existing.inputModalities;
+        const inputModalitiesChanged = JSON.stringify(nextInputModalities || []) !== JSON.stringify(existing.inputModalities || []);
         // 旧 ID 落盘时换成现在的 ID，下次打开就是新 ID。
-        if (usable && (usable.value !== existing.protocol || usable.authType !== existing.authType || repairedCapabilityConfig !== existing.capabilityConfig)) {
-            return { ...existing, protocol: usable.value, authType: usable.authType, capabilityConfig: repairedCapabilityConfig };
+        if (usable && (usable.value !== existing.protocol || usable.authType !== existing.authType || repairedCapabilityConfig !== existing.capabilityConfig || inputModalitiesChanged)) {
+            return { ...existing, protocol: usable.value, authType: usable.authType, capabilityConfig: repairedCapabilityConfig, ...(nextInputModalities?.length ? { inputModalities: nextInputModalities } : {}) };
         }
         const currentProtocol = existing.protocol;
         const fromBuiltin = plugin?.protocolPrefixes.some((prefix) => currentProtocol.startsWith(prefix)) ?? false;
-        if (usable || !fromBuiltin) return existing;
+        if (usable || !fromBuiltin) {
+            return inputModalitiesChanged ? { ...existing, ...(nextInputModalities?.length ? { inputModalities: nextInputModalities } : {}) } : existing;
+        }
     }
     const presetModel = plugin?.models.find((presetItem) => presetItem.model === item.id);
     if (presetModel && (!explicitCapability || explicitCapability === presetModel.capability)) {
@@ -332,7 +338,8 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
     if (fullvideoFull && capability === "video" && !inherited) proposed = item.supportedEndpointTypes?.includes("full-video") ? "full-video" : undefined;
     const definition = protocols.find((p) => p.value === proposed && p.capability === capability && p.enabled !== false);
     const protocol = definition?.value;
-    return { ...existing, model: item.id, displayName: existing?.displayName || item.displayName, capability, protocol, authType: definition ? definition.authType : existing?.authType, capabilitySource: existing?.capability === capability ? existing.capabilitySource : undefined, capabilityConfig: existing?.capability === capability && existing.capabilityConfig ? existing.capabilityConfig : (capability === "image" || capability === "video") && protocol ? defaultModelCapabilityConfig(protocol, item.id, protocols) : undefined };
+    const inputModalities = item.inputModalities?.length ? item.inputModalities : existing?.inputModalities;
+    return { ...existing, model: item.id, displayName: existing?.displayName || item.displayName, capability, protocol, ...(inputModalities?.length ? { inputModalities } : {}), authType: definition ? definition.authType : existing?.authType, capabilitySource: existing?.capability === capability ? existing.capabilitySource : undefined, capabilityConfig: existing?.capability === capability && existing.capabilityConfig ? existing.capabilityConfig : (capability === "image" || capability === "video") && protocol ? defaultModelCapabilityConfig(protocol, item.id, protocols) : undefined };
 }
 
 export function channelAllowsEmptyAPIKey(channel: Pick<ModelChannel, "models" | "modelProfiles" | "interfaceType">, protocols?: ModelProtocolDefinition[]) {

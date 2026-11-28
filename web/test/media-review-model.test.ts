@@ -36,8 +36,43 @@ test("saved media choice and explicit off survive normalization, reconnect and c
 });
 
 test("catalog aliases are selectable without silently choosing another model", () => {
-    const channel = { ...managed, models: ["catalog-wand"], modelAliases: { [model]: "catalog-wand" }, modelProfiles: [{ model: "catalog-wand", capability: "text" as const, protocol: "chat-completion" }] };
+    const channel = { ...managed, models: ["catalog-wand"], modelAliases: { [model]: "catalog-wand" }, modelProfiles: [{ model: "catalog-wand", capability: "text" as const, protocol: "chat-completion" as const }] };
     const aliased = { ...config, channels: [channel] };
     expect(mediaReviewModelOptions(aliased)).toEqual(["beeftv::catalog-wand"]);
     expect(normalizeMediaReviewModel(aliased, `beeftv::${model}`)).toBe("beeftv::catalog-wand");
+});
+
+test("capability-driven selection accepts any model declaring inputModalities or text reference limits", () => {
+    const byokChannel = createModelChannel({
+        id: "byok",
+        models: ["qwen-omni-review", "vision-ref-model", "audio-ref-model", "text-only-declared", "plain-chat"],
+        modelProfiles: [
+            { model: "qwen-omni-review", capability: "text", protocol: "chat-completion", inputModalities: ["text", "image", "video", "audio"] },
+            {
+                model: "vision-ref-model",
+                capability: "text",
+                protocol: "chat-completion",
+                capabilityConfig: { version: 1, text: { references: { promptMaxChars: 32000, maxImages: 4, maxImageBytes: 8_000_000, maxVideos: 0, maxVideoBytes: 0, maxAudios: 0, maxAudioBytes: 0 } } },
+            },
+            {
+                model: "audio-ref-model",
+                capability: "text",
+                protocol: "chat-completion",
+                capabilityConfig: { version: 1, text: { references: { promptMaxChars: 32000, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0, maxAudios: 1, maxAudioBytes: 8_000_000 } } },
+            },
+            { model: "text-only-declared", capability: "text", protocol: "chat-completion", inputModalities: ["text"] },
+            { model: "plain-chat", capability: "text", protocol: "chat-completion" },
+        ],
+    });
+    const byokConfig = { ...defaultConfig, channels: [byokChannel] };
+    expect(mediaReviewModelOptions(byokConfig)).toEqual([
+        "byok::qwen-omni-review",
+        "byok::vision-ref-model",
+        "byok::audio-ref-model",
+    ]);
+    expect(normalizeMediaReviewModel(byokConfig, "byok::qwen-omni-review")).toBe("byok::qwen-omni-review");
+    expect(normalizeMediaReviewModel(byokConfig, "byok::vision-ref-model")).toBe("byok::vision-ref-model");
+    expect(normalizeMediaReviewModel(byokConfig, "byok::audio-ref-model")).toBe("byok::audio-ref-model");
+    expect(normalizeMediaReviewModel(byokConfig, "byok::text-only-declared")).toBe("");
+    expect(normalizeMediaReviewModel(byokConfig, "byok::plain-chat")).toBe("");
 });

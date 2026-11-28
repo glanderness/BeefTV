@@ -520,6 +520,12 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 		if err := json.Unmarshal(descriptor.Params, &schema); err != nil {
 			t.Fatal(err)
 		}
+		if descriptor.ID == "media.transcribe" {
+			if slices.Contains(schema.Required, "expectedVersion") || descriptor.Replay != "unsafe" {
+				t.Fatal("transcribe discovery contract mismatch")
+			}
+			continue
+		}
 		if slices.Contains(schema.Required, "expectedVersion") != (descriptor.ID != "media.overview") {
 			t.Fatalf("%s discovery does not match the required media version", descriptor.ID)
 		}
@@ -527,8 +533,8 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 			t.Fatalf("%s properties expectedVersion=%v, want %v", descriptor.ID, hasExpectedVersion, descriptor.ID != "media.overview")
 		}
 		if descriptor.ID == "media.review" {
-			if !slices.Contains(schema.Required, "question") || descriptor.Replay != "unsafe" {
-				t.Fatal("review must require a question and avoid replaying external charges")
+			if !slices.Contains(schema.Required, "question") || descriptor.Replay != "unsafe" || !slices.Contains(schema.Properties["mode"].Enum, "image") {
+				t.Fatal("review must require a question, support image mode, and avoid replaying external charges")
 			}
 			continue
 		}
@@ -556,7 +562,7 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 4 {
+	if len(seen) != 5 {
 		t.Fatal("incomplete media discovery")
 	}
 }

@@ -152,6 +152,16 @@ func cloudTranscribeTargetDigest(canvasID, tool, modelName string) string {
 	})
 }
 
+func mediaTranscribeTargetDigest(canvasID, nodeID, assetID, resourceID, expectedVersion, modelName string) string {
+	return ComputeApprovalTargetDigest("media.transcribe", canvasID, nil, map[string]any{
+		"nodeId":          strings.TrimSpace(nodeID),
+		"assetId":         strings.TrimSpace(assetID),
+		"resourceId":      strings.TrimSpace(resourceID),
+		"expectedVersion": strings.TrimSpace(expectedVersion),
+		"model":           strings.TrimSpace(modelName),
+	})
+}
+
 // EvaluatePaidToolPrecheckInTx evaluates a paid tool call before execution inside
 // ToolHooks.beforeTool. It never mutates mandate balances (actual atomic reservation
 // happens inside the operation transaction), and persists a pending ToolApprovalRecord
@@ -266,10 +276,46 @@ func EvaluatePaidToolPrecheckInTx(
 		unquotedCount = 1
 		targetDigest = mediaReviewTargetDigest(canvasID, args.NodeID, args.AssetID, args.ResourceID, args.Mode, args.StartMs, args.EndMs)
 		modeLabel := "视频"
-		if strings.EqualFold(strings.TrimSpace(args.Mode), "audio") {
+		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
+		case "audio":
 			modeLabel = "音频"
+		case "image":
+			modeLabel = "图片"
 		}
 		summary = "调用多模态审片模型检查" + modeLabel + "片段"
+
+	case "media.transcribe":
+		var args struct {
+			CanvasID        string `json:"canvasId"`
+			NodeID          string `json:"nodeId"`
+			AssetID         string `json:"assetId"`
+			ResourceID      string `json:"resourceId"`
+			ExpectedVersion string `json:"expectedVersion"`
+			Model           string `json:"model"`
+		}
+		_ = json.Unmarshal(req.Params, &args)
+		if strings.TrimSpace(args.CanvasID) != "" {
+			canvasID = strings.TrimSpace(args.CanvasID)
+		}
+		modelName := strings.TrimSpace(args.Model)
+		if modelName == "" {
+			return ToolPrecheckResult{Decision: "allow", Reason: "local_whisper_free"}, nil
+		}
+		resolvedResourceID := strings.TrimSpace(args.ResourceID)
+		if domain != nil {
+			if id, err := resolveMediaResource(&Context{Domain: domain, UserID: userID}, mediaArgs{
+				CanvasID:   canvasID,
+				NodeID:     args.NodeID,
+				AssetID:    args.AssetID,
+				ResourceID: args.ResourceID,
+			}); err == nil && strings.TrimSpace(id) != "" {
+				resolvedResourceID = strings.TrimSpace(id)
+			}
+		}
+		kinds = []string{model.MandateKindMediaTranscribe}
+		unquotedCount = 1
+		targetDigest = mediaTranscribeTargetDigest(canvasID, args.NodeID, args.AssetID, resolvedResourceID, args.ExpectedVersion, modelName)
+		summary = "调用云端语音转写服务"
 
 	case "business.call":
 		var args struct {
