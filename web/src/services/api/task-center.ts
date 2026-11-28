@@ -596,6 +596,45 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
     throw new Error(lastQueryError instanceof Error ? `任务状态同步失败：${lastQueryError.message}` : "任务执行超时，请稍后重试");
 }
 
+function createBoundedAttemptSignal(outerSignal: AbortSignal | undefined, remainingMs: number) {
+    if (!Number.isFinite(remainingMs)) {
+        return {
+            signal: outerSignal,
+            timedOut: () => false,
+            dispose: () => undefined,
+        };
+    }
+    const controller = new AbortController();
+    let isTimedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onOuterAbort = () => controller.abort();
+    if (outerSignal?.aborted) {
+        controller.abort();
+    } else {
+        outerSignal?.addEventListener("abort", onOuterAbort, { once: true });
+        if (remainingMs <= 0) {
+            isTimedOut = true;
+            controller.abort();
+        } else {
+            timer = setTimeout(() => {
+                isTimedOut = true;
+                controller.abort();
+            }, remainingMs);
+        }
+    }
+    return {
+        signal: controller.signal,
+        timedOut: () => isTimedOut,
+        dispose: () => {
+            if (timer !== undefined) {
+                clearTimeout(timer);
+                timer = undefined;
+            }
+            outerSignal?.removeEventListener("abort", onOuterAbort);
+        },
+    };
+}
+
 async function waitForGenerationTaskTextEvents(id: string, options: WaitForGenerationTaskOptions) {
     const startedAt = Date.now();
     const intervalMs = options.intervalMs || 1000;
@@ -607,15 +646,27 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
     let lastStreamError: unknown;
     let consecutiveFailures = 0;
     if (!lastTask) {
-        lastTask = await queryGenerationTask(id, { signal: options.signal });
-        options.onTaskUpdate?.(lastTask);
+        const initialAttempt = createBoundedAttemptSignal(options.signal, timeoutMs);
+        try {
+            lastTask = await queryGenerationTask(id, { signal: initialAttempt.signal });
+            options.onTaskUpdate?.(lastTask);
+        } catch (error) {
+            if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+            if (initialAttempt.timedOut()) throw new Error("任务执行超时，请稍后重试");
+            throw error;
+        } finally {
+            initialAttempt.dispose();
+        }
     }
     const initialSettled = settleTerminalTextEventTask(lastTask);
     if (initialSettled) return initialSettled;
     while (Date.now() - startedAt < timeoutMs) {
         if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        const remainingMs = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs - (Date.now() - startedAt)) : Infinity;
+        if (remainingMs <= 0) break;
         let terminalReceived = false;
         let progressedOnStream = false;
+        const attempt = createBoundedAttemptSignal(options.signal, remainingMs);
         try {
             const base = String(apiBaseURL).replace(/\/+$/, "");
             const cursor = lastEventId > 0 ? `?after=${encodeURIComponent(String(lastEventId))}` : "";
@@ -623,7 +674,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             const response = await fetch(`${base}${path}${cursor}`, {
                 headers: { Accept: "text/event-stream" },
                 credentials: "include",
-                signal: options.signal,
+                signal: attempt.signal,
             });
             if (!response.ok) throw new TaskTextStreamFatalError(await taskTextStreamHTTPError(response));
             if (!(response.headers.get("content-type") || "").toLowerCase().includes("text/event-stream")) {
@@ -675,19 +726,41 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
                 }
                 if (event.event === "error") throw new Error(typeof payload.message === "string" ? payload.message : "任务文本流不可用");
             };
+            let rejectOnStreamAbort: ((reason?: unknown) => void) | undefined;
+            const streamAbortedPromise = attempt.signal
+                ? new Promise<never>((_resolve, reject) => {
+                      rejectOnStreamAbort = reject;
+                  })
+                : null;
+            void streamAbortedPromise?.catch(() => undefined);
+            const onStreamAbort = () => {
+                void reader.cancel().catch(() => undefined);
+                rejectOnStreamAbort?.(new DOMException("Aborted", "AbortError"));
+            };
+            if (attempt.signal) {
+                if (attempt.signal.aborted) {
+                    onStreamAbort();
+                } else {
+                    attempt.signal.addEventListener("abort", onStreamAbort, { once: true });
+                }
+            }
             try {
                 for (;;) {
-                    const { done, value } = await reader.read();
+                    const readPromise = reader.read();
+                    const { done, value } = streamAbortedPromise
+                        ? await Promise.race([readPromise, streamAbortedPromise])
+                        : await readPromise;
                     if (done) break;
                     consumeTaskTextStream(parser, decoder.decode(value, { stream: true }), onEvent);
                 }
                 consumeTaskTextStream(parser, decoder.decode(), onEvent, true);
                 streamLifetimeMs = Date.now() - streamOpenedAt;
             } finally {
+                attempt.signal?.removeEventListener("abort", onStreamAbort);
                 await reader.cancel().catch(() => undefined);
                 reader.releaseLock();
             }
-            const latest = await queryGenerationTask(id, { signal: options.signal });
+            const latest = await queryGenerationTask(id, { signal: attempt.signal });
             lastTask = latest;
             options.onTaskUpdate?.(latest);
             const settled = settleTerminalTextEventTask(latest);
@@ -709,16 +782,18 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             }
         } catch (error) {
             if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+            if (attempt.timedOut()) throw new Error("任务执行超时，请稍后重试");
             if (error instanceof TaskTextStreamFatalError) throw error;
             if (error instanceof Error && error.message.startsWith("任务文本流同步失败：")) throw error;
             try {
-                const latest = await queryGenerationTask(id, { signal: options.signal });
+                const latest = await queryGenerationTask(id, { signal: attempt.signal });
                 lastTask = latest;
                 options.onTaskUpdate?.(latest);
                 const settled = settleTerminalTextEventTask(latest);
                 if (settled) return settled;
             } catch (queryError) {
                 if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+                if (attempt.timedOut()) throw new Error("任务执行超时，请稍后重试");
                 if (queryError instanceof TaskTextStreamFatalError) throw queryError;
             }
             lastStreamError = error;
@@ -726,8 +801,12 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             if (consecutiveFailures >= 5) {
                 throw new Error(`任务文本流同步失败：${error instanceof Error ? error.message : String(error)}`);
             }
+        } finally {
+            attempt.dispose();
         }
-        await delay(intervalMs, options.signal);
+        const sleepRemaining = Number.isFinite(timeoutMs) ? timeoutMs - (Date.now() - startedAt) : intervalMs;
+        if (sleepRemaining <= 0) break;
+        await delay(Math.min(intervalMs, sleepRemaining), options.signal);
     }
     throw new Error(lastStreamError instanceof Error ? `任务文本流同步失败：${lastStreamError.message}` : "任务执行超时，请稍后重试");
 }

@@ -425,3 +425,59 @@ func TestActiveOnlyUnreadableFallbackIsHardBoundedByPageBudget(t *testing.T) {
 		t.Fatalf("unreadable fallback paged %d times across 500 terminal rows, want hard cap 2", store.fallbackCalls)
 	}
 }
+
+func TestComputeOutcomeKeepsRecoveryStoppedTasksRetrievable(t *testing.T) {
+	settled := "settled"
+	completed := "completed"
+	cases := []struct {
+		name       string
+		task       model.Task
+		facts      OutcomeFacts
+		wantReason string
+	}{
+		{
+			name:       "image submission_unknown stopped",
+			task:       model.Task{Type: "canvas_image", Status: model.TaskStatusFailed, Stage: model.TaskStageRecoveryStopped},
+			wantReason: "image_recovery_pending",
+		},
+		{
+			name:       "image settled stopped",
+			task:       model.Task{Type: "canvas_image", Status: model.TaskStatusFailed, Stage: model.TaskStageRecoveryStopped, BeefBillingState: &settled},
+			wantReason: "image_recovery_pending",
+		},
+		{
+			name:       "video submission_unknown stopped",
+			task:       model.Task{Type: "canvas_video", Status: model.TaskStatusFailed, Stage: model.TaskStageRecoveryStopped},
+			wantReason: "provider_result_pending",
+		},
+		{
+			name:       "video provider receipt stopped",
+			task:       model.Task{Type: "canvas_video", Status: model.TaskStatusFailed, Stage: model.TaskStageRecoveryStopped, ProviderRequestID: "req-1", BeefUsageState: &completed},
+			wantReason: "provider_result_pending",
+		},
+		{
+			name:       "audio submission_unknown stopped",
+			task:       model.Task{Type: "canvas_audio", Status: model.TaskStatusFailed, Stage: model.TaskStageRecoveryStopped},
+			wantReason: "provider_result_pending",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ComputeOutcome(tc.task, "", tc.facts)
+			if got.Phase != "retrievable" || got.Regenerate != "blocked" || got.Reason != tc.wantReason {
+				t.Fatalf("ComputeOutcome() = %+v, want phase=retrievable regenerate=blocked reason=%s", got, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestPersistedFailureViewTreatsRecoveryStoppedLikeSubmissionUnknown(t *testing.T) {
+	wantMsg, wantCode := PersistedFailureView("raw upstream error", "submission_unknown", "")
+	gotMsg, gotCode := PersistedFailureView("raw upstream error", model.TaskStageRecoveryStopped, "")
+	if gotMsg != wantMsg || gotCode != wantCode {
+		t.Fatalf("PersistedFailureView(recovery_stopped) = (%q, %q), want (%q, %q)", gotMsg, gotCode, wantMsg, wantCode)
+	}
+	if SafePersistedFailureMessage("raw upstream error", model.TaskStageRecoveryStopped) != SafePersistedFailureMessage("raw upstream error", "submission_unknown") {
+		t.Fatalf("SafePersistedFailureMessage(recovery_stopped) diverged from submission_unknown")
+	}
+}

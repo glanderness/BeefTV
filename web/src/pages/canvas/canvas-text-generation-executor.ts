@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { getGenerationCount, resetGenerationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
+import { CANVAS_TEXT_GENERATION_TIMEOUT_MS, getGenerationCount, resetGenerationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import { canvasGenerationPromptMetadata } from "@/lib/canvas/canvas-generation-submission";
 import { projectCanvasGenerationSubmission } from "@/lib/canvas/canvas-generation-live-target";
 import { planTextGenerationTargets } from "@/lib/canvas/canvas-generation-layout";
@@ -111,6 +111,22 @@ export async function executeTextGeneration({
                     referenceImages: generationContext.referenceImages,
                     referenceVideos: generationContext.referenceVideos,
                     signal: controller.signal,
+                    useTextEvents: true,
+                    timeoutMs: CANVAS_TEXT_GENERATION_TIMEOUT_MS,
+                    onTextDelta: (text) => {
+                        if (!isCurrent()) return;
+                        setNodes((current) => {
+                            let changed = false;
+                            const mapped = current.map((node) => {
+                                if (node.id !== targetNodeId || node.metadata?.status !== NODE_STATUS_LOADING) return node;
+                                if (node.metadata.content === text) return node;
+                                changed = true;
+                                return { ...node, metadata: { ...node.metadata, content: text } };
+                            });
+                            if (changed) nodesRef.current = mapped;
+                            return changed ? mapped : current;
+                        });
+                    },
                     metadata: { sourceNodeId: nodeId, ...taskContext, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, ...skillMetadata },
                 },
                 {

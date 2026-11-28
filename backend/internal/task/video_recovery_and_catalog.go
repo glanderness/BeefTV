@@ -202,7 +202,7 @@ func RecoverFailedVideo(
 	if err != nil {
 		return err
 	}
-	if task.Status != model.TaskStatusFailed || !VideoRecoveryNeedsPolling(*task) {
+	if task.Status != model.TaskStatusFailed || (!ManualRecovery(ctx) && task.Stage == model.TaskStageRecoveryStopped) || !VideoRecoveryNeedsPolling(*task) {
 		return nil
 	}
 	hydrateReqID(task)

@@ -593,7 +593,10 @@ func restoreDeletedTestCanvas(t *testing.T, svc *Service, raw []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.UpsertUserCanvasProject("local", encoded); err != nil {
+	if _, err := svc.UpsertUserCanvasProject("local", encoded); err == nil {
+		t.Fatal("expected plain revision=0 upsert after delete to be rejected by deletion tombstone")
+	}
+	if _, err := svc.CanvasService().RestoreDeletedUserCanvasProject("local", encoded); err != nil {
 		t.Fatal(err)
 	}
 }

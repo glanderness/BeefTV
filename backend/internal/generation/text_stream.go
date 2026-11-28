@@ -334,7 +334,7 @@ func PostStreamingTextResult(ctx context.Context, config Config, path string, bo
 		return ProviderTextResult{}, err
 	}
 	result := ProviderTextResult{Text: stringField(parsed, "text"), Reasoning: stringField(parsed, "reasoning")}
-	if result.Text == "" {
+	if strings.TrimSpace(result.Text) == "" {
 		return ProviderTextResult{}, errors.New("流式文本接口没有返回内容")
 	}
 	return result, nil
@@ -412,7 +412,7 @@ func ParseTextEventStream(data []byte, protocol string) (string, error) {
 	if err := flush(); err != nil {
 		return "", err
 	}
-	if text.Len() == 0 {
+	if strings.TrimSpace(text.String()) == "" {
 		return "", errors.New("流式文本接口没有返回内容")
 	}
 	return text.String(), nil

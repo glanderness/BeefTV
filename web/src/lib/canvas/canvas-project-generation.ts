@@ -14,6 +14,8 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 export * from "./canvas-project-generation-metadata";
 export * from "./canvas-project-generation-recovery";
 
+export const CANVAS_TEXT_GENERATION_TIMEOUT_MS = 6 * 60 * 1000;
+
 export async function runBackendCanvasGenerationTask(
     {
         projectId,
@@ -28,6 +30,9 @@ export async function runBackendCanvasGenerationTask(
         signal,
         metadata,
         onTaskCreated,
+        onTextDelta,
+        useTextEvents,
+        timeoutMs,
         clientOperationId,
         retryOf,
         attemptGroupId,
@@ -45,6 +50,9 @@ export async function runBackendCanvasGenerationTask(
         signal?: AbortSignal;
         metadata?: Record<string, unknown>;
         onTaskCreated?: (task: GenerationTask) => void;
+        onTextDelta?: (text: string) => void;
+        useTextEvents?: boolean;
+        timeoutMs?: number;
         clientOperationId?: string;
         retryOf?: string;
         attemptGroupId?: string;
@@ -52,6 +60,8 @@ export async function runBackendCanvasGenerationTask(
     },
     dependencies?: GenerationTaskDependencies,
 ) {
+    const effectiveUseTextEvents = useTextEvents ?? (mode === "text" ? true : undefined);
+    const effectiveTimeoutMs = timeoutMs ?? (mode === "text" ? CANVAS_TEXT_GENERATION_TIMEOUT_MS : undefined);
     return runBackendGenerationTask(
         {
             projectId,
@@ -65,6 +75,9 @@ export async function runBackendCanvasGenerationTask(
             signal,
             metadata: { nodeId, ...(mode === "video" && !metadata?.videoEditOperation ? { videoEditOperation: "image_to_video" } : {}), ...metadata },
             onTaskUpdate: onTaskCreated,
+            onTextDelta,
+            useTextEvents: effectiveUseTextEvents,
+            timeoutMs: effectiveTimeoutMs,
             clientOperationId,
             retryOf,
             attemptGroupId,

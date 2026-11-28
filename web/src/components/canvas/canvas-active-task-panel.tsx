@@ -5,6 +5,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { findCanvasGenerationTaskTarget } from "@/lib/canvas/canvas-generation-task-identity";
 import { formatTaskKind, generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel, operationLabelByValue } from "@/lib/generation-task-display";
 import { configuredModelDisplayName } from "@/lib/model-selection";
+import { isTaskActiveInPanel, taskStopActionKind, taskStopActionLabel } from "@/lib/task-outcome";
 import type { GenerationTask } from "@/services/api/task-center";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useConfigStore } from "@/stores/use-config-store";
@@ -29,7 +30,7 @@ export function CanvasActiveTaskPanel({ tasks, nodes, align = "right", topInset 
     const [open, setOpen] = useState(false);
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
     const visibleTasks = useMemo(() => tasks.flatMap((task) => {
-        if (task.status !== "queued" && task.status !== "running") return [];
+        if (!isTaskActiveInPanel(task)) return [];
         const target = findCanvasGenerationTaskTarget(task, nodes);
         if (!target || (target.metadata?.taskId && target.metadata.taskId !== task.id)) return [];
         return [{ task, targetId: target.id }];
@@ -118,6 +119,8 @@ function ActiveTaskRow({ task, modelName, now, theme, expanded, onToggle, onCanc
     const elapsed = formatDuration(Math.max(0, now - (Number.isFinite(startedAt) ? startedAt : now)));
     const elapsedLabel = task.status === "queued" ? "已等待" : "已运行";
     const prompt = task.prompt?.trim();
+    const stopAction = taskStopActionKind(task);
+    const stopLabel = stopAction ? taskStopActionLabel(stopAction) : null;
     const rowLayout = "grid grid-cols-[minmax(0,1fr)_auto_0.875rem] items-center gap-2";
 
     const heading = (
@@ -146,18 +149,18 @@ function ActiveTaskRow({ task, modelName, now, theme, expanded, onToggle, onCanc
                     {summary}
                     {progress > 0 && <span className="whitespace-nowrap tabular-nums"> · {progress}%</span>}
                 </span>
-                {onCancelTask && (
+                {onCancelTask && stopLabel && (
                     <button
                         type="button"
                         className="min-h-6 justify-self-end whitespace-nowrap rounded-sm font-medium leading-4 hover:underline focus-visible:outline focus-visible:outline-2"
-                        style={{ color: theme.accent.danger }}
+                        style={{ color: stopAction === "cancel" ? theme.accent.danger : theme.node.text }}
                         onClick={(event) => {
                             event.stopPropagation();
                             onCancelTask?.(task);
                         }}
                         onMouseDown={(event) => event.stopPropagation()}
                     >
-                        取消任务
+                        {stopLabel}
                     </button>
                 )}
             </div>

@@ -154,7 +154,11 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
             ? fallbackOutcome
             : undefined;
     const authoritative = explicitOutcome ?? legacyConfirmOutcome;
-    const copyOptions = node.metadata?.taskProviderCancelStatus ? { providerCancelStatus: node.metadata.taskProviderCancelStatus } : undefined;
+    const copyOptions = {
+        ...(node.metadata?.taskProviderCancelStatus ? { providerCancelStatus: node.metadata.taskProviderCancelStatus } : {}),
+        ...(node.metadata?.taskStage ? { stage: node.metadata.taskStage } : {}),
+    };
+    const isRecoveryStopped = node.metadata?.taskStage === "recovery_stopped";
     // This action opens saved history; it must never dispatch another generation.
     if (explicitOutcome?.reason === "result_target_unavailable" || (!explicitOutcome && explanation.category === "result_target_unavailable")) {
         const copy = explicitOutcome ? taskOutcomeCopy(explicitOutcome, undefined, copyOptions) : undefined;
@@ -169,7 +173,8 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
         if (!authoritative) return explanation;
         const copy = taskOutcomeCopy(authoritative, undefined, copyOptions);
         const uncertain = isTaskOutcomeSubmissionUncertain(authoritative);
-        const keepRefinedCopy = explanationMatchesAuthoritativeOutcome(authoritative, explanation);
+        const keepRefinedCopy = !(authoritative.phase === "retrievable" && isRecoveryStopped)
+            && explanationMatchesAuthoritativeOutcome(authoritative, explanation);
         return {
             ...explanation,
             ...(keepRefinedCopy

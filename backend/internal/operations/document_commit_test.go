@@ -212,9 +212,12 @@ func TestCanvasCreateOperationAndReplay(t *testing.T) {
 	}
 	if _, err := h.execute(t, operations.ExternalCaller(false), "canvas.create", "create-op-3", map[string]any{
 		"canvasId": "canvas-recreated",
-		"title":    "重建版",
-	}); err != nil {
-		t.Fatalf("canvas.create second instance: %v", err)
+		"title":    "僵尸复活版",
+	}); err == nil {
+		t.Fatal("expected canvas.create for tombstoned canvasId to fail with conflict")
+	}
+	if _, err := h.service.CanvasService().RestoreDeletedUserCanvasProject(h.userID, json.RawMessage(`{"id":"canvas-recreated","revision":0,"title":"重建版","nodes":[],"connections":[],"viewport":{"x":0,"y":0,"k":1}}`)); err != nil {
+		t.Fatalf("RestoreDeletedUserCanvasProject: %v", err)
 	}
 	if _, err := store.UndoExternalCanvasWrite(t.Context(), h.service, h.userID, "canvas-recreated", "create-op-2"); err == nil {
 		t.Fatal("expected undo of superseded canvas.create to fail with conflict")

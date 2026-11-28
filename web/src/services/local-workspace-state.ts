@@ -38,6 +38,7 @@ export type CanvasSaveSummary = Pick<CanvasProject, "id" | "title" | "createdAt"
 
 export const backendSaveTails = new Map<string, Promise<void>>();
 export const backendSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+export const backendSaveControllers = new Map<string, Set<AbortController>>();
 export const canvasProjectionLocks = new Map<string, Promise<void>>();
 export const canvasDeleting = new Set<string>();
 export const pendingForceHistorySnapshotEpochs = new Map<string, number>();

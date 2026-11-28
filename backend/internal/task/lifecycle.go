@@ -67,13 +67,13 @@ func (s *Service) retry(userID, id string, refresh *retryCredentialRefresh) (*mo
 		}
 	}
 	effectiveStage, errorCode := task.Stage, task.ErrorCode
-	if task.RecoveryOutcome != nil && *task.RecoveryOutcome == RecoveryNoResult && effectiveStage == "submission_unknown" {
+	if task.RecoveryOutcome != nil && *task.RecoveryOutcome == RecoveryNoResult && (effectiveStage == "submission_unknown" || effectiveStage == model.TaskStageRecoveryStopped) {
 		// The saved category only restates the old stage; recovery proved no result.
 		effectiveStage, errorCode = "", ""
 	}
 	if s.deps.Failures.BlocksRetry(task.Error, effectiveStage, errorCode) && !(refresh != nil && s.deps.Failures.Category(task.Error, effectiveStage, errorCode) == generation.CategoryAuth) {
 		category := s.deps.Failures.Category(task.Error, effectiveStage, errorCode)
-		if effectiveStage == "submission_unknown" || category == generation.CategorySubmissionUncertain {
+		if effectiveStage == "submission_unknown" || effectiveStage == model.TaskStageRecoveryStopped || category == generation.CategorySubmissionUncertain {
 			return nil, kernel.BadAuthRequest(SubmissionUncertainRetryMessage)
 		}
 		if category == generation.CategoryDownloadFailed {
@@ -171,6 +171,9 @@ func (s *Service) Cancel(ctx context.Context, userID, id string) (*model.Task, e
 		if task.Status == model.TaskStatusCancelled {
 			return presentTask(s.deps.Present, *task)
 		}
+		if task.Status == model.TaskStatusFailed {
+			return s.stopRetrievableRecovery(userID, task)
+		}
 		return nil, fmt.Errorf("任务当前状态为 %s，无法取消", task.Status)
 	}
 
@@ -222,5 +225,43 @@ func (s *Service) Cancel(ctx context.Context, userID, id string) (*model.Task, e
 		}
 	}
 
+	return presentTask(s.deps.Present, *task)
+}
+
+func (s *Service) stopRetrievableRecovery(userID string, task *model.Task) (*model.Task, error) {
+	s.hydrateProviderRequestID(task)
+	presented, err := presentTask(s.deps.Present, *task)
+	if err != nil {
+		return nil, err
+	}
+	outcome := ComputeOutcome(*task, "", OutcomeFacts{})
+	if presented != nil && presented.Outcome != nil {
+		outcome = *presented.Outcome
+	}
+	if outcome.Phase != "retrievable" {
+		return nil, fmt.Errorf("任务当前状态为 %s，无法取消", task.Status)
+	}
+	if task.Stage == model.TaskStageRecoveryStopped {
+		return presented, nil
+	}
+	now := s.now()
+	stopped, err := s.store.StopRecoveryIfFailed(userID, task.ID, now)
+	if err != nil {
+		return nil, err
+	}
+	if !stopped {
+		latest, latestErr := s.store.TaskForUser(userID, task.ID)
+		if latestErr != nil {
+			return nil, latestErr
+		}
+		if latest.Status == model.TaskStatusFailed && latest.Stage == model.TaskStageRecoveryStopped {
+			return presentTask(s.deps.Present, *latest)
+		}
+		return nil, errors.New(CancelChangedMessage)
+	}
+	task.Stage = model.TaskStageRecoveryStopped
+	task.NextPollAt = nil
+	s.deps.Runtime.StopLocalWait(task.ID)
+	s.log(task.UserID, task.ID, "warn", "用户停止自动取回", "")
 	return presentTask(s.deps.Present, *task)
 }

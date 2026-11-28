@@ -17,6 +17,7 @@ type Store interface {
 	CreateWithLimit(task *model.Task, limit int) error
 	Retry(userID string, prepared *model.Task, limit int) (*model.Task, error)
 	CancelIfStatus(userID, id string, expected model.TaskStatus, now time.Time) (bool, error)
+	StopRecoveryIfFailed(userID, id string, now time.Time) (bool, error)
 	List(userID string, limit int, projectID string, activeOnly bool) ([]model.Task, error)
 	Logs(userID, id string) ([]model.TaskLog, error)
 	LatestProviderRequestID(taskID string) (string, error)

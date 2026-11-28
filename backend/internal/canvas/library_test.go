@@ -245,7 +245,10 @@ func TestCanvasDeleteRetainsDrawingTombstoneAcrossRecreate(t *testing.T) {
 	if err := svc.DeleteUserCanvasProject("owner", "canvas"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{"id":"canvas","revision":0,"title":"new","nodes":[]}`)); err != nil {
+	if _, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{"id":"canvas","revision":0,"title":"late-zombie","nodes":[]}`)); err == nil {
+		t.Fatal("expected late revision=0 upsert after delete to be rejected by durable deletion tombstone")
+	}
+	if _, err := svc.RestoreDeletedUserCanvasProject("owner", json.RawMessage(`{"id":"canvas","revision":0,"title":"new","nodes":[]}`)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := svc.UpsertUserCanvasDrawing("owner", "canvas", "sketch", raw)

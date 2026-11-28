@@ -210,15 +210,47 @@ test("wan3.0-video on newapi-channel-2 restricts operations to image_to_video an
     assert.equal(kling.references.maxAudios, 3);
 });
 
-test("moss-image-sft-1.0 uses URL response format and disables unsupported OpenAI image parameters", () => {
-    const profile = defaultModelCapabilityConfig("openai-image", "moss-image-sft-1.0").image!;
-    assert.equal(profile.responseFormat.supported, true);
-    assert.equal(profile.responseFormat.value, "url");
-    assert.equal(profile.quality.supported, false);
-    assert.equal(profile.outputFormat.supported, false);
-    assert.equal(profile.maxOutputs, 1);
-    assert.equal(profile.references.maxImages, 0);
-    assert.equal(profile.references.maskSupported, false);
+test("moss-image models preserve server/channel-declared capability profiles without client hardcode override", () => {
+    const serverMossProfile = {
+        references: { promptMaxChars: 8000, maxImages: 4, maxImageBytes: 10 * 1024 * 1024, maskSupported: true },
+        size: { parameter: "size" as const, values: ["1:1", "16:9", "2048x2048"], default: "16:9", allowCustom: false },
+        quality: { supported: true, values: ["standard", "hd"], default: "hd" },
+        transparentBackground: { supported: true, default: true },
+        responseFormat: { supported: true, value: "b64_json" as const },
+        outputFormat: { supported: true },
+        maxOutputs: 4,
+    };
+    const config = {
+        imageModel: "ch::moss-image-sft-1.0",
+        imageModels: ["ch::moss-image-sft-1.0"],
+        channels: [{
+            id: "ch",
+            name: "Managed",
+            baseUrl: "https://api.example.com",
+            apiKey: "key",
+            apiFormat: "openai",
+            interfaceType: "openai-image",
+            models: ["moss-image-sft-1.0"],
+            modelProfiles: [{
+                model: "moss-image-sft-1.0",
+                protocol: "openai-image",
+                capabilityConfig: { version: 1, image: serverMossProfile },
+            }],
+        }],
+    } as AiConfig;
+    const resolved = modelCapabilityConfigFor(config, "ch::moss-image-sft-1.0").image!;
+    assert.equal(resolved.references.maxImages, 4);
+    assert.equal(resolved.references.maskSupported, true);
+    assert.equal(resolved.maxOutputs, 4);
+    assert.equal(resolved.responseFormat.value, "b64_json");
+    assert.equal(resolved.quality.supported, true);
+    assert.equal(resolved.quality.default, "hd");
+    assert.equal(resolved.size.default, "16:9");
+
+    // Without server profile, default fallback uses generic openai-image capability rather than a MOSS model-name hardcode.
+    const genericDefault = defaultModelCapabilityConfig("openai-image", "moss-image-sft-1.0").image!;
+    assert.equal(genericDefault.references.maxImages, 16);
+    assert.equal(genericDefault.maxOutputs, 15);
 });
 
 test("mask edit preserves Seedream 5.5 even when native-mask GPT models are available", () => {
@@ -311,6 +343,22 @@ test("mask edit uses valid remembered model preference and falls back when unava
             apiFormat: "openai",
             interfaceType: "openai-image",
             models: ["gpt-image-2", "doubao-seedream-5-0-260128", "moss-image-sft"],
+            modelProfiles: [{
+                model: "moss-image-sft",
+                protocol: "openai-image",
+                capabilityConfig: {
+                    version: 1,
+                    image: {
+                        references: { promptMaxChars: 4000, maxImages: 0, maxImageBytes: 0, maskSupported: false },
+                        size: { parameter: "size", values: ["1:1", "1024x1024"], default: "1:1", allowCustom: true },
+                        quality: { supported: false, values: [], default: "auto" },
+                        transparentBackground: { supported: false, default: false },
+                        responseFormat: { supported: true, value: "url" },
+                        outputFormat: { supported: false },
+                        maxOutputs: 1,
+                    },
+                },
+            }],
         }],
     } as AiConfig;
 

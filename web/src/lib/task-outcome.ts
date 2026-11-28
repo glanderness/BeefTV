@@ -177,11 +177,15 @@ function readLegacyTerminalOutcome({ status, stage, errorCode, providerRequestId
     if (errorCode === "result_target_unavailable") {
         return resultTargetUnavailableTaskOutcome();
     }
-    if (stage === "submission_unknown") {
+    if (stage === "submission_unknown" || stage === "recovery_stopped") {
         if (isDepthCapture && !providerRequestId) {
             return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
         }
-        return status === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : submissionUnknownTaskOutcome();
+        return status === "cancelled"
+            ? cancelledResultUnconfirmedTaskOutcome()
+            : providerRequestId
+              ? { phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" }
+              : submissionUnknownTaskOutcome();
     }
     if (stage === "delivery_paused" || stage === "delivery_timed_out" || LEGACY_RETRIEVABLE_ERROR_CODES.has(errorCode)) {
         if (isDepthCapture && !providerRequestId && (status === "cancelled" || errorCode === "submission_uncertain")) {
@@ -291,11 +295,15 @@ export function readNodeTaskOutcome(metadata?: CanvasNodeOutcomeMetadata | null)
         (typeof metadata.providerRequestId === "string" && metadata.providerRequestId.trim()) ||
         "";
 
-    if (metadata.generationSubmissionState === "unknown" || taskStage === "submission_unknown") {
+    if (metadata.generationSubmissionState === "unknown" || taskStage === "submission_unknown" || taskStage === "recovery_stopped") {
         if (taskType === "depth_capture" && !providerRequestId) {
             return { phase: "failed", regenerate: "allowed", reason: "task_failed" };
         }
-        return taskStatus === "cancelled" ? cancelledResultUnconfirmedTaskOutcome() : submissionUnknownTaskOutcome();
+        return taskStatus === "cancelled"
+            ? cancelledResultUnconfirmedTaskOutcome()
+            : providerRequestId
+              ? { phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" }
+              : submissionUnknownTaskOutcome();
     }
     if (metadata.status === "success" && Boolean(metadata.content || metadata.storageKey)) {
         return readyTaskOutcome();
@@ -380,6 +388,104 @@ export function canRegenerateTaskOutcome(outcome?: TaskOutcome | null): boolean 
 
 export function canRecoverTaskOutcome(outcome?: TaskOutcome | null): boolean {
     return outcome?.phase === "retrievable";
+}
+
+export type TaskStopActionKind = "cancel" | "stop_retrieve" | "pause_download" | null;
+
+export type CanvasNodeStatusBadge = {
+    tone: "neutral" | "error" | "success";
+    label: string;
+    ariaLabel: string;
+};
+
+const STOPPED_RECOVERY_STAGES = new Set(["recovery_stopped", "delivery_paused", "delivery_timed_out"]);
+
+function isTaskDeliveryOrRecoveryStopped(task?: TaskOutcomeSource | null): boolean {
+    const stage = typeof task?.stage === "string" ? task.stage.trim() : "";
+    if (STOPPED_RECOVERY_STAGES.has(stage)) return true;
+    const outputs = Array.isArray(task?.outputs) ? task.outputs : [];
+    return outputs.some((item) => item?.materializationErrorCode === "delivery_paused" || item?.materializationErrorCode === "delivery_timed_out");
+}
+
+/**
+ * 画布右下角/右上角活跃任务面板是否展示该任务。
+ * 单一来源：以 `readTaskOutcome` 为准，包含生成中、取回下载中、以及正在自动取回的待取回任务；
+ * 已手动停止自动取回（`recovery_stopped`）或暂停下载（`delivery_paused` / `delivery_timed_out`）的任务退出活跃面板。
+ */
+export function isTaskActiveInPanel(task?: TaskOutcomeSource | null): boolean {
+    const status = typeof task?.status === "string" ? task.status.trim() : "";
+    if (status === "cancelled") return false;
+    const outcome = readTaskOutcome(task);
+    if (!outcome) return false;
+    if (outcome.phase === "running") return true;
+    if (outcome.phase === "fetching") return !isTaskDeliveryOrRecoveryStopped(task);
+    if (outcome.phase === "retrievable") return !isTaskDeliveryOrRecoveryStopped(task);
+    return false;
+}
+
+/**
+ * 根据任务 `outcome` 派生允许的停止动作：
+ * - `running` -> `"cancel"`（取消任务）
+ * - `fetching`（或未暂停的已成功待交付） -> `"pause_download"`（暂停下载）
+ * - `retrievable`（未停止自动取回） -> `"stop_retrieve"`（停止自动取回）
+ * - 其余状态（含已暂停下载、已停止自动取回、已完成、已失败） -> `null`
+ */
+export function taskStopActionKind(task?: TaskOutcomeSource | null): TaskStopActionKind {
+    const status = typeof task?.status === "string" ? task.status.trim() : "";
+    if (status === "cancelled") return null;
+    const outcome = readTaskOutcome(task);
+    if (!outcome) return null;
+    if (outcome.phase === "running") return "cancel";
+    if (isTaskDeliveryOrRecoveryStopped(task)) return null;
+    if (outcome.phase === "fetching") return "pause_download";
+    if (outcome.phase === "retrievable") {
+        return status === "succeeded" ? "pause_download" : "stop_retrieve";
+    }
+    return null;
+}
+
+export function taskStopActionLabel(kind: Exclude<TaskStopActionKind, null>): string {
+    switch (kind) {
+        case "cancel":
+            return "取消任务";
+        case "stop_retrieve":
+            return "停止自动取回";
+        case "pause_download":
+            return "暂停下载";
+    }
+}
+
+/**
+ * 根据 `TaskOutcome` 与节点展示态派生左上角状态徽章。
+ * 待取回、取回中、核对中等非终态失败统一使用中性徽章，不再在「正在自动取回」旁叠加红色「失败」。
+ */
+export function nodeBadgeFromOutcome(
+    outcome?: TaskOutcome | null,
+    status?: string,
+    options?: { stage?: string; resultPending?: boolean },
+): CanvasNodeStatusBadge | null {
+    if (!status || status === "idle" || status === "loading") return null;
+    if (status === "success") {
+        return { tone: "success", label: "完成", ariaLabel: "生成完成" };
+    }
+    if (status !== "error") return null;
+    if (outcome?.phase === "fetching") {
+        return { tone: "neutral", label: "取回中", ariaLabel: "正在取回结果" };
+    }
+    if (outcome?.phase === "retrievable" || options?.resultPending) {
+        const stage = typeof options?.stage === "string" ? options.stage.trim() : "";
+        const stopped = STOPPED_RECOVERY_STAGES.has(stage) || outcome?.reason === "delivery_pending";
+        return stopped
+            ? { tone: "neutral", label: "待取回", ariaLabel: "结果待取回" }
+            : { tone: "neutral", label: "取回中", ariaLabel: "正在自动取回结果" };
+    }
+    if (outcome?.reason === "result_target_unavailable") {
+        return { tone: "neutral", label: "待取回", ariaLabel: "结果已保存，待取回" };
+    }
+    if (isTaskOutcomeReconciling(outcome)) {
+        return { tone: "neutral", label: "核对中", ariaLabel: "正在核对上次提交" };
+    }
+    return { tone: "error", label: "失败", ariaLabel: "生成失败" };
 }
 
 export function isTaskRegenerateBlocked(source?: TaskOutcome | TaskOutcomeSource | null): boolean {
@@ -527,6 +633,7 @@ export function formatReconcileDeadlineCopy(reconcileDeadline?: string, nowMs = 
 
 export type TaskOutcomeCopyOptions = {
     providerCancelStatus?: string;
+    stage?: string;
 };
 
 /**
@@ -586,6 +693,16 @@ export function taskOutcomeCopy(outcome?: TaskOutcome | null, nowMs = Date.now()
             };
         }
         case "retrievable": {
+            if (options?.stage === "recovery_stopped") {
+                const reason = "已停止自动取回，原任务结果仍会保留";
+                const action = "可随时点击继续取回，不要重复生成";
+                return {
+                    badge: "待取回结果",
+                    reason,
+                    action,
+                    message: `${reason}，${action}。`,
+                };
+            }
             let reason = "上次生成结果已保留，系统正在自动取回";
             if (outcome.reason === "image_recovery_pending") {
                 reason = "正在查询并取回上次生成的图片结果";

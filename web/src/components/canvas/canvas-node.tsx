@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertCircle, CheckCircle2, ChevronRight, Copy, Download, Lock, Maximize2, RefreshCw, ScanSearch, Star, Trash2, WandSparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronRight, Clock3, Copy, Download, Lock, Maximize2, RefreshCw, ScanSearch, Star, Trash2, WandSparkles } from "lucide-react";
 
 import { useCanvasNodeActions } from "./canvas-node-action-context";
 import { CanvasHistoryStackBadge } from "./canvas-node-history-stack";
 import { resolveCanvasNodeImageHistory, stepCanvasNodeImageHistory } from "@/lib/canvas/canvas-image-history";
 import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
+import { nodeBadgeFromOutcome, taskStopActionKind, type CanvasNodeStatusBadge } from "@/lib/task-outcome";
 import { useAssetStore } from "@/stores/use-asset-store";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -173,6 +174,18 @@ export const CanvasNode = React.memo(function CanvasNode({
     const resolvedImageHistory = data.type === CanvasNodeType.Image && !isBatchRoot ? resolveCanvasNodeImageHistory(data) : [];
     const hasImageHistory = resolvedImageHistory.length > 1 || (resolvedImageHistory.length === 1 && !hasImageContent && !Boolean(data.metadata?.storageKey));
     const failureView = canvasNodeFailureView(data);
+    const statusBadge = data.type !== CanvasNodeType.Frame && data.metadata?.status !== "success"
+        ? nodeBadgeFromOutcome(failureView.outcome, data.metadata?.status, {
+              stage: data.metadata?.taskStage,
+              resultPending: failureView.canReload,
+          })
+        : null;
+    const taskCancellable = (data.metadata?.status === "loading" || data.metadata?.status === "error") &&
+        taskStopActionKind({
+            outcome: failureView.outcome,
+            status: data.metadata?.taskStatus,
+            stage: data.metadata?.taskStage,
+        }) !== null;
     const showStatusTrack = Boolean(data.metadata?.locked || isBatchRoot || hasImageHistory || (isBatchChild && !readOnly));
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
     const nodeState = isFocusRelated ? "focus" : isConnectionTarget ? "target" : isSelected ? "selected" : isRelated && !isBatchChild ? "related" : "idle";
@@ -330,7 +343,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             data-result-origin={canvasMediaNodeOrigin(data) || undefined}
             data-task-status={data.metadata?.taskStatus || undefined}
             data-task-id={data.metadata?.taskId || undefined}
-            data-task-cancellable={data.metadata?.status === "loading" && (data.metadata?.taskStatus === "queued" || data.metadata?.taskStatus === "running") ? "true" : "false"}
+            data-task-cancellable={taskCancellable ? "true" : "false"}
             data-task-stage={data.metadata?.taskStage || undefined}
             data-task-progress={typeof data.metadata?.taskProgress === "number" ? String(data.metadata.taskProgress) : undefined}
             data-subtitle-count={data.metadata?.subtitleEntries?.length ? String(data.metadata.subtitleEntries.length) : undefined}
@@ -488,9 +501,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     }
                 >
                     {/* 仅在执行中或异常时显示状态；成功来源由内部元数据保留，不占用卡片视觉层。 */}
-                    {data.metadata?.status && data.metadata.status !== "idle" && data.metadata.status !== "success" && data.type !== CanvasNodeType.Frame ? (
-                        <NodeStatusBadge status={data.metadata.status} resultPending={failureView.canReload} />
-                    ) : null}
+                    {statusBadge ? <NodeStatusBadge badge={statusBadge} theme={theme} /> : null}
                     <CanvasNodeContent
                         node={data}
                         theme={theme}
@@ -767,30 +778,44 @@ function ResizeHandle({ corner, onMouseDown }: { corner: ResizeCorner; onMouseDo
     return <div className={`absolute z-[var(--node-z-handle)] size-7 ${positionClass}`} onMouseDown={(event) => onMouseDown(event, corner)} />;
 }
 
-// 节点状态徽章（对应 #97 决策2：左上角状态指示，loading/success/error）
-function NodeStatusBadge({ status, resultPending }: { status: "loading" | "success" | "error"; resultPending?: boolean }) {
-    if (status === "loading") return null;
-    if (status === "error") {
+// 节点状态徽章（对应 #97 决策2 & #297：统一从 TaskOutcome 派生，待取回/取回中用中性徽章）
+function NodeStatusBadge({ badge, theme }: { badge: CanvasNodeStatusBadge; theme: CanvasTheme }) {
+    if (badge.tone === "neutral") {
         return (
             <div
+                data-node-status-badge="neutral"
+                className="pointer-events-none absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full border px-2 py-0.5 backdrop-blur-sm"
+                style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                aria-label={badge.ariaLabel}
+            >
+                <Clock3 className="size-3" strokeWidth={2} />
+                <span className="text-[var(--fs-micro)] font-medium leading-none">{badge.label}</span>
+            </div>
+        );
+    }
+    if (badge.tone === "error") {
+        return (
+            <div
+                data-node-status-badge="error"
                 className="pointer-events-none absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full px-2 py-0.5 backdrop-blur-sm"
                 style={{ background: "color-mix(in oklch, var(--status-error) 20%, transparent)", color: "var(--status-error)" }}
-                aria-label={resultPending ? "结果待放入画布" : "生成失败"}
+                aria-label={badge.ariaLabel}
             >
                 <AlertCircle className="size-3" strokeWidth={2} />
-                <span className="text-[var(--fs-micro)] font-medium leading-none">{resultPending ? "待放入画布" : "失败"}</span>
+                <span className="text-[var(--fs-micro)] font-medium leading-none">{badge.label}</span>
             </div>
         );
     }
     // success：短暂闪现后淡出（由 CSS animation 控制，2s 后消失）
     return (
         <div
+            data-node-status-badge="success"
             className="pointer-events-none absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full px-2 py-0.5 backdrop-blur-sm"
             style={{ background: "color-mix(in oklch, var(--status-success) 20%, transparent)", color: "var(--status-success)", animation: "canvas-status-success-fade 2s ease-out forwards" }}
-            aria-label="生成完成"
+            aria-label={badge.ariaLabel}
         >
             <CheckCircle2 className="size-3" strokeWidth={2} />
-            <span className="text-[var(--fs-micro)] font-medium leading-none">完成</span>
+            <span className="text-[var(--fs-micro)] font-medium leading-none">{badge.label}</span>
         </div>
     );
 }

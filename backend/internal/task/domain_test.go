@@ -143,6 +143,20 @@ func (m *memStore) CancelIfStatus(userID, id string, expected model.TaskStatus, 
 	return true, nil
 }
 
+func (m *memStore) StopRecoveryIfFailed(userID, id string, now time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[id]
+	if !ok || task.UserID != userID || task.Status != model.TaskStatusFailed {
+		return false, nil
+	}
+	task.Stage = model.TaskStageRecoveryStopped
+	task.NextPollAt = nil
+	task.UpdatedAt = now
+	m.tasks[id] = task
+	return true, nil
+}
+
 func (m *memStore) List(userID string, limit int, projectID string, activeOnly bool) ([]model.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -655,21 +669,47 @@ func TestCancelStopsLocalWaitAndDoesNotMintProviderRequest(t *testing.T) {
 	}
 }
 
-func TestCancelRejectedForTerminalUnknownAcceptance(t *testing.T) {
+func TestCancelStopsRetrievableFailedTaskWithoutCancellingAndRejectsNonRetrievable(t *testing.T) {
 	store := newMemStore()
-	svc := domainService(store, nil)
-	task := model.Task{
+	provider := &captureProvider{}
+	svc := domainService(store, func(d *Dependencies) {
+		d.Provider = provider
+	})
+	retrievable := model.Task{
 		ID: "failed-unknown", UserID: "user", Type: "canvas_image", Status: model.TaskStatusFailed,
 		Stage: "submission_unknown", ProviderRequestID: "upstream-9",
 	}
-	store.tasks[task.ID] = task
-	_, err := svc.Cancel(context.Background(), "user", task.ID)
-	if err == nil || !strings.Contains(err.Error(), "无法取消") {
-		t.Fatalf("cancel error = %v", err)
+	store.tasks[retrievable.ID] = retrievable
+	stopped, err := svc.Cancel(context.Background(), "user", retrievable.ID)
+	if err != nil {
+		t.Fatalf("stop retrievable error = %v", err)
 	}
-	stored, _ := store.TaskForUser("user", task.ID)
-	if stored.Status != model.TaskStatusFailed || stored.ProviderRequestID != "upstream-9" {
-		t.Fatalf("terminal task mutated: %+v", stored)
+	if stopped.Status != model.TaskStatusFailed || stopped.Stage != model.TaskStageRecoveryStopped || stopped.ProviderRequestID != "upstream-9" {
+		t.Fatalf("unexpected stopped task: %+v", stopped)
+	}
+	stored, _ := store.TaskForUser("user", retrievable.ID)
+	if stored.Status != model.TaskStatusFailed || stored.Stage != model.TaskStageRecoveryStopped || stored.ProviderRequestID != "upstream-9" {
+		t.Fatalf("stored retrievable task mutated unexpectedly: %+v", stored)
+	}
+	if out := ComputeOutcome(*stored, "", OutcomeFacts{}); out.Phase != "retrievable" {
+		t.Fatalf("recovery_stopped must remain retrievable, got %+v", out)
+	}
+	if len(provider.ids) != 0 {
+		t.Fatalf("stopping recovery must never request upstream cancel, got %v", provider.ids)
+	}
+	// Idempotent second stop
+	if again, err := svc.Cancel(context.Background(), "user", retrievable.ID); err != nil || again.Stage != model.TaskStageRecoveryStopped {
+		t.Fatalf("second stop = %+v err=%v", again, err)
+	}
+
+	noResult := RecoveryNoResult
+	terminal := model.Task{
+		ID: "failed-terminal", UserID: "user", Type: "canvas_image", Status: model.TaskStatusFailed,
+		RecoveryOutcome: &noResult,
+	}
+	store.tasks[terminal.ID] = terminal
+	if _, err := svc.Cancel(context.Background(), "user", terminal.ID); err == nil || !strings.Contains(err.Error(), "无法取消") {
+		t.Fatalf("terminal failed cancel error = %v", err)
 	}
 }
 

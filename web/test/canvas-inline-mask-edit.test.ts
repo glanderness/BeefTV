@@ -42,7 +42,34 @@ describe("inline canvas mask editing", () => {
         const model = "custom::moss-image-sft";
         const html = renderToStaticMarkup(createElement(CanvasImageMaskEditor, {
             imageDimensions: { width: 512, height: 512 }, scale: 1,
-            config: { ...defaultConfig, model, imageModel: model, imageModels: [model], channels: [{ id: "custom", name: "Custom", models: ["moss-image-sft"], interfaceType: "openai-image" }] },
+            config: {
+                ...defaultConfig,
+                model,
+                imageModel: model,
+                imageModels: [model],
+                channels: [{
+                    id: "custom",
+                    name: "Custom",
+                    models: ["moss-image-sft"],
+                    interfaceType: "openai-image",
+                    modelProfiles: [{
+                        model: "moss-image-sft",
+                        protocol: "openai-image",
+                        capabilityConfig: {
+                            version: 1,
+                            image: {
+                                references: { promptMaxChars: 4000, maxImages: 0, maxImageBytes: 0, maskSupported: false },
+                                size: { parameter: "size", values: ["1:1", "1024x1024"], default: "1:1", allowCustom: true },
+                                quality: { supported: false, values: [], default: "auto" },
+                                transparentBackground: { supported: false, default: false },
+                                responseFormat: { supported: true, value: "url" },
+                                outputFormat: { supported: false },
+                                maxOutputs: 1,
+                            },
+                        },
+                    }],
+                }],
+            },
             onCancel: () => undefined, onConfirm: () => undefined,
         }));
         expect(html).toContain("当前模型配置仅支持文生图，不支持图片重绘");

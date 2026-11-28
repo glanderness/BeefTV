@@ -77,7 +77,7 @@ for (const oldContent of [false, true]) {
     test(`stop and resume original delivery with retained old content=${oldContent}`, async () => {
         await page.goto(server.url + (oldContent ? "?old" : ""));
         await page.getByRole("button", { name: "停止取回结果", exact: true }).click();
-        await page.getByRole("dialog").getByRole("button", { name: "停止取回", exact: true }).click();
+        await page.getByRole("dialog").getByRole("button", { name: "暂停下载", exact: true }).click();
         await page.getByRole("button", { name: "继续取回", exact: true }).waitFor();
         const paused = JSON.parse(await page.locator("#snapshot").innerText()).nodes[0].metadata;
         expect(paused.status).toBe("error");
@@ -94,7 +94,7 @@ for (const oldContent of [false, true]) {
 test("resume delivery yields the node when another request takes it over", async () => {
     await page.goto(server.url.toString());
     await page.getByRole("button", { name: "停止取回结果", exact: true }).click();
-    await page.getByRole("dialog").getByRole("button", { name: "停止取回", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "暂停下载", exact: true }).click();
     await page.getByRole("button", { name: "继续取回", exact: true }).waitFor();
     holdQuery = true;
     await page.getByRole("button", { name: "继续取回", exact: true }).click();
@@ -117,7 +117,7 @@ for (const owner of ["canvas", "account"]) {
         test(`discard old cancellation after ${owner} switch, request started=${afterRequest}`, async () => {
             await page.goto(server.url.toString());
             await page.getByRole("button", { name: "停止取回结果", exact: true }).click();
-            const confirm = page.getByRole("dialog").getByRole("button", { name: "停止取回", exact: true });
+            const confirm = page.getByRole("dialog").getByRole("button", { name: "暂停下载", exact: true });
             if (afterRequest) {
                 holdCancellation = true;
                 await confirm.click();
@@ -132,7 +132,7 @@ for (const owner of ["canvas", "account"]) {
             await page.getByRole("dialog").waitFor({ state: "hidden" });
             expect(writes).toHaveLength(afterRequest ? 1 : 0);
             expect(JSON.parse(await page.locator("#snapshot").innerText()).nodes[0].metadata.status).toBe("loading");
-            expect(await page.getByText("已停止取回", { exact: true }).count()).toBe(0);
+            expect(await page.getByText("已暂停下载", { exact: true }).count()).toBe(0);
         }, 15_000);
     }
 }

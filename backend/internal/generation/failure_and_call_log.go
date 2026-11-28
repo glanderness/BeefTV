@@ -195,7 +195,7 @@ func PersistedFailureErrorCode(message string, stage string) string {
 		return string(CategoryRequestNotSent)
 	}
 	failure := ClassifyText(message)
-	if stage == "submission_unknown" {
+	if stage == "submission_unknown" || stage == model.TaskStageRecoveryStopped {
 		return string(CategorySubmissionUncertain)
 	}
 	return failure.ErrorCode()
@@ -205,7 +205,7 @@ func PersistedFailureBlocksRetry(message, stage, errorCode string) bool {
 	if stage == taskStageRequestNotSent {
 		return false
 	}
-	if stage == "submission_unknown" {
+	if stage == "submission_unknown" || stage == model.TaskStageRecoveryStopped {
 		return true
 	}
 	return PersistedFailure(message, errorCode).BlocksManualRetry()
@@ -214,7 +214,7 @@ func PersistedFailureBlocksRetry(message, stage, errorCode string) bool {
 // PersistedTaskCategory is the category a stored task failure carries; the
 // unconfirmed-submission stage stays a stage fact.
 func PersistedTaskCategory(message, stage, errorCode string) FailureCategory {
-	if stage == "submission_unknown" {
+	if stage == "submission_unknown" || stage == model.TaskStageRecoveryStopped {
 		return CategorySubmissionUncertain
 	}
 	if strings.TrimSpace(errorCode) != "" {

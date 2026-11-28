@@ -1,20 +1,19 @@
-import { canvasDocumentBase, clearCanvasDocumentBase, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
+import { canvasDocumentBase, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { ApiError, http } from "@/services/api/request";
 import { commitCanvasDocument, patchCanvasDocument } from "@/services/api/operations";
 import { buildCanvasDocumentPatch } from "@/lib/canvas/canvas-document-patch";
 import { notifyCanvasRefresh } from "@/services/local-workspace-sync";
-import { CanvasBackendSubmitPausedError, clearCanvasBackendSaveProgress, isCanvasRevisionConflict, isCanvasSubmitControlError } from "@/services/canvas-revision-conflict";
-import { CanvasJournalError, clearCanvasOperationJournal, loadCanvasOperationJournal, newCanvasCommitOperationId, peekCanvasOperationJournal, recordConfirmedCanvasCommit, updateCanvasOperationJournal, type CanvasCommitPayload } from "@/services/canvas-operation-journal";
+import { CanvasBackendSubmitPausedError, isCanvasRevisionConflict, isCanvasSubmitControlError } from "@/services/canvas-revision-conflict";
+import { CanvasJournalError, loadCanvasOperationJournal, newCanvasCommitOperationId, peekCanvasOperationJournal, recordConfirmedCanvasCommit, updateCanvasOperationJournal, type CanvasCommitPayload } from "@/services/canvas-operation-journal";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { normalizeCanvasProjectGraph, sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { revertUnchangedCanvasDocumentPatch, type CanvasDocumentPersistPatch } from "@/lib/canvas/canvas-unconfirmed-edits";
 import { settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
+import { deleteLocalCanvasProjects } from "./local-workspace-delete";
 import {
     hydrateLocalCanvasProjectsFromBackend,
-    isNotFoundApiError,
     openLocalCanvasProjectFromBackend,
     readLocalCanvasProjectFromBackend,
     restoreLocalCanvasProjectFromHistory,
@@ -28,6 +27,7 @@ import {
 } from "./local-workspace-reconcile";
 import {
     applyLiveCanvasProject,
+    backendSaveControllers,
     backendSaveTails,
     backendSaveTimers,
     canvasDeleting,
@@ -57,6 +57,7 @@ import {
 export {
     CanvasBackendSubmitPausedError,
     CanvasProjectionError,
+    deleteLocalCanvasProjects,
     getUnconfirmedCanvasDiagnostic,
     hasUnconfirmedCanvasEdits,
     hydrateLocalCanvasProjectsFromBackend,
@@ -100,8 +101,24 @@ export async function createLocalCanvasProject(title: string, projectId?: string
     return { id };
 }
 
+function registerBackendSaveController(key: string, controller: AbortController) {
+    let set = backendSaveControllers.get(key);
+    if (!set) {
+        set = new Set();
+        backendSaveControllers.set(key, set);
+    }
+    set.add(controller);
+}
+
+function unregisterBackendSaveController(key: string, controller: AbortController) {
+    const set = backendSaveControllers.get(key);
+    if (!set) return;
+    set.delete(controller);
+    if (set.size === 0) backendSaveControllers.delete(key);
+}
+
 /** Serialize writes per canvas so optimistic revisions cannot race each other. */
-function syncLocalCanvasProject(id: string): Promise<void> {
+function syncLocalCanvasProject(id: string, options: { allowRestoreDeleted?: boolean } = {}): Promise<void> {
     const scope = getActiveUserScope();
     const key = saveKey(scope, id);
     const existingTimer = backendSaveTimers.get(key);
@@ -109,12 +126,15 @@ function syncLocalCanvasProject(id: string): Promise<void> {
         clearTimeout(existingTimer);
         backendSaveTimers.delete(key);
     }
+    const controller = new AbortController();
+    registerBackendSaveController(key, controller);
     const previous = backendSaveTails.get(key) || Promise.resolve();
     const next = previous.catch(() => undefined).then(async () => {
-        if (canvasDeleting.has(key)) throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
-        await commitLiveCanvasDocument(id);
+        if (controller.signal.aborted || canvasDeleting.has(key)) throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
+        await commitLiveCanvasDocument(id, controller.signal, options.allowRestoreDeleted === true);
     });
     const tail = next.finally(() => {
+        unregisterBackendSaveController(key, controller);
         if (backendSaveTails.get(key) === tail) backendSaveTails.delete(key);
     });
     backendSaveTails.set(key, tail);
@@ -172,11 +192,17 @@ async function applyAcceptedCanvasSave(
 
 const MAX_COMMIT_REBASE_ATTEMPTS = 4;
 
-async function putCanvasProjectToBackend(id: string, endpoint: string, projectForSave: CanvasProject) {
+async function putCanvasProjectToBackend(
+    id: string,
+    endpoint: string,
+    projectForSave: CanvasProject,
+    options: { signal?: AbortSignal; restoreDeleted?: boolean } = {},
+) {
+    const body = options.restoreDeleted ? { project: projectForSave, restoreDeleted: true } : { project: projectForSave };
     const response = await http.put<{ project: CanvasSaveSummary }>(
         endpoint,
-        { project: projectForSave },
-        {},
+        body,
+        options.signal ? { signal: options.signal } : {},
     );
     if (!response.project || response.project.id !== id) throw new Error("画布保存回执无效，修改仍保留在本地，请重试");
     return response.project;
@@ -188,22 +214,25 @@ function isInitialCanvasCreate(project: CanvasProject, scope: string) {
     return (project.revision ?? 0) === 0;
 }
 
-async function commitLiveCanvasDocument(id: string) {
-    return withCanvasProjection(getActiveUserScope(), id, () => commitLiveCanvasDocumentUnlocked(id));
+async function commitLiveCanvasDocument(id: string, signal?: AbortSignal, allowRestoreDeleted = false) {
+    return withCanvasProjection(getActiveUserScope(), id, () => commitLiveCanvasDocumentUnlocked(id, signal, allowRestoreDeleted));
 }
 
-async function commitLiveCanvasDocumentUnlocked(id: string) {
+async function commitLiveCanvasDocumentUnlocked(id: string, signal?: AbortSignal, allowRestoreDeleted = false) {
     const scope = getActiveUserScope();
+    if (signal?.aborted || canvasDeleting.has(saveKey(scope, id))) {
+        throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
+    }
     await replayPendingCanvasProjection(id, scope, { throwOnFailure: true });
     const journal = await loadCanvasOperationJournal(id, scope);
     let retriesLeft = MAX_COMMIT_REBASE_ATTEMPTS;
     let sent = false;
     if (journal.inFlight) {
-        const outcome = await sendCanvasDocumentCommit(id, journal.inFlight.operationId, journal.inFlight.payload, retriesLeft > 0);
+        const outcome = await sendCanvasDocumentCommit(id, journal.inFlight.operationId, journal.inFlight.payload, retriesLeft > 0, signal);
         if (outcome === "rebased") retriesLeft -= 1;
         sent = true;
     }
-    if (canvasDeleting.has(saveKey(scope, id))) {
+    if (signal?.aborted || canvasDeleting.has(saveKey(scope, id))) {
         const live = openLocalCanvasProject(id);
         const current = peekCanvasOperationJournal(id, scope);
         if (sent && live && current?.confirmedSnapshot && sameCanvasDocument(current.confirmedSnapshot, live) && !current.inFlight) return;
@@ -211,14 +240,23 @@ async function commitLiveCanvasDocumentUnlocked(id: string) {
     }
     for (;;) {
         const confirmed = peekCanvasOperationJournal(id, scope)?.confirmedSnapshot ?? null;
-        const outcome = await queueAndSendLiveCanvasDocument(id, confirmed, retriesLeft > 0);
+        const outcome = await queueAndSendLiveCanvasDocument(id, confirmed, retriesLeft > 0, signal, allowRestoreDeleted);
         if (outcome !== "rebased") return;
         retriesLeft -= 1;
     }
 }
 
-async function queueAndSendLiveCanvasDocument(id: string, confirmed: CanvasProject | null, rebaseAllowed: boolean): Promise<CanvasCommitOutcome | undefined> {
+async function queueAndSendLiveCanvasDocument(
+    id: string,
+    confirmed: CanvasProject | null,
+    rebaseAllowed: boolean,
+    signal?: AbortSignal,
+    allowRestoreDeleted = false,
+): Promise<CanvasCommitOutcome | undefined> {
     const scope = getActiveUserScope();
+    if (signal?.aborted || canvasDeleting.has(saveKey(scope, id))) {
+        throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
+    }
     const project = openLocalCanvasProject(id);
     if (!project) return undefined;
     if (project.summaryOnly) {
@@ -230,12 +268,21 @@ async function queueAndSendLiveCanvasDocument(id: string, confirmed: CanvasProje
     if (settled !== project) applyLiveCanvasProject(id, settled, false);
     if (isInitialCanvasCreate(settled, scope)) {
         try {
-            const saved = await putCanvasProjectToBackend(id, `/canvas-projects/${encodeURIComponent(id)}`, settled);
+            const saved = await putCanvasProjectToBackend(id, `/canvas-projects/${encodeURIComponent(id)}`, settled, {
+                signal,
+                restoreDeleted: allowRestoreDeleted,
+            });
             if (!saved) return undefined;
+            if (signal?.aborted || canvasDeleting.has(saveKey(scope, id))) {
+                throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
+            }
             await applyAcceptedCanvasSave(id, settled, saved);
             return "accepted";
         } catch (error) {
-            if (rebaseAllowed && isCanvasRevisionConflict(error) && await rebaseAfterRejectedCanvasCommit(id, 0)) {
+            if (signal?.aborted || canvasDeleting.has(saveKey(scope, id))) {
+                throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
+            }
+            if (rebaseAllowed && isCanvasRevisionConflict(error) && await rebaseAfterRejectedCanvasCommit(id, 0, signal)) {
                 return "rebased";
             }
             throw error;
@@ -270,8 +317,9 @@ async function queueAndSendLiveCanvasDocument(id: string, confirmed: CanvasProje
         };
     });
     if (!queued.inFlight) return undefined;
+    if (signal?.aborted) throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
     throwIfCanvasNotWritable(id, scope);
-    return sendCanvasDocumentCommit(id, queued.inFlight.operationId, queued.inFlight.payload, rebaseAllowed);
+    return sendCanvasDocumentCommit(id, queued.inFlight.operationId, queued.inFlight.payload, rebaseAllowed, signal);
 }
 
 type CanvasCommitOutcome = "accepted" | "rebased";
@@ -280,13 +328,14 @@ type CanvasCommitOutcome = "accepted" | "rebased";
  * 遇到极少数并发 revision 过时拒绝时读一次服务端最新文档并做确定性合并，
  * 随后带着推进后的 revision 重试。
  */
-async function rebaseAfterRejectedCanvasCommit(id: string, rejectedRevision: number) {
+async function rebaseAfterRejectedCanvasCommit(id: string, rejectedRevision: number, signal?: AbortSignal) {
     let remote: CanvasProject;
     try {
-        remote = await readLocalCanvasProjectFromBackend(id);
+        remote = await readLocalCanvasProjectFromBackend(id, signal);
     } catch {
         return false;
     }
+    if (signal?.aborted) return false;
     if (remote.id !== id || typeof remote.revision !== "number" || remote.revision <= rejectedRevision) return false;
     const outcome = await reconcileRemoteCanvasUnlocked({
         id,
@@ -302,6 +351,7 @@ async function sendCanvasDocumentCommit(
     operationId: string,
     payload: CanvasCommitPayload,
     rebaseAllowed = false,
+    signal?: AbortSignal,
 ): Promise<CanvasCommitOutcome> {
     traceCanvasGraph("repository.submit", { document: payload.document, confirmed: canvasDocumentBase(id, getActiveUserScope())?.snapshot });
     const scope = getActiveUserScope();
@@ -310,7 +360,10 @@ async function sendCanvasDocumentCommit(
             const result = await patchCanvasDocument({
                 operationId,
                 ...payload.patch,
-            });
+            }, signal);
+            if (signal?.aborted || canvasDeleting.has(saveKey(scope, id))) {
+                throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
+            }
             const revision = result.revision || result.result?.revision;
             const mergedDoc = result.result?.document
                 ? normalizeCanvasProjectGraph({
@@ -353,7 +406,10 @@ async function sendCanvasDocumentCommit(
             canvasId: payload.canvasId,
             expectedRevision: payload.expectedRevision,
             document: payload.document as unknown as Record<string, unknown>,
-        });
+        }, signal);
+        if (signal?.aborted || canvasDeleting.has(saveKey(scope, id))) {
+            throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
+        }
         const saved: CanvasSaveSummary = {
             id,
             title: result.result?.title ?? payload.document.title,
@@ -364,12 +420,15 @@ async function sendCanvasDocumentCommit(
         await applyAcceptedCanvasSave(id, payload.document, saved, operationId);
         return "accepted";
     } catch (error) {
+        if (signal?.aborted || canvasDeleting.has(saveKey(scope, id))) {
+            throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
+        }
         if (isCanvasRevisionConflict(error)) {
             await updateCanvasOperationJournal(id, scope, (current) => {
                 if (!current.inFlight) return;
                 return { ...current, inFlight: null };
             });
-            if (rebaseAllowed && await rebaseAfterRejectedCanvasCommit(id, payload.expectedRevision)) return "rebased";
+            if (rebaseAllowed && await rebaseAfterRejectedCanvasCommit(id, payload.expectedRevision, signal)) return "rebased";
             throw error;
         }
         if (!shouldKeepCanvasCommitIdentity(error)) {
@@ -389,8 +448,8 @@ function shouldKeepCanvasCommitIdentity(error: unknown) {
     return error.status === undefined && error.code === undefined;
 }
 
-export function syncLocalCanvasProjectToBackend(id: string): Promise<void> {
-    return syncLocalCanvasProject(id);
+export function syncLocalCanvasProjectToBackend(id: string, options?: { allowRestoreDeleted?: boolean }): Promise<void> {
+    return syncLocalCanvasProject(id, options);
 }
 
 /**
@@ -531,6 +590,10 @@ export function scheduleLocalCanvasBackendSync(id: string) {
 export function resetLocalCanvasBackendSaveState() {
     for (const timer of backendSaveTimers.values()) clearTimeout(timer);
     backendSaveTimers.clear();
+    for (const controllers of backendSaveControllers.values()) {
+        for (const controller of controllers) controller.abort();
+    }
+    backendSaveControllers.clear();
     backendSaveTails.clear();
     canvasProjectionLocks.clear();
     canvasDeleting.clear();
@@ -612,112 +675,5 @@ export async function flushLocalCanvasBackendSaves(): Promise<void> {
         if (failed?.status === "rejected" && !isCanvasSubmitControlError(failed.reason)) {
             throw failed.reason;
         }
-    }
-}
-
-async function waitForCanvasBackendIdle(id: string, scope: string) {
-    const key = saveKey(scope, id);
-    const timer = backendSaveTimers.get(key);
-    if (timer) {
-        clearTimeout(timer);
-        backendSaveTimers.delete(key);
-    }
-    const tail = backendSaveTails.get(key);
-    if (tail) await tail.catch(() => undefined);
-    // 被取消的排队提交不会再发出：删除失败时如实显示为未保存。
-    if (timer) publishCanvasSaveProgress(id, scope, true);
-}
-
-export async function deleteLocalCanvasProjects(ids: readonly string[], options: { recordHistory?: boolean } = {}) {
-    const scope = getActiveUserScope();
-    const recordHistory = options.recordHistory !== false;
-    const selected = [...new Set(ids)];
-    for (const id of selected) canvasDeleting.add(saveKey(scope, id));
-    try {
-        await Promise.all(selected.map((id) => waitForCanvasBackendIdle(id, scope)));
-        const snapshots: CanvasProject[] = [];
-        for (const id of selected) {
-            const current = useCanvasStore.getState().openProject(id);
-            if (!current) continue;
-            if (current.summaryOnly && recordHistory) {
-                let journalInFlight: CanvasProject | undefined;
-                try {
-                    const journal = await loadCanvasOperationJournal(id, scope);
-                    const candidate = journal.inFlight?.payload?.document;
-                    if (candidate && !candidate.summaryOnly) {
-                        journalInFlight = normalizeCanvasProjectGraph(candidate);
-                    }
-                } catch {
-                    // 日记读取失败时回退到后端完整读取。
-                }
-                if (journalInFlight) {
-                    snapshots.push(journalInFlight);
-                    continue;
-                }
-                try {
-                    snapshots.push(await readLocalCanvasProjectFromBackend(id));
-                } catch (error) {
-                    if (!isNotFoundApiError(error)) {
-                        throw error;
-                    }
-                }
-            } else {
-                snapshots.push(current);
-            }
-        }
-        const deleted: string[] = [];
-        const failures: unknown[] = [];
-        for (const id of selected) {
-            const snapshot = snapshots.find((item) => item.id === id);
-            const localOnlyRollback = !recordHistory
-                && (snapshot?.revision ?? 0) === 0
-                && !(peekCanvasOperationJournal(id, scope)?.confirmedRevision);
-            let backendDeleteWarning: unknown;
-            try {
-                try {
-                    await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
-                } catch (error) {
-                    if (isNotFoundApiError(error) && (!recordHistory || (snapshot?.revision ?? 0) === 0)) {
-                        // 回滚或 revision=0 草稿后端明确返回 404，视为后端已不存在。
-                    } else if (localOnlyRollback) {
-                        // 未曾确认落库的 revision=0 回滚草稿，即使后端 DELETE 返回 5xx 也必须清掉本地残留，
-                        // 同时保留该后端错误上报给调用方，避免静默吞掉响应丢失导致的潜在远端残留。
-                        backendDeleteWarning = error;
-                    } else {
-                        throw error;
-                    }
-                }
-                await flushPendingCanvasOverlapWrite(id, scope);
-                await clearCanvasOperationJournal(id, scope);
-                clearCanvasDocumentBase(id, scope);
-                pendingForceHistorySnapshotEpochs.delete(saveKey(scope, id));
-                serverConfirmedCanvasSnapshots.delete(saveKey(scope, id));
-                clearCanvasBackendSaveProgress(id, scope);
-                deleted.push(id);
-                if (backendDeleteWarning !== undefined) {
-                    failures.push(backendDeleteWarning);
-                }
-            } catch (error) {
-                console.error("画布后端删除失败", { id, error });
-                failures.push(error);
-                if (!useCanvasStore.getState().openProject(id) && snapshot) {
-                    useCanvasStore.getState().restoreProject(snapshot);
-                }
-            }
-        }
-        if (deleted.length) {
-            useCanvasStore.getState().deleteProjects(deleted);
-            if (recordHistory) {
-                const removed = snapshots.filter((item) => deleted.includes(item.id) && !item.summaryOnly);
-                if (removed.length) useCanvasHistoryStore.getState().recordDeletedProjects(removed);
-            }
-            await flushCanvasStorePersistence().catch((error) => {
-                console.error("画布本地缓存写入失败，已从桌面数据库删除", { ids: deleted, error });
-            });
-        }
-        if (failures.length) throw failures[0];
-        return snapshots.filter((item) => deleted.includes(item.id));
-    } finally {
-        for (const id of selected) canvasDeleting.delete(saveKey(scope, id));
     }
 }

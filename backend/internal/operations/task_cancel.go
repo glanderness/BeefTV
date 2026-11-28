@@ -42,9 +42,16 @@ func opTaskCancel(ctx *Context, params json.RawMessage) (any, error) {
 	if before == nil {
 		return nil, NotFound("task_not_found", "任务不存在")
 	}
-	// 只有这几种状态有取消语义；其余状态直接说明，不把内部错误伪装成业务冲突。
+	// 只有这几种状态有取消或停止自动取回语义；其余状态直接说明，不把内部错误伪装成业务冲突。
 	switch before.Status {
 	case model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusCancelled, model.TaskStatusSucceeded:
+	case model.TaskStatusFailed:
+		if before.Outcome == nil || before.Outcome.Phase != "retrievable" {
+			return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(before.Status)+"，无法取消", map[string]any{
+				"taskId": taskID,
+				"status": before.Status,
+			})
+		}
 	default:
 		return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(before.Status)+"，无法取消", map[string]any{
 			"taskId": taskID,
@@ -67,6 +74,25 @@ func opTaskCancel(ctx *Context, params json.RawMessage) (any, error) {
 			case model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSucceeded:
 				// 任务仍可取消或可停止取回，只是状态刚变化；保留重试语义。
 				return nil, Conflict("task_cancel_race", "任务状态在取消时发生变化，请重新查询任务状态后重试", map[string]any{
+					"taskId": taskID,
+					"status": latest.Status,
+				})
+			case model.TaskStatusFailed:
+				if latest.Outcome != nil && latest.Outcome.Phase == "retrievable" {
+					if latest.Stage == model.TaskStageRecoveryStopped {
+						return map[string]any{
+							"taskId":         latest.ID,
+							"status":         latest.Status,
+							"previousStatus": before.Status,
+							"note":           "已停止后台自动取回；已提交任务的结果仍会保留，之后可随时手动继续取回。",
+						}, nil
+					}
+					return nil, Conflict("task_cancel_race", "任务状态在取消时发生变化，请重新查询任务状态后重试", map[string]any{
+						"taskId": taskID,
+						"status": latest.Status,
+					})
+				}
+				return nil, Conflict("task_not_cancellable", "任务当前状态为 "+string(latest.Status)+"，无法取消", map[string]any{
 					"taskId": taskID,
 					"status": latest.Status,
 				})
@@ -107,6 +133,8 @@ func taskCancelNote(previous model.TaskStatus, current model.TaskStatus) string 
 		return "已请求取消。上游已经受理的任务可能已经计费，这里不承诺退款。"
 	case current == model.TaskStatusSucceeded:
 		return "任务已经完成，已停止继续取回产物。上游可能已经计费，这里不承诺退款。"
+	case current == model.TaskStatusFailed:
+		return "已停止自动取回，已提交任务的结果仍会保留，之后可随时手动继续取回。"
 	default:
 		return "已请求取消。上游已经受理的任务可能已经计费，这里不承诺退款。"
 	}

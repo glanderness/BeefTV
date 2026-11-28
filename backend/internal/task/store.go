@@ -73,6 +73,13 @@ func (s repoStore) CancelIfStatus(userID, id string, expected model.TaskStatus, 
 	return s.repo.CancelTaskIfStatus(userID, id, expected, now)
 }
 
+func (s repoStore) StopRecoveryIfFailed(userID, id string, now time.Time) (bool, error) {
+	if err := s.require(); err != nil {
+		return false, err
+	}
+	return s.repo.StopTaskRecoveryIfFailed(userID, id, now)
+}
+
 func (s repoStore) List(userID string, limit int, projectID string, activeOnly bool) ([]model.Task, error) {
 	if err := s.require(); err != nil {
 		return nil, err

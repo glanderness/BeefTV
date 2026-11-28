@@ -25,11 +25,37 @@ const (
 	ResourceURLTTL                   = 4 * time.Hour
 )
 
+// StreamReadIdleTimeout bounds how long a streaming HTTP response body may
+// remain silent between chunks after response headers arrive.
+var StreamReadIdleTimeout = 90 * time.Second
+
 var ErrVideoJSONRequestTooLarge = errors.New("video request body exceeds the 64 MiB request limit; use public media URLs instead of inline base64")
+
+var errUpstreamReadIdle = errors.New("upstream_stream_idle_timeout")
+
+type UpstreamStreamIdleTimeoutError struct {
+	IdleTimeout time.Duration
+}
+
+func (e UpstreamStreamIdleTimeoutError) Error() string {
+	return fmt.Sprintf("upstream_stream_idle_timeout: 上游流式响应超过 %s 未返回数据", e.IdleTimeout.Round(time.Millisecond))
+}
+
+func (e UpstreamStreamIdleTimeoutError) Unwrap() error {
+	return errUpstreamReadIdle
+}
 
 type submissionKeyContext struct{}
 type binaryNoRedirectContext struct{}
 type providerDownloadContext struct{}
+type streamReadIdleTimeoutContext struct{}
+
+func streamReadIdleTimeout(ctx context.Context) time.Duration {
+	if timeout, ok := ctx.Value(streamReadIdleTimeoutContext{}).(time.Duration); ok && timeout > 0 {
+		return timeout
+	}
+	return StreamReadIdleTimeout
+}
 
 func WithSubmissionKey(ctx context.Context, key string) context.Context {
 	key = strings.TrimSpace(key)
@@ -364,12 +390,16 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			return nil, "", err
 		}
 	}
+	parentCtx := req.Context()
+	readCtx, cancelRead := context.WithCancelCause(parentCtx)
+	defer cancelRead(nil)
+	req = req.WithContext(readCtx)
 	observation.TransportRoute = outbound.RequestNetworkRoute(req, client.Transport)
 	resp, err := client.Do(req)
 	observation.Dispatched, observation.TransportPhase = trace.result(err)
 	if err != nil {
 		if usesGenerationCircuit {
-			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, !errors.Is(err, context.Canceled))
+			_ = runtime.Limits.RecordChannelResult(parentCtx, channelID, !errors.Is(err, context.Canceled))
 		}
 		if !observation.Dispatched && resp == nil && (req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodPatch) {
 			return nil, "", RequestNotSentError{Cause: err}
@@ -377,6 +407,17 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		return nil, "", err
 	}
 	defer resp.Body.Close()
+	var idleTimer *time.Timer
+	var idleTimeout time.Duration
+	if onChunk != nil {
+		idleTimeout = streamReadIdleTimeout(parentCtx)
+		if idleTimeout > 0 {
+			idleTimer = time.AfterFunc(idleTimeout, func() {
+				cancelRead(errUpstreamReadIdle)
+			})
+			defer idleTimer.Stop()
+		}
+	}
 	observation.Headers = resp.Header.Clone()
 	observation.HTTPStatus = resp.StatusCode
 	observation.StatusCode = resp.StatusCode
@@ -400,6 +441,9 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		readCount, readErr := reader.Read(chunk)
 		observation.ReceivedBytes += int64(readCount)
 		if readCount > 0 {
+			if idleTimer != nil {
+				idleTimer.Reset(idleTimeout)
+			}
 			if int64(buffered.Len()+readCount) > responseLimit {
 				observation.Outcome = "response_limit"
 				return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
@@ -413,6 +457,12 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			break
 		}
 		if readErr != nil {
+			if errors.Is(context.Cause(readCtx), errUpstreamReadIdle) {
+				if usesGenerationCircuit {
+					_ = runtime.Limits.RecordChannelResult(parentCtx, channelID, true)
+				}
+				return nil, "", UpstreamStreamIdleTimeoutError{IdleTimeout: idleTimeout}
+			}
 			return nil, "", readErr
 		}
 	}
@@ -423,7 +473,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if usesGenerationCircuit {
-			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
+			_ = runtime.Limits.RecordChannelResult(parentCtx, channelID, resp.StatusCode >= 500)
 		}
 		httpErr := HTTPError{
 			RequestID:           observation.RequestID,
@@ -441,7 +491,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	}
 	observation.StatusCode = resp.StatusCode
 	if usesGenerationCircuit {
-		_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, false)
+		_ = runtime.Limits.RecordChannelResult(parentCtx, channelID, false)
 	}
 	return data, mimeType, nil
 }

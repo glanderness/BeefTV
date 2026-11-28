@@ -99,7 +99,8 @@ func hasUnconfirmedImageSubmission(task model.Task, facts OutcomeFacts) bool {
 	}
 	pendingImageReceipt := facts.HasImageReceipt && facts.DispatchState != "rejected_no_job" && facts.DispatchState != "not_sent"
 	return pendingImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay ||
-		facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown"
+		facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" ||
+		task.Stage == "submission_unknown" || task.Stage == model.TaskStageRecoveryStopped
 }
 
 func hasUnconfirmedProviderSubmission(task model.Task, facts OutcomeFacts) bool {
@@ -107,7 +108,8 @@ func hasUnconfirmedProviderSubmission(task model.Task, facts OutcomeFacts) bool 
 		return true
 	}
 	isAsyncMedia := task.Type == "canvas_video" || task.Type == "canvas_audio" || strings.HasPrefix(task.Type, "video_") || task.IsUpscale()
-	return isAsyncMedia && (facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown")
+	return isAsyncMedia && (facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" ||
+		task.Stage == "submission_unknown" || task.Stage == model.TaskStageRecoveryStopped)
 }
 
 // RegenerableFailure 是后端唯一的「失败后能在原节点重新生成」读法。
@@ -130,7 +132,7 @@ func provablyNotSubmitted(task model.Task, facts OutcomeFacts) bool {
 	if facts.RequestNotSent {
 		return true
 	}
-	return task.ErrorCode == "reference_upload_failed" && task.Stage != "submission_unknown" && !facts.HasImageReceipt
+	return task.ErrorCode == "reference_upload_failed" && task.Stage != "submission_unknown" && task.Stage != model.TaskStageRecoveryStopped && !facts.HasImageReceipt
 }
 
 var arkPolicyRejectedCodePattern = regexp.MustCompile(

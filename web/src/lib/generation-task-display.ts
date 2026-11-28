@@ -26,8 +26,9 @@ export function isGenerationTaskSubmissionUncertain(task: GenerationTaskDisplayT
 export function generationTaskStatusLabel(task: GenerationTaskDisplayTarget) {
     const outcome = normalizeTaskOutcome(task.outcome);
     if (outcome) {
-        return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus }).badge;
+        return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus, stage: task.stage }).badge;
     }
+    if (task.stage === "recovery_stopped") return "待取回结果";
     if (isGenerationTaskSubmissionUncertain(task)) return "提交结果待确认";
     if (task.stage === "delivery_paused" || task.stage === "delivery_timed_out") return "待取回结果";
     return statusLabel[task.status];
@@ -40,10 +41,11 @@ export function generationTaskStageLabel(task: GenerationTaskDisplayTarget) {
         (outcome.phase === "retrievable" ||
             isTaskOutcomeReconciling(outcome) ||
             outcome.reason === "cancelled_result_unconfirmed" ||
-            (outcome.phase === "failed" && (task.providerCancelStatus === "requested" || task.providerCancelStatus === "uncertain")))
+            (outcome.phase === "failed" && (task.providerCancelStatus === "requested" || task.providerCancelStatus === "uncertain" || task.stage === "recovery_stopped")))
     ) {
-        return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus }).reason;
+        return taskOutcomeCopy(outcome, undefined, { providerCancelStatus: task.providerCancelStatus, stage: task.stage }).reason;
     }
+    if (!outcome && task.stage === "recovery_stopped") return "已停止自动取回，原任务结果仍会保留";
     if (isGenerationTaskSubmissionUncertain(task)) return "为避免重复创建上游任务，未自动重试";
     if (task.stage === "delivery_paused") return "已暂停取回结果";
     if (task.stage === "delivery_timed_out") return "下载超时，可继续取回原结果";
@@ -55,6 +57,7 @@ export function generationTaskStageLabel(task: GenerationTaskDisplayTarget) {
 export function generationTaskShowsProgress(task: GenerationTaskDisplayTarget) {
     const outcome = normalizeTaskOutcome(task.outcome);
     if (outcome && outcome.phase !== "running" && outcome.phase !== "fetching") return false;
+    if (!outcome && task.stage === "recovery_stopped") return false;
     if (isGenerationTaskSubmissionUncertain(task) || task.stage === "delivery_paused" || task.stage === "delivery_timed_out") return false;
     // 排队、后端接管和连接供应商都没有真实百分比。只有上游状态响应
     // 已经写回任务后才显示进度，避免所有图片/视频长期停在同一个假数值。

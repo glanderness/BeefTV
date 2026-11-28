@@ -492,7 +492,7 @@ func RequestTextProvider(ctx context.Context, config Config, path string, body m
 		return ProviderTextResult{}, err
 	}
 	result := ProviderTextResult{Text: stringField(parsed, "text"), Reasoning: stringField(parsed, "reasoning")}
-	if result.Text == "" {
+	if strings.TrimSpace(result.Text) == "" {
 		return ProviderTextResult{}, errors.New("文本接口没有返回内容")
 	}
 	return result, nil
