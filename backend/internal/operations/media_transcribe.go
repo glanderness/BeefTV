@@ -2,6 +2,8 @@ package operations
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -18,12 +20,13 @@ type MediaTranscriptionClientResolver interface {
 }
 
 type mediaTranscribeArgs struct {
-	CanvasID   string `json:"canvasId"`
-	NodeID     string `json:"nodeId,omitempty"`
-	AssetID    string `json:"assetId,omitempty"`
-	ResourceID string `json:"resourceId,omitempty"`
-	Language   string `json:"language,omitempty"`
-	Model      string `json:"model,omitempty"`
+	CanvasID        string `json:"canvasId"`
+	NodeID          string `json:"nodeId,omitempty"`
+	AssetID         string `json:"assetId,omitempty"`
+	ResourceID      string `json:"resourceId,omitempty"`
+	ExpectedVersion string `json:"expectedVersion,omitempty"`
+	Language        string `json:"language,omitempty"`
+	Model           string `json:"model,omitempty"`
 }
 
 type mediaTranscribeOpener struct {
@@ -47,12 +50,13 @@ func registerMediaTranscribe(r *Registry) {
 		ReadOnly:        true,
 		ReplayUnsafe:    true,
 		Scope:           ScopeCanvas,
-		Summary:         "把音视频转写为带时间戳的字幕与 SRT（省略 model 走本地免费 Whisper；指定 model 走云端付费转写，须预算包或用户批准）",
+		Summary: "音视频转写字幕与SRT（省略model本地免费，指定model云端付费）",
 		Params: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{` +
 			`"canvasId":{"type":"string"},` +
 			`"nodeId":{"type":"string"},` +
 			`"assetId":{"type":"string"},` +
 			`"resourceId":{"type":"string"},` +
+			`"expectedVersion":{"type":"string"},` +
 			`"language":{"type":"string","description":"可选 ISO 语言码，如 zh、en；省略自动识别"},` +
 			`"model":{"type":"string","description":"可选云端转写模型；省略使用本地免费 whisper.cpp，指定则走付费云端转写"}` +
 			`},"required":["canvasId"]}`),
@@ -88,8 +92,14 @@ func runMediaTranscribe(ctx *Context, raw json.RawMessage) (any, error) {
 	}
 	args.Model = strings.TrimSpace(args.Model)
 	args.Language = strings.TrimSpace(args.Language)
+	args.ExpectedVersion = strings.TrimSpace(args.ExpectedVersion)
 	if len([]rune(args.Language)) > 32 || len([]rune(args.Model)) > 160 {
 		return nil, InvalidArg("invalid_media_transcribe", "转写参数长度超出限制")
+	}
+	// Reject explicit paid cloud Whisper in read-only mode BEFORE resolving the
+	// client so read-only callers never trigger outbound catalog refreshes.
+	if args.Model != "" && ctx.Caller.ReadOnly {
+		return nil, newError(CodeReadOnly, "read_only_client", "只读客户端不能调用云端付费语音转写", nil)
 	}
 
 	resourceID, err := resolveMediaResource(ctx, mediaArgs{
@@ -114,6 +124,27 @@ func runMediaTranscribe(ctx *Context, raw json.RawMessage) (any, error) {
 	opener, ok := ctx.Domain.(MediaSourceOpener)
 	if !ok {
 		return nil, Unsupported("media_unavailable", "当前工作区不支持媒体读取")
+	}
+
+	var version string
+	if args.ExpectedVersion != "" {
+		reader, openErr := opener.OpenMediaResource(ctx.Context, ctx.UserID, resourceID)
+		if openErr != nil {
+			return nil, PreconditionFailed("media_read_failed", "媒体读取失败", nil)
+		}
+		hash := sha256.New()
+		n, copyErr := io.Copy(hash, io.LimitReader(reader, maxMediaSourceBytes+1))
+		closeErr := reader.Close()
+		if copyErr != nil || closeErr != nil {
+			return nil, PreconditionFailed("media_read_failed", "媒体读取失败", nil)
+		}
+		if n > maxMediaSourceBytes {
+			return nil, PreconditionFailed("media_too_large", "当前媒体转写支持 256 MiB 以内的素材", nil)
+		}
+		version = hex.EncodeToString(hash.Sum(nil))
+		if version != args.ExpectedVersion {
+			return nil, Conflict("stale_media_version", "素材内容已变化，请重新读取 overview", map[string]any{"currentVersion": version})
+		}
 	}
 
 	client, err := resolveTranscriptionClientForOp(ctx, args.Model)
@@ -141,7 +172,7 @@ func runMediaTranscribe(ctx *Context, raw json.RawMessage) (any, error) {
 					"reason": "no_active_mandate",
 				})
 			}
-			digest := mediaTranscribeTargetDigest(args.CanvasID, args.NodeID, args.AssetID, args.ResourceID, effectiveModel)
+			digest := mediaTranscribeTargetDigest(args.CanvasID, args.NodeID, args.AssetID, resourceID, args.ExpectedVersion, effectiveModel)
 			var permitErr error
 			permit, permitErr = acquirePaidSyncPermit(ctx, args.CanvasID, model.MandateKindMediaTranscribe, "media.transcribe", digest)
 			if permitErr != nil {
@@ -175,6 +206,7 @@ func runMediaTranscribe(ctx *Context, raw json.RawMessage) (any, error) {
 			NodeID:     args.NodeID,
 			AssetID:    args.AssetID,
 			ResourceID: resourceID,
+			Version:    version,
 		},
 		"mode":     mode,
 		"segments": result.Segments,

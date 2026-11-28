@@ -162,19 +162,29 @@ export function closeSharedPhotonImages() {
   return sharedPhotonManager.close();
 }
 
+function readCaseInsensitiveString(obj, key) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return '';
+  const target = key.toLowerCase();
+  for (const [k, v] of Object.entries(obj)) {
+    if (k.toLowerCase() === target && typeof v === 'string' && v.trim() !== '') {
+      return v.trim();
+    }
+  }
+  return '';
+}
+
 export function resolvePaidOpForTool(call) {
   const name = String(call?.name || '').trim();
   if (name === 'canvas_generation_submit') return 'canvas.generation.submit';
   if (name === 'canvas_generation_regenerate') return 'canvas.generation.regenerate';
   if (name === 'media_review') return 'media.review';
   if (name === 'media_transcribe') {
-    const model = String(call?.arguments?.model || '').trim();
-    return model !== '' ? 'media.transcribe' : '';
+    return readCaseInsensitiveString(call?.arguments, 'model') !== '' ? 'media.transcribe' : '';
   }
   if (name === 'business_call') {
     const args = call?.arguments && typeof call.arguments === 'object' ? call.arguments : {};
     const targetTool = String(args.tool || '').trim();
-    const model = String(args.body?.model || '').trim();
+    const model = readCaseInsensitiveString(args.body, 'model');
     if (targetTool === 'business_post_timeline_transcriptions' && model !== '') {
       return 'business.call';
     }
@@ -274,7 +284,7 @@ export function createDurableApprovalExtension({
             }
 
             const currentMode = entry?.permissionMode || entry?.generation?.permissionMode || 'canvas';
-            if (currentMode === 'read-only' && (!isAllowedInReadOnlyMode(entry, call.name) || (call.name === 'media_transcribe' && String(call?.arguments?.model || '').trim() !== ''))) {
+            if (currentMode === 'read-only' && (!isAllowedInReadOnlyMode(entry, call.name) || (call.name === 'media_transcribe' && readCaseInsensitiveString(call?.arguments, 'model') !== ''))) {
               return blockCall(`scope_denied: 本轮助手只能读取（禁止调用 ${call.name}）`);
             }
 

@@ -152,12 +152,13 @@ func cloudTranscribeTargetDigest(canvasID, tool, modelName string) string {
 	})
 }
 
-func mediaTranscribeTargetDigest(canvasID, nodeID, assetID, resourceID, modelName string) string {
+func mediaTranscribeTargetDigest(canvasID, nodeID, assetID, resourceID, expectedVersion, modelName string) string {
 	return ComputeApprovalTargetDigest("media.transcribe", canvasID, nil, map[string]any{
-		"nodeId":     strings.TrimSpace(nodeID),
-		"assetId":    strings.TrimSpace(assetID),
-		"resourceId": strings.TrimSpace(resourceID),
-		"model":      strings.TrimSpace(modelName),
+		"nodeId":          strings.TrimSpace(nodeID),
+		"assetId":         strings.TrimSpace(assetID),
+		"resourceId":      strings.TrimSpace(resourceID),
+		"expectedVersion": strings.TrimSpace(expectedVersion),
+		"model":           strings.TrimSpace(modelName),
 	})
 }
 
@@ -285,11 +286,12 @@ func EvaluatePaidToolPrecheckInTx(
 
 	case "media.transcribe":
 		var args struct {
-			CanvasID   string `json:"canvasId"`
-			NodeID     string `json:"nodeId"`
-			AssetID    string `json:"assetId"`
-			ResourceID string `json:"resourceId"`
-			Model      string `json:"model"`
+			CanvasID        string `json:"canvasId"`
+			NodeID          string `json:"nodeId"`
+			AssetID         string `json:"assetId"`
+			ResourceID      string `json:"resourceId"`
+			ExpectedVersion string `json:"expectedVersion"`
+			Model           string `json:"model"`
 		}
 		_ = json.Unmarshal(req.Params, &args)
 		if strings.TrimSpace(args.CanvasID) != "" {
@@ -299,9 +301,20 @@ func EvaluatePaidToolPrecheckInTx(
 		if modelName == "" {
 			return ToolPrecheckResult{Decision: "allow", Reason: "local_whisper_free"}, nil
 		}
+		resolvedResourceID := strings.TrimSpace(args.ResourceID)
+		if domain != nil {
+			if id, err := resolveMediaResource(&Context{Domain: domain, UserID: userID}, mediaArgs{
+				CanvasID:   canvasID,
+				NodeID:     args.NodeID,
+				AssetID:    args.AssetID,
+				ResourceID: args.ResourceID,
+			}); err == nil && strings.TrimSpace(id) != "" {
+				resolvedResourceID = strings.TrimSpace(id)
+			}
+		}
 		kinds = []string{model.MandateKindMediaTranscribe}
 		unquotedCount = 1
-		targetDigest = mediaTranscribeTargetDigest(canvasID, args.NodeID, args.AssetID, args.ResourceID, modelName)
+		targetDigest = mediaTranscribeTargetDigest(canvasID, args.NodeID, args.AssetID, resolvedResourceID, args.ExpectedVersion, modelName)
 		summary = "调用云端语音转写服务"
 
 	case "business.call":

@@ -51,14 +51,16 @@ test('pi-creative-media imports and executes standalone in an isolated directory
       await manager.close();
     }
 
-    // 2. Multimodal payload adapter works independently with custom prefix & graceful degradation.
+    // 2. Multimodal payload adapter works independently with domain-agnostic source shapes
+    //    (zero canvasId/nodeId/assetId/resourceId), wire-byte budget, and corrupt-manifest degradation.
     const videoBytes = Buffer.from('standalone-mp4-bytes');
+    const genericSource = { documentId: 'doc-42', clipId: 'clip-9', startMs: 0, endMs: 1000 };
     const part = {
       type: 'media',
       mimeType: 'video/mp4',
       data: videoBytes.toString('base64'),
       sha256: crypto.createHash('sha256').update(videoBytes).digest('hex'),
-      source: { canvasId: 'c', nodeId: 'n', resourceId: 'r', version: 'v1', startMs: 0, endMs: 1000 },
+      source: genericSource,
     };
     const payload = {
       messages: [
@@ -66,6 +68,14 @@ test('pi-creative-media imports and executes standalone in an isolated directory
         { role: 'tool', tool_call_id: 'tc1', content: `PI_MEDIA_PART_V1:${JSON.stringify(part)}` },
       ],
     };
+    const sources = pkg.collectTrustedMediaSources(payload, {
+      api: 'openai-completions',
+      modelId: 'gemini-3.8-flash',
+      isTrustedToolName: (name) => name === 'inspect_clip',
+    });
+    expect(sources).toEqual([genericSource]);
+    expect(sources[0].mediaKind).toBe('video');
+
     const adapted = pkg.adaptMultimodalRequest(payload, {
       api: 'openai-completions',
       modelId: 'gemini-3.8-flash',
@@ -76,6 +86,25 @@ test('pi-creative-media imports and executes standalone in an isolated directory
       type: 'image_url',
       image_url: { url: `data:video/mp4;base64,${part.data}` },
     });
+
+    // Corrupt persisted manifest degrades gracefully to a neutral domain-agnostic text placeholder.
+    const corruptAdapted = pkg.adaptMultimodalRequest({
+      messages: [
+        { role: 'assistant', tool_calls: [{ id: 'tc2', function: { name: 'inspect_clip' } }] },
+        { role: 'tool', tool_call_id: 'tc2', content: `PI_MEDIA_REF_V1:${JSON.stringify({ id: part.sha256, mimeType: 'video/mp4', source: genericSource })}` },
+      ],
+    }, {
+      api: 'openai-completions',
+      modelId: 'gemini-3.8-flash',
+      isTrustedToolName: (name) => name === 'inspect_clip',
+      partStore: {
+        read: () => { throw new SyntaxError('Unexpected end of JSON input'); },
+      },
+    });
+    expect(corruptAdapted.messages[1].content).toContain('"degradedMedia":true');
+    expect(corruptAdapted.messages[1].content).toContain('"reason":"corrupt"');
+    expect(corruptAdapted.messages[1].content).toContain('"documentId":"doc-42"');
+    expect(corruptAdapted.messages[1].content).not.toContain('media_inspect');
 
     // 3. Scoped SSE idle watchdog detects idle timeout without mutating globalThis.fetch.
     const originalFetch = globalThis.fetch;

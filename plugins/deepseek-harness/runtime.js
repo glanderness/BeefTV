@@ -369,26 +369,28 @@ export function taskOutcome(task, taskId = task?.taskId) {
   return classifyTaskRecord(task, taskId, { fromWait: false }) || { taskId, state: 'pending', reason: '' }
 }
 
-// task.wait 超时返回 pending；任务行与单任务详情共用同一权威分类器，消除两套平行推导漂移。
+// task.wait 超时返回 pending；优先评估任务行与权威 outcome，再回退顶层 status 汇总，确保与 taskOutcome 一致。
 export function waitOutcome(value, taskId) {
   const status = normalizedLower(value?.status)
   const listed = Array.isArray(value?.tasks)
     ? value.tasks.find(task => task?.taskId === taskId) || (value.tasks.length === 1 ? value.tasks[0] : undefined)
     : undefined
-  if (succeededWaitStates.has(status)) return { taskId, state: 'succeeded', reason: '' }
+  const listedOutcome = classifyTaskRecord(listed, taskId, { fromWait: true })
   if (incompleteWaitStates.has(status)) {
+    if (listedOutcome && listedOutcome.state !== 'succeeded') return listedOutcome
     return { taskId, state: 'incomplete', reason: incompleteReason(listed || value?.task || value) }
   }
+  if (listedOutcome) return listedOutcome
+  if (value?.outcome && typeof value.outcome === 'object') {
+    const directOutcome = classifyTaskRecord(value, taskId, { fromWait: true })
+    if (directOutcome) return directOutcome
+  }
+  if (succeededWaitStates.has(status)) return { taskId, state: 'succeeded', reason: '' }
   if (status === 'failed' || status === 'error') {
-    // 顶层说 failed，但任务项按权威判定属于 incomplete 或仍在 retrievable 取回中时，以任务项为准。
-    const listedOutcome = classifyTaskRecord(listed, taskId, { fromWait: true })
-    if (listedOutcome?.state === 'incomplete' || listedOutcome?.state === 'pending') return listedOutcome
     return { taskId, state: 'failed', reason: failureReason(listed || value?.task || value) }
   }
   if (status === 'cancelled' || status === 'canceled') return { taskId, state: 'failed', reason: '已取消' }
   if (pendingWaitStates.has(status)) return { taskId, state: 'pending', reason: '' }
-  const listedOutcome = classifyTaskRecord(listed, taskId, { fromWait: true })
-  if (listedOutcome) return listedOutcome
   if (value?.cancelled === true || listed?.cancelled === true) return { taskId, state: 'failed', reason: '已取消' }
   if (Array.isArray(value?.failedTaskIds) && value.failedTaskIds.includes(taskId)) return { taskId, state: 'failed', reason: failureReason(listed) }
   if (Array.isArray(value?.completedTaskIds) && value.completedTaskIds.includes(taskId)) return { taskId, state: 'succeeded', reason: '' }

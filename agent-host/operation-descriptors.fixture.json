@@ -2487,7 +2487,7 @@
   },
   {
     "id": "media.transcribe",
-    "summary": "把音视频转写为带时间戳的字幕与 SRT（省略 model 走本地免费 Whisper；指定 model 走云端付费转写，须预算包或用户批准）",
+    "summary": "音视频转写字幕与SRT（省略model本地免费，指定model云端付费）",
     "readOnly": true,
     "scope": "canvas",
     "params": {
@@ -2504,6 +2504,9 @@
           "type": "string"
         },
         "resourceId": {
+          "type": "string"
+        },
+        "expectedVersion": {
           "type": "string"
         },
         "language": {

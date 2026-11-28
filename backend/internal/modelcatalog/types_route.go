@@ -71,6 +71,7 @@ type PublicChannelModelProfile struct {
 	Icon             string                     `json:"icon"`
 	Capability       string                     `json:"capability"`
 	Protocol         model.ChannelInterfaceType `json:"protocol"`
+	InputModalities  []string                   `json:"inputModalities,omitempty"`
 	CapabilityConfig *ModelCapabilityConfig     `json:"capabilityConfig,omitempty"`
 }
 
@@ -100,6 +101,7 @@ type ChannelModelCatalogItem struct {
 	DisplayName              string                               `json:"displayName,omitempty"`
 	ModelType                string                               `json:"modelType,omitempty"`
 	SupportedEndpointTypes   []string                             `json:"supportedEndpointTypes,omitempty"`
+	InputModalities          []string                             `json:"inputModalities,omitempty"`
 	DefaultParameters        ChannelModelCatalogDefaultParameters `json:"defaultParameters,omitempty"`
 	Options                  ChannelModelCatalogOptions           `json:"options,omitempty"`
 	SupportsImages           *bool                                `json:"supportsImages,omitempty"`

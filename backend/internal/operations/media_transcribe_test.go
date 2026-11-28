@@ -3,7 +3,10 @@ package operations
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"net/http"
@@ -26,9 +29,11 @@ type transcribeTestDomain struct {
 	cloudBaseURL string
 	cloudAPIKey  string
 	forceModel   string
+	resolveCalls atomic.Int32
 }
 
 func (d *transcribeTestDomain) ResolveMediaTranscriptionClient(_ context.Context, modelID string) (*transcription.Client, error) {
+	d.resolveCalls.Add(1)
 	effective := strings.TrimSpace(modelID)
 	if effective == "" && d.forceModel != "" {
 		effective = d.forceModel
@@ -44,7 +49,9 @@ func (d *transcribeTestDomain) ResolveMediaTranscriptionClient(_ context.Context
 
 func openTranscribeTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	safeName := strings.NewReplacer("/", "_", " ", "_", ":", "_").Replace(t.Name())
+	dsn := fmt.Sprintf("file:transcribe-%s?mode=memory&cache=shared", safeName)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,5 +298,53 @@ func TestMediaTranscribeRejectsNonAudioVideoImage(t *testing.T) {
 	raw, _ := json.Marshal(mediaTranscribeArgs{CanvasID: "canvas", NodeID: "node"})
 	if _, err := runMediaTranscribe(ctx, raw); AsError(err) == nil || AsError(err).Reason != "media_transcribe_unsupported_mime" {
 		t.Fatalf("expected media_transcribe_unsupported_mime for image, got %v", err)
+	}
+}
+
+func TestMediaTranscribeReadOnlySkipsClientResolutionAndChecksExpectedVersion(t *testing.T) {
+	audioData := nativeMediaFixture(t, true, false)
+	sum := sha256.Sum256(audioData)
+	goodVersion := hex.EncodeToString(sum[:])
+
+	var localCalls atomic.Int32
+	localSrv := newWhisperLoopback(t, "/inference", "", "", nil, &localCalls)
+	defer localSrv.Close()
+
+	d := &transcribeTestDomain{
+		mediaDomain:  &mediaDomain{owner: "owner", data: audioData, mimeType: "video/mp4"},
+		localBaseURL: localSrv.URL,
+	}
+
+	// Read-only + explicit cloud model must reject BEFORE ResolveMediaTranscriptionClient (no outbound catalog refresh).
+	roCtx := &Context{
+		Context: context.Background(),
+		UserID:  "owner",
+		Domain:  d,
+		Caller:  Caller{Kind: CallerAssistant, ReadOnly: true},
+	}
+	cloudRaw, _ := json.Marshal(mediaTranscribeArgs{CanvasID: "canvas", NodeID: "node", Model: "whisper-1"})
+	if _, err := runMediaTranscribe(roCtx, cloudRaw); AsError(err) == nil || AsError(err).Code != CodeReadOnly {
+		t.Fatalf("expected CodeReadOnly, got %v", err)
+	}
+	if d.resolveCalls.Load() != 0 {
+		t.Fatalf("read-only rejection must happen before ResolveMediaTranscriptionClient, got %d calls", d.resolveCalls.Load())
+	}
+
+	// Stale expectedVersion returns stale_media_version with currentVersion.
+	staleRaw, _ := json.Marshal(mediaTranscribeArgs{CanvasID: "canvas", NodeID: "node", ExpectedVersion: strings.Repeat("0", 64)})
+	if _, err := runMediaTranscribe(roCtx, staleRaw); AsError(err) == nil || AsError(err).Reason != "stale_media_version" {
+		t.Fatalf("expected stale_media_version, got %v", err)
+	}
+
+	// Matching expectedVersion succeeds and echoes Version on source.
+	validRaw, _ := json.Marshal(mediaTranscribeArgs{CanvasID: "canvas", NodeID: "node", ExpectedVersion: goodVersion})
+	res, err := runMediaTranscribe(roCtx, validRaw)
+	if err != nil {
+		t.Fatalf("expected valid expectedVersion to succeed, got %v", err)
+	}
+	out := res.(map[string]any)
+	src := out["source"].(MediaSource)
+	if src.Version != goodVersion {
+		t.Fatalf("source.Version=%q want=%q", src.Version, goodVersion)
 	}
 }

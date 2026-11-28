@@ -381,7 +381,7 @@ export function createConnection({
   }
 
   function runtimeProcessExited(runtime) {
-    return Boolean(runtime?.child && (runtime.child.exitCode != null || runtime.child.signalCode != null))
+    return Boolean(runtime?.owned && runtime?.child && (runtime.child.exitCode != null || runtime.child.signalCode != null))
   }
 
   async function refreshConnection() {

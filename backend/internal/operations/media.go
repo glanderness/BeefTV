@@ -85,7 +85,6 @@ type mediaArgs struct {
 	Mode            string                `json:"mode"`
 	Evidence        *mediaEvidenceRequest `json:"evidence,omitempty"`
 	ImageCrop       *MediaImageCrop       `json:"imageCrop,omitempty"`
-	BurnTimestamp   bool                  `json:"burnTimestamp,omitempty"`
 }
 
 type mediaEvidenceRequest struct {

@@ -10,6 +10,7 @@ import {
   ARCHIVE_SAFETY_ERROR_CODE,
   createRuntimeStore,
   extractZipArchive,
+  inspectZipSafety,
   orderCandidateURLs,
   platformKey,
   preferDomesticMirror,
@@ -233,6 +234,48 @@ test('orderCandidateURLs prioritizes domestic mirror in mainland China and offic
   assert.equal(preferDomesticMirror({ timeZone: 'Asia/Shanghai', locale: 'en-US' }), true)
   assert.equal(preferDomesticMirror({ timeZone: 'America/Los_Angeles', locale: 'en-US' }), false)
   assert.equal(preferDomesticMirror({ timeZone: 'Asia/Taipei', locale: 'zh-TW' }), false)
+})
+
+test('inspectZipSafety rejects traversal, absolute paths, drive letters, symlinks, forged EOCD count, and LFH mismatch', async context => {
+  const dir = await mkdtemp(join(tmpdir(), 'beeftv-zip-inspect-'))
+  context.after(() => rm(dir, { recursive: true, force: true }))
+
+  const goodPath = join(dir, 'good.zip')
+  await writeFile(goodPath, validRuntimeZipFor('darwin-arm64'))
+  const info = await inspectZipSafety(goodPath)
+  assert.equal(info.entryCount, 2)
+
+  for (const [label, entries, expected] of [
+    ['traversal', [{ name: 'a/../../evil.sh', data: 'x' }], /路径穿越/],
+    ['absolute', [{ name: '/etc/passwd', data: 'x' }], /不安全路径/],
+    ['drive', [{ name: 'C:\\Windows\\evil.exe', data: 'x' }], /不安全路径/],
+    ['symlink', [{ name: 'BeefTV.app/link', data: '/tmp', mode: 0o120777 }], /符号链接/],
+  ]) {
+    const badPath = join(dir, `${label}.zip`)
+    await writeFile(badPath, buildZip(entries))
+    await assert.rejects(() => inspectZipSafety(badPath), expected)
+  }
+
+  // EOCD 条目计数小于真实中央目录记录数时必须拒绝（防止尾部藏匿未检验条目）。
+  const twoEntries = buildZip([
+    { name: 'safe.txt', data: 'ok' },
+    { name: 'hidden.txt', data: 'bad' },
+  ])
+  const forgedCount = Buffer.from(twoEntries)
+  const eocdOffset = forgedCount.length - 22
+  forgedCount.writeUInt16LE(1, eocdOffset + 8)
+  forgedCount.writeUInt16LE(1, eocdOffset + 10)
+  const forgedCountPath = join(dir, 'forged-count.zip')
+  await writeFile(forgedCountPath, forgedCount)
+  await assert.rejects(() => inspectZipSafety(forgedCountPath), /条目数量与目录大小不一致/)
+
+  // Local File Header 文件名与 Central Directory 名称不一致时必须拒绝。
+  const mismatchBuf = Buffer.from(buildZip([{ name: 'good.txt', data: 'ok' }]))
+  const lfhNameIdx = mismatchBuf.indexOf(Buffer.from('good.txt'))
+  Buffer.from('evil.txt').copy(mismatchBuf, lfhNameIdx)
+  const mismatchPath = join(dir, 'lfh-mismatch.zip')
+  await writeFile(mismatchPath, mismatchBuf)
+  await assert.rejects(() => inspectZipSafety(mismatchPath), /本地文件头名称与目录不一致/)
 })
 
 test('rejectExtractedSymlinks and runtime store reject symlinks, verify SHA256 before extraction, and preserve active runtime on failure', async context => {

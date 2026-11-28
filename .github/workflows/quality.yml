@@ -222,15 +222,27 @@ jobs:
     if: needs.gates.outputs.agent_host == 'true'
     name: Agent host checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
       - uses: actions/setup-node@v4
         with:
           node-version: '24.22.1'
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
+      - name: Ensure ffmpeg for offline creative harness eval
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            bash scripts/configure-ubuntu-apt.sh
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
       - name: Select bundled Node runtime
         run: |
           node -e 'const fs=require("fs"),p=require("path"); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${p.dirname(p.dirname(process.execPath))}\n`);'
@@ -245,7 +257,7 @@ jobs:
       - name: Verify agent-host request efficiency gate
         working-directory: agent-host
         run: |
-          bun test studio-digest.test.mjs skill-resource.test.mjs plan-and-skills.test.mjs eval/request-efficiency-gate.test.mjs timeline-tool-schema.test.mjs durable-stream-events.test.mjs durable-recovery.test.mjs durable-session-owner.test.mjs host-runtime-probe.test.mjs local-ipc.test.mjs canvas-turn.test.mjs media-content.test.mjs phase2-1-harness.test.mjs byok-protocols.test.mjs phase2-2-harness.test.mjs phase2-3-harness.test.mjs
+          bun test studio-digest.test.mjs skill-resource.test.mjs plan-and-skills.test.mjs eval/request-efficiency-gate.test.mjs timeline-tool-schema.test.mjs durable-stream-events.test.mjs durable-recovery.test.mjs durable-session-owner.test.mjs host-runtime-probe.test.mjs local-ipc.test.mjs canvas-turn.test.mjs media-content.test.mjs native-part-store.test.mjs pi-creative-media.test.mjs phase2-1-harness.test.mjs byok-protocols.test.mjs phase2-2-harness.test.mjs phase2-3-harness.test.mjs eval/creative-harness-eval.test.mjs
           node --test mcp-servers.test.mjs
           bun eval/request-efficiency-gate.mjs
       - name: Run DeepSeek Harness plugin tests

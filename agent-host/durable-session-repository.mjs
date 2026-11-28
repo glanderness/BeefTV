@@ -646,6 +646,7 @@ export function createDurableSessionRepository({
           precheckTool,
           enableImageFitting,
           maxInlineImageChars,
+          nativePartStore,
         });
         openCount += 1;
         dstEntry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${newUuid}.sqlite`)), {
@@ -710,7 +711,7 @@ export function createDurableSessionRepository({
           forkedFrom,
         });
         await install(dstEntry);
-        try { nativePartStore?.copySessionRefs?.(canvasId, sourceSessionId, newSessionId); } catch { /* non-fatal ref copy */ }
+        try { nativePartStore?.copySessionRefs?.(canvasId, sessionId, newSessionId); } catch { /* non-fatal ref copy */ }
         return {
           sessionId: newSessionId,
           conversationId: forkedConv.id,

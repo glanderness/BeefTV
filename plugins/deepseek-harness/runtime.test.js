@@ -1842,6 +1842,11 @@ test('taskOutcome and waitOutcome classify Go authoritative task.outcome and tas
   // 顶层 status=failed 但任务项带 outcome.phase=retrievable 时仍为 pending，不误判终态失败。
   assert.equal(waitOutcome({ status: 'failed', tasks: [{ taskId: 'ret-1', status: 'failed', outcome: { phase: 'retrievable' } }] }, 'ret-1').state, 'pending')
   assert.equal(waitOutcome({ tasks: [{ taskId: 'ret-2', status: 'failed', outcome: { phase: 'retrievable' } }] }, 'ret-2').state, 'pending')
+  // 顶层 status=succeeded 但任务项或 outcome 仍在 fetching/downloading/materialization_failed 时，必须以任务项权威状态为准。
+  assert.equal(waitOutcome({ status: 'succeeded', tasks: [{ taskId: 'fetch-1', status: 'succeeded', outcome: { phase: 'fetching' } }] }, 'fetch-1').state, 'pending')
+  assert.equal(waitOutcome({ status: 'succeeded', outcome: { phase: 'fetching' } }, 'fetch-2').state, 'pending')
+  assert.equal(waitOutcome({ status: 'succeeded', tasks: [{ taskId: 'dl-1', status: 'succeeded', state: 'downloading' }] }, 'dl-1').state, 'pending')
+  assert.equal(waitOutcome({ status: 'succeeded', tasks: [{ taskId: 'inc-1', status: 'succeeded', reason: 'materialization_failed' }] }, 'inc-1').state, 'incomplete')
 })
 
 test('transient /api/health failures do not kill a healthy running backend until consecutive threshold is reached', async context => {
@@ -1872,4 +1877,32 @@ test('transient /api/health failures do not kill a healthy running backend until
   const thirdFail = (await call('GET', '/beeftv/status')).body
   assert.equal(thirdFail.connected, false)
   assert.equal(thirdFail.connectionId, null)
+})
+
+test('local attach mode (owned=false with exited attach helper child) preserves 3-failure health tolerance', async context => {
+  const { call, workspace } = await startHost(context)
+  const realSpawn = childProcess.spawn
+  context.mock.method(childProcess, 'spawn', (...args) => {
+    const child = realSpawn(...args)
+    // 模拟真实 local attach 子进程打印就绪 JSON 后立刻 exitCode=0 退出（owned=false）。
+    child.exitCode = 0
+    return child
+  })
+  syncBuiltinESMExports()
+
+  const initial = await call('POST', '/beeftv/connect', { mode: 'local' })
+  assert.equal(initial.status, 200)
+  const connId = initial.body.connectionId
+
+  workspace.available = false
+  // 第 1、2 次健康检查失败不得因 owned=false 的 attach 子进程 exitCode=0 而提前断开！
+  const fail1 = (await call('GET', '/beeftv/status')).body
+  assert.equal(fail1.connected, true)
+  assert.equal(fail1.connectionId, connId)
+  const fail2 = (await call('GET', '/beeftv/status')).body
+  assert.equal(fail2.connected, true)
+  assert.equal(fail2.connectionId, connId)
+  // 第 3 次连续失败后正常断开。
+  const fail3 = (await call('GET', '/beeftv/status')).body
+  assert.equal(fail3.connected, false)
 })

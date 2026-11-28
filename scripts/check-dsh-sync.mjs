@@ -34,7 +34,6 @@ export const SHARED_DSH_FILES = Object.freeze([
 
 const PACKAGE_CONTRACT_KEYS = Object.freeze([
   'name',
-  'version',
   'type',
   'main',
   'exports',

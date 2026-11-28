@@ -56,6 +56,7 @@ export type ModelChannel = {
         icon?: string;
         capability: ModelCapability;
         protocol?: ModelProtocol;
+        inputModalities?: string[];
         referenceMediaTransport?: ReferenceMediaTransport;
         authType?: string;
         capabilityConfig?: ModelCapabilityConfig;
@@ -664,9 +665,13 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         hasSecretKey: channel?.hasSecretKey,
         modelProfiles: channel?.modelProfiles?.map((item) => {
             const mediaCapabilities = item.mediaCapabilities !== undefined ? sanitizeMediaCapabilities(item.mediaCapabilities) : undefined;
+            const inputModalities = Array.isArray(item.inputModalities)
+                ? Array.from(new Set(item.inputModalities.map((v) => String(v || "").trim().toLowerCase()).filter(Boolean)))
+                : undefined;
             return {
                 ...item,
                 protocol: normalizeModelProtocol(item.protocol),
+                ...(inputModalities?.length ? { inputModalities } : {}),
                 ...(item.mediaCapabilities !== undefined ? { mediaCapabilities } : {}),
             };
         }),

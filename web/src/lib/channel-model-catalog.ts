@@ -13,6 +13,7 @@ export type ChannelModelCatalogItem = {
     displayName?: string;
     modelType?: "text" | "image" | "video" | "audio";
     supportedEndpointTypes?: string[];
+    inputModalities?: string[];
     imageCapabilities?: ImageCapabilityConfig;
     imageCapabilitiesVersion?: string;
     defaultParameters?: {
@@ -72,9 +73,34 @@ export function sanitizeChannelModelCatalogItem(value: unknown): ChannelModelCat
         supportsImages: typeof record.supportsImages === "boolean" ? record.supportsImages : undefined,
         minImages: nonNegativeInteger(record.minImages),
         maxImages: nonNegativeInteger(record.maxImages),
+        ...(normalizeCatalogInputModalities(record.inputModalities, record.input_modalities).length > 0
+            ? { inputModalities: normalizeCatalogInputModalities(record.inputModalities, record.input_modalities) }
+            : {}),
         ...catalogVideoFields(record),
         ...catalogMediaFields(record),
     });
+}
+
+function normalizeCatalogInputModalities(...rawGroups: unknown[]): string[] {
+    const out: string[] = [];
+    for (const group of rawGroups) {
+        if (!Array.isArray(group)) continue;
+        for (const raw of group) {
+            if (typeof raw !== "string") continue;
+            const lower = raw.trim().toLowerCase();
+            const normalized = lower === "vision" || lower.startsWith("image/")
+                ? "image"
+                : lower === "video/mp4"
+                  ? "video"
+                  : lower === "audio/wav"
+                    ? "audio"
+                    : lower === "text" || lower === "image" || lower === "video" || lower === "audio"
+                      ? lower
+                      : "";
+            if (normalized && !out.includes(normalized)) out.push(normalized);
+        }
+    }
+    return out;
 }
 
 export function catalogModelMapping(

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode"
 
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/pricing"
 	"infinite-canvas/backend/internal/providerpreset"
 	"infinite-canvas/backend/internal/workspace"
@@ -78,6 +79,9 @@ func applyCatalogSnapshot(store *workspace.ProviderConfig, models []CatalogModel
 				}
 				if protocol != "" {
 					profile["protocol"] = protocol
+				}
+				if modalities := catalogInputModalities(model, capability, protocol); len(modalities) > 0 {
+					profile["inputModalities"] = modalities
 				}
 				if capability == "video" {
 					if video, ok := NormalizeVersionedVideoCapability(model.VideoCapabilities, model.VideoCapabilitiesVersion); ok {
@@ -272,6 +276,18 @@ func catalogEndpoints(model CatalogModel) []string {
 		}
 	}
 	return endpoints
+}
+
+func catalogInputModalities(model CatalogModel, capability, protocol string) []string {
+	if modalities := modelcatalog.NormalizeCatalogInputModalities(model.InputModalities); len(modalities) > 0 {
+		return modalities
+	}
+	if capability == "text" && (protocol == "" || protocol == "chat-completion") {
+		if defaults := modelcatalog.OfficialDefaultReviewInputModalities(model.ID); len(defaults) > 0 {
+			return defaults
+		}
+	}
+	return nil
 }
 
 func catalogClearsGeneration(model CatalogModel) bool {

@@ -2,13 +2,10 @@ package operations
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
-
-	"infinite-canvas/backend/internal/mediatools"
 )
 
 type frameQualityTier struct {
@@ -57,16 +54,11 @@ func frameSampleTimestamps(startMs, endMs int64, count int) []int64 {
 	return timestamps
 }
 
-func buildFrameVideoFilter(bin string, tier frameQualityTier, atMs int64, burnTimestamp bool) string {
-	scale := fmt.Sprintf(
+func buildFrameVideoFilter(tier frameQualityTier) string {
+	return fmt.Sprintf(
 		"scale=w='min(iw,%d)':h='min(ih,%d)':force_original_aspect_ratio=decrease",
 		tier.maxEdge, tier.maxEdge,
 	)
-	if !burnTimestamp || !mediatools.SupportsFFmpegFilter(bin, "drawtext") {
-		return scale
-	}
-	label := fmt.Sprintf("%.2fs", float64(atMs)/1000)
-	return scale + fmt.Sprintf(",drawtext=text='%s':x=12:y=12:fontsize=20:fontcolor=white:box=1:boxcolor=black@0.6", label)
 }
 
 func tryExtractFrameCommand(ctx context.Context, bin string, command []string, output string) (int64, bool) {
@@ -91,9 +83,8 @@ func extractVideoFrameWithFallback(
 	atMs, startMs, endMs, durationMs int64,
 	isTail bool,
 	tier frameQualityTier,
-	burnTimestamp bool,
 ) (int64, int64, error) {
-	vf := buildFrameVideoFilter(bin, tier, atMs, burnTimestamp)
+	vf := buildFrameVideoFilter(tier)
 	runAt := func(seekFlag, seekVal string, inputSide bool) (int64, bool) {
 		var cmd []string
 		if inputSide {
@@ -174,7 +165,7 @@ func (p preparedMedia) extractVideoFrames(ctx context.Context, bin, operation st
 			size, actualMs, err := extractVideoFrameWithFallback(
 				ctx, bin, p.input, output,
 				at, args.StartMs, args.EndMs, p.facts.DurationMs,
-				isTail, videoFrameTiers[t], args.BurnTimestamp,
+				isTail, videoFrameTiers[t],
 			)
 			if err != nil {
 				lastErr = err
@@ -193,7 +184,7 @@ func (p preparedMedia) extractVideoFrames(ctx context.Context, bin, operation st
 				break
 			}
 			part = loaded
-			extractedBytes = int64(base64.StdEncoding.DecodedLen(len(loaded.Data)))
+			extractedBytes = size
 			usedMs = actualMs
 			lastErr = nil
 			break

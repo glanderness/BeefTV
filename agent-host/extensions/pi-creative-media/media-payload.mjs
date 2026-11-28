@@ -19,9 +19,20 @@ export function defaultSupportsNativeMedia({ api, modelId }) {
   return (api === 'openai-completions' || api === 'google-generative-ai') && isGeminiModelId(modelId);
 }
 
+function defaultValidateSource(source) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    throw new Error('missing_media_source');
+  }
+}
+
+function defaultDescribeMediaKind(mimeType) {
+  return String(mimeType || '').startsWith('audio/') ? 'audio' : 'video';
+}
+
 export function validateMediaPart(part, {
   maxPartBytes = DEFAULT_MAX_PART_BYTES,
   allowedMimeTypes = DEFAULT_MEDIA_MIME_TYPES,
+  validateSource = defaultValidateSource,
 } = {}) {
   if (!allowedMimeTypes.has(part?.mimeType) || typeof part.data !== 'string'
       || !/^[A-Za-z0-9+/]+={0,2}$/.test(part.data) || part.data.length > maxPartBytes * 4 / 3 + 4) {
@@ -34,32 +45,40 @@ export function validateMediaPart(part, {
   if (crypto.createHash('sha256').update(bytes).digest('hex') !== part.sha256) {
     throw new Error('media_content_changed');
   }
-  if (!part.source?.version || !part.source.resourceId) {
-    throw new Error('missing_media_source');
+  if (typeof validateSource === 'function') {
+    validateSource(part.source);
   }
   return bytes.length;
 }
 
 export function formatDegradedMediaPlaceholder(refOrPart, reason = 'missing', customNote = '') {
-  const source = refOrPart?.source && typeof refOrPart.source === 'object' ? refOrPart.source : {};
+  const source = refOrPart?.source && typeof refOrPart.source === 'object' && !Array.isArray(refOrPart.source)
+    ? refOrPart.source
+    : {};
   const mimeType = typeof refOrPart?.mimeType === 'string' && refOrPart.mimeType
     ? refOrPart.mimeType
     : 'application/octet-stream';
   const defaultNote = reason === 'missing'
-    ? '该历史原生媒体片段已不可读取，已降级为文本占位；如需复查请重新调用 media_inspect。'
-    : '该较早原生媒体片段超出单次请求 32 MiB 预算，已降级为文本占位；如需复查请重新调用 media_inspect。';
+    ? 'Historical native media part is no longer available and was degraded to a text placeholder; re-inspect the source if needed.'
+    : reason === 'corrupt'
+      ? 'Historical native media part failed integrity verification and was degraded to a safe text placeholder; re-inspect the source if needed.'
+      : 'Older native media part exceeded the request byte budget and was degraded to a text placeholder; re-inspect the source if needed.';
   const meta = {
     degradedMedia: true,
     reason,
     mimeType,
-    ...(source.resourceId ? { resourceId: source.resourceId } : {}),
-    ...(source.nodeId ? { nodeId: source.nodeId } : {}),
-    ...(source.assetId ? { assetId: source.assetId } : {}),
+    ...(Object.keys(source).length > 0 ? { source } : {}),
     ...(Number.isFinite(source.startMs) ? { startMs: source.startMs } : {}),
     ...(Number.isFinite(source.endMs) ? { endMs: source.endMs } : {}),
     note: customNote || defaultNote,
   };
-  return `[历史媒体已降级为文本占位: ${JSON.stringify(meta)}]`;
+  return `[degraded_media_placeholder: ${JSON.stringify(meta)}]`;
+}
+
+function isDegradableStoreCorruptionError(error) {
+  if (!error) return false;
+  if (error instanceof SyntaxError) return true;
+  return error.message === 'native_part_manifest_changed' || error.message === 'media_content_changed';
 }
 
 function resolveMarkerEntry(line, {
@@ -67,10 +86,11 @@ function resolveMarkerEntry(line, {
   markerPrefix = DEFAULT_MARKER,
   referenceMarkerPrefix = DEFAULT_REFERENCE_MARKER,
   maxPartBytes = DEFAULT_MAX_PART_BYTES,
+  validateSource = defaultValidateSource,
 }) {
   if (line.startsWith(markerPrefix)) {
     const part = JSON.parse(line.slice(markerPrefix.length));
-    const bytes = validateMediaPart(part, { maxPartBytes });
+    const bytes = validateMediaPart(part, { maxPartBytes, validateSource });
     return { kind: 'part', part, bytes };
   }
   if (line.startsWith(referenceMarkerPrefix)) {
@@ -78,11 +98,14 @@ function resolveMarkerEntry(line, {
     const ref = JSON.parse(line.slice(referenceMarkerPrefix.length));
     try {
       const part = partStore.read(ref);
-      const bytes = validateMediaPart(part, { maxPartBytes });
+      const bytes = validateMediaPart(part, { maxPartBytes, validateSource });
       return { kind: 'part', part, bytes };
     } catch (error) {
       if (error?.code === 'ENOENT') {
         return { kind: 'missing', ref };
+      }
+      if (isDegradableStoreCorruptionError(error)) {
+        return { kind: 'corrupt', ref };
       }
       throw error;
     }
@@ -90,16 +113,18 @@ function resolveMarkerEntry(line, {
   return null;
 }
 
-// Budget planner: retain the newest valid parts up to maxRequestBytes and mark
-// older parts that would exceed the ceiling as budget-degraded placeholders.
+// Budget planner: retain the newest valid parts up to maxRequestBytes using
+// serialized base64 wire size (Math.ceil(bytes * 4 / 3)) so inline JSON payloads
+// stay cleanly inside the request byte ceiling.
 function selectRetainedIndices(entries, maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES) {
   const retained = new Set();
-  let usedBytes = 0;
+  let usedWireBytes = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry.kind !== 'part') continue;
-    if (usedBytes + entry.bytes <= maxRequestBytes) {
-      usedBytes += entry.bytes;
+    const wireBytes = Math.ceil((entry.bytes * 4) / 3);
+    if (usedWireBytes + wireBytes <= maxRequestBytes) {
+      usedWireBytes += wireBytes;
       retained.add(i);
     }
   }
@@ -116,6 +141,7 @@ function scanPayloadMarkerEntries(payload, options) {
     isTrustedToolName = () => true,
     supportsNativeMedia = defaultSupportsNativeMedia,
     maxPartBytes = DEFAULT_MAX_PART_BYTES,
+    validateSource = defaultValidateSource,
   } = options;
 
   const entries = [];
@@ -135,7 +161,7 @@ function scanPayloadMarkerEntries(payload, options) {
           if (!isTrustedToolName(fnResp?.name || '') || !supportsNativeMedia({ api, modelId })) {
             throw new Error('media_source_not_trusted');
           }
-          const resolved = resolveMarkerEntry(line, { partStore, markerPrefix, referenceMarkerPrefix, maxPartBytes });
+          const resolved = resolveMarkerEntry(line, { partStore, markerPrefix, referenceMarkerPrefix, maxPartBytes, validateSource });
           if (resolved) {
             entries.push({ ...resolved, cIdx, pIdx, lIdx, toolCallId: fnResp?.id || '' });
           }
@@ -161,7 +187,7 @@ function scanPayloadMarkerEntries(payload, options) {
       if (!isTrustedToolName(toolNames.get(message.tool_call_id) || '') || !supportsNativeMedia({ api, modelId })) {
         throw new Error('media_source_not_trusted');
       }
-      const resolved = resolveMarkerEntry(line, { partStore, markerPrefix, referenceMarkerPrefix, maxPartBytes });
+      const resolved = resolveMarkerEntry(line, { partStore, markerPrefix, referenceMarkerPrefix, maxPartBytes, validateSource });
       if (resolved) {
         entries.push({ ...resolved, mIdx, lIdx, toolCallId: message.tool_call_id || '' });
       }
@@ -171,7 +197,11 @@ function scanPayloadMarkerEntries(payload, options) {
 }
 
 export function collectTrustedMediaSources(payload, options = {}) {
-  const { maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES } = options;
+  const {
+    maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES,
+    validateAuthorizationSource = defaultValidateSource,
+    describeMediaKind = defaultDescribeMediaKind,
+  } = options;
   if (options.api !== 'google-generative-ai' && options.api !== 'openai-completions') return [];
   const entries = scanPayloadMarkerEntries(payload, options);
   const retained = selectRetainedIndices(entries, maxRequestBytes);
@@ -180,14 +210,14 @@ export function collectTrustedMediaSources(payload, options = {}) {
     const entry = entries[i];
     if (entry.kind !== 'part' || !retained.has(i)) continue;
     const source = entry.part.source;
-    if (!source.canvasId || (!source.nodeId === !source.assetId) || !source.version) {
-      throw new Error('missing_media_authorization_source');
+    if (typeof validateAuthorizationSource === 'function') {
+      validateAuthorizationSource(source);
     }
     sources.push(Object.defineProperties(
       { ...source },
       {
         toolCallId: { value: entry.toolCallId },
-        mediaKind: { value: entry.part.mimeType.startsWith('audio/') ? '音频' : '视频' },
+        mediaKind: { value: describeMediaKind(entry.part.mimeType) },
       },
     ));
   }
@@ -272,6 +302,7 @@ function adaptGoogleMultimodalRequest(payload, options) {
     modelId,
     maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES,
     attachmentNotice = DEFAULT_ATTACHMENT_NOTICE,
+    formatPlaceholder = formatDegradedMediaPlaceholder,
   } = options;
   let nextPayload = payload;
   if (
@@ -312,10 +343,10 @@ function adaptGoogleMultimodalRequest(payload, options) {
         if (!hit) { kept.push(lines[lIdx]); continue; }
         itemChanged = true;
         turnChanged = true;
-        if (hit.entry.kind === 'missing') {
-          kept.push(formatDegradedMediaPlaceholder(hit.entry.ref, 'missing'));
+        if (hit.entry.kind === 'missing' || hit.entry.kind === 'corrupt') {
+          kept.push(formatPlaceholder(hit.entry.ref, hit.entry.kind));
         } else if (!retained.has(hit.idx)) {
-          kept.push(formatDegradedMediaPlaceholder(hit.entry.part, 'budget_exceeded'));
+          kept.push(formatPlaceholder(hit.entry.part, 'budget_exceeded'));
         } else {
           appended.push({ text: JSON.stringify({ source: hit.entry.part.source }) });
           appended.push({ inlineData: { mimeType: hit.entry.part.mimeType, data: hit.entry.part.data } });
@@ -349,6 +380,7 @@ export function adaptMultimodalRequest(payload, options = {}) {
     unpinnedSignatures,
     maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES,
     attachmentNotice = DEFAULT_ATTACHMENT_NOTICE,
+    formatPlaceholder = formatDegradedMediaPlaceholder,
   } = options;
   if (api === 'anthropic-messages') return adaptAnthropicUnpinnedRequest(payload, unpinnedSignatures);
   if (api === 'google-generative-ai') return adaptGoogleMultimodalRequest(payload, options);
@@ -386,10 +418,10 @@ export function adaptMultimodalRequest(payload, options = {}) {
       const hit = byLocation.get(`${mIdx}:${lIdx}`);
       if (!hit) { kept.push(lines[lIdx]); continue; }
       changed = true;
-      if (hit.entry.kind === 'missing') {
-        kept.push(formatDegradedMediaPlaceholder(hit.entry.ref, 'missing'));
+      if (hit.entry.kind === 'missing' || hit.entry.kind === 'corrupt') {
+        kept.push(formatPlaceholder(hit.entry.ref, hit.entry.kind));
       } else if (!retained.has(hit.idx)) {
-        kept.push(formatDegradedMediaPlaceholder(hit.entry.part, 'budget_exceeded'));
+        kept.push(formatPlaceholder(hit.entry.part, 'budget_exceeded'));
       } else {
         pending.push({ type: 'text', text: JSON.stringify({ source: hit.entry.part.source }) });
         pending.push(

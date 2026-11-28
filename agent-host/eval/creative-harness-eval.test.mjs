@@ -42,7 +42,7 @@ function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `beeftv-eval-${prefix}-`));
 }
 
-function runGoTests(runRegex) {
+function runGoTests(runRegex, expectedTests = []) {
   const output = execFileSync(
     'go',
     ['test', '-race', '-count=1', '-v', './internal/operations', '-run', runRegex],
@@ -50,6 +50,10 @@ function runGoTests(runRegex) {
   );
   expect(output).toContain('PASS');
   expect(output).not.toContain('testing: warning: no tests to run');
+  expect(output).not.toContain('--- SKIP:');
+  for (const name of expectedTests) {
+    expect(output).toContain(`--- PASS: ${name}`);
+  }
   return output;
 }
 
@@ -97,11 +101,12 @@ describe('7-Scenario Offline Creative Harness Regression Eval Suite ($0 spend)',
   // Scenario 1: First/mid/tail video frame extraction + short/VFR fallback + Source.StartMs
   // -------------------------------------------------------------------------
   test('Scenario 1: first/mid/tail frame extraction, <=100ms & VFR tail fallback, 1024 scale, and Source.StartMs metadata', { timeout: 60000 }, async () => {
-    const goOut = runGoTests('^TestMediaFrame');
-    expect(goOut).toContain('TestMediaFrameSampleTimestampsFirstMidTailAndShortClamp');
-    expect(goOut).toContain('TestMediaFrameExtractionHDScale1024AndFirstMidTailTimestamps');
-    expect(goOut).toContain('TestMediaFrameExtractionShortClipAndVFRTailFallback');
-    expect(goOut).toContain('TestMediaFrameExtractionDynamicBudgetDownscale');
+    runGoTests('^TestMediaFrame', [
+      'TestMediaFrameSampleTimestampsFirstMidTailAndShortClamp',
+      'TestMediaFrameExtractionHDScale1024AndFirstMidTailTimestamps',
+      'TestMediaFrameExtractionShortClipAndVFRTailFallback',
+      'TestMediaFrameExtractionDynamicBudgetDownscale',
+    ]);
 
     const dir = makeTempDir('s1-frames');
     try {
@@ -139,14 +144,17 @@ describe('7-Scenario Offline Creative Harness Regression Eval Suite ($0 spend)',
   // Scenario 2: media.transcribe free local Whisper vs paid cloud Whisper mandate enforcement
   // -------------------------------------------------------------------------
   test('Scenario 2: media.transcribe free local Whisper bypasses mandate while paid cloud Whisper enforces mandate precheck & Go permit', { timeout: 60000 }, async () => {
-    const goOut = runGoTests('^TestMediaTranscribe');
-    expect(goOut).toContain('TestMediaTranscribeFreeLocalWhisperRunsWithoutMandate');
-    expect(goOut).toContain('TestMediaTranscribePaidCloudWhisperMandateAndRaceEnforcement');
+    runGoTests('^TestMediaTranscribe', [
+      'TestMediaTranscribeFreeLocalWhisperRunsWithoutMandate',
+      'TestMediaTranscribePaidCloudWhisperMandateAndRaceEnforcement',
+      'TestMediaTranscribeReadOnlySkipsClientResolutionAndChecksExpectedVersion',
+    ]);
 
-    // JS host layer: free local Whisper (model == '') is NOT a paid op; paid cloud Whisper IS.
+    // JS host layer: free local Whisper (model == '') is NOT a paid op; paid cloud Whisper IS (case-insensitively).
     expect(resolvePaidOpForTool({ name: 'media_transcribe', arguments: { canvasId: 'c1', resourceId: 'r1', model: '' } })).toBe('');
     expect(resolvePaidOpForTool({ name: 'media_transcribe', arguments: { canvasId: 'c1', resourceId: 'r1' } })).toBe('');
     expect(resolvePaidOpForTool({ name: 'media_transcribe', arguments: { canvasId: 'c1', resourceId: 'r1', model: 'whisper-1' } })).toBe('media.transcribe');
+    expect(resolvePaidOpForTool({ name: 'media_transcribe', arguments: { canvasId: 'c1', resourceId: 'r1', Model: 'whisper-1' } })).toBe('media.transcribe');
 
     const precheckCalls = [];
     const ext = createDurableApprovalExtension({
@@ -241,12 +249,12 @@ describe('7-Scenario Offline Creative Harness Regression Eval Suite ($0 spend)',
 
       const adapted = adaptMediaRequest({ contents: googleContents }, googleModel);
       // Must NEVER throw on >32MiB OR ENOENT; oldest parts + missing part degrade to structured text placeholders!
-      let totalInlineDecodedBytes = 0;
+      let totalInlineWireBytes = 0;
       const placeholderTexts = [];
       for (const content of adapted.contents) {
         for (const part of content.parts) {
           if (part.inlineData?.data) {
-            totalInlineDecodedBytes += Math.floor((part.inlineData.data.length * 3) / 4);
+            totalInlineWireBytes += part.inlineData.data.length;
           }
           const fnOut = part.functionResponse?.response?.output;
           if (typeof fnOut === 'string' && fnOut.includes('历史媒体已降级为文本占位')) {
@@ -254,8 +262,8 @@ describe('7-Scenario Offline Creative Harness Regression Eval Suite ($0 spend)',
           }
         }
       }
-      expect(totalInlineDecodedBytes).toBeLessThanOrEqual(DEFAULT_MAX_REQUEST_BYTES);
-      expect(totalInlineDecodedBytes).toBeGreaterThan(0);
+      expect(totalInlineWireBytes).toBeLessThanOrEqual(DEFAULT_MAX_REQUEST_BYTES);
+      expect(totalInlineWireBytes).toBeGreaterThan(0);
       expect(placeholderTexts.some((t) => t.includes('res-vid-0') && t.includes('video/mp4') && t.includes('budget_exceeded'))).toBe(true);
       expect(placeholderTexts.some((t) => t.includes('res-vid-7') && t.includes('video/mp4') && t.includes('"reason":"missing"'))).toBe(true);
 
@@ -500,11 +508,12 @@ describe('7-Scenario Offline Creative Harness Regression Eval Suite ($0 spend)',
   //             failed+retrievable non-release, unquoted gate
   // -------------------------------------------------------------------------
   test('Scenario 6: PR-5 ProductionMandate enforces concurrent reserve, ceiling pause, failed+retrievable non-release, and unquoted gate', { timeout: 60000 }, async () => {
-    const goOut = runGoTests('^TestProductionMandate(6Shot|Parallel4|LifecycleRetrievable|UnquotedBYOK)');
-    expect(goOut).toContain('TestProductionMandate6ShotAutoExecutionAndBudgetExhaustion');
-    expect(goOut).toContain('TestProductionMandateParallel4ToolReservationsNoDeadlock');
-    expect(goOut).toContain('TestProductionMandateLifecycleRetrievableNeverReleasesAndOrphanReconciliation');
-    expect(goOut).toContain('TestProductionMandateUnquotedBYOKNeverGetsFreePass');
+    runGoTests('^TestProductionMandate(6Shot|Parallel4|LifecycleRetrievable|UnquotedBYOK)', [
+      'TestProductionMandate6ShotAutoExecutionAndBudgetExhaustion',
+      'TestProductionMandateParallel4ToolReservationsNoDeadlock',
+      'TestProductionMandateLifecycleRetrievableNeverReleasesAndOrphanReconciliation',
+      'TestProductionMandateUnquotedBYOKNeverGetsFreePass',
+    ]);
 
     // Verify JS beforeTool approval extension honors allow / approval_required (ceiling/unquoted) / deny.
     const decisions = [

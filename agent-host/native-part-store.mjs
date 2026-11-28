@@ -204,12 +204,15 @@ export function createNativePartStore({ directory }) {
   }
 
   // Reference-aware eviction: NEVER evicts any part with >=1 live session reference
-  // regardless of mtime or total store bytes. Only parts with zero live references
-  // are eligible for deletion when totalBytes exceeds maxTotalBytes.
+  // regardless of mtime or total store bytes. Only reference-tracked parts with zero
+  // live references are eligible for deletion when tracked totalBytes exceeds maxTotalBytes.
+  // Legacy manifests without a `refs` array are excluded from evictable byte accounting
+  // so legacy un-evictable files never distort GC of reference-tracked parts.
   function pruneUnreferenced({ maxTotalBytes = DEFAULT_MAX_STORE_BYTES, isSessionAlive = null } = {}) {
     const limit = Number.isFinite(maxTotalBytes) && maxTotalBytes >= 0 ? maxTotalBytes : DEFAULT_MAX_STORE_BYTES;
     const records = [];
     let totalBytes = 0;
+    let legacyBytes = 0;
 
     for (const id of listManifestIds()) {
       let stored;
@@ -225,10 +228,17 @@ export function createNativePartStore({ directory }) {
           mtimeMs = stat.mtimeMs;
         }
       } catch { /* missing bin */ }
+
+      const isTracked = Array.isArray(stored.refs);
+      if (!isTracked) {
+        legacyBytes += binSize;
+        records.push({ id, binFile, jsonFile, binSize, mtimeMs, unreferenced: false });
+        continue;
+      }
       totalBytes += binSize;
 
       let liveRefs = stored.refs;
-      if (Array.isArray(stored.refs) && typeof isSessionAlive === 'function') {
+      if (typeof isSessionAlive === 'function') {
         liveRefs = stored.refs.filter((ref) => {
           try { return Boolean(isSessionAlive(ref.canvasId, ref.sessionId)); }
           catch { return true; }
@@ -238,7 +248,7 @@ export function createNativePartStore({ directory }) {
           atomic(directory, jsonFile, JSON.stringify(stored));
         }
       }
-      const unreferenced = Array.isArray(liveRefs) && liveRefs.length === 0;
+      const unreferenced = liveRefs.length === 0;
       records.push({ id, binFile, jsonFile, binSize, mtimeMs, unreferenced });
     }
 
@@ -262,6 +272,7 @@ export function createNativePartStore({ directory }) {
       deleted,
       kept: records.length - deleted.length,
       totalBytes,
+      legacyBytes,
       reclaimedBytes,
     };
   }

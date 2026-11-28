@@ -226,7 +226,7 @@ func TestMediaReviewAudioFailureIsNotRetried(t *testing.T) {
 					return
 				}
 				if body["model"] != "wand-vega-vl-1.0-flash" || body["stream"] != false || body["max_tokens"] != float64(8192) ||
-					body["thinking_enabled"] != false || body["reasoning_effort"] != "none" || body["tools"] != nil {
+					body["thinking_enabled"] != nil || body["reasoning_effort"] != nil || body["tools"] != nil {
 					t.Error("audio changed bounded inference settings")
 				}
 				parts := body["messages"].([]any)[1].(map[string]any)["content"].([]any)

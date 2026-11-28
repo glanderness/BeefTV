@@ -37,9 +37,20 @@ const SKILL_SCRIPT_REQUEST_TIMEOUT_MS = (SKILL_SCRIPT_MAX_TIMEOUT_SEC + 15) * 10
 const canvasMutation = descriptor => descriptor.id.startsWith('canvas.') &&
   (!descriptor.readOnly || descriptor.id === 'canvas.generation.propose');
 
+function readCaseInsensitiveArgString(obj, key) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return '';
+  const target = key.toLowerCase();
+  for (const [k, v] of Object.entries(obj)) {
+    if (k.toLowerCase() === target && typeof v === 'string' && v.trim() !== '') {
+      return v.trim();
+    }
+  }
+  return '';
+}
+
 function assertToolGeneration(generation, descriptor, signal, turn, { resumingParked = false, args = null } = {}) {
   if (generation.aborted || signal?.aborted) throw new Error('aborted');
-  const paidCloudTranscribe = descriptor.id === 'media.transcribe' && String(args?.model || '').trim() !== '';
+  const paidCloudTranscribe = descriptor.id === 'media.transcribe' && readCaseInsensitiveArgString(args, 'model') !== '';
   if (generation.permissionMode === 'read-only' && (!descriptor.readOnly || descriptor.id === 'canvas.generation.propose' || descriptor.id === 'skill.script.run' || paidCloudTranscribe)) throw new Error('scope_denied: 本轮助手只能读取');
   if (resumingParked) {
     if (generation.pendingInputError) {
@@ -422,7 +433,7 @@ export function createOperationBridge({
           const converted = mediaToolResult(projected, descriptor.id, {
             ...mediaModel,
             originTurnId: turn.turnId,
-            canvasId: params.canvasId || canvasId,
+            canvasId,
             sessionId: identityPrefix,
             ...(generation.durable ? { nativePartStore } : {}),
           });

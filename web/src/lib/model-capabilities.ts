@@ -114,6 +114,8 @@ export type TextCapabilityConfig = {
         maxImageBytes: number;
         maxVideos: number;
         maxVideoBytes: number;
+        maxAudios?: number;
+        maxAudioBytes?: number;
     };
 };
 
@@ -352,7 +354,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
     const text: TextCapabilityConfig = {
         streaming: true,
         // 文本模型的视觉能力必须由管理员明确开启，不能根据模型名猜测。
-        references: { promptMaxChars: 32000, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 },
+        references: { promptMaxChars: 32000, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0, maxAudios: 0, maxAudioBytes: 0 },
     };
     const video = defaultVideoCapabilityConfig(protocol, model);
     const separator = model.lastIndexOf("::");
