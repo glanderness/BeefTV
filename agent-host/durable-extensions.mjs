@@ -14,6 +14,9 @@ import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, l
 import { missingSkillResources, restoredSkillMessage } from './active-skills.mjs';
 import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, publicPlan, renderPlanSection } from './plan.mjs';
 import { withCurrentStudio } from './studio-digest.mjs';
+import { isToolPark } from './await-business-tasks.mjs';
+import { mutateTurnContinuation, readTurnContinuation } from './durable-signals.mjs';
+import { createCreativeCompactionExtension } from './durable-compaction.mjs';
 import {
   createPartialOutputRetryGuard,
   normalizeModelTransportError,
@@ -79,10 +82,10 @@ export function createDurableSkillController({ skills, state, update, lock, offi
     return context;
   }
 
-  async function resolveActiveSkills(entry, signal) {
-    const context = await readSkillContext(entry);
+  async function resolveActiveSkills(entry, signal, turnId = entry.turn.turnId) {
+    const context = await readSkillContext(entry, turnId);
     return activeSkillProjection({ context, signal,
-      readVersion: (pin, readSignal) => skills.readVersion(entry, pin, readSignal, entry.turn.turnId) });
+      readVersion: (pin, readSignal) => skills.readVersion(entry, pin, readSignal, turnId) });
   }
 
   async function resetPendingScope(entry, context) {
@@ -225,6 +228,7 @@ export async function installDurableExtensions({
   extensions,
   codemodeSandbox = null,
   dispatchDiagnostics = null,
+  ensureRunTurnHandoff = null,
 }) {
   const { readSkillContext, resolveActiveSkills, prepareSkillContext } = skillController;
   const skillHashPattern = /^[a-f0-9]{64}$/;
@@ -280,7 +284,7 @@ export async function installDurableExtensions({
             if (doc.active) doc.active.plan = publicPlan(nextPlan);
           });
           entry.turn.plan = publicPlan(nextPlan);
-          entry.generation.planTouchedInTurn = true;
+          await mutateTurnContinuation(entry, (doc) => { doc.planTouchedInTurn = true; }, CTX);
           entry.log.push({ toolCallId: toolCallId || null, tool: 'plan.update', args: args || {}, isError: false, ms: Date.now() - started });
           return { content: [{ type: 'text', text: renderPlanSection(nextPlan) || '当前制作计划已清空。' }] };
         } catch (error) {
@@ -332,20 +336,25 @@ export async function installDurableExtensions({
             : ['skill.load', 'skill.file'].includes(tool.label)
               ? { outputLimits: { maxBytes: 128 * 1024, maxLines: 4000 } }
               : {}),
+        ...(typeof tool.cancel === 'function' ? { cancel: (args, api, context) => tool.cancel(args, api, context) } : {}),
         execute: async (args, api, context) => {
           if (entry.generation.aborted) throw fail('aborted');
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
-          if (entry.generation.pendingInput?.state === 'pending') throw fail('supplement_preparation_pending');
+          if (entry.generation.pendingInput?.state === 'pending' && !api.checkpoint?.businessTaskWait) throw fail('supplement_preparation_pending');
           await authorization(entry, entry.turn.turnId);
           try {
             const proposalCount = entry.turn.proposals.length;
             const pendingScriptProposalCount = (entry.turn.scriptProposals || []).filter((item) => item?.status === 'pending').length;
             const resolvedArgs = await resolveSkillToolArgs(tool.label, args, String(api.taskId), context.abortSignal);
-            // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
-            const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), resolvedArgs, context.abortSignal,
+            // Bridge tools return {content} or a pure Pi ToolPark ({sleep}/{wait}); never mix result fields into a park.
+            const rawResult = await runWithBudget(entry, () => tool.execute(String(api.taskId), resolvedArgs, context.abortSignal,
               { executeTool: (name, params, options) => api.executeTool(name, params, context, options),
-                reportProgress: (progress) => api.details({ beeftvProgress: progress }, context) }));
-            entry.generation.toolCalledSinceYield = true;
+                reportProgress: (progress) => api.details({ beeftvProgress: progress }, context),
+                durableApi: api,
+                durableContext: context }));
+            if (isToolPark(rawResult)) return rawResult;
+            const { content, ...result } = rawResult;
+            await mutateTurnContinuation(entry, (doc) => { doc.toolCalledSinceYield = true; }, context);
             if (!tool.readOnly && typeof readCanvas === 'function') {
               await refreshStudioDigest(entry, entry.turn.turnId, { selectedNodeIds: entry.input?.selectedNodeIds || [], computeDiff: false, signal: context.abortSignal });
             }
@@ -438,7 +447,8 @@ export async function installDurableExtensions({
         };
         try {
           const rawResult = await runWithBudget(entry, () => pluginTool.execute(args, wrappedApi, context));
-          entry.generation.toolCalledSinceYield = true;
+          if (isToolPark(rawResult)) return rawResult;
+          await mutateTurnContinuation(entry, (doc) => { doc.toolCalledSinceYield = true; }, context);
           const output = rawResult?.output ?? rawResult?.content ?? [];
           const isError = rawResult?.isError === true;
           entry.log.push({
@@ -476,6 +486,13 @@ export async function installDurableExtensions({
     });
   }
 
+  const creativeCompactionExt = createCreativeCompactionExtension({
+    entry,
+    state,
+    skills,
+    resolveActiveSkills,
+  });
+
   function applyPluginExtensionsToRegistry(rawExtensions) {
     const nextWrapped = (Array.isArray(rawExtensions) ? rawExtensions : [])
       .map((ext) => wrapPluginExtensionForEntry(ext))
@@ -488,6 +505,9 @@ export async function installDurableExtensions({
     for (const ext of nextWrapped) {
       registry.install(ext);
     }
+    // 始终把默认创作态压缩钩子放在自定义扩展之后，允许插件/测试显式覆盖 beforeCompact。
+    registry.uninstall(creativeCompactionExt);
+    registry.install(creativeCompactionExt);
     entry.pluginExtensions = nextWrapped;
     entry.pluginTools = nextWrapped.flatMap((ext) => ext.tools || []);
     entry.toolNames = [...selectedHostTools, ...builtinExtensionTools, ...entry.pluginTools].map((tool) => tool.name);
@@ -524,6 +544,9 @@ export async function installDurableExtensions({
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
           if (entry.generation.pendingInput?.state === 'pending') await entry.generation.pendingInput.promise;
           if (entry.generation.aborted) throw fail('aborted');
+          if (typeof ensureRunTurnHandoff === 'function') {
+            await ensureRunTurnHandoff(_runtime, context);
+          }
           await authorization(entry, entry.turn.turnId);
           let studioDiff = '';
           if (typeof readCanvas === 'function') {
@@ -616,13 +639,14 @@ export async function installDurableExtensions({
           return;
         }
       },
-      onYield: async (message) => {
+      onYield: async (message, _runtime, context) => {
         if (message?.stopReason === 'length') return;
         if (entry.generation.aborted || entry.generation.pendingInput?.state === 'pending' || entry.generation.pendingInputError) return;
         if (entry.turn.proposals?.length || (entry.turn.scriptProposals || []).some((item) => item?.status === 'pending')) return;
         const doc = await state(entry);
         if (doc?.active?.stopped || (doc?.active?.supplementIds?.length || 0) > 0) return;
-        if (!entry.generation.unboundReminderSent && entry.turn.createdNodeIds?.length > 0 && typeof readCanvas === 'function') {
+        const cont = await readTurnContinuation(entry, context);
+        if (!cont.unboundReminderSent && entry.turn.createdNodeIds?.length > 0 && typeof readCanvas === 'function') {
           const canvas = await readCanvas(entry, undefined, entry.turn.turnId).catch(() => null);
           const nodes = Array.isArray(canvas?.nodes) ? canvas.nodes : [];
           const connections = Array.isArray(canvas?.connections) ? canvas.connections : [];
@@ -650,7 +674,7 @@ export async function installDurableExtensions({
                 )
               : [];
             if (unboundMedia.length > 0 || unlinkedVideos.length > 0) {
-              entry.generation.unboundReminderSent = true;
+              await mutateTurnContinuation(entry, (draft) => { draft.unboundReminderSent = true; }, context);
               const hints = [];
               if (unboundMedia.length > 0) {
                 const list = unboundMedia.map((n) => `${n.id}「${n.title || n.type}」`).join('、');
@@ -666,14 +690,16 @@ export async function installDurableExtensions({
             }
           }
         }
-        if (!entry.generation.planTouchedInTurn || !entry.generation.toolCalledSinceYield) return;
+        if (!cont.planTouchedInTurn || !cont.toolCalledSinceYield) return;
         const prompt = planContinuation(doc?.plan, {
-          continuations: entry.generation.planContinuations || 0,
+          continuations: cont.planContinuations || 0,
           maxContinuations: maxPlanContinuations,
         });
         if (!prompt) return;
-        entry.generation.planContinuations = (entry.generation.planContinuations || 0) + 1;
-        entry.generation.toolCalledSinceYield = false;
+        await mutateTurnContinuation(entry, (draft) => {
+          draft.planContinuations = (draft.planContinuations || 0) + 1;
+          draft.toolCalledSinceYield = false;
+        }, context);
         return { continue: prompt };
       },
     })],
@@ -745,8 +771,8 @@ export async function installDurableExtensions({
   let models = await getModels(entry);
   if (skills) {
     models = guardSkillModelRequests(models, async (model, request, signal) => {
-      // 空闲手动压缩只做历史摘要，不处于任何 Go 对话回合内，不校验已结束回合授权与技能上下文。
-      if (entry.compacting && !entry.busy) return;
+      // 空闲手动压缩或后台压缩只做历史摘要，不处于任何 Go 对话回合内，不校验已结束回合授权与技能上下文。
+      if ((entry.compacting || entry.compactingHookCount > 0) && !entry.busy) return;
       await authorization(entry, entry.turn.turnId);
       const projection = await resolveActiveSkills(entry, signal);
       if (entry.generation.preparedRequests?.has(requestSignature(request.messages))) {

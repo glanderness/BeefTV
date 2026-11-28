@@ -4,15 +4,16 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { estimateContextTokens } from '@earendil-works/pi-ai/utils/estimate';
-import { Harness, ProviderDoc, createRegistry } from '@earendil-works/pi-durable';
+import { Harness, LiveDoc, ProviderDoc, createRegistry } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { canvasKey } from './session-owner.mjs';
 import { newTurnAccumulator, sessionTitle } from './canvas-turn.mjs';
 import { SYSTEM_PROMPT } from './system-prompt.mjs';
 import { emptyPlan, publicPlan } from './plan.mjs';
-import { publicDurableTurn } from './durable-turn-projection.mjs';
+import { durableLifecycleState, extractParkedToolsFromLive, publicDurableTurn } from './durable-turn-projection.mjs';
 import { isCorruptSessionArtifactError, isSkippableSessionError } from './durable-pointer-resolver.mjs';
 import { installDurableExtensions } from './durable-extensions.mjs';
+import { createRunTurnHandoff } from './durable-followup.mjs';
 import { resolveHostCacheRetention } from './prompt-cache.mjs';
 
 const CTX = BACKGROUND_CONTEXT;
@@ -23,12 +24,14 @@ export function createDurableSessionRepository({
   sessionRoot,
   workspaceRoot,
   sessions,
+  detachedEntries = new Map(),
   lock,
   state,
   update,
   hydrate,
   persistEffects,
   authorization,
+  getRunHandoffDeps = () => ({}),
   refreshStudioDigest,
   getModels,
   getModelRef,
@@ -141,6 +144,18 @@ export function createDurableSessionRepository({
     const registry = createRegistry();
     entry.generation.persistEffects = () => persistEffects(entry);
     entry.generation.permissionMode = 'full-access';
+    const ensureRunTurnHandoff = readOnly
+      ? null
+      : createRunTurnHandoff({
+          entry,
+          lock,
+          state,
+          update,
+          hydrate,
+          openTurn: (...args) => getRunHandoffDeps().openTurn?.(...args),
+          settleTurnWithConfirmation: (...args) => getRunHandoffDeps().settleTurnWithConfirmation?.(...args),
+          onFollowUpStarted: (...args) => getRunHandoffDeps().onFollowUpStarted?.(...args),
+        });
     const { tools, models } = await installDurableExtensions({
       entry,
       registry,
@@ -161,6 +176,7 @@ export function createDurableSessionRepository({
       extensions,
       codemodeSandbox,
       dispatchDiagnostics,
+      ensureRunTurnHandoff,
     });
     openCount += 1;
     try {
@@ -230,6 +246,30 @@ export function createDurableSessionRepository({
   async function withSession(canvasId, sessionId, fn, { readOnly = true } = {}) {
     const cached = sessions.get(canvasId);
     if (cached?.sessionId === sessionId) return fn(cached, true);
+    const borrowKey = `${canvasId}\0${sessionId}`;
+    const detached = detachedEntries.get(borrowKey);
+    if (detached) {
+      detached.borrowedCount = (detached.borrowedCount || 0) + 1;
+      try {
+        return await fn(detached, false);
+      } finally {
+        detached.borrowedCount = Math.max(0, (detached.borrowedCount || 1) - 1);
+        if (
+          detached.borrowedCount === 0 &&
+          detached.pendingDetachedClose &&
+          detachedEntries.get(borrowKey) === detached &&
+          sessions.get(canvasId) !== detached &&
+          !detached.detachedSignalDrain &&
+          !detached.running &&
+          !(detached.waiters > 0) &&
+          !(detached.submissionWaiters?.size > 0)
+        ) {
+          detachedEntries.delete(borrowKey);
+          detached.disposed = true;
+          await detached.harness.close(CTX).catch(() => {});
+        }
+      }
+    }
     if (!readOnly) {
       const entry = await open(canvasId, sessionId, { readOnly: false });
       try {
@@ -239,7 +279,6 @@ export function createDurableSessionRepository({
         await entry.harness.close(CTX);
       }
     }
-    const borrowKey = `${canvasId}\0${sessionId}`;
     let lease = borrowed.get(borrowKey);
     if (!lease) {
       lease = {
@@ -352,10 +391,21 @@ export function createDurableSessionRepository({
     if (!value) return { sessionId: entry.sessionId, turns: [], active: null };
     const plan = publicPlan(value.plan);
     const meta = includeContext ? await sessionContextSnapshot(entry) : null;
+    const active = publicDurableTurn(value.active, true);
+    if (active && entry?.root && entry?.harness) {
+      const live = await entry.harness.snapshot(LiveDoc, entry.root.id, CTX).catch(() => null);
+      const parkedTools = extractParkedToolsFromLive(live);
+      if (parkedTools.length > 0) {
+        active.parked = true;
+        active.parkedTools = parkedTools;
+        const projectedLifecycle = durableLifecycleState(null, { type: 'snapshot', docs: { 'pi.live': live } });
+        if (projectedLifecycle) active.lifecycle = projectedLifecycle;
+      }
+    }
     return {
       sessionId: entry.sessionId,
       turns: (value.turns || []).map((turn) => publicDurableTurn(turn)),
-      active: publicDurableTurn(value.active, true),
+      active,
       ...(value.forkedFrom ? { forkedFrom: value.forkedFrom } : {}),
       ...(plan ? { plan } : {}),
       ...(meta ? {
@@ -543,6 +593,16 @@ export function createDurableSessionRepository({
         };
         fs.mkdirSync(dstEntry.budgetDirectory, { recursive: true, mode: 0o700 });
         dstEntry.generation.persistEffects = () => persistEffects(dstEntry);
+        const ensureRunTurnHandoff = createRunTurnHandoff({
+          entry: dstEntry,
+          lock,
+          state,
+          update,
+          hydrate,
+          openTurn: (...args) => getRunHandoffDeps().openTurn?.(...args),
+          settleTurnWithConfirmation: (...args) => getRunHandoffDeps().settleTurnWithConfirmation?.(...args),
+          onFollowUpStarted: (...args) => getRunHandoffDeps().onFollowUpStarted?.(...args),
+        });
         const { tools, models } = await installDurableExtensions({
           entry: dstEntry,
           registry,
@@ -563,6 +623,7 @@ export function createDurableSessionRepository({
           extensions,
           codemodeSandbox,
           dispatchDiagnostics,
+          ensureRunTurnHandoff,
         });
         openCount += 1;
         dstEntry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${newUuid}.sqlite`)), {
@@ -653,6 +714,16 @@ export function createDurableSessionRepository({
       if (!isDurableSessionId(sessionId) || !hasSession(canvasId, sessionId)) throw fail('session_not_found');
       const current = sessions.get(canvasId);
       if (isEntryBusy(current)) throw fail('session_busy');
+      const detachedKey = `${canvasId}\0${sessionId}`;
+      const detached = detachedEntries.get(detachedKey);
+      if (detached) {
+        if (isEntryBusy(detached) || detached.detachedSignalDrain || (detached.borrowedCount || 0) > 0) {
+          throw fail('session_busy');
+        }
+        detachedEntries.delete(detachedKey);
+        detached.disposed = true;
+        await detached.harness.close(CTX);
+      }
       const uuid = idPattern.exec(sessionId)[1];
       const dir = durableDirectory(canvasId);
       if (current?.sessionId === sessionId) {

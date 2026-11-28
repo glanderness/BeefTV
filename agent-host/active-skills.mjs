@@ -1,12 +1,30 @@
-// 活动技能恢复：技能正文在被选择/读取时已经写进对话（官方做法）。
-// 对话被官方压缩后，正文可能被摘要掉。这里在每次请求前检查：
-// 最近使用的技能如果在当前可见消息里已经找不到正文，就在本次请求里补回一份（只对这次请求生效，不落盘）。
+// 活动技能恢复与指针投影：
+// 1. 压缩阶段由 durable-compaction.mjs 写入持久技能指针（formatActiveSkillPointers），保留技能身份；
+// 2. 当有损压缩导致完整技能正文不在当前可见消息内时，在本次请求前按窗口预算临时补回，
+//    并由 Models 层的 guardSkillModelRequests 继续做安全完整性校验。
 import { SKILL_PAGE_MAX_BYTES, formatSkillBlock } from './skill-resource.mjs';
 
 function messageText(message) {
   if (typeof message?.content === 'string') return message.content;
   if (!Array.isArray(message?.content)) return '';
   return message.content.map((part) => (part?.type === 'text' && typeof part.text === 'string' ? part.text : '')).join('\n');
+}
+
+// 供 CompactionTask.beforeCompact 使用的技能指针清单（单一真相来源）。
+export function formatActiveSkillPointers(resources = []) {
+  const seen = new Set();
+  const lines = [];
+  for (const item of resources || []) {
+    const pin = item?.pin || item || {};
+    if (!pin.skillId || !pin.versionId || !pin.contentHash) continue;
+    const key = `${pin.skillId}@${pin.versionId}:${pin.contentHash}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const label = String(item?.name || pin.skillName || pin.skillId).trim();
+    const version = String(item?.version || '').trim();
+    lines.push(`- ${label} (skillId=${pin.skillId}, versionId=${pin.versionId}${version ? `, version=${version}` : ''}, contentHash=${pin.contentHash})`);
+  }
+  return lines.join('\n');
 }
 
 // 正文是否仍在可见消息里：以技能块的 versionId + contentHash 为准（formatSkillBlock 的固定属性）。

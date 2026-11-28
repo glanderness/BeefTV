@@ -262,7 +262,7 @@ func (r *Repository) UpdateTaskProviderProgress(id string, progress int) error {
 }
 
 func (r *Repository) SaveTaskCompletion(task *model.Task, expected model.TaskStatus, results []model.Result) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	err := r.db.Transaction(func(tx *gorm.DB) error {
 		updated := r.taskLeaseWriter(tx.Model(&model.Task{}), task.LeaseOwner).
 			Where("id = ? AND status = ?", task.ID, expected).
 			// Completion owns the result, not the worker's routing, lease or
@@ -281,6 +281,10 @@ func (r *Repository) SaveTaskCompletion(task *model.Task, expected model.TaskSta
 		}
 		return nil
 	})
+	if err == nil && task != nil {
+		r.notifyTaskChanged(task.ID)
+	}
+	return err
 }
 
 func (r *Repository) UpdateTaskTerminalState(id string, owner string, expected model.TaskStatus, status model.TaskStatus, stage string, errorText string, errorCode string, completedAt time.Time, diagnostics ...*model.TaskFailureDiagnostics) (bool, error) {
@@ -299,6 +303,9 @@ func (r *Repository) UpdateTaskTerminalState(id string, owner string, expected m
 			"failure_diagnostics": diagnosticJSON,
 			"lease_owner":         "", "lease_expires_at": nil, "updated_at": completedAt,
 		})
+	if result.RowsAffected == 1 && result.Error == nil {
+		r.notifyTaskChanged(id)
+	}
 	return result.RowsAffected == 1, result.Error
 }
 
@@ -309,6 +316,9 @@ func (r *Repository) CancelTaskIfStatus(userID string, id string, expected model
 			"status": model.TaskStatusCancelled, "stage": "任务已取消", "error": "任务已取消", "completed_at": &now,
 			"lease_owner": "", "lease_expires_at": nil, "updated_at": now,
 		})
+	if result.RowsAffected == 1 && result.Error == nil {
+		r.notifyTaskChanged(id)
+	}
 	return result.RowsAffected == 1, result.Error
 }
 

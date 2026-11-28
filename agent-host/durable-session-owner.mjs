@@ -24,6 +24,8 @@ import {
 } from './durable-extensions.mjs';
 import { createDurableSessionRepository } from './durable-session-repository.mjs';
 import { createDurableTurnAdmission } from './durable-turn-admission.mjs';
+import { deliverDurableSignal, resolveSignalToken } from './durable-signals.mjs';
+import { enqueueFollowUpEvent, resolvePreservedPermissionMode } from './durable-followup.mjs';
 
 export {
   durableCompletion,
@@ -76,6 +78,8 @@ export function createDurableSessionStore({
   getModelRef,
   buildTools,
   authorizeTurn,
+  openTurn = null,
+  onFollowUpStarted = null,
   authorizeContinuation = null,
   completeTurn = async () => {},
   runWithBudget = (_entry, fn) => fn(),
@@ -93,6 +97,8 @@ export function createDurableSessionStore({
   if (!THINKING_LEVELS.includes(thinkingLevel)) throw fail('invalid_thinking_level');
   if (typeof authorizeTurn !== 'function') throw fail('durable_authorizer_required');
   const sessions = new Map();
+  const detachedEntries = new Map();
+  const detachedKeyOf = (canvasId, sessionId) => `${canvasId}\0${sessionId}`;
   const locks = new Map();
   const STOP_INTENT_LIMIT = 64;
   const stopIntents = new Map();
@@ -243,17 +249,24 @@ export function createDurableSessionStore({
   const ownedCodemodeSandbox = codemodeSandbox === undefined
     ? new CodemodeSandbox({ timeoutMs: 60_000, memoryLimitBytes: 256 * 1024 * 1024 })
     : codemodeSandbox;
+  let settleTurnWithConfirmationRef = null;
   const repository = createDurableSessionRepository({
     durableVersion: DURABLE_VERSION,
     sessionRoot,
     workspaceRoot,
     sessions,
+    detachedEntries,
     lock,
     state,
     update,
     hydrate,
     persistEffects,
     authorization,
+    getRunHandoffDeps: () => ({
+      openTurn,
+      settleTurnWithConfirmation: settleTurnWithConfirmationRef,
+      onFollowUpStarted,
+    }),
     refreshStudioDigest,
     getModels,
     getModelRef,
@@ -349,6 +362,7 @@ export function createDurableSessionStore({
     forgetStop,
     completeTurn,
   });
+  settleTurnWithConfirmationRef = settleTurnWithConfirmation;
 
   admission = createDurableTurnAdmission({
     sessions,
@@ -419,6 +433,12 @@ export function createDurableSessionStore({
         return previous;
       }
       if (isEntryBusy(previous)) throw fail('session_busy');
+      const dKey = detachedKeyOf(canvasId, sessionId);
+      const detached = detachedEntries.get(dKey);
+      if (detached) {
+        detachedEntries.delete(dKey);
+        return install(detached, { publishPointer });
+      }
       const entry = await open(canvasId, sessionId);
       return install(entry, { publishPointer });
     });
@@ -469,12 +489,137 @@ export function createDurableSessionStore({
       }
       const pointer = readSafeCurrentPointer(canvasId);
       if (!sessionId || pointer !== sessionId) throw fail('session_not_current');
+      const dKey = detachedKeyOf(canvasId, sessionId);
+      const detached = detachedEntries.get(dKey);
+      if (detached) {
+        detachedEntries.delete(dKey);
+        return install(detached);
+      }
       return install(await open(canvasId, sessionId));
     });
   }
   const deleteSession = (canvasId, sessionId) => repository.deleteSession(canvasId, sessionId, { refreshCanvasBusy, isEntryBusy, readSafeCurrentPointer });
   const forkSession = (canvasId, opts) => repository.forkSession(canvasId, opts, { refreshCanvasBusy, isEntryBusy });
   const recordEvent = (canvasId, payload) => repository.recordEvent(canvasId, payload, { ensureSession, readSafeCurrentPointer });
+
+  async function resolvedPermissionMode(entry, explicitMode = '') {
+    const doc = entry ? await state(entry).catch(() => null) : null;
+    return resolvePreservedPermissionMode(entry, doc, explicitMode);
+  }
+
+  async function submitFollowUpEvent(entry, payload) {
+    return enqueueFollowUpEvent({
+      entry,
+      lock,
+      state,
+      update,
+      ...payload,
+      onFollowUpStarted,
+    });
+  }
+
+  async function deliverSignal(canvasId, sessionId, { durableTaskId, signal, key, value }, { onWoken = null } = {}) {
+    const cleanCanvasId = String(canvasId || '').trim();
+    const cleanSessionId = String(sessionId || '').trim();
+    if (!cleanCanvasId || !cleanSessionId || !isDurableSessionId(cleanSessionId)) {
+      return { ok: false, status: 400, error: 'invalid_request', reason: 'invalid_request' };
+    }
+    if (!resolveSignalToken(signal)) {
+      return { ok: false, status: 400, error: 'unknown_signal', reason: 'unknown_signal' };
+    }
+    if (!hasSession(cleanCanvasId, cleanSessionId)) {
+      return { ok: false, status: 404, error: 'session_not_found', reason: 'session_not_found' };
+    }
+
+    const dKey = detachedKeyOf(cleanCanvasId, cleanSessionId);
+    return lock(cleanCanvasId, async () => {
+      let entry = null;
+      let ownership = 'mounted';
+      const mounted = sessions.get(cleanCanvasId);
+      if (mounted?.sessionId === cleanSessionId) {
+        entry = mounted;
+        ownership = 'mounted';
+      } else if (detachedEntries.has(dKey)) {
+        entry = detachedEntries.get(dKey);
+        entry.pendingDetachedClose = false;
+        ownership = 'detached';
+      } else if (!mounted) {
+        entry = await open(cleanCanvasId, cleanSessionId, { readOnly: false });
+        await install(entry, { publishPointer: false });
+        ownership = 'mounted-cold';
+      } else {
+        entry = await open(cleanCanvasId, cleanSessionId, { readOnly: false });
+        detachedEntries.set(dKey, entry);
+        ownership = 'detached-cold';
+      }
+
+      const delivery = await deliverDurableSignal(entry.harness, { durableTaskId, signal, key, value }, CTX);
+      if (!delivery.ok) {
+        if (ownership === 'mounted-cold' && sessions.get(cleanCanvasId) === entry) {
+          sessions.delete(cleanCanvasId);
+          entry.disposed = true;
+          await entry.harness.close(CTX).catch(() => {});
+        } else if (ownership === 'detached-cold' && detachedEntries.get(dKey) === entry) {
+          detachedEntries.delete(dKey);
+          entry.disposed = true;
+          await entry.harness.close(CTX).catch(() => {});
+        }
+        return delivery;
+      }
+
+      const doc = await state(entry).catch(() => null);
+      const active = doc?.active || null;
+      let submission = null;
+      if (active) {
+        submission = active.submissionId != null
+          ? await entry.harness.submission(active.submissionId, CTX).catch(() => null)
+          : await officialSubmission(entry, active.requestId).catch(() => null);
+      }
+
+      if (ownership === 'mounted' || ownership === 'mounted-cold') {
+        if (submission && !entry.running && !entry.submissionWaiters?.has(submission.id)) {
+          if (typeof onWoken === 'function') {
+            onWoken(entry, submission);
+          } else {
+            void wait(entry, submission).catch(() => {});
+          }
+        }
+      } else if (!entry.detachedSignalDrain) {
+        entry.pendingDetachedClose = false;
+        entry.detachedSignalDrain = (async () => {
+          try {
+            if (submission && !entry.submissionWaiters?.has(submission.id)) {
+              await wait(entry, submission);
+            } else {
+              await entry.harness.waitForIdle(CTX);
+            }
+          } catch {
+            // Detached background wake settles best-effort; SQLite retains authoritative state.
+          } finally {
+            await lock(cleanCanvasId, async () => {
+              entry.detachedSignalDrain = null;
+              if (
+                detachedEntries.get(dKey) === entry &&
+                sessions.get(cleanCanvasId) !== entry &&
+                !entry.running &&
+                !(entry.waiters > 0) &&
+                !(entry.submissionWaiters?.size > 0)
+              ) {
+                if ((entry.borrowedCount || 0) > 0) {
+                  entry.pendingDetachedClose = true;
+                  return;
+                }
+                detachedEntries.delete(dKey);
+                entry.disposed = true;
+                await entry.harness.close(CTX).catch(() => {});
+              }
+            }).catch(() => {});
+          }
+        })();
+      }
+      return delivery;
+    });
+  }
   async function configureSession(canvasId, { sessionId = '', thinkingLevel: nextThinking } = {}) {
     const cleanLevel = String(nextThinking || '').trim().toLowerCase();
     if (!THINKING_LEVELS.includes(cleanLevel)) throw fail('invalid_thinking_level');
@@ -496,7 +641,7 @@ export function createDurableSessionStore({
     if (await refreshCanvasBusy(canvasId)) throw fail('session_busy');
     const entry = await ensureSession(canvasId, sessionId, { handoffLegacy: false });
     const preservation = [
-      '压缩较早的对话记录时，请保留：当前创作目标、画布关键节点与分镜结构、用户约束与风格偏好、已上传文件的 resourceId、待确认或进行中的任务/计划状态，以及精确的错误信息。',
+      '压缩较早的对话记录时，请保留：画布 ID、分镜/镜头计划、已确认或引用过的 resourceId 与角色/场景/风格资产、用户约束与画幅台词偏好、在途任务 ID、已激活技能指针及精确错误信息。',
       String(instructions || '').trim(),
     ].filter(Boolean).join('\n');
     // 仅在持锁窗口内检查空闲、标记 compacting 并提交压缩任务；
@@ -547,8 +692,9 @@ export function createDurableSessionStore({
   async function disposeAll() {
     closed = true;
     await Promise.allSettled([...locks.values()]);
-    const entries = [...sessions.values()];
+    const entries = [...sessions.values(), ...detachedEntries.values()];
     sessions.clear();
+    detachedEntries.clear();
     for (const entry of entries) {
       entry.disposed = true;
       await entry.harness.close(CTX);
@@ -575,6 +721,9 @@ export function createDurableSessionStore({
     forkSession,
     deleteSession,
     submit,
+    submitFollowUpEvent,
+    resolvedPermissionMode,
+    deliverSignal,
     recover,
     recoverForRead,
     inspectReadOnlyEntry,

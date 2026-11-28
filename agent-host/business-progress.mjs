@@ -1,6 +1,6 @@
 // A closed projection of our own tool details. Raw tool output and provider
 // stage/error text must never become panel copy or reconnect progress.
-const TOOLS = new Set(['canvas_generation_submit', 'canvas_timeline_render', 'canvas_timeline_deliver']);
+const TOOLS = new Set(['canvas_generation_submit', 'canvas_generation_regenerate', 'canvas_timeline_render', 'canvas_timeline_deliver']);
 const STAGES = new Set(['processing', 'downloading', 'saving', 'saved', 'binding', 'rendering', 'exporting', 'checking', 'observation_unavailable']);
 
 export function businessLifecycle(toolName, details) {

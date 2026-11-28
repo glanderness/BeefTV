@@ -50,7 +50,7 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 	}
 	for _, name := range []string{
 		"server.mjs", "plugin-host.mjs", "session-identity.mjs", "canvas-turn.mjs", "request-budget.mjs", "durable-request-budget.mjs",
-		"durable-session-owner.mjs", "durable-session-repository.mjs", "durable-turn-admission.mjs", "durable-pointer-resolver.mjs", "durable-detached-reconciler.mjs", "durable-turn-projection.mjs", "durable-extensions.mjs", "durable-watch-observer.mjs", "business-progress.mjs", "durable-turn-budget.mjs", "media-content.mjs", "native-part-store.mjs",
+		"durable-session-owner.mjs", "durable-session-repository.mjs", "durable-turn-admission.mjs", "durable-pointer-resolver.mjs", "durable-detached-reconciler.mjs", "durable-turn-projection.mjs", "durable-extensions.mjs", "durable-watch-observer.mjs", "durable-signals.mjs", "durable-compaction.mjs", "durable-followup.mjs", "business-progress.mjs", "durable-turn-budget.mjs", "media-content.mjs", "native-part-store.mjs",
 		"native-history.mjs", "skill-resource.mjs", "active-skills.mjs", "operation-bridge.mjs", "await-business-tasks.mjs", "timeline-delivery.mjs", "canvas-read-view.mjs", "canvas-write-view.mjs",
 		"session-owner.mjs", "system-prompt.mjs", "model-stream-idle.mjs", "model-transport-error.mjs", "model-fetch-proxy.mjs", "http-utils.mjs", "events-route.mjs", "plan.mjs", "studio-digest.mjs", "dispatch-diagnostics.mjs", "plugin-packages.mjs", "package.json", "run-agent-host.sh",
 	} {

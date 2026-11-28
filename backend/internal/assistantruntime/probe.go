@@ -128,6 +128,16 @@ func (h *Host) transport(responseHeaderTimeout time.Duration) http.RoundTripper 
 	}, responseHeaderTimeout)
 }
 
+// HasSignalEndpoint reports whether Go currently owns a live agent-host child
+// endpoint capable of receiving POST /signals callbacks.
+func (h *Host) HasSignalEndpoint() bool {
+	if h == nil || h.proc == nil {
+		return false
+	}
+	base, nonce := h.proc.identity()
+	return strings.TrimSpace(base) != "" && nonce != ""
+}
+
 func (h *Host) NewChildRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
 	if h == nil {
 		return nil, invalidArg("host_unreachable", "内置创作助手宿主未运行")

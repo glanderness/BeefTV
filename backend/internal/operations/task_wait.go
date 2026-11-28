@@ -180,6 +180,37 @@ type taskWaitState struct {
 	Reason string
 }
 
+// TaskWaitSignalEvaluation summarizes whether a business task has reached a
+// terminal wait state (saved/no_outputs or failed/cancelled/materialization_failed)
+// along with the normalized signal payload for agent-host ToolPark wakeup.
+type TaskWaitSignalEvaluation struct {
+	Settled bool
+	Payload map[string]any
+}
+
+// EvaluateTaskWaitSignal reuses taskWaitStateOf as the single source of truth so
+// signal wakeups and synchronous task.wait never drift on saving/downloading rules.
+func EvaluateTaskWaitSignal(task model.Task) TaskWaitSignalEvaluation {
+	state := taskWaitStateOf(task)
+	if state.State != taskWaitCompleted && state.State != taskWaitFailed {
+		return TaskWaitSignalEvaluation{}
+	}
+	payload := map[string]any{
+		"taskId":      task.ID,
+		"status":      string(task.Status),
+		"state":       state.State,
+		"reason":      state.Reason,
+		"resultState": task.ResultState,
+	}
+	if strings.TrimSpace(task.Error) != "" {
+		payload["error"] = task.Error
+	}
+	return TaskWaitSignalEvaluation{
+		Settled: true,
+		Payload: payload,
+	}
+}
+
 func taskWaitStateOf(task model.Task) taskWaitState {
 	phase := taskWaitPhase(task)
 	if task.Status == model.TaskStatusCancelled {

@@ -9,6 +9,7 @@ import {
   durableCompletion,
   durableReasoningSegments,
   durableTurnReplyText,
+  extractParkedToolMeta,
   publicDurableTurn,
 } from './durable-turn-projection.mjs';
 import { PARTIAL_OUTPUT_STREAM_INTERRUPTED } from './model-transport-error.mjs';
@@ -425,6 +426,11 @@ export function createDurableTurnLifecycle({
     // Counted before the first await so a recovery read in the same tick sees the live owner.
     entry.waiters += 1;
     entry.detachedRunning = false;
+    entry.submissionWaiters ||= new Map();
+    const waitGate = Promise.withResolvers();
+    if (submission?.id != null && !entry.submissionWaiters.has(submission.id)) {
+      entry.submissionWaiters.set(submission.id, waitGate.promise);
+    }
     let settled = false;
     let detachedRunning = false;
     let detachedRequestId = '';
@@ -446,6 +452,10 @@ export function createDurableTurnLifecycle({
       if (detachedRunning) monitorDetachedSubmission(entry, submission, detachedRequestId);
       throw error;
     } finally {
+      if (submission?.id != null && entry.submissionWaiters?.get(submission.id) === waitGate.promise) {
+        entry.submissionWaiters.delete(submission.id);
+      }
+      waitGate.resolve();
       entry.waiters -= 1;
       // Exclude entry.running here because followDurable assigns entry.running to wait().finally(...);
       // keep busy if the official submission is still running in the background after observer failure.
@@ -487,16 +497,25 @@ export function createDurableTurnLifecycle({
         : null;
       const allInitialSlots = [...(initialLive.tools || []), ...(initialLive.nestedTools || [])];
       const startedTools = new Set(
-        allInitialSlots.filter((slot) => slot.status === 'running' || slot.status === 'done').map((slot) => slot.callId),
+        allInitialSlots
+          .filter((slot) => slot.status === 'running' || slot.status === 'sleeping' || slot.status === 'done')
+          .map((slot) => slot.callId),
       );
       const endedTools = new Set(
         allInitialSlots.filter((slot) => slot.status === 'done').map((slot) => slot.callId),
       );
       const startedSlotMeta = new Map(
         allInitialSlots
-          .filter((slot) => slot.status === 'running' || slot.status === 'done')
+          .filter((slot) => slot.status === 'running' || slot.status === 'sleeping' || slot.status === 'done')
           .map((slot) => [slot.callId, { name: slot.name, parentCallId: slot.parentCallId }]),
       );
+      const parkedTools = new Map();
+      for (const slot of allInitialSlots) {
+        if (slot.status === 'sleeping') {
+          const meta = extractParkedToolMeta(slot);
+          if (meta) parkedTools.set(slot.callId, JSON.stringify(meta));
+        }
+      }
       for (const item of initialEntries) {
         for (const msg of item.model || []) {
           if (msg?.role === 'toolResult' && msg.toolCallId) {
@@ -640,12 +659,28 @@ export function createDurableTurnLifecycle({
           liveMessage = null;
         }
 
-        for (const slot of [...(live.tools || []), ...(live.nestedTools || [])]) {
-          if ((slot.status === 'running' || slot.status === 'done') && !startedTools.has(slot.callId)) {
+        const allCurrentSlots = [...(live.tools || []), ...(live.nestedTools || [])];
+        const currentSleepingCallIds = new Set();
+        for (const slot of allCurrentSlots) {
+          if ((slot.status === 'running' || slot.status === 'sleeping' || slot.status === 'done') && !startedTools.has(slot.callId)) {
             startedTools.add(slot.callId);
             startedSlotMeta.set(slot.callId, { name: slot.name, parentCallId: slot.parentCallId });
             events.push({ type: 'tool_execution_start', toolCallId: slot.callId, toolName: slot.name, args: slot.arguments || {} });
           }
+          if (slot.status === 'sleeping') {
+            currentSleepingCallIds.add(slot.callId);
+            const meta = extractParkedToolMeta(slot);
+            if (meta) {
+              const serialized = JSON.stringify(meta);
+              if (parkedTools.get(slot.callId) !== serialized) {
+                parkedTools.set(slot.callId, serialized);
+                events.push({ type: 'tool_parked', ...meta });
+              }
+            }
+          }
+        }
+        for (const callId of [...parkedTools.keys()]) {
+          if (!currentSleepingCallIds.has(callId)) parkedTools.delete(callId);
         }
         for (const slot of [...(live.nestedTools || []), ...(live.tools || [])]) {
           if (slot.details !== undefined) {

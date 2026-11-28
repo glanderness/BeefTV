@@ -451,7 +451,8 @@ test('official close interrupts live work without committing a false skill failu
     const record=await fixture.store.wait(restored,recovered);
     assert.equal(record.error,null);
     assert.equal(record.toolCalls.filter(tool=>tool.tool==='plan.update'&&!tool.isError).length,1,'completed tool must not be duplicated');
-    assert.equal(fixture.payloads.length,1,'only explicit recovery may dispatch the interrupted request');
+    assert.equal(fixture.payloads.length,2,'explicit recovery dispatches the interrupted request and preserves durable continuation for the unfinished doing step');
+    assert.match(userText(fixture.payloads[1]),/计划还没做完/,'persisted TurnContinuationDoc continues the unfinished doing step after restart');
   }finally{release?.();await fixture?.close();fs.rmSync(directory,{recursive:true,force:true});}
 });
 
