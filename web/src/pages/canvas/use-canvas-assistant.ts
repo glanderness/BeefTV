@@ -492,6 +492,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         plan: end.plan ?? null,
                         error: end.error ? agentAssistantFailureText(end.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
                         errorReason: end.errorReason,
+                        rawStopReason: end.rawStopReason,
                         cancelled: Boolean(end.cancelled),
                         supplements: end.supplements || run.supplements.filter(item => item.status === "accepted").map(item => item.text),
                         attachments: end.attachments || attachments,

@@ -14,7 +14,11 @@ import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, l
 import { missingSkillResources, restoredSkillMessage } from './active-skills.mjs';
 import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, publicPlan, renderPlanSection } from './plan.mjs';
 import { withCurrentStudio } from './studio-digest.mjs';
-import { normalizeModelTransportError } from './model-transport-error.mjs';
+import {
+  createPartialOutputRetryGuard,
+  normalizeModelTransportError,
+  recordModelResponseDiagnostics,
+} from './model-transport-error.mjs';
 
 const CTX = BACKGROUND_CONTEXT;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
@@ -220,6 +224,7 @@ export async function installDurableExtensions({
   getModels,
   extensions,
   codemodeSandbox = null,
+  dispatchDiagnostics = null,
 }) {
   const { readSkillContext, resolveActiveSkills, prepareSkillContext } = skillController;
   const skillHashPattern = /^[a-f0-9]{64}$/;
@@ -497,7 +502,13 @@ export async function installDurableExtensions({
         return adapted === payload ? undefined : { payload: adapted };
       },
       afterResponse: async (message, ...rest) => {
-        normalizeModelTransportError(message, ...rest);
+        if (message?.stopReason === 'error' && entry.budget?.failure?.reason) {
+          // Budget refusal thrown inside fetch can be wrapped by SDKs as a retryable "Connection error."
+          // Surface the terminal machine code so Pi Durable never wastes retries after budget exhaustion.
+          message.errorMessage = entry.budget.failure.reason;
+        }
+        const normalized = normalizeModelTransportError(message, ...rest);
+        recordModelResponseDiagnostics(dispatchDiagnostics, entry, message, normalized);
         // 本次响应是否带提方案调用：同批的 plan_update 也要请求结束本轮，否则官方 Durable 因为
         // 「不是所有调用都请求结束」而多发一轮只为总结的请求。写进 Durable 文档而不是内存，
         // 重启后从工具阶段接着跑时（不会再触发本钩子）仍然生效；每次响应都会重新写。
@@ -506,6 +517,9 @@ export async function installDurableExtensions({
         if (((await state(entry))?.roundProposes === true) !== proposes) await update(entry, (doc) => { doc.roundProposes = proposes; });
       },
       beforeRequest: async (request, _runtime, context) => {
+        if (entry.budget?.failure?.reason || (entry.budget?.maxRequests > 0 && entry.budget.requests >= entry.budget.maxRequests)) {
+          return;
+        }
         for (;;) {
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
           if (entry.generation.pendingInput?.state === 'pending') await entry.generation.pendingInput.promise;
@@ -602,7 +616,8 @@ export async function installDurableExtensions({
           return;
         }
       },
-      onYield: async () => {
+      onYield: async (message) => {
+        if (message?.stopReason === 'length') return;
         if (entry.generation.aborted || entry.generation.pendingInput?.state === 'pending' || entry.generation.pendingInputError) return;
         if (entry.turn.proposals?.length || (entry.turn.scriptProposals || []).some((item) => item?.status === 'pending')) return;
         const doc = await state(entry);
@@ -744,6 +759,8 @@ export async function installDurableExtensions({
       await persistEffects(entry).catch(() => {});
     });
   }
+
+  models = createPartialOutputRetryGuard({ entry, models, ctx: CTX });
 
   return { tools: [...selectedHostTools, ...builtinExtensionTools, ...entry.pluginTools], models };
 }

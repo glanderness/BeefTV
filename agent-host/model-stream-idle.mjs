@@ -36,6 +36,7 @@ function meaningful(protocol, data) {
     if (!choice || typeof choice !== 'object') return false;
     const delta = choice.delta || {};
     return !!choice.finish_reason || text(delta.content) || text(delta.reasoning_content) || text(delta.reasoning) || text(delta.reasoning_text) ||
+      (Array.isArray(delta.reasoning_details) && delta.reasoning_details.length > 0) ||
       (Array.isArray(delta.tool_calls) ? delta.tool_calls : []).some(tool => tool && (text(tool.id) || text(tool.function?.name) || text(tool.function?.arguments)));
   });
   if (protocol === 'responses') {

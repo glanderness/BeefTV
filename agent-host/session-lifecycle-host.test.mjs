@@ -521,11 +521,28 @@ test('真实宿主：冷启动首个历史响应恢复已提交文字，不等�
   } finally { releaseReply(); }
 }, 35000);
 
-test('真实宿主：上游失败直接结束且不自动重发，保留失败历史', async () => {
+test('真实宿主：瞬态 503 自动有限重试并脱敏恢复，不可重试失败直接结束且不泄露上游细节', async () => {
   await withHost(async ({ api, getModelCalls }) => {
     const canvasId = 'retry-canvas';
     const created = await api('/sessions', { canvasId });
     const chat = api('/chat', { canvasId, message: 'Retry once.', turnId: 'retryturn1', revisionBefore: 1, sessionId: created.payload.sessionId });
+    const result = await chat;
+    const lines = result.text.trim().split('\n').map((line) => JSON.parse(line));
+    const retryEvents = lines.filter((line) => line.type === 'lifecycle' && line.phase.startsWith('retry'));
+    expect(retryEvents.some((line) => line.phase === 'retry')).toBe(true);
+    expect(lines.find((line) => line.type === 'turn_end')).toMatchObject({ reply: 'ok', error: null, errorReason: null, cancelled: false });
+    expect(result.text).not.toContain(UPSTREAM_SECRET);
+    expect(getModelCalls()).toBe(2);
+    const after = await api(`/history?canvasId=${canvasId}`);
+    expect(after.payload.active).toBeNull();
+    expect(after.payload.turns[0]).toMatchObject({ reply: 'ok', error: null, errorReason: null, cancelled: false });
+    expect(after.text).not.toContain(UPSTREAM_SECRET);
+  }, {}, { canvasId: 'retry-canvas', slowFirstModel: false, retryFirstModel: true });
+
+  await withHost(async ({ api, getModelCalls }) => {
+    const canvasId = 'nonretry-canvas';
+    const created = await api('/sessions', { canvasId });
+    const chat = api('/chat', { canvasId, message: 'Non-retryable failure.', turnId: 'nonretryturn1', revisionBefore: 1, sessionId: created.payload.sessionId });
     const result = await chat;
     const lines = result.text.trim().split('\n').map((line) => JSON.parse(line));
     expect(lines.filter((line) => line.type === 'lifecycle' && line.phase.startsWith('retry'))).toEqual([]);
@@ -538,7 +555,7 @@ test('真实宿主：上游失败直接结束且不自动重发，保留失败�
     expect(after.payload.turns[0]).toMatchObject({ reply: '',
       error: '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。', errorReason: 'model_error', cancelled: false });
     expect(after.text).not.toContain(UPSTREAM_SECRET);
-  }, {}, { canvasId: 'retry-canvas', slowFirstModel: false, retryFirstModel: true });
+  }, {}, { canvasId: 'nonretry-canvas', slowFirstModel: false, failFirstModel: true });
 }, 35000);
 
 test('真实宿主：准备阶段（官方提交前）停止的请求不调用模型、不写画布，历史记为已停下；之后的新请求照常执行', async () => {

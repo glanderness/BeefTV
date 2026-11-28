@@ -51,8 +51,8 @@ func TestDurableActualHostRestartsAgainstRealGoTurnAndUndo(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	// 中断前落地的两个节点保留，中断后不重发请求，所以没有连线。
-	if len(doc.Nodes) != 3 || len(doc.Connections) != 0 {
+	// 首字节前崩溃自动恢复继续连线，已落地节点不重复创建。
+	if len(doc.Nodes) != 3 || len(doc.Connections) != 2 {
 		t.Fatalf("duplicate/missing effects: %s", raw)
 	}
 	if _, err := env.service.AssistantTurns().Undo(owner.ID, env.canvasID, turnID); err != nil {

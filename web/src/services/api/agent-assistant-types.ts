@@ -324,6 +324,7 @@ export type AgentTurnEnd = {
     plan?: AssistantPlan | null;
     error: string | null;
     errorReason?: string | null;
+    rawStopReason?: string | null;
     cancelled: boolean;
     supplements?: string[];
     attachments?: AssistantAttachment[];
@@ -351,6 +352,7 @@ export type AssistantTurn = {
     plan?: AssistantPlan | null;
     error: string | null;
     errorReason?: string | null;
+    rawStopReason?: string | null;
     cancelled: boolean;
     supplements?: string[];
     attachments?: AssistantAttachment[];
@@ -475,6 +477,24 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
             return "当前配置的总调用预算已用完，请检查助手运行配置。已落地的改动会保留。";
         case "request_budget_storage_unavailable":
             return "预算记录无法读取或保存，已停止继续调用。请检查磁盘空间和数据目录权限；仍失败时，请从有效备份恢复预算记录后重启助手。";
+        case "partial_output_stream_interrupted":
+            return "模型输出中途中断，已保留已生成内容，可点击继续处理。";
+        case "model_output_truncated":
+            return "回复达到长度上限被截断，已保留现有内容，可点击继续处理。";
+        case "model_content_filtered":
+            return "上游模型触发了安全审核拦截，请调整措辞后重试。";
+        case "stream_ended_without_finish_reason":
+            return "模型回复中途异常结束，未返回完成标记。已完成的改动会保留，可点击继续处理。";
+        case "upstream_eof_before_first_byte":
+            return "模型服务连接在返回首字节前中断。已完成的改动会保留，可点击继续处理。";
+        case "stream_idle_timeout":
+            return "模型输出长时间无响应，连接已超时中断。已完成的改动会保留，可点击继续处理。";
+        case "provider_rate_limited":
+            return "模型服务当前请求较多（触发限流），请稍后点击继续处理。";
+        case "provider_unavailable":
+            return "模型服务暂时繁忙或不可用，已完成的改动会保留，请稍后点击继续处理。";
+        case "provider_quota_exhausted":
+            return "模型服务额度或余额不足，请检查账户余额后再试。";
         case "model_network_error":
             return "无法连接模型服务。若开启了系统代理，可在「通用设置 → 网络代理」切为不使用代理后重试；已完成的改动会保留。";
         case "model_error":

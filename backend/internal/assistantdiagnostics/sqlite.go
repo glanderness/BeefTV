@@ -53,14 +53,19 @@ func readSession(file string, session ownedSession, from, to time.Time, out *dia
 		return errors.New("runtime_schema_unsupported")
 	}
 	reasonCodes := diagnostics.AssistantFailureReasonCodes()
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(reasonCodes)), ",")
-	args := make([]any, 0, len(reasonCodes)+2)
+	reasonPlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(reasonCodes)), ",")
+	rawStopInputs := diagnostics.AllowedRawStopReasonInputs()
+	rawStopPlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(rawStopInputs)), ",")
+	args := make([]any, 0, len(reasonCodes)+len(rawStopInputs)+2)
 	for _, code := range reasonCodes {
 		args = append(args, code)
 	}
+	for _, stopCode := range rawStopInputs {
+		args = append(args, stopCode)
+	}
 	args = append(args, from.UnixMilli(), to.UnixMilli())
-	// Compare exact known codes inside SQLite. Raw errorMessage/content values
-	// never cross the query boundary, even when they contain private text.
+	// Compare exact known codes inside SQLite. Raw errorMessage/content/rawStopReason
+	// values never cross the query boundary, even when they contain private text.
 	rows, err := db.QueryContext(ctx, `SELECT e.id, m.key,
  COALESCE(json_extract(m.value,'$.role'),''), COALESCE(json_extract(m.value,'$.timestamp'),0),
  COALESCE(json_extract(m.value,'$.model'),''), COALESCE(json_extract(m.value,'$.stopReason'),''),
@@ -68,7 +73,9 @@ func readSession(file string, session ownedSession, from, to time.Time, out *dia
  COALESCE(json_extract(m.value,'$.toolCallId'),''), COALESCE(json_extract(m.value,'$.isError'),0),
  CASE WHEN (json_extract(m.value,'$.stopReason') = 'error' OR
  (json_extract(m.value,'$.role') = 'toolResult' AND json_extract(m.value,'$.isError') = 1))
- AND json_extract(m.value,'$.errorMessage') IN (`+placeholders+`) THEN json_extract(m.value,'$.errorMessage') ELSE '' END
+ AND json_extract(m.value,'$.errorMessage') IN (`+reasonPlaceholders+`) THEN json_extract(m.value,'$.errorMessage') ELSE '' END,
+ CASE WHEN json_extract(m.value,'$.role') = 'assistant'
+ AND json_extract(m.value,'$.rawStopReason') IN (`+rawStopPlaceholders+`) THEN json_extract(m.value,'$.rawStopReason') ELSE '' END
  FROM entries e, json_each(e.record,'$.model') m
  WHERE json_extract(m.value,'$.role') IN ('assistant','toolResult')
  AND json_extract(m.value,'$.timestamp') BETWEEN ? AND ?
@@ -78,13 +85,19 @@ func readSession(file string, session ownedSession, from, to time.Time, out *dia
 	}
 	for rows.Next() {
 		var id, index, stamp, duration int64
-		var role, model, stop, tool, toolID, failureReason string
+		var role, model, stop, tool, toolID, failureReason, rawStopReason string
 		var isError bool
-		if rows.Scan(&id, &index, &role, &stamp, &model, &stop, &duration, &tool, &toolID, &isError, &failureReason) != nil {
+		if rows.Scan(&id, &index, &role, &stamp, &model, &stop, &duration, &tool, &toolID, &isError, &failureReason, &rawStopReason) != nil {
 			rows.Close()
 			return errors.New("runtime_metadata_invalid")
 		}
-		record := diagnostics.AssistantRuntimeEvidence{ID: fmt.Sprintf("durable:%s:entry:%d:%d", strings.TrimPrefix(session.sessionID, "durable:"), id, index), SessionID: session.sessionID, CanvasID: session.canvasID, Kind: "model_call", Name: "model.response", Status: stop, Reason: "turn_link_not_recorded", FailureReason: failureReason, Model: model, Timestamp: time.UnixMilli(stamp).UTC(), DurationMs: duration}
+		record := diagnostics.AssistantRuntimeEvidence{
+			ID: fmt.Sprintf("durable:%s:entry:%d:%d", strings.TrimPrefix(session.sessionID, "durable:"), id, index),
+			SessionID: session.sessionID, CanvasID: session.canvasID, Kind: "model_call", Name: "model.response",
+			Status: stop, Reason: "turn_link_not_recorded", FailureReason: failureReason,
+			RawStopReason: diagnostics.SanitizeRawStopReason(rawStopReason),
+			Model: model, Timestamp: time.UnixMilli(stamp).UTC(), DurationMs: duration,
+		}
 		if role == "toolResult" {
 			record.Kind = "tool"
 			record.Name = tool

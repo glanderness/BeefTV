@@ -42,6 +42,7 @@ export function createDurableSessionRepository({
   codemodeSandbox = null,
   settings,
   telemetry = undefined,
+  dispatchDiagnostics = null,
   thinkingLevel,
   isDurableSessionId,
   fail,
@@ -51,6 +52,18 @@ export function createDurableSessionRepository({
   const currentPath = (canvasId) => path.join(directory(canvasId), 'current.json');
   const borrowed = new Map();
   let openCount = 0;
+  // Single-layer bounded transient retry:
+  // - Keep Layer 1 stream.maxRetries=0 (pi-ai provider-retry retries all 429s blindly without inspecting quota/billing).
+  // - Enable Layer 2 Durable retry (isRetryableAssistantError excludes quota/billing, while Path A + Path B guards
+  //   prevent double-billing after any partial output or crash-restart convertPartial).
+  const defaultHarnessSettings = () => ({
+    stream: { timeoutMs: 180000, maxRetries: 0, cacheRetention: resolveHostCacheRetention() },
+    retry: { enabled: true, maxRetries: 2, baseDelayMs: 1500, maxAgentDelayMs: 15000 },
+    afterFailedRun: 'continue',
+    toolExecution: 'parallel',
+    steeringMode: 'all',
+    ...settings,
+  });
 
   function publish(entry) {
     const temporary = `${currentPath(entry.canvasId)}.${crypto.randomUUID()}.tmp`;
@@ -147,6 +160,7 @@ export function createDurableSessionRepository({
       getModels,
       extensions,
       codemodeSandbox,
+      dispatchDiagnostics,
     });
     openCount += 1;
     try {
@@ -155,17 +169,7 @@ export function createDurableSessionRepository({
         registry,
         readOnly,
         ...(telemetry ? { telemetry } : {}),
-        // Do not repeat a failed model request: the upstream may already have billed it.
-        // pi 1.5 counts a request cut off by a host restart as a failed attempt too, so that
-        // turn ends interrupted instead of resending; landed changes stay.
-        settings: {
-          stream: { timeoutMs: 180000, maxRetries: 0, cacheRetention: resolveHostCacheRetention() },
-          retry: { maxRetries: 0 },
-          afterFailedRun: 'continue',
-          toolExecution: 'parallel',
-          steeringMode: 'all',
-          ...settings,
-        },
+        settings: defaultHarnessSettings(),
       }, CTX);
     } catch (error) {
       if (isCorruptSessionArtifactError(error)) {
@@ -558,6 +562,7 @@ export function createDurableSessionRepository({
           getModels,
           extensions,
           codemodeSandbox,
+          dispatchDiagnostics,
         });
         openCount += 1;
         dstEntry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${newUuid}.sqlite`)), {
@@ -565,14 +570,7 @@ export function createDurableSessionRepository({
           registry,
           readOnly: false,
           ...(telemetry ? { telemetry } : {}),
-          settings: {
-            stream: { timeoutMs: 180000, maxRetries: 0, cacheRetention: resolveHostCacheRetention() },
-            retry: { maxRetries: 0 },
-            afterFailedRun: 'continue',
-            toolExecution: 'parallel',
-            steeringMode: 'all',
-            ...settings,
-          },
+          settings: defaultHarnessSettings(),
         }, CTX);
         const parentConv = await dstEntry.harness.conversation(srcConvId, CTX);
         if (!parentConv) throw fail('corrupt_session_manifest');

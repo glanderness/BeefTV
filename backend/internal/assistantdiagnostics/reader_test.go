@@ -262,12 +262,95 @@ func TestDurableSchemaVersion2AndModelOutcomeLedgerAreReadCleanly(t *testing.T) 
 }
 
 func TestAllowedOutcomeReasonsLoadedFromEmbeddedFixture(t *testing.T) {
-	if len(allowedOutcomeReasons) < 10 {
+	if len(allowedOutcomeReasons) < 20 {
 		t.Fatalf("expected embedded outcome reasons, got %d", len(allowedOutcomeReasons))
 	}
-	for _, required := range []string{"http_200", "http_429", "http_502", "stream_idle_timeout", "network_eof", "network_error", "aborted", "model_error"} {
+	for _, required := range []string{
+		"http_200", "http_429", "http_502", "stream_idle_timeout", "network_eof", "network_error", "aborted", "model_error",
+		"partial_output_stream_interrupted", "stream_ended_without_finish_reason", "model_content_filtered",
+		"model_output_truncated", "upstream_eof_before_first_byte", "provider_rate_limited", "provider_unavailable", "provider_quota_exhausted", "model_network_error",
+	} {
 		if !allowedOutcomeReasons[required] {
 			t.Errorf("embedded allowedOutcomeReasons missing %q", required)
 		}
+	}
+}
+
+func TestSqliteProjectsSanitizedRawStopReasonAndExpandedFailureCodes(t *testing.T) {
+	dir, turn, stamp := fixture(t)
+	hash := sha256.Sum256([]byte(turn.CanvasID))
+	file := filepath.Join(dir, "sessions", hex.EncodeToString(hash[:])[:24], "durable", strings.TrimPrefix(turn.SessionID, "durable:")+".sqlite")
+	db, err := sql.Open("sqlite3", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := []any{
+		map[string]any{"role": "assistant", "timestamp": stamp.UnixMilli(), "model": "m1", "stopReason": "error", "rawStopReason": "content_filter", "errorMessage": "model_content_filtered", "content": "PRIVATE_CF"},
+		map[string]any{"role": "assistant", "timestamp": stamp.UnixMilli(), "model": "m1", "stopReason": "length", "rawStopReason": "max_tokens", "content": "PRIVATE_LEN"},
+		map[string]any{"role": "assistant", "timestamp": stamp.UnixMilli(), "model": "m1", "stopReason": "error", "rawStopReason": "aborted", "errorMessage": "partial_output_stream_interrupted", "content": "PRIVATE_PARTIAL"},
+		map[string]any{"role": "assistant", "timestamp": stamp.UnixMilli(), "model": "m1", "stopReason": "error", "rawStopReason": "SAFETY", "errorMessage": "stream_ended_without_finish_reason", "content": "PRIVATE_SAFETY"},
+		map[string]any{"role": "assistant", "timestamp": stamp.UnixMilli(), "model": "m1", "stopReason": "error", "rawStopReason": "PRIVATE_RAW_STOP_LEAK", "errorMessage": "upstream_eof_before_first_byte", "content": "PRIVATE_EOF"},
+		map[string]any{"role": "assistant", "timestamp": stamp.UnixMilli(), "model": "m1", "stopReason": "error", "rawStopReason": "error", "errorMessage": "provider_quota_exhausted", "content": "PRIVATE_QUOTA"},
+	}
+	entry, err := json.Marshal(map[string]any{"model": rows})
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO entries VALUES(2,2,?)", string(entry)); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	outcomeRows := []map[string]any{
+		{"id": "out-cf", "at": stamp.Format(time.RFC3339Nano), "turnId": turn.ID, "canvasId": turn.CanvasID, "sessionId": turn.SessionID, "model": "m1", "status": "error", "reason": "model_content_filtered", "rawStopReason": "content_filter", "durationMs": 40},
+		{"id": "out-bad-stop", "at": stamp.Format(time.RFC3339Nano), "turnId": turn.ID, "canvasId": turn.CanvasID, "sessionId": turn.SessionID, "model": "m1", "status": "error", "reason": "partial_output_stream_interrupted", "rawStopReason": "PRIVATE_LEDGER_STOP", "durationMs": 50},
+	}
+	var ledgerBody []byte
+	for _, row := range outcomeRows {
+		b, _ := json.Marshal(row)
+		ledgerBody = append(append(ledgerBody, b...), '\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agent-requests.jsonl"), ledgerBody, 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := New(dir).DiagnosticAssistantEvidence("owner-1", stamp.Add(-time.Hour), stamp.Add(time.Hour), []diagnostics.AssistantTurnEvidence{turn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]diagnostics.AssistantRuntimeEvidence{}
+	for _, rec := range result.Records {
+		byID[rec.ID] = rec
+	}
+	prefix := "durable:" + strings.TrimPrefix(turn.SessionID, "durable:") + ":entry:2:"
+	if got := byID[prefix+"0"]; got.FailureReason != "model_content_filtered" || got.RawStopReason != "content_filter" {
+		t.Fatalf("content_filter projection mismatch: %+v", got)
+	}
+	if got := byID[prefix+"1"]; got.Status != "length" || got.RawStopReason != "length" {
+		t.Fatalf("max_tokens -> length projection mismatch: %+v", got)
+	}
+	if got := byID[prefix+"2"]; got.FailureReason != "partial_output_stream_interrupted" || got.RawStopReason != "aborted" {
+		t.Fatalf("partial_output_stream_interrupted projection mismatch: %+v", got)
+	}
+	if got := byID[prefix+"3"]; got.FailureReason != "stream_ended_without_finish_reason" || got.RawStopReason != "content_filter" {
+		t.Fatalf("SAFETY -> content_filter projection mismatch: %+v", got)
+	}
+	if got := byID[prefix+"4"]; got.FailureReason != "upstream_eof_before_first_byte" || got.RawStopReason != "" {
+		t.Fatalf("private rawStopReason was not blocked at SQLite boundary: %+v", got)
+	}
+	if got := byID[prefix+"5"]; got.FailureReason != "provider_quota_exhausted" || got.RawStopReason != "error" {
+		t.Fatalf("provider_quota_exhausted projection mismatch: %+v", got)
+	}
+	if got := byID["outcome:out-cf"]; got.Reason != "model_content_filtered" || got.RawStopReason != "content_filter" {
+		t.Fatalf("ledger outcome rawStopReason mismatch: %+v", got)
+	}
+	if got := byID["outcome:out-bad-stop"]; got.Reason != "partial_output_stream_interrupted" || got.RawStopReason != "" {
+		t.Fatalf("ledger private rawStopReason leaked: %+v", got)
+	}
+	encoded, _ := json.Marshal(result)
+	if strings.Contains(string(encoded), "PRIVATE_") {
+		t.Fatalf("private text leaked into diagnostic evidence: %s", encoded)
 	}
 }
