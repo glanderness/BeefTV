@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/editing"
 	"infinite-canvas/backend/internal/mediatools"
+	"infinite-canvas/backend/internal/timelinesources"
 )
 
 // MediaSourceOpener is optional: domain implementations must open only owned,
@@ -194,28 +194,7 @@ func resolveMediaResource(ctx *Context, args mediaArgs) (string, error) {
 }
 
 func collectMediaResourceIDs(value any, ids map[string]bool) {
-	switch v := value.(type) {
-	case map[string]any:
-		for key, item := range v {
-			if key == "resourceId" {
-				if id, ok := item.(string); ok && strings.TrimSpace(id) != "" {
-					ids[id] = true
-				}
-			}
-			if key == "storageKey" || key == "content" {
-				if value, ok := item.(string); ok {
-					if id := assets.ResourceID(value); id != "" {
-						ids[id] = true
-					}
-				}
-			}
-			collectMediaResourceIDs(item, ids)
-		}
-	case []any:
-		for _, item := range v {
-			collectMediaResourceIDs(item, ids)
-		}
-	}
+	timelinesources.CollectMediaResourceIDs(value, ids)
 }
 
 // ReferencedMediaResourceIDs extracts canonical references from an already owned

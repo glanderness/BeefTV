@@ -16,9 +16,9 @@
     container-type: inline-size;
 }
 @container (max-width: 1050px) {
-    /* 窄容器保留工作流、版本记录和助手入口；Tooltip 包一层 span，
+    /* 窄容器保留时间线、工作流、版本记录和助手入口；Tooltip 包一层 span，
        所以既要匹配元素自身，也要匹配包着它的那层。 */
-    .canvas-topbar-tools-cluster > :not(:has(.canvas-topbar-version-button)):not(:has(.canvas-topbar-agent-button)):not(:has(.canvas-topbar-workflow-button)):not(.canvas-topbar-agent-button):not(.canvas-topbar-workflow-button) {
+    .canvas-topbar-tools-cluster > :not(:has(.canvas-topbar-version-button)):not(:has(.canvas-topbar-agent-button)):not(:has(.canvas-topbar-workflow-button)):not(:has(.canvas-topbar-timeline-button)):not(.canvas-topbar-agent-button):not(.canvas-topbar-workflow-button):not(.canvas-topbar-timeline-button) {
         display: none !important;
     }
 }

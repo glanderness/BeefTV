@@ -81,7 +81,14 @@ func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCrea
 	if err != nil {
 		return nil, err
 	}
-	plan, err := editing.Compile(req.Timeline, nil, req.Options)
+	if len(req.Timeline.Clips) > 0 {
+		req.Timeline.Clips = append([]editing.Clip(nil), req.Timeline.Clips...)
+	}
+	sources, err := s.resolveTimelineRenderSources(userID, &req)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := editing.Compile(req.Timeline, sources, req.Options)
 	if err != nil {
 		return nil, kernel.BadAuthRequest(err.Error())
 	}

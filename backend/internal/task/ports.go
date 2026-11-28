@@ -6,6 +6,7 @@ import (
 
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/timelinesources"
 )
 
 // Store is the durable task ledger. Callers pass user identity on every read
@@ -85,6 +86,14 @@ type Projects interface {
 // Task never imports asset/app to rebuild authorization itself.
 type OwnedMedia interface {
 	Resource(userID, id string) (*model.Resource, error)
+}
+
+// TimelineSources loads owner-scoped canvas documents, ready resources, and
+// assets so timeline render admission shares one resolver with canvas ops.
+type TimelineSources interface {
+	timelinesources.CanvasDocumentLoader
+	timelinesources.OwnedReadyResourceLookup
+	timelinesources.OwnedAssetLookup
 }
 
 // Features is the workspace capability gate used by local transcription.
@@ -193,6 +202,7 @@ type Dependencies struct {
 	Logs                   Logger
 	Activity               Activity
 	OwnedMedia             OwnedMedia
+	TimelineSources        TimelineSources
 	Features               Features
 	NewID                  func() string
 	Now                    func() time.Time

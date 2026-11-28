@@ -99,3 +99,56 @@ test("timeline media actions are required and wired back to the canvas", async (
     expect(timelineDialogCalls[0]?.onUploadLocalFiles).toBe(onUploadLocalFiles);
     expect(timelineDialogCalls[0]?.onCreateAssembledNode).toBe(onCreateAssembledNode);
 });
+
+test("empty canvas opens CanvasTimelineDialog with node=null and wires native resourceId binding", async () => {
+    const onUploadLocalFiles = async () => [];
+    const onCreateAssembledNode = async () => null;
+    const onCreateAssembledNodeFromResource = async () => null;
+    const noop = () => undefined;
+
+    const props = {
+        projectId: "canvas-empty",
+        readOnly: false,
+        theme: canvasThemes.dark,
+        config: {},
+        document: { nodes: [], connections: [], setNodes: noop },
+        dialogs: { timelineOpen: true, timelineNodeId: null, setTimelineOpen: noop, setTimelineNodeId: noop, openTextNodeEditor: noop, openDrawingNode: noop, setScriptEditorNodeId: noop, setInfoNodeId: noop, setPreviewNodeId: noop, setNodeSearchOpen: noop, setGenerationHistoryOpen: noop, setLibTVImportOpen: noop, setTapNowImportOpen: noop, setStylePickerOpen: noop, setSubtitleNodeId: noop, setCharacterReferenceNodeId: noop, setTextEditorNodeId: noop, setDrawingNodeId: noop, setDirectorNodeId: noop, setVersionCompareRootId: noop, setClearConfirmOpen: noop },
+        renderModel: { nodeById: new Map(), frameChildrenById: new Map(), versionCompareNodes: [], infoNode: null, previewNode: null, activeScriptNode: null, activeDirectorScene: null, upscaleNode: null, activeStylePresetId: undefined },
+        generation: { setTaskDetail: noop, cancelCanvasTask: noop, retrieveTaskResult: async () => undefined },
+        nodeEditor: { handleConfigNodeChange: noop },
+        mediaTools: { setPanoramaConfigNodeId: noop, setUpscaleNodeId: noop, closeFrameDialog: noop },
+        styles: { styleApplying: false, selectCanvasStyle: noop },
+        director: { saveDirectorScene: noop },
+        viewport: { x: 0, y: 0, k: 1 },
+        viewportSize: { width: 1280, height: 800 },
+        onFocusNode: noop,
+        onSearchFocusNode: noop,
+        imports: { onApplyLibTV: async () => undefined, onApplyTapNow: async () => undefined },
+        timeline: {
+            project: null,
+            onSave: noop,
+            onUpdate: noop,
+            onOpenAssetLibrary: noop,
+            onOpenProjectAssets: noop,
+            onUploadLocalFiles,
+            addNodeToTimelineRef: { current: null },
+            addMediaToTimelineRef: { current: null },
+            onCreateAssembledNode,
+            onCreateAssembledNodeFromResource,
+        },
+        directorOnboardingScope: "guest",
+        onDeleteNodes: noop,
+        onAddDirectorImage: async () => undefined,
+        onFlush: noop,
+        onClearCanvas: noop,
+        onSetPrimaryVersion: noop,
+        assets: { pickerOpen: false, multiple: true, onInsertLibrary: noop, onClosePicker: noop, projectOpen: false, onCloseProject: noop, onInsertProject: noop },
+    } as unknown as CanvasProjectEditorDialogsProps;
+
+    const stream = await renderToReadableStream(createElement(AntdApp, null, createElement(CanvasProjectEditorDialogs, props)));
+    await stream.allReady;
+    expect(timelineDialogCalls).toHaveLength(1);
+    expect(timelineDialogCalls[0]?.projectId).toBe("canvas-empty");
+    expect(timelineDialogCalls[0]?.node).toBeNull();
+    expect(timelineDialogCalls[0]?.onCreateAssembledNodeFromResource).toBe(onCreateAssembledNodeFromResource);
+});

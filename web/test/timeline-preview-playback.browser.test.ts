@@ -321,3 +321,22 @@ test("portrait output uses the real export caption PNG with one bottom line, eve
         await caption.waitFor({ state: "hidden" });
     } finally { await page.close(); }
 }, 45_000);
+
+test("boosted clip volume above 100% plays preview cleanly without error and clamps HTMLMediaElement volume", async () => {
+    const page = await open();
+    try {
+        await page.evaluate(() => {
+            (window as any).timelinePlaybackFixture.setVolume(1.5);
+            (window as any).timelinePlaybackFixture.seek(600);
+        });
+        await page.getByRole("button", { name: "Play", exact: true }).click();
+        await page.waitForFunction(() => (window as any).timelinePlaybackFixture.snapshot().playhead > 1200);
+        const state = await snapshot(page);
+        expect(state.playing).toBe(true);
+        expect(state.error).toBe("");
+        expect(await page.getByRole("alert").count()).toBe(0);
+        expect(state.audio[0].paused).toBe(false);
+        expect(state.audio[0].volume).toBeGreaterThan(0.95);
+        expect(state.audio[0].volume).toBeLessThanOrEqual(1);
+    } finally { await page.close(); }
+}, 45_000);

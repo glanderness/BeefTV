@@ -80,6 +80,7 @@ export type CanvasProjectEditorDialogsProps = {
         addNodeToTimelineRef: MutableRefObject<((node: CanvasNodeData) => void) | null>;
         addMediaToTimelineRef: MutableRefObject<((media: TimelineDirectMedia) => void) | null>;
         onCreateAssembledNode: (blob: Blob, title: string) => Promise<CanvasNodeData | null>;
+        onCreateAssembledNodeFromResource?: (input: { resourceId: string; title: string; durationMs?: number; width?: number; height?: number; size?: number; mimeType?: string }) => Promise<CanvasNodeData | null>;
     };
     directorOnboardingScope: string;
     onDeleteNodes: (nodeIds: Set<string>) => void;
@@ -203,15 +204,23 @@ export function CanvasProjectEditorDialogs({
             {subtitleNode ? <Suspense fallback={null}><CanvasSubtitleDialog node={subtitleNode} open projectId={projectId} config={config} onClose={() => dialogs.setSubtitleNodeId(null)} onSave={saveSubtitles} /></Suspense> : null}
             {subtitleEraseNode ? <Suspense fallback={null}><CanvasVideoSubtitleEraseDialog node={subtitleEraseNode} open initialEraseType={mediaTools.subtitleEraseInitialType} onClose={() => mediaTools.setSubtitleEraseNodeId(null)} onPrepareResource={mediaTools.prepareUpscaleResource} onConfirm={mediaTools.submitVideoSubtitleErase} /></Suspense> : null}
             {frameNode ? <Suspense fallback={null}><CanvasVideoFrameDialog node={frameNode} open onClose={mediaTools.closeFrameDialog} onConfirm={params => { if (frameNode) void mediaTools.extractVideoFrames(frameNode, params); }} /></Suspense> : null}
-            {timelineNode ? (
+            {dialogs.timelineOpen || timelineNode ? (
                 <Suspense fallback={null}>
                     <CanvasTimelineDialog
+                        projectId={projectId}
                         node={timelineNode}
                         open
                         nodes={nodes}
                         timeline={timeline.project}
-                        onClose={() => dialogs.setTimelineNodeId(null)}
-                        onOpenSubtitleDialog={nodeId => { dialogs.setTimelineNodeId(null); dialogs.setSubtitleNodeId(nodeId); }}
+                        onClose={() => {
+                            dialogs.setTimelineOpen?.(false);
+                            dialogs.setTimelineNodeId(null);
+                        }}
+                        onOpenSubtitleDialog={nodeId => {
+                            dialogs.setTimelineOpen?.(false);
+                            dialogs.setTimelineNodeId(null);
+                            dialogs.setSubtitleNodeId(nodeId);
+                        }}
                         onSave={timeline.onSave}
                         onSaveSubtitles={(nodeId, entries) => nodeEditor.handleConfigNodeChange(nodeId, { subtitleEntries: entries, ...(entries.length ? {} : { subtitleHighlights: [] }), subtitleUpdatedAt: new Date().toISOString() })}
                         onOpenAssetLibrary={timeline.onOpenAssetLibrary}
@@ -220,6 +229,7 @@ export function CanvasProjectEditorDialogs({
                         addNodeToTimelineRef={timeline.addNodeToTimelineRef}
                         addMediaToTimelineRef={timeline.addMediaToTimelineRef}
                         onCreateAssembledNode={timeline.onCreateAssembledNode}
+                        onCreateAssembledNodeFromResource={timeline.onCreateAssembledNodeFromResource}
                     />
                 </Suspense>
             ) : null}

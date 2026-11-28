@@ -16,7 +16,7 @@ func (s *operationSession) CreateCanvasTimelineRender(userID string, req localta
 	}
 	adapter := operationRenderDependencies{s: s, policy: policy}
 	domain := localtask.NewService(localtask.NewStore(s.repo), localtask.Dependencies{
-		Projects: adapter, Policy: adapter, Persist: adapter, Runtime: taskRuntimeAdapter{s.service}, Present: operationRenderPresenter{}, NewID: newID,
+		Projects: adapter, Policy: adapter, Persist: adapter, Runtime: taskRuntimeAdapter{s.service}, Present: operationRenderPresenter{}, TimelineSources: localtask.NewRepositoryTimelineSources(s.repo, s.canvas), NewID: newID,
 	})
 	return domain.CreateTimelineRenderTask(userID, req)
 }

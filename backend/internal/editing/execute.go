@@ -1,10 +1,14 @@
 package editing
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"infinite-canvas/backend/internal/mediatools"
 	"io"
+	"mime"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -262,12 +266,21 @@ func (t *ffmpegLogTail) FontFailure() bool {
 	return t.fontFailure
 }
 
+func (r *Renderer) openSource(ctx context.Context, sourceID string) (io.ReadCloser, string, error) {
+	if provider, ok := r.Sources.(SourceMIMEProvider); ok {
+		return provider.OpenWithMIME(ctx, sourceID)
+	}
+	reader, err := r.Sources.Open(ctx, sourceID)
+	return reader, "", err
+}
+
 func (r *Renderer) materialize(ctx context.Context, plan *Plan) (string, map[string]string, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "beeftv-render-*")
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("创建临时目录失败: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(tmpDir) }
+	sourceKinds := planSourceKinds(plan)
 	files := map[string]string{}
 	for _, sourceID := range plan.SourceIDs() {
 		if err := ctx.Err(); err != nil {
@@ -282,19 +295,33 @@ func (r *Renderer) materialize(ctx context.Context, plan *Plan) (string, map[str
 			cleanup()
 			return "", nil, nil, fmt.Errorf("无法读取时间线引用的媒体，可能已被删除")
 		}
-		reader, err := r.Sources.Open(ctx, sourceID)
+		reader, mimeType, err := r.openSource(ctx, sourceID)
 		if err != nil || reader == nil {
 			cleanup()
 			return "", nil, nil, fmt.Errorf("无法读取时间线引用的媒体，可能已被删除")
 		}
-		path := filepath.Join(tmpDir, fmt.Sprintf("src-%d.mp4", len(files)))
+		var body io.Reader = reader
+		ext := extensionForMIME(mimeType)
+		if ext == "" {
+			var headBuf [512]byte
+			n, readErr := io.ReadFull(reader, headBuf[:])
+			if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+				reader.Close()
+				cleanup()
+				return "", nil, nil, fmt.Errorf("读取时间线媒体失败: %w", readErr)
+			}
+			head := headBuf[:n]
+			ext = materializedSourceExtension(mimeType, head, sourceKinds[sourceID])
+			body = io.MultiReader(bytes.NewReader(head), reader)
+		}
+		path := filepath.Join(tmpDir, fmt.Sprintf("src-%d%s", len(files), ext))
 		file, err := os.Create(path)
 		if err != nil {
 			reader.Close()
 			cleanup()
 			return "", nil, nil, fmt.Errorf("写入临时媒体失败: %w", err)
 		}
-		if _, err := io.Copy(file, reader); err != nil {
+		if _, err := io.Copy(file, body); err != nil {
 			file.Close()
 			reader.Close()
 			cleanup()
@@ -312,4 +339,157 @@ func (r *Renderer) materialize(ctx context.Context, plan *Plan) (string, map[str
 		files[sourceID] = path
 	}
 	return tmpDir, files, cleanup, nil
+}
+
+func planSourceKinds(plan *Plan) map[string]string {
+	kinds := map[string]string{}
+	if plan == nil {
+		return kinds
+	}
+	for _, seg := range plan.Segments {
+		if seg.Kind != KindGap && seg.SourceID != "" {
+			kinds[seg.SourceID] = seg.Kind
+		}
+	}
+	for _, clip := range plan.Audio {
+		if clip.SourceID != "" && kinds[clip.SourceID] == "" {
+			kinds[clip.SourceID] = KindAudio
+		}
+	}
+	return kinds
+}
+
+func materializedSourceExtension(mimeType string, head []byte, planKind string) string {
+	if ext := extensionForMIME(mimeType); ext != "" {
+		return ext
+	}
+	if ext := sniffMediaExtension(head, planKind); ext != "" {
+		return ext
+	}
+	if len(head) > 0 {
+		if ext := extensionForMIME(http.DetectContentType(head)); ext != "" {
+			return ext
+		}
+	}
+	if planKind == KindVideo {
+		return ".mp4"
+	}
+	return ".bin"
+}
+
+func extensionForMIME(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	mediaType, _, err := mime.ParseMediaType(trimmed)
+	if err != nil {
+		mediaType = strings.ToLower(strings.TrimSpace(strings.SplitN(trimmed, ";", 2)[0]))
+	} else {
+		mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	}
+	switch mediaType {
+	case "image/png":
+		return ".png"
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	case "video/mp4":
+		return ".mp4"
+	case "video/quicktime":
+		return ".mov"
+	case "video/x-m4v", "video/m4v":
+		return ".m4v"
+	case "video/webm":
+		return ".webm"
+	case "video/x-matroska", "video/matroska":
+		return ".mkv"
+	case "video/x-msvideo", "video/avi":
+		return ".avi"
+	case "audio/mpeg", "audio/mp3":
+		return ".mp3"
+	case "audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave":
+		return ".wav"
+	case "audio/mp4", "audio/x-m4a", "audio/m4a":
+		return ".m4a"
+	case "audio/aac", "audio/x-aac":
+		return ".aac"
+	case "audio/flac", "audio/x-flac":
+		return ".flac"
+	case "audio/ogg", "application/ogg":
+		return ".ogg"
+	case "audio/opus":
+		return ".opus"
+	default:
+		return ""
+	}
+}
+
+func sniffMediaExtension(head []byte, planKind string) string {
+	if len(head) == 0 {
+		return ""
+	}
+	if len(head) >= 8 && bytes.Equal(head[:8], []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) {
+		return ".png"
+	}
+	if len(head) >= 3 && head[0] == 0xff && head[1] == 0xd8 && head[2] == 0xff {
+		return ".jpg"
+	}
+	if len(head) >= 6 && (bytes.HasPrefix(head, []byte("GIF87a")) || bytes.HasPrefix(head, []byte("GIF89a"))) {
+		return ".gif"
+	}
+	if len(head) >= 12 && bytes.Equal(head[:4], []byte("RIFF")) {
+		if bytes.Equal(head[8:12], []byte("WEBP")) {
+			return ".webp"
+		}
+		if bytes.Equal(head[8:12], []byte("WAVE")) {
+			return ".wav"
+		}
+		if bytes.Equal(head[8:12], []byte("AVI ")) {
+			return ".avi"
+		}
+	}
+	if len(head) >= 4 && bytes.Equal(head[:4], []byte("fLaC")) {
+		return ".flac"
+	}
+	if len(head) >= 4 && bytes.Equal(head[:4], []byte("OggS")) {
+		if bytes.Contains(head, []byte("OpusHead")) {
+			return ".opus"
+		}
+		return ".ogg"
+	}
+	if len(head) >= 4 && bytes.Equal(head[:4], []byte{0x1a, 0x45, 0xdf, 0xa3}) {
+		if bytes.Contains(bytes.ToLower(head), []byte("webm")) {
+			return ".webm"
+		}
+		return ".mkv"
+	}
+	if len(head) >= 12 && bytes.Equal(head[4:8], []byte("ftyp")) {
+		switch string(head[8:12]) {
+		case "M4A ", "M4B ":
+			return ".m4a"
+		case "qt  ":
+			return ".mov"
+		case "M4V ":
+			return ".m4v"
+		default:
+			if planKind == KindAudio {
+				return ".m4a"
+			}
+			return ".mp4"
+		}
+	}
+	if len(head) >= 3 && bytes.Equal(head[:3], []byte("ID3")) {
+		return ".mp3"
+	}
+	if len(head) >= 2 && head[0] == 0xff && (head[1]&0xe0) == 0xe0 {
+		if (head[1] & 0xf6) == 0xf0 {
+			return ".aac"
+		}
+		return ".mp3"
+	}
+	return ""
 }

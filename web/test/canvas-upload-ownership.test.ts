@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 
 import { createCanvasOwnerLifetime } from "@/pages/canvas/canvas-owner-epoch";
 import {
+    createCanvasVideoNodeFromResource,
+    uploadTimelineLocalMediaFiles,
+} from "@/pages/canvas/canvas-timeline-media-upload";
+import {
+    createOwnedCanvasUploadGuard,
     persistOwnedCanvasUploadNode,
     shouldSuppressOwnedCanvasCallback,
     type PersistOwnedCanvasUploadNodeDeps,
@@ -292,11 +297,158 @@ test("upload hook threads the canvas owner through persist, file, image, chapter
     const chapter = hook.slice(hook.indexOf("const handleProjectChapterInsert"), hook.indexOf("const handleUploadRequest"));
     expect(chapter).toContain("getProjectUnit(chapter.projectId, chapter.id, guard.signal)");
     expect(chapter).toContain("if (!guard.alive()) return");
+});
 
-    const timeline = hook.slice(hook.indexOf("const uploadTimelineMedia"), hook.indexOf("const createVideoNodeFromBlob"));
-    expect(timeline).toContain("uploadMediaFile(file, \"audio\")");
-    expect(timeline).toContain("persistTimelineMedia(media, guard.signal)");
-    expect(timeline).toContain("if (guard.suppress(error)) return []");
+describe("timeline local upload and native resource binding ownership", () => {
+    test("uploadTimelineLocalMediaFiles threads guard.signal across audio/image/video and drops stale canvas callbacks", async () => {
+        const restore = switchScope("owner-a");
+        const lifetime = createCanvasOwnerLifetime();
+        try {
+            let liveCanvasId = "canvas-a";
+            const persistedSignals: Array<AbortSignal | undefined> = [];
+            const messages: string[] = [];
+            const guard = createOwnedCanvasUploadGuard({
+                lifetime,
+                canvasId: "canvas-a",
+                getLiveCanvasId: () => liveCanvasId,
+            });
+            const uploaded = await uploadTimelineLocalMediaFiles({
+                files: [
+                    new File([new Uint8Array([1])], "bgm.m4a", { type: "audio/mp4" }),
+                    new File([new Uint8Array([2])], "cover.png", { type: "image/png" }),
+                    new File([new Uint8Array([3])], "shot.mp4", { type: "video/mp4" }),
+                ],
+                guard,
+                message: {
+                    warning: (text) => messages.push(`warn:${text}`),
+                    success: (text) => messages.push(`ok:${text}`),
+                    error: (text) => messages.push(`err:${text}`),
+                },
+                uploadMedia: async (_file, kind) => ({
+                    storageKey: `resource:res-${kind}`,
+                    url: `/api/resources/res-${kind}/file`,
+                    durationMs: 4000,
+                    bytes: 128,
+                    mimeType: kind === "audio" ? "audio/mp4" : "video/mp4",
+                    width: kind === "video" ? 1080 : undefined,
+                    height: kind === "video" ? 1920 : undefined,
+                }),
+                uploadImageFile: async () => ({
+                    storageKey: "resource:res-image",
+                    url: "/api/resources/res-image/file",
+                    width: 1080,
+                    height: 1920,
+                    bytes: 64,
+                    mimeType: "image/png",
+                }),
+                persistTimelineMedia: async (_media, signal) => {
+                    persistedSignals.push(signal);
+                    return "asset-persisted";
+                },
+            });
+            expect(uploaded.map((item) => item.kind)).toEqual(["audio", "image", "video"]);
+            expect(persistedSignals).toEqual([guard.signal, guard.signal, guard.signal]);
+            expect(messages).toEqual(["ok:已上传 3 个素材到时间线"]);
+
+            const failedMessages: string[] = [];
+            const staleGuard = createOwnedCanvasUploadGuard({
+                lifetime,
+                canvasId: "canvas-a",
+                getLiveCanvasId: () => liveCanvasId,
+            });
+            const abandoned = await uploadTimelineLocalMediaFiles({
+                files: [new File([new Uint8Array([1])], "voice.m4a", { type: "audio/mp4" })],
+                guard: staleGuard,
+                message: {
+                    warning: (text) => failedMessages.push(`warn:${text}`),
+                    success: (text) => failedMessages.push(`ok:${text}`),
+                    error: (text) => failedMessages.push(`err:${text}`),
+                },
+                uploadMedia: async () => {
+                    liveCanvasId = "canvas-b";
+                    throw new Error("网络断开");
+                },
+                persistTimelineMedia: async () => "should-not-run",
+            });
+            expect(abandoned).toEqual([]);
+            expect(failedMessages).toEqual([]);
+        } finally {
+            restore();
+        }
+    });
+
+    test("createCanvasVideoNodeFromResource binds resourceId directly and aborts cleanly on canvas switch", async () => {
+        const restore = switchScope("owner-a");
+        const lifetime = createCanvasOwnerLifetime();
+        try {
+            let liveCanvasId = "canvas-a";
+            let nodes: CanvasNodeData[] = [];
+            const persisted: Array<{ storageKey?: string; signal?: AbortSignal }> = [];
+            const errors: string[] = [];
+            const guard = createOwnedCanvasUploadGuard({
+                lifetime,
+                canvasId: "canvas-a",
+                getLiveCanvasId: () => liveCanvasId,
+            });
+            const created = await createCanvasVideoNodeFromResource({
+                input: { resourceId: "res-native-9x16", title: "9:16 竖屏成片", durationMs: 4200, width: 1080, height: 1920 },
+                guard,
+                domainProjectId: "project-1",
+                getCanvasCenter: () => ({ x: 400, y: 300 }),
+                setNodes: (updater) => {
+                    nodes = typeof updater === "function" ? updater(nodes) : updater;
+                },
+                selectInsertedNode: () => {},
+                persistMediaNode: async (node, signal) => {
+                    persisted.push({ storageKey: node.metadata?.storageKey, signal });
+                    return true;
+                },
+                startUploadStatus: () => ({ update: () => {}, done: () => {}, fail: () => {} }),
+                message: { warning: () => {}, success: () => {}, error: (text) => errors.push(text) },
+                fetchResource: async (id) => ({
+                    id,
+                    mimeType: "video/mp4",
+                    width: 1080,
+                    height: 1920,
+                    durationMs: 4200,
+                    size: 4096,
+                    publicUrl: `/api/resources/${id}/file`,
+                } as never),
+            });
+            expect(created?.metadata?.storageKey).toBe("resource:res-native-9x16");
+            expect(nodes).toHaveLength(1);
+            expect(persisted).toEqual([{ storageKey: "resource:res-native-9x16", signal: guard.signal }]);
+            expect(errors).toEqual([]);
+
+            let switchedNodes: CanvasNodeData[] = [];
+            const switchedGuard = createOwnedCanvasUploadGuard({
+                lifetime,
+                canvasId: "canvas-a",
+                getLiveCanvasId: () => liveCanvasId,
+            });
+            const abandoned = await createCanvasVideoNodeFromResource({
+                input: { resourceId: "res-stale", title: "已切换画布成片" },
+                guard: switchedGuard,
+                getCanvasCenter: () => ({ x: 0, y: 0 }),
+                setNodes: (updater) => {
+                    switchedNodes = typeof updater === "function" ? updater(switchedNodes) : updater;
+                },
+                selectInsertedNode: () => {},
+                persistMediaNode: async () => true,
+                startUploadStatus: () => ({ update: () => {}, done: () => {}, fail: () => {} }),
+                message: { warning: () => {}, success: () => {}, error: (text) => errors.push(text) },
+                fetchResource: async () => {
+                    liveCanvasId = "canvas-b";
+                    return null as never;
+                },
+            });
+            expect(abandoned).toBeNull();
+            expect(switchedNodes).toEqual([]);
+            expect(errors).toEqual([]);
+        } finally {
+            restore();
+        }
+    });
 });
 
 test("node editor threads the canvas owner through category change and save, and keeps confirmed=false draft copy", () => {

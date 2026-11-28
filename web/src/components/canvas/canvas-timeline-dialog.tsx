@@ -1,39 +1,44 @@
 import "./canvas-media-editors.css";
 import { App } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
-// 二期：多轨时间线编辑弹窗。
-// 数据源是项目级 TimelineProject：视频/音频节点自动入轨，字幕条目转字幕片段。
-// 交互：拖拽移动片段（吸附播放头/片段边缘）、左右边缘裁剪、删除、播放头跳转。
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from "react";
-
 import { ArrowLeft, Clapperboard } from "lucide-react";
-import { useTimelineEdgeAutoScroll } from "@/components/canvas/use-timeline-edge-auto-scroll";
-import { saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
 
-import {
-    CanvasTimelineInspector,
-    CanvasTimelineToolbar,
-    CanvasTimelineTrackArea,
-} from "./canvas-timeline-tracks";
-import { CanvasTimelinePreview } from "./canvas-timeline-preview";
+import { downloadOwnedOrBrowserMedia, saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { buildTimelineFromNodes, isNodeInTimeline, syncTimelineSubtitleClips } from "@/lib/timeline/timeline-build";
-import { canPlaceAt, clampClipDurationByNeighbors, findNearestAvailablePlacement, planClipMove, resolveLeftClampedClipMove } from "@/lib/timeline/timeline-placement";
-import { computeSnap } from "@/lib/timeline/timeline-snap";
-import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_VIDEO_TRACK_ID, normalizeTimelineProject } from "@/lib/timeline/timeline-tracks";
+import { findNearestAvailablePlacement } from "@/lib/timeline/timeline-placement";
+import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_VIDEO_TRACK_ID, getVisualTracks, normalizeTimelineProject } from "@/lib/timeline/timeline-tracks";
 import { MIN_CLIP_DURATION_MS, getFitTimelineZoom, getTimelineTrackWidth, zoomIn, zoomOut } from "@/lib/timeline/timeline-view";
-import { exportTimelineToMp4 } from "@/lib/timeline/timeline-export";
-import { getVisibleMediaClips, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
+import { getVisibleMediaClips } from "@/lib/timeline/timeline-to-ffmpeg";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { SrtEntry, TimelineClip, TimelineDirectMedia, TimelineProject } from "@/types/timeline";
 
-const SNAP_THRESHOLD_PX = 8;
+import { executeTimelineRender, type TimelineRenderOutcome } from "./canvas-timeline-export";
+import { CanvasTimelineInspector } from "./canvas-timeline-inspector";
+import { CanvasTimelinePreview } from "./canvas-timeline-preview";
+import { CanvasTimelineToolbar, CanvasTimelineTrackArea } from "./canvas-timeline-tracks";
+import { useTimelineClipDrag } from "./use-timeline-clip-drag";
+import { useTimelineDraftHistory } from "./use-timeline-draft-history";
+
 const BASE_PX_PER_SECOND = 96;
+const DEFAULT_IMAGE_CLIP_DURATION_MS = 3_000;
+
+export type AssembledResourceNodeInput = {
+    resourceId: string;
+    title: string;
+    durationMs?: number;
+    width?: number;
+    height?: number;
+    size?: number;
+    mimeType?: string;
+};
 
 type CanvasTimelineDialogProps = {
-    node: CanvasNodeData;
+    projectId?: string;
+    node?: CanvasNodeData | null;
     open: boolean;
     nodes: CanvasNodeData[];
     timeline: TimelineProject | null;
@@ -41,18 +46,13 @@ type CanvasTimelineDialogProps = {
     onOpenSubtitleDialog?: (nodeId: string) => void;
     onSave: (timeline: TimelineProject) => void | Promise<void>;
     onSaveSubtitles: (nodeId: string, entries: SrtEntry[]) => void;
-    /** 打开项目素材库选择器（由页面层接线） */
     onOpenAssetLibrary?: () => void;
-    /** 打开项目资产库选择器（由页面层接线） */
     onOpenProjectAssets?: () => void;
-    /** 上传本地音视频并返回直连媒体描述（仅时间线作用域，不创建画布节点） */
     onUploadLocalFiles: (files: File[]) => Promise<TimelineDirectMedia[]>;
-    /** 页面层持有：素材库/上传创建节点后，调用该引用把节点加入时间线草稿 */
     addNodeToTimelineRef?: MutableRefObject<((node: CanvasNodeData) => void) | null>;
-    /** 页面层持有：素材库/项目资产直连媒体（不落画布）入轨通道 */
     addMediaToTimelineRef?: MutableRefObject<((media: TimelineDirectMedia) => void) | null>;
-    /** 把合成结果保存为新视频节点放回画布（页面层接线） */
     onCreateAssembledNode: (blob: Blob, title: string) => Promise<CanvasNodeData | null>;
+    onCreateAssembledNodeFromResource?: (input: AssembledResourceNodeInput) => Promise<CanvasNodeData | null>;
 };
 
 export async function runTimelineDialogSaveAttempt(save: () => Promise<void>, close: () => void) {
@@ -65,17 +65,9 @@ export async function runTimelineDialogSaveAttempt(save: () => Promise<void>, cl
     }
 }
 
-type ClipDragMode = "move" | "trim-start" | "trim-end";
-
-type DragState =
-    // 移动基于拖动起点快照计算：同轨让位会同时改动相邻片段，用快照才能保证整次拖动结果确定、不随帧叠加漂移。
-    | { mode: "move"; pointerId: number; startScrollLeft: number; captureElement: HTMLElement | null; clipId: string; startClientX: number; originalStartMs: number; clips: TimelineClip[] }
-    | { mode: "trim-start"; pointerId: number; startScrollLeft: number; captureElement: HTMLElement | null; clipId: string; startClientX: number; originalStartMs: number; originalDurationMs: number; originalSourceStartMs: number }
-    | { mode: "trim-end"; pointerId: number; startScrollLeft: number; captureElement: HTMLElement | null; clipId: string; startClientX: number; originalStartMs: number; originalDurationMs: number }
-    | null;
-
 export function CanvasTimelineDialog({
-    node,
+    projectId,
+    node = null,
     open,
     nodes,
     timeline,
@@ -89,10 +81,22 @@ export function CanvasTimelineDialog({
     addNodeToTimelineRef,
     addMediaToTimelineRef,
     onCreateAssembledNode,
+    onCreateAssembledNodeFromResource,
 }: CanvasTimelineDialogProps) {
     const { message } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
-    const [draft, setDraft] = useState<TimelineProject>(() => buildTimelineFromNodes([]));
+    const {
+        draft,
+        canUndo,
+        canRedo,
+        resetDraft,
+        commitDraft,
+        replaceDraft,
+        recordSnapshot,
+        undo,
+        redo,
+    } = useTimelineDraftHistory(() => buildTimelineFromNodes([]), open);
+
     const [playheadMs, setPlayheadMs] = useState(0);
     const [zoomLevel, setZoomLevel] = useState(1);
     const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
@@ -106,23 +110,19 @@ export function CanvasTimelineDialog({
         if (!open) exportControllerRef.current?.abort();
         return () => exportControllerRef.current?.abort();
     }, [open]);
+
     const [saving, setSaving] = useState(false);
     const [exportPercent, setExportPercent] = useState(0);
     const [exportDetail, setExportDetail] = useState("");
-    const [clipDragging, setClipDragging] = useState(false);
-    const dragRef = useRef<DragState>(null);
+    const gestureSnapshotRef = useRef<TimelineProject | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const trackAreaRef = useRef<HTMLDivElement>(null);
-    const { updateEdgeAutoScroll, stopEdgeAutoScroll } = useTimelineEdgeAutoScroll(trackAreaRef);
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const toolbarRef = useRef<HTMLDivElement>(null);
     const addGroupProbeRef = useRef<HTMLDivElement>(null);
     const moreBtnRef = useRef<HTMLSpanElement>(null);
-
     const initializedRef = useRef(false);
 
-    // 打开弹窗：优先复用项目时间线，否则从画布节点自动构建；播放头定位到触发节点片段。
-    // 仅首次打开时构建草稿：素材上传/素材库插入会触发 nodes 变化，不能因此重建草稿丢弃编辑。
     useEffect(() => {
         if (!open) {
             initializedRef.current = false;
@@ -132,20 +132,19 @@ export function CanvasTimelineDialog({
         initializedRef.current = true;
         const base = timeline ? normalizeTimelineProject(timeline) : buildTimelineFromNodes(nodes);
         const next = timeline ? syncTimelineSubtitleClips(base, nodes) : base;
-        setDraft(next);
+        resetDraft(next);
         setPlayheadMs(0);
         setZoomLevel(1);
         setSelectedClipId(null);
         setPreviewPlaying(false);
-        const triggerClip = next.clips.find((clip) => clip.nodeId === node.id);
+        const triggerClip = node?.id ? next.clips.find((clip) => clip.nodeId === node.id) : null;
         if (triggerClip) setPlayheadMs(triggerClip.startMs);
-    }, [open, node.id, nodes, timeline]);
+    }, [open, node?.id, nodes, timeline, resetDraft]);
 
     const pxPerMs = (BASE_PX_PER_SECOND / 1_000) * zoomLevel;
     const durationMs = Math.max(1_000, draft.durationMs);
     const [viewportWidth, setViewportWidth] = useState(900);
     const trackWidth = useMemo(() => getTimelineTrackWidth(durationMs, zoomLevel, viewportWidth), [durationMs, zoomLevel, viewportWidth]);
-
     const clampPlayheadMs = useCallback((ms: number) => Math.min(durationMs, Math.max(0, Math.round(ms))), [durationMs]);
 
     useEffect(() => {
@@ -155,18 +154,13 @@ export function CanvasTimelineDialog({
 
     useEffect(() => {
         if (!open) return;
-        const measure = () => {
-            setViewportWidth(trackAreaRef.current?.clientWidth || 900);
-        };
+        const measure = () => setViewportWidth(trackAreaRef.current?.clientWidth || 900);
         measure();
         const observer = new ResizeObserver(measure);
         if (trackAreaRef.current) observer.observe(trackAreaRef.current);
         return () => observer.disconnect();
     }, [open]);
 
-    // 工具栏自适应：按钮总数过多或容器变窄时，把「添加素材/上传本地/素材库/项目资产」收进「更多」菜单，
-    // 工具栏保持单行不换行；容器变宽后自动恢复内联展示。
-    // 素材组用隐藏探针测量自然宽度，展开/收起两种形态下算出的核心区宽度一致，判定不随当前状态震荡。
     const [addGroupCollapsed, setAddGroupCollapsed] = useState(false);
     const toolbarObserverRef = useRef<ResizeObserver | null>(null);
     const measureToolbar = useCallback(() => {
@@ -188,8 +182,6 @@ export function CanvasTimelineDialog({
     }, [measureToolbar]);
     useEffect(() => {
         if (!open) return;
-        // AntD Modal 内容经门户延迟挂载，首次 effect 时 toolbarRef 可能为空；
-        // afterOpenChange 兜底确保动画结束后一定完成测量与观察。
         ensureToolbarObserved();
         return () => {
             toolbarObserverRef.current?.disconnect();
@@ -197,16 +189,9 @@ export function CanvasTimelineDialog({
         };
     }, [open, ensureToolbarObserved]);
 
-    const applyDraft = (updater: (current: TimelineProject) => TimelineProject) => {
-        setDraft((current) => {
-            const next = updater(current);
-            const endMs = next.clips.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
-            return { ...next, durationMs: Math.max(endMs, 1_000) };
-        });
-    };
-
-    const updateClip = (clipId: string, patch: Partial<TimelineClip>) => {
-        applyDraft((current) => ({
+    const updateClip = (clipId: string, patch: Partial<TimelineClip>, transient = false) => {
+        const apply = transient ? replaceDraft : commitDraft;
+        apply((current) => ({
             ...current,
             clips: current.clips.map((clip) => (clip.id === clipId ? { ...clip, ...patch } : clip)),
         }));
@@ -214,333 +199,210 @@ export function CanvasTimelineDialog({
 
     const updateSelectedMediaNumbers = (patch: Partial<TimelineClip>) => {
         if (!selectedClipId) return;
-        updateClip(selectedClipId, patch);
+        gestureSnapshotRef.current = null;
+        if (patch.durationMs === undefined && patch.startMs === undefined) {
+            updateClip(selectedClipId, patch, false);
+            return;
+        }
+        commitDraft((current) => {
+            const target = current.clips.find((clip) => clip.id === selectedClipId);
+            if (!target) return current;
+            const updatedTarget = { ...target, ...patch };
+            const sameTrackLater = current.clips
+                .filter((clip) => clip.trackId === target.trackId && clip.id !== selectedClipId && clip.startMs >= target.startMs)
+                .sort((a, b) => a.startMs - b.startMs);
+            const shiftedStarts = new Map<string, number>();
+            let cursor = updatedTarget.startMs + updatedTarget.durationMs;
+            for (const next of sameTrackLater) {
+                if (next.startMs < cursor) {
+                    shiftedStarts.set(next.id, cursor);
+                    cursor += next.durationMs;
+                } else {
+                    cursor = next.startMs + next.durationMs;
+                }
+            }
+            return {
+                ...current,
+                clips: current.clips.map((clip) => {
+                    if (clip.id === selectedClipId) return updatedTarget;
+                    const shifted = shiftedStarts.get(clip.id);
+                    return shifted !== undefined ? { ...clip, startMs: shifted } : clip;
+                }),
+            };
+        });
     };
 
-    // 拖动落位：被压到的同轨片段沿拖动方向让位。首尾紧贴时前一个片段的右侧没有任何空隙，
-    // 直接按「碰撞即拒绝」处理会让它永远拖不动（首个素材拖不动的根因），因此改为让位而不是丢弃。
-    // 快照里空间不足（向左会让某段越过 0）时仍丢弃本次位移，拖动永不产生同轨重叠。
-    const moveClip = (clipId: string, candidateStartMs: number, snapshot: TimelineClip[]) => {
-        const clip = snapshot.find((item) => item.id === clipId);
-        if (!clip) return;
-        const clampedCandidateMs = Math.max(0, candidateStartMs);
-        const snapped = snapEnabled
-            ? computeSnap({
-                  candidateMs: clampedCandidateMs,
-                  playheadMs,
-                  clips: snapshot,
-                  excludeClipId: clipId,
-                  pxPerMs,
-                  thresholdPx: SNAP_THRESHOLD_PX,
-                  enabled: true,
-              })
-            : { snappedMs: clampedCandidateMs, targets: [] };
-        const nextStartMs = Math.max(0, Math.round(snapped.snappedMs));
-        let placement = planClipMove({
-            clipId,
-            trackId: clip.trackId,
-            startMs: nextStartMs,
-            durationMs: clip.durationMs,
-            clips: snapshot,
-        });
-        if (!placement && nextStartMs < clip.startMs) {
-            placement = resolveLeftClampedClipMove({
-                clipId,
-                trackId: clip.trackId,
-                startMs: nextStartMs,
-                durationMs: clip.durationMs,
-                clips: snapshot,
-            });
+    const previewSelectedMediaNumbers = (patch: Partial<TimelineClip>) => {
+        if (!selectedClipId) return;
+        if (!gestureSnapshotRef.current) gestureSnapshotRef.current = draft;
+        updateClip(selectedClipId, patch, true);
+    };
+
+    const commitMediaNumberGesture = () => {
+        if (gestureSnapshotRef.current) {
+            recordSnapshot(gestureSnapshotRef.current);
+            gestureSnapshotRef.current = null;
         }
-        if (!placement) return;
-        // 每帧都从快照重建整条轨道：只更新本帧涉及的片段，会把上一帧推开的片段留在它当时的位置，
-        // 连续拖动（同一手势里先拖到 1s 再拖到 8s）就会让两个片段叠在一起。
-        const snapshotStarts = new Map(snapshot.map((item) => [item.id, item.startMs]));
-        applyDraft((current) => ({
+    };
+
+    const toggleTrackMute = (trackId: string) => {
+        commitDraft((current) => ({
             ...current,
-            clips: current.clips.map((item) => {
-                const baselineStartMs = snapshotStarts.get(item.id);
-                if (baselineStartMs === undefined) return item;
-                return { ...item, startMs: placement.get(item.id) ?? baselineStartMs };
-            }),
+            tracks: current.tracks.map((track) => (track.id === trackId ? { ...track, muted: !track.muted } : track)),
         }));
     };
 
-    // 裁剪统一基于拖动起点快照计算，避免“当前值 + 累计 delta”造成的漂移与越界。
-    const trimClipStart = (clipId: string, deltaMs: number, original: { startMs: number; durationMs: number; sourceStartMs: number }) => {
-        const clip = draft.clips.find((item) => item.id === clipId);
-        if (!clip) return;
-        const rightEdgeMs = original.startMs + original.durationMs;
-        // 向左延长最多到源文件起点：时间轴起点不能早于 original.start - sourceStart。
-        const minStartMs = clip.sourceStartMs === undefined ? 0 : Math.max(0, original.startMs - original.sourceStartMs);
-        const newStartMs = Math.max(minStartMs, Math.min(rightEdgeMs - MIN_CLIP_DURATION_MS, original.startMs + deltaMs));
-        const newDurationMs = rightEdgeMs - newStartMs;
-        // 源内裁剪：sourceStart 必须落在 [0, sourceDuration - newDuration]，右缘不越源。
-        const sourceDurationMs = clip.sourceDurationMs;
-        let sourceStartMs = original.sourceStartMs + (newStartMs - original.startMs);
-        if (sourceDurationMs !== undefined) {
-            sourceStartMs = Math.max(0, Math.min(Math.max(0, sourceDurationMs - newDurationMs), sourceStartMs));
-        }
-        const collision = canPlaceAt({
-            trackId: clip.trackId,
-            startMs: newStartMs,
-            durationMs: newDurationMs,
-            excludeClipId: clipId,
-            clips: draft.clips,
-        });
-        if (!collision.ok) return;
-        updateClip(clipId, {
-            startMs: Math.round(newStartMs),
-            durationMs: Math.round(newDurationMs),
-            ...(clip.sourceStartMs !== undefined ? { sourceStartMs: Math.round(sourceStartMs) } : {}),
-        });
+    const toggleTrackVisibility = (trackId: string) => {
+        commitDraft((current) => ({
+            ...current,
+            tracks: current.tracks.map((track) => (track.id === trackId ? { ...track, visible: track.visible === false ? true : false } : track)),
+        }));
     };
 
-    const trimClipEnd = (clipId: string, deltaMs: number, original: { startMs: number; durationMs: number }) => {
-        const clip = draft.clips.find((item) => item.id === clipId);
-        if (!clip) return;
-        const maxDurationMs = clip.sourceDurationMs !== undefined && clip.sourceStartMs !== undefined ? Math.max(0, clip.sourceDurationMs - clip.sourceStartMs) : undefined;
-        const maxDuration = clampClipDurationByNeighbors({
-            clipId,
-            startMs: original.startMs,
-            requestedDurationMs: original.durationMs + deltaMs,
-            trackId: clip.trackId,
-            clips: draft.clips,
-            maxDurationMs,
-        });
-        const newDurationMs = Math.max(MIN_CLIP_DURATION_MS, maxDuration);
-        updateClip(clipId, { durationMs: Math.round(newDurationMs) });
+    const updateOutputOptions = (nextOutput: TimelineProject["output"]) => {
+        commitDraft((current) => ({
+            ...current,
+            output: nextOutput,
+        }));
     };
 
-    const applyClipPointerMoveRef = useRef<(pointerId: number, clientX: number) => void>(() => undefined);
-
-    const finishClipDrag = useCallback((pointerId?: number) => {
-        const drag = dragRef.current;
-        if (!drag) return;
-        if (pointerId !== undefined && drag.pointerId !== pointerId) return;
-        dragRef.current = null;
-        stopEdgeAutoScroll();
-        setClipDragging(false);
-        const captureEl = drag.captureElement;
-        if (captureEl?.hasPointerCapture?.(drag.pointerId)) {
-            try {
-                captureEl.releasePointerCapture(drag.pointerId);
-            } catch {
-                // 指针已释放或未捕获时忽略
-            }
-        }
-    }, [stopEdgeAutoScroll]);
-
-    useEffect(() => {
-        if (!clipDragging) return;
-        const onWindowPointerMove = (event: PointerEvent) => applyClipPointerMoveRef.current(event.pointerId, event.clientX);
-        const onWindowPointerEnd = (event: PointerEvent) => finishClipDrag(event.pointerId);
-        const onWindowBlur = () => finishClipDrag();
-        window.addEventListener("pointermove", onWindowPointerMove);
-        window.addEventListener("pointerup", onWindowPointerEnd);
-        window.addEventListener("pointercancel", onWindowPointerEnd);
-        window.addEventListener("blur", onWindowBlur);
-        return () => {
-            window.removeEventListener("pointermove", onWindowPointerMove);
-            window.removeEventListener("pointerup", onWindowPointerEnd);
-            window.removeEventListener("pointercancel", onWindowPointerEnd);
-            window.removeEventListener("blur", onWindowBlur);
-        };
-    }, [clipDragging, finishClipDrag]);
-
-    useEffect(() => {
-        if (!open) finishClipDrag();
-        return () => finishClipDrag();
-    }, [finishClipDrag, open]);
-
-    const handleClipPointerDown = (event: React.PointerEvent<HTMLDivElement>, clipId: string, mode: ClipDragMode) => {
-        const clip = draft.clips.find((item) => item.id === clipId);
-        if (!clip) return;
-        event.preventDefault();
-        event.stopPropagation();
-        const targetEl = event.currentTarget as HTMLElement;
-        const captureElement = targetEl.closest<HTMLElement>("[data-timeline-clip-id]") ?? targetEl;
-        try {
-            captureElement.setPointerCapture(event.pointerId);
-        } catch {
-            // 合成指针环境不支持捕获时忽略
-        }
-        const startScrollLeft = trackAreaRef.current?.scrollLeft ?? 0;
-        setSelectedClipId(clipId);
-        setClipDragging(true);
-        if (mode === "move") {
-            dragRef.current = { mode, pointerId: event.pointerId, startScrollLeft, captureElement, clipId, startClientX: event.clientX, originalStartMs: clip.startMs, clips: draft.clips };
-        } else if (mode === "trim-start") {
-            dragRef.current = {
-                mode,
-                pointerId: event.pointerId,
-                startScrollLeft,
-                captureElement,
-                clipId,
-                startClientX: event.clientX,
-                originalStartMs: clip.startMs,
-                originalDurationMs: clip.durationMs,
-                originalSourceStartMs: clip.sourceStartMs || 0,
-            };
-        } else {
-            dragRef.current = { mode, pointerId: event.pointerId, startScrollLeft, captureElement, clipId, startClientX: event.clientX, originalStartMs: clip.startMs, originalDurationMs: clip.durationMs };
-        }
-    };
-
-    const applyClipStepAtClientX = (clientX: number) => {
-        const drag = dragRef.current;
-        if (!drag) return;
-        const container = trackAreaRef.current;
-        const scrollDeltaPx = (container?.scrollLeft ?? 0) - drag.startScrollLeft;
-        const deltaMs = Math.round((clientX - drag.startClientX + scrollDeltaPx) / Math.max(pxPerMs, 1e-6));
-        if (drag.mode === "move") {
-            moveClip(drag.clipId, drag.originalStartMs + deltaMs, drag.clips);
-        } else if (drag.mode === "trim-start") {
-            trimClipStart(drag.clipId, deltaMs, {
-                startMs: drag.originalStartMs,
-                durationMs: drag.originalDurationMs,
-                sourceStartMs: drag.originalSourceStartMs,
-            });
-        } else {
-            trimClipEnd(drag.clipId, deltaMs, {
-                startMs: drag.originalStartMs,
-                durationMs: drag.originalDurationMs,
-            });
-        }
-    };
-
-    const applyClipPointerMove = (pointerId: number, clientX: number) => {
-        const drag = dragRef.current;
-        if (!drag || pointerId !== drag.pointerId) return;
-        const allowScroll =
-            (clientX < drag.startClientX && (trackAreaRef.current?.scrollLeft ?? 0) > 0) ||
-            clientX > drag.startClientX;
-        updateEdgeAutoScroll(clientX, applyClipStepAtClientX, allowScroll);
-    };
-    applyClipPointerMoveRef.current = applyClipPointerMove;
-
-    const handleClipPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-        applyClipPointerMove(event.pointerId, event.clientX);
-    };
-
-    const handleClipPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-        finishClipDrag(event.pointerId);
-    };
+    const { handleClipPointerDown, handleClipPointerMove, handleClipPointerUp } = useTimelineClipDrag({
+        open,
+        draft,
+        playheadMs,
+        pxPerMs,
+        snapEnabled,
+        trackAreaRef,
+        onSelectClip: setSelectedClipId,
+        replaceDraft,
+        recordSnapshot,
+    });
 
     const deleteSelectedClip = () => {
         if (!selectedClipId) {
             message.info("请先点击选中一个片段");
             return;
         }
-        applyDraft((current) => ({
-            ...current,
-            clips: current.clips.filter((clip) => clip.id !== selectedClipId),
-        }));
+        commitDraft((current) => ({ ...current, clips: current.clips.filter((clip) => clip.id !== selectedClipId) }));
         setSelectedClipId(null);
     };
 
-    const removeClip = (clipId: string) => {
-        applyDraft((current) => ({
-            ...current,
-            clips: current.clips.filter((clip) => clip.id !== clipId),
-        }));
-        if (selectedClipId === clipId) setSelectedClipId(null);
+    const resolveTargetTrackFrom = (tracks: TimelineProject["tracks"], kind: "video" | "audio" | "image") => {
+        if (kind === "audio") {
+            const trackId = tracks.find((track) => track.kind === "audio")?.id ?? DEFAULT_AUDIO_TRACK_ID;
+            return tracks.find((track) => track.id === trackId);
+        }
+        const visualTracks = getVisualTracks(tracks);
+        return visualTracks[0] ?? tracks.find((track) => track.id === DEFAULT_VIDEO_TRACK_ID);
+    };
+
+    const resolvePlacementStartMsFrom = (clips: TimelineClip[], trackId: string, clipDurationMs: number) => {
+        const placement = findNearestAvailablePlacement({ targetStartMs: playheadMs, durationMs: clipDurationMs, trackId, clips });
+        return placement.fits
+            ? placement.startMs
+            : clips.filter((item) => item.trackId === trackId).reduce((max, item) => Math.max(max, item.startMs + item.durationMs), 0);
     };
 
     const addNodeToTimeline = (targetNode: CanvasNodeData) => {
-        const kind = targetNode.type === "video" ? "video" : targetNode.type === "audio" ? "audio" : null;
+        const kind = targetNode.type === "video" ? "video" : targetNode.type === "audio" ? "audio" : targetNode.type === "image" ? "image" : null;
         if (!kind) return;
-        const trackId = draft.tracks.find((track) => track.kind === kind)?.id ?? (kind === "video" ? DEFAULT_VIDEO_TRACK_ID : DEFAULT_AUDIO_TRACK_ID);
-        const targetTrack = draft.tracks.find((track) => track.id === trackId);
+        const targetTrack = resolveTargetTrackFrom(draft.tracks, kind);
         if (!targetTrack || targetTrack.locked) {
-            message.warning(kind === "video" ? "视频轨已锁定或不存在" : "音频轨已锁定或不存在");
+            message.warning(kind === "audio" ? "音频轨已锁定或不存在" : "画面轨已锁定或不存在");
             return;
         }
-        const durationMs = targetNode.metadata?.durationMs && targetNode.metadata.durationMs > 0 ? Math.round(targetNode.metadata.durationMs) : 4_000;
-        const placement = findNearestAvailablePlacement({
-            targetStartMs: playheadMs,
-            durationMs,
-            trackId,
-            clips: draft.clips,
+        const fallbackDuration = kind === "image" ? DEFAULT_IMAGE_CLIP_DURATION_MS : 4_000;
+        const clipDurationMs = targetNode.metadata?.durationMs && targetNode.metadata.durationMs > 0 ? Math.round(targetNode.metadata.durationMs) : fallbackDuration;
+        const clipId = `clip-${targetNode.id}-${Date.now()}`;
+        const clipTitle = targetNode.title || (kind === "video" ? "视频片段" : kind === "image" ? "图片片段" : "音频片段");
+        commitDraft((current) => {
+            const track = resolveTargetTrackFrom(current.tracks, kind);
+            if (!track || track.locked) return current;
+            const startMs = resolvePlacementStartMsFrom(current.clips, track.id, clipDurationMs);
+            const clip: TimelineClip = {
+                id: clipId,
+                kind,
+                nodeId: targetNode.id,
+                trackId: track.id,
+                startMs,
+                durationMs: clipDurationMs,
+                title: clipTitle,
+                ...(kind === "image" ? {} : { sourceStartMs: 0, sourceDurationMs: clipDurationMs, volume: 1, fadeInMs: 0, fadeOutMs: 0 }),
+            };
+            return { ...current, clips: [...current.clips, clip] };
         });
-        // 找不到可用空隙时（目标位置冲突且无足够间隙）回退到轨道末尾追加，避免片段重叠破坏后续放置/导出。
-        const startMs = placement.fits ? placement.startMs : draft.clips.filter((item) => item.trackId === trackId).reduce((max, item) => Math.max(max, item.startMs + item.durationMs), 0);
-        const clip: TimelineClip = {
-            id: `clip-${targetNode.id}-${Date.now()}`,
-            kind,
-            nodeId: targetNode.id,
-            trackId,
-            startMs,
-            durationMs,
-            title: targetNode.title || (kind === "video" ? "视频片段" : "音频片段"),
-            sourceStartMs: 0,
-            sourceDurationMs: durationMs,
-            ...(kind === "audio" ? { volume: 1, fadeInMs: 0, fadeOutMs: 0 } : {}),
-        };
-        applyDraft((current) => ({ ...current, clips: [...current.clips, clip] }));
-        setSelectedClipId(clip.id);
-        message.success(`已添加「${clip.title}」到时间线`);
+        setSelectedClipId(clipId);
+        message.success(`已添加「${clipTitle}」到时间线`);
     };
 
-    // 把“添加节点”能力暴露给页面层（素材库/本地上传创建节点后回填到草稿）。
     useEffect(() => {
         if (!addNodeToTimelineRef) return;
         addNodeToTimelineRef.current = addNodeToTimeline;
-        return () => {
-            addNodeToTimelineRef.current = null;
-        };
+        return () => { addNodeToTimelineRef.current = null; };
     }, [addNodeToTimeline, addNodeToTimelineRef]);
 
-    // 直连媒体（仅时间线作用域，不落画布）：素材库/项目资产/本地上传直接入轨。
-    const addDirectMediaToTimeline = (media: TimelineDirectMedia) => {
-        const kind = media.kind === "video" ? "video" : media.kind === "audio" ? "audio" : null;
-        if (!kind) {
-            message.info("图片/文本素材暂不支持直接入轨，请先在画布中添加节点");
-            return;
+    const addDirectMediasToTimeline = (medias: TimelineDirectMedia[]) => {
+        if (!medias.length) return;
+        const supported: Array<{ media: TimelineDirectMedia; kind: "video" | "audio" | "image" }> = [];
+        for (const media of medias) {
+            const kind = media.kind === "video" ? "video" : media.kind === "audio" ? "audio" : media.kind === "image" ? "image" : null;
+            if (!kind) {
+                message.info("文本素材暂不支持直接入轨");
+                continue;
+            }
+            const targetTrack = resolveTargetTrackFrom(draft.tracks, kind);
+            if (!targetTrack || targetTrack.locked) {
+                message.warning(kind === "audio" ? "音频轨已锁定或不存在" : "画面轨已锁定或不存在");
+                continue;
+            }
+            supported.push({ media, kind });
         }
-        const trackId = draft.tracks.find((track) => track.kind === kind)?.id ?? (kind === "video" ? DEFAULT_VIDEO_TRACK_ID : DEFAULT_AUDIO_TRACK_ID);
-        const targetTrack = draft.tracks.find((track) => track.id === trackId);
-        if (!targetTrack || targetTrack.locked) {
-            message.warning(kind === "video" ? "视频轨已锁定或不存在" : "音频轨已锁定或不存在");
-            return;
-        }
-        const durationMs = media.durationMs && media.durationMs > 0 ? Math.round(media.durationMs) : 4_000;
-        const placement = findNearestAvailablePlacement({
-            targetStartMs: playheadMs,
-            durationMs,
-            trackId,
-            clips: draft.clips,
+        if (!supported.length) return;
+        const now = Date.now();
+        const lastItem = supported[supported.length - 1];
+        const lastClipId = `clip-media-${lastItem.media.id}-${now}-${supported.length - 1}`;
+        const lastTitle = lastItem.media.title || (lastItem.kind === "video" ? "视频片段" : lastItem.kind === "image" ? "图片片段" : "音频片段");
+        commitDraft((current) => {
+            const nextClips = [...current.clips];
+            let added = 0;
+            supported.forEach(({ media, kind }, index) => {
+                const track = resolveTargetTrackFrom(current.tracks, kind);
+                if (!track || track.locked) return;
+                const fallbackDuration = kind === "image" ? DEFAULT_IMAGE_CLIP_DURATION_MS : 4_000;
+                const clipDurationMs = media.durationMs && media.durationMs > 0 ? Math.round(media.durationMs) : fallbackDuration;
+                const startMs = resolvePlacementStartMsFrom(nextClips, track.id, clipDurationMs);
+                const clipId = `clip-media-${media.id}-${now}-${index}`;
+                const clipTitle = media.title || (kind === "video" ? "视频片段" : kind === "image" ? "图片片段" : "音频片段");
+                nextClips.push({
+                    id: clipId,
+                    kind,
+                    nodeId: `timeline-media-${media.id}-${now}-${index}`,
+                    trackId: track.id,
+                    startMs,
+                    durationMs: clipDurationMs,
+                    title: clipTitle,
+                    directMedia: media,
+                    ...(kind === "image" ? {} : { sourceStartMs: 0, sourceDurationMs: clipDurationMs, volume: 1, fadeInMs: 0, fadeOutMs: 0 }),
+                });
+                added += 1;
+            });
+            return added > 0 ? { ...current, clips: nextClips } : current;
         });
-        const clip: TimelineClip = {
-            id: `clip-media-${media.id}-${Date.now()}`,
-            kind,
-            nodeId: `timeline-media-${media.id}-${Date.now()}`,
-            trackId,
-            startMs: placement.startMs,
-            durationMs,
-            title: media.title || (kind === "video" ? "视频片段" : "音频片段"),
-            sourceStartMs: 0,
-            sourceDurationMs: durationMs,
-            directMedia: media,
-            ...(kind === "audio" ? { volume: 1, fadeInMs: 0, fadeOutMs: 0 } : {}),
-        };
-        applyDraft((current) => ({ ...current, clips: [...current.clips, clip] }));
-        setSelectedClipId(clip.id);
-        message.success(`已添加「${clip.title}」到时间线`);
+        setSelectedClipId(lastClipId);
+        if (supported.length === 1 && lastTitle) message.success(`已添加「${lastTitle}」到时间线`);
+        else if (supported.length > 1) message.success(`已添加 ${supported.length} 个素材到时间线`);
     };
 
-    // 把“直连媒体入轨”能力暴露给页面层（时间线作用域插入不重复落画布）。
+    const addDirectMediaToTimeline = (media: TimelineDirectMedia) => addDirectMediasToTimeline([media]);
+
     useEffect(() => {
         if (!addMediaToTimelineRef) return;
         addMediaToTimelineRef.current = addDirectMediaToTimeline;
-        return () => {
-            addMediaToTimelineRef.current = null;
-        };
+        return () => { addMediaToTimelineRef.current = null; };
     }, [addDirectMediaToTimeline, addMediaToTimelineRef]);
 
-    // 播放头处分割：把视频/音频片段切成两段，右段源内起点整体后移，保持源文件内容连续。
     const splitClipAtPlayhead = () => {
-        const clip = draft.clips.find((item) => (item.kind === "video" || item.kind === "audio") && playheadMs > item.startMs && playheadMs < item.startMs + item.durationMs);
+        const clip = draft.clips.find((item) => (item.kind === "video" || item.kind === "audio" || item.kind === "image") && playheadMs > item.startMs && playheadMs < item.startMs + item.durationMs);
         if (!clip) {
             message.info("请先将播放头移动到片段内部，再执行分割");
             return;
@@ -556,9 +418,9 @@ export function CanvasTimelineDialog({
             id: `${clip.id}-right-${Date.now()}`,
             startMs: playheadMs,
             durationMs: Math.round(clip.durationMs - cutMs),
-            sourceStartMs: (clip.sourceStartMs || 0) + Math.round(cutMs),
+            ...(clip.kind === "image" ? {} : { sourceStartMs: (clip.sourceStartMs || 0) + Math.round(cutMs) }),
         };
-        applyDraft((current) => ({ ...current, clips: [...current.clips.filter((item) => item.id !== clip.id), left, right] }));
+        commitDraft((current) => ({ ...current, clips: [...current.clips.filter((item) => item.id !== clip.id), left, right] }));
         setSelectedClipId(left.id);
         message.success("已在播放头处分割片段");
     };
@@ -567,7 +429,7 @@ export function CanvasTimelineDialog({
         const list = files ? Array.from(files) : [];
         if (!list.length) return;
         const medias = await onUploadLocalFiles(list);
-        for (const media of medias) addDirectMediaToTimeline(media);
+        addDirectMediasToTimeline(medias);
     };
 
     const handleClose = () => {
@@ -576,125 +438,6 @@ export function CanvasTimelineDialog({
         onClose();
     };
 
-    const handleSave = async () => {
-        if (saving) return;
-        if (exportControllerRef.current) return;
-        // 互通修复：时间线草稿只在打开时初始化，期间节点字幕可能在字幕弹窗中被清空（或节点数据被外部更新）。
-        // 保存前以节点当前字幕为准做定向校准：节点字幕已为空时，剔除草稿残留的旧字幕片段并回写空数组，
-        // 避免「清空后重开视频节点旧字幕复活」；节点仍有字幕时保留草稿内用户的时间线编辑（拖动/删减/文本）。
-        const clearedSubtitleNodeIds = new Set(nodes.filter((item) => (item.metadata?.subtitleEntries?.length ?? 0) === 0).map((item) => item.id));
-        const base = normalizeTimelineProject({ ...draft, updatedAt: new Date().toISOString() });
-        const reconciledClips = clearedSubtitleNodeIds.size ? base.clips.filter((clip) => !(clip.kind === "subtitle" && clearedSubtitleNodeIds.has(clip.nodeId))) : base.clips;
-        const normalized = normalizeTimelineProject({ ...base, clips: reconciledClips });
-        setSaving(true);
-        const error = await runTimelineDialogSaveAttempt(async () => {
-            await onSave(normalized);
-            // 整合方向：时间线字幕片段与节点字幕互通。保存时按视频节点回写 subtitleEntries（含空数组）。
-            // 回写集合 = 项目时间线原有字幕节点 ∪ 校准后仍有字幕片段的节点 ∪ 节点当前仍有字幕数据的节点：
-            // 覆盖“首次打开时间线（项目尚无 timeline）时删除字幕片段”这类 timeline 为空导致的漏回写，
-            // 保证删除全部字幕片段后节点字幕被同步清空，重开视频节点不再显示旧字幕。
-            const previousSubtitleNodeIds = new Set((timeline?.clips || []).filter((clip) => clip.kind === "subtitle").map((clip) => clip.nodeId));
-            const nextSubtitleNodeIds = new Set(normalized.clips.filter((clip) => clip.kind === "subtitle").map((clip) => clip.nodeId));
-            const nodeSubtitleNodeIds = new Set(nodes.filter((item) => (item.metadata?.subtitleEntries?.length ?? 0) > 0).map((item) => item.id));
-            const subtitleNodeIds = new Set([...previousSubtitleNodeIds, ...nextSubtitleNodeIds, ...nodeSubtitleNodeIds]);
-            subtitleNodeIds.forEach((subNodeId) => {
-                onSaveSubtitles(subNodeId, buildSubtitleEntriesForNode(subNodeId, normalized));
-            });
-            message.success("时间线已保存");
-        }, onClose);
-        if (error) message.error(error instanceof Error ? error.message : "时间线保存失败，请重试");
-        setSaving(false);
-    };
-
-    // 组装导出：把当前草稿按片段顺序合成一个 MP4 Blob（导出下载与生成新片段共用）。
-    const runExport = async (): Promise<Blob> => {
-        if (exportControllerRef.current) throw new Error("正在导出，请等待当前操作完成");
-        const mediaClips = getVisibleMediaClips(draft);
-        if (!mediaClips.length) throw new Error("时间线没有可渲染的媒体片段");
-        const sources: TimelineRenderSource[] = [];
-        for (const clip of mediaClips) {
-            const sourceNode = nodes.find((item) => item.id === clip.nodeId);
-            const media = clip.directMedia;
-            if (sources.some((source) => source.nodeId === clip.nodeId)) continue;
-            if (!sourceNode && !media) throw new Error("找不到素材：" + (clip.title || clip.nodeId));
-            sources.push({
-                nodeId: clip.nodeId,
-                fileName: "input-" + sources.length + ".mp4",
-                durationMs: clip.sourceDurationMs || clip.durationMs,
-                storageKey: media ? media.storageKey : sourceNode?.metadata?.storageKey,
-                url: media ? media.url || media.dataUrl || media.content : sourceNode?.metadata?.content || undefined,
-            });
-        }
-        if (!sources.length) throw new Error("找不到素材");
-        setExporting(true);
-        const controller = new AbortController();
-        exportControllerRef.current = controller;
-        setExportPercent(0);
-        setExportDetail("准备导出");
-        try {
-            return await exportTimelineToMp4(normalizeTimelineProject(draft), sources, {
-                signal: controller.signal,
-                onProgress: ({ percent, detail }) => {
-                    setExportPercent(percent);
-                    setExportDetail(detail);
-                },
-            });
-        } finally {
-            if (controller.signal.aborted) throw new DOMException("导出已取消", "AbortError");
-        }
-    };
-
-    const finishExport = () => {
-        exportControllerRef.current = null;
-        finalizingExportRef.current = false;
-        setExporting(false);
-        setFinalizingExport(false);
-        setExportPercent(0);
-        setExportDetail("");
-    };
-
-    const handleExport = async () => {
-        if (exportControllerRef.current) return;
-        try {
-            const blob = await runExport();
-            finalizingExportRef.current = true;
-            setFinalizingExport(true);
-            setExportDetail("正在保存成片");
-            const saved = await saveOwnedOrBrowserVideoBlob((node.title || "成片") + ".mp4", blob);
-            if (saved === "saved") message.success("成片导出完成");
-        } catch (error) {
-            if (!(error instanceof DOMException && error.name === "AbortError")) message.error(error instanceof Error ? error.message : "导出失败");
-        } finally {
-            finishExport();
-        }
-    };
-
-    // 组装能力闭环：合成结果不落地下载，而是作为新视频节点放回画布，可继续编辑字幕与样式。
-    const handleCreateAssembledNode = async () => {
-        if (exportControllerRef.current) return;
-        try {
-            const blob = await runExport();
-            finalizingExportRef.current = true;
-            setFinalizingExport(true);
-            setExportDetail("正在保存新片段");
-            const created = await onCreateAssembledNode(blob, (node.title || "成片") + "-新片段");
-            if (created) message.success("已生成新视频片段并放到画布，可继续编辑字幕与样式");
-        } catch (error) {
-            if (!(error instanceof DOMException && error.name === "AbortError")) message.error(error instanceof Error ? error.message : "生成新片段失败");
-        } finally {
-            finishExport();
-        }
-    };
-
-    const addableNodes = nodes.filter((item) => (item.type === "video" || item.type === "audio") && Boolean(item.metadata?.content || item.metadata?.storageKey) && !isNodeInTimeline(item.id, draft));
-
-    const selectedSubtitleClip = selectedClipId ? draft.clips.find((clip) => clip.id === selectedClipId && clip.kind === "subtitle") || null : null;
-    const selectedMediaClip = selectedClipId ? draft.clips.find((clip) => clip.id === selectedClipId && (clip.kind === "video" || clip.kind === "audio")) || null : null;
-    const hasVideoClips = draft.clips.some((clip) => clip.kind === "video");
-
-    // 时间线全局时间 → 视频节点本地时间：以该节点视频片段起点为 0 基准重建 SrtEntry。
-    // source 传保存时校准后的时间线（normalized）：节点字幕已清空时直接回写空数组，
-    // 避免草稿残留的旧字幕片段把节点上已清空的字幕重新写回。
     const buildSubtitleEntriesForNode = (subNodeId: string, source: TimelineProject = draft): SrtEntry[] => {
         const currentNode = nodes.find((item) => item.id === subNodeId);
         if ((currentNode?.metadata?.subtitleEntries?.length ?? 0) === 0) return [];
@@ -711,6 +454,115 @@ export function CanvasTimelineDialog({
             }));
     };
 
+    const handleSave = async () => {
+        if (saving || exportControllerRef.current) return;
+        const clearedSubtitleNodeIds = new Set(nodes.filter((item) => (item.metadata?.subtitleEntries?.length ?? 0) === 0).map((item) => item.id));
+        const base = normalizeTimelineProject({ ...draft, updatedAt: new Date().toISOString() });
+        const reconciledClips = clearedSubtitleNodeIds.size ? base.clips.filter((clip) => !(clip.kind === "subtitle" && clearedSubtitleNodeIds.has(clip.nodeId))) : base.clips;
+        const normalized = normalizeTimelineProject({ ...base, clips: reconciledClips });
+        setSaving(true);
+        const error = await runTimelineDialogSaveAttempt(async () => {
+            await onSave(normalized);
+            const previousSubtitleNodeIds = new Set((timeline?.clips || []).filter((clip) => clip.kind === "subtitle").map((clip) => clip.nodeId));
+            const nextSubtitleNodeIds = new Set(normalized.clips.filter((clip) => clip.kind === "subtitle").map((clip) => clip.nodeId));
+            const nodeSubtitleNodeIds = new Set(nodes.filter((item) => (item.metadata?.subtitleEntries?.length ?? 0) > 0).map((item) => item.id));
+            const subtitleNodeIds = new Set([...previousSubtitleNodeIds, ...nextSubtitleNodeIds, ...nodeSubtitleNodeIds]);
+            subtitleNodeIds.forEach((subNodeId) => onSaveSubtitles(subNodeId, buildSubtitleEntriesForNode(subNodeId, normalized)));
+            message.success("时间线已保存");
+        }, onClose);
+        if (error) message.error(error instanceof Error ? error.message : "时间线保存失败，请重试");
+        setSaving(false);
+    };
+
+    const runRender = async (): Promise<TimelineRenderOutcome> => {
+        if (exportControllerRef.current) throw new Error("正在导出，请等待当前操作完成");
+        setExporting(true);
+        const controller = new AbortController();
+        exportControllerRef.current = controller;
+        setExportPercent(0);
+        setExportDetail("准备导出");
+        return executeTimelineRender({
+            projectId,
+            draft,
+            nodes,
+            controller,
+            onProgress: (percent, detail) => {
+                setExportPercent(percent);
+                setExportDetail(detail);
+            },
+        });
+    };
+
+    const finishExport = () => {
+        exportControllerRef.current = null;
+        finalizingExportRef.current = false;
+        setExporting(false);
+        setFinalizingExport(false);
+        setExportPercent(0);
+        setExportDetail("");
+    };
+
+    const defaultBaseTitle = node?.title?.trim() || "成片";
+
+    const handleExport = async () => {
+        if (exportControllerRef.current) return;
+        try {
+            const outcome = await runRender();
+            finalizingExportRef.current = true;
+            setFinalizingExport(true);
+            setExportDetail("正在保存成片");
+            const fileName = `${defaultBaseTitle}.mp4`;
+            const saved = outcome.mode === "native"
+                ? await downloadOwnedOrBrowserMedia({ fileName, resourceId: outcome.resourceId })
+                : await saveOwnedOrBrowserVideoBlob(fileName, outcome.blob);
+            if (saved === "saved") message.success("成片导出完成");
+        } catch (error) {
+            if (!(error instanceof DOMException && error.name === "AbortError")) {
+                message.error(error instanceof Error ? error.message : "导出失败");
+            }
+        } finally {
+            finishExport();
+        }
+    };
+
+    const handleCreateAssembledNode = async () => {
+        if (exportControllerRef.current) return;
+        try {
+            const outcome = await runRender();
+            finalizingExportRef.current = true;
+            setFinalizingExport(true);
+            setExportDetail("正在保存新片段");
+            const nextTitle = `${defaultBaseTitle}-新片段`;
+            let created: CanvasNodeData | null = null;
+            if (outcome.mode === "native") {
+                if (!onCreateAssembledNodeFromResource) throw new Error("当前视图不支持直接绑定渲染结果");
+                created = await onCreateAssembledNodeFromResource({
+                    resourceId: outcome.resourceId,
+                    title: nextTitle,
+                    durationMs: outcome.durationMs,
+                    width: outcome.width,
+                    height: outcome.height,
+                    size: outcome.size,
+                });
+            } else {
+                created = await onCreateAssembledNode(outcome.blob, nextTitle);
+            }
+            if (created) message.success("已生成新视频片段并放到画布，可继续编辑字幕与样式");
+        } catch (error) {
+            if (!(error instanceof DOMException && error.name === "AbortError")) {
+                message.error(error instanceof Error ? error.message : "生成新片段失败");
+            }
+        } finally {
+            finishExport();
+        }
+    };
+
+    const addableNodes = nodes.filter((item) => (item.type === "video" || item.type === "audio" || item.type === "image") && Boolean(item.metadata?.content || item.metadata?.storageKey) && !isNodeInTimeline(item.id, draft));
+    const selectedSubtitleClip = selectedClipId ? draft.clips.find((clip) => clip.id === selectedClipId && clip.kind === "subtitle") || null : null;
+    const selectedMediaClip = selectedClipId ? draft.clips.find((clip) => clip.id === selectedClipId && (clip.kind === "video" || clip.kind === "audio" || clip.kind === "image")) || null : null;
+    const hasRenderableMedia = getVisibleMediaClips(draft).length > 0;
+    const hasSubtitleTargetNode = Boolean(selectedSubtitleClip?.nodeId && nodes.some((item) => item.id === selectedSubtitleClip.nodeId));
+
     const resetPlayheadToStart = useCallback(() => {
         setPreviewPlaying(false);
         setPlayheadMs(0);
@@ -724,11 +576,7 @@ export function CanvasTimelineDialog({
                 disabled={saving || finalizingExport}
                 onClick={handleClose}
                 className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium transition hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-                style={{
-                    borderColor: theme.toolbar.border,
-                    background: theme.node.fill,
-                    color: theme.node.text,
-                }}
+                style={{ borderColor: theme.toolbar.border, background: theme.node.fill, color: theme.node.text }}
             >
                 <ArrowLeft className="size-3.5" />
                 <span>返回</span>
@@ -737,7 +585,7 @@ export function CanvasTimelineDialog({
                 <Clapperboard className="size-4" />
             </span>
             <div className="min-w-0">
-                <div className="truncate text-[var(--fs-heading-lg)] font-semibold leading-6 tracking-[-0.02em]">多轨时间线</div>
+                <div className="truncate text-[var(--fs-heading-lg)] font-medium leading-6">多轨时间线</div>
             </div>
         </div>
     );
@@ -765,9 +613,6 @@ export function CanvasTimelineDialog({
             open={open}
             centered
             footer={null}
-            // Keep the desktop LibTV proportions while allowing the editor to
-            // remain usable on narrow screens instead of rendering a clipped
-            // fixed-width modal.
             width="min(1360px, calc(100vw - 24px))"
             destroyOnHidden
             onCancel={handleClose}
@@ -776,88 +621,102 @@ export function CanvasTimelineDialog({
             }}
             flush
         >
-            <CanvasTimelineToolbar
-                theme={theme}
-                playheadMs={playheadMs}
-                onResetPlayhead={resetPlayheadToStart}
-                snapEnabled={snapEnabled}
-                onToggleSnap={() => setSnapEnabled((value) => !value)}
-                onZoomOut={() => setZoomLevel((value) => zoomOut(value))}
-                onZoomIn={() => setZoomLevel((value) => zoomIn(value))}
-                onFitZoom={() => setZoomLevel(getFitTimelineZoom(durationMs, viewportWidth))}
-                addGroupCollapsed={addGroupCollapsed}
-                addableNodes={addableNodes}
-                onAddNodeToTimeline={addNodeToTimeline}
-                onOpenAssetLibrary={onOpenAssetLibrary}
-                onOpenProjectAssets={onOpenProjectAssets}
-                onUploadFiles={(files) => void handleLocalUpload(files)}
-                onSplitClipAtPlayhead={splitClipAtPlayhead}
-                selectedClipId={selectedClipId}
-                onDeleteSelectedClip={deleteSelectedClip}
-                toolbarRef={toolbarRef}
-                moreBtnRef={moreBtnRef}
-                addGroupProbeRef={addGroupProbeRef}
-                uploadInputRef={uploadInputRef}
-            />
-
-            <div className="timeline-editor-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
-                <CanvasTimelinePreview
-                    clips={draft.clips}
-                    tracks={draft.tracks}
-                    output={draft.output}
-                    nodes={nodes}
-                    playheadMs={playheadMs}
-                    playing={previewPlaying}
+            <div data-canvas-keyboard-scope className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <CanvasTimelineToolbar
                     theme={theme}
-                    onTogglePlay={() => setPreviewPlaying((value) => !value)}
-                    onRequestPause={() => setPreviewPlaying(false)}
-                    onPlayheadChange={clampPlayheadMs}
+                    playheadMs={playheadMs}
+                    onResetPlayhead={resetPlayheadToStart}
+                    canUndo={canUndo}
+                    canRedo={canRedo}
+                    onUndo={undo}
+                    onRedo={redo}
+                    snapEnabled={snapEnabled}
+                    onToggleSnap={() => setSnapEnabled((value) => !value)}
+                    onZoomOut={() => setZoomLevel((value) => zoomOut(value))}
+                    onZoomIn={() => setZoomLevel((value) => zoomIn(value))}
+                    onFitZoom={() => setZoomLevel(getFitTimelineZoom(durationMs, viewportWidth))}
+                    addGroupCollapsed={addGroupCollapsed}
+                    addableNodes={addableNodes}
+                    onAddNodeToTimeline={addNodeToTimeline}
+                    onOpenAssetLibrary={onOpenAssetLibrary}
+                    onOpenProjectAssets={onOpenProjectAssets}
+                    onUploadFiles={(files) => void handleLocalUpload(files)}
+                    onSplitClipAtPlayhead={splitClipAtPlayhead}
+                    selectedClipId={selectedClipId}
+                    onDeleteSelectedClip={deleteSelectedClip}
+                    toolbarRef={toolbarRef}
+                    moreBtnRef={moreBtnRef}
+                    addGroupProbeRef={addGroupProbeRef}
+                    uploadInputRef={uploadInputRef}
                 />
 
-                <CanvasTimelineTrackArea
+                <div className="timeline-editor-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
+                    <CanvasTimelinePreview
+                        clips={draft.clips}
+                        tracks={draft.tracks}
+                        output={draft.output}
+                        nodes={nodes}
+                        playheadMs={playheadMs}
+                        playing={previewPlaying}
+                        theme={theme}
+                        onTogglePlay={() => setPreviewPlaying((value) => !value)}
+                        onRequestPause={() => setPreviewPlaying(false)}
+                        onPlayheadChange={clampPlayheadMs}
+                        onUpdateOutput={updateOutputOptions}
+                    />
+
+                    <CanvasTimelineTrackArea
+                        draft={draft}
+                        theme={theme}
+                        pxPerMs={pxPerMs}
+                        durationMs={durationMs}
+                        playheadMs={playheadMs}
+                        trackWidth={trackWidth}
+                        selectedClipId={selectedClipId}
+                        trackAreaRef={trackAreaRef}
+                        scrollRef={scrollRef}
+                        onSeek={(ms) => {
+                            setPreviewPlaying(false);
+                            setPlayheadMs(clampPlayheadMs(ms));
+                        }}
+                        onClipPointerDown={handleClipPointerDown}
+                        onClipPointerMove={handleClipPointerMove}
+                        onClipPointerUp={handleClipPointerUp}
+                        onToggleTrackMute={toggleTrackMute}
+                        onToggleTrackVisibility={toggleTrackVisibility}
+                        onUploadFiles={(files) => void handleLocalUpload(files)}
+                        onTriggerUpload={() => uploadInputRef.current?.click()}
+                    />
+                </div>
+
+                <CanvasTimelineInspector
                     draft={draft}
                     theme={theme}
-                    pxPerMs={pxPerMs}
                     durationMs={durationMs}
-                    playheadMs={playheadMs}
-                    trackWidth={trackWidth}
-                    selectedClipId={selectedClipId}
-                    trackAreaRef={trackAreaRef}
-                    scrollRef={scrollRef}
-                    onSeek={(ms) => {
-                        setPreviewPlaying(false);
-                        setPlayheadMs(clampPlayheadMs(ms));
+                    exporting={exporting}
+                    exportPercent={exportPercent}
+                    exportDetail={exportDetail}
+                    finalizingExport={finalizingExport}
+                    saving={saving}
+                    hasRenderableMedia={hasRenderableMedia}
+                    hasSubtitleTargetNode={hasSubtitleTargetNode}
+                    selectedSubtitleClip={selectedSubtitleClip}
+                    selectedMediaClip={selectedMediaClip}
+                    onOpenSubtitleDialog={onOpenSubtitleDialog}
+                    onUpdateClip={(clipId, patch) => updateClip(clipId, patch)}
+                    onUpdateSelectedMediaNumbers={updateSelectedMediaNumbers}
+                    onPreviewSelectedMediaNumbers={previewSelectedMediaNumbers}
+                    onCommitMediaNumberGesture={commitMediaNumberGesture}
+                    onSplitClipAtPlayhead={splitClipAtPlayhead}
+                    onAbortExport={() => {
+                        if (!finalizingExportRef.current) exportControllerRef.current?.abort();
                     }}
-                    onClipPointerDown={handleClipPointerDown}
-                    onClipPointerMove={handleClipPointerMove}
-                    onClipPointerUp={handleClipPointerUp}
+                    onExport={() => void handleExport()}
+                    onCreateAssembledNode={() => void handleCreateAssembledNode()}
+                    onClose={handleClose}
+                    onSave={() => void handleSave()}
                 />
             </div>
-
-            <CanvasTimelineInspector
-                draft={draft}
-                theme={theme}
-                durationMs={durationMs}
-                exporting={exporting}
-                exportPercent={exportPercent}
-                exportDetail={exportDetail}
-                finalizingExport={finalizingExport}
-                saving={saving}
-                hasVideoClips={hasVideoClips}
-                selectedSubtitleClip={selectedSubtitleClip}
-                selectedMediaClip={selectedMediaClip}
-                onOpenSubtitleDialog={onOpenSubtitleDialog}
-                onUpdateClip={updateClip}
-                onUpdateSelectedMediaNumbers={updateSelectedMediaNumbers}
-                onSplitClipAtPlayhead={splitClipAtPlayhead}
-                onAbortExport={() => {
-                    if (!finalizingExportRef.current) exportControllerRef.current?.abort();
-                }}
-                onExport={() => void handleExport()}
-                onCreateAssembledNode={() => void handleCreateAssembledNode()}
-                onClose={handleClose}
-                onSave={() => void handleSave()}
-            />
         </AppModal>
     );
 }

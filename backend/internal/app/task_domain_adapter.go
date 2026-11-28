@@ -43,6 +43,7 @@ func (s *Service) taskDependencies() localtask.Dependencies {
 		Logs:                   taskLogAdapter{s},
 		Activity:               taskActivityAdapter{s},
 		OwnedMedia:             taskOwnedMediaAdapter{s},
+		TimelineSources:        localtask.NewRepositoryTimelineSources(s.repo, s.CanvasService()),
 		Features:               taskFeaturesAdapter{s},
 		NewID:                  newID,
 	}

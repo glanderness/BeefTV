@@ -24,6 +24,8 @@ type CanvasTopBarProps = {
     onToggleVersions: () => void;
     onOpenWorkflows?: () => void;
     workflowsOpen?: boolean;
+    onOpenTimeline?: () => void;
+    timelineOpen?: boolean;
     assistantOpen?: boolean;
     onToggleAssistant?: () => void;
     title: string;
@@ -72,6 +74,8 @@ export function CanvasTopBar({
     onToggleVersions,
     onOpenWorkflows,
     workflowsOpen = false,
+    onOpenTimeline,
+    timelineOpen = false,
     assistantOpen = false,
     onToggleAssistant,
     title,
@@ -405,6 +409,18 @@ export function CanvasTopBar({
                 ) : null}
 
                 <div className="canvas-topbar-cluster canvas-topbar-local-cluster pointer-events-auto hidden items-center gap-1 lg:flex" style={dockStyle}>
+                    {onOpenTimeline ? (
+                        <Button
+                            type="text"
+                            className="canvas-topbar-action canvas-topbar-timeline-button rounded-xl px-2.5 text-[13px] font-medium"
+                            style={{ color: theme.node.text, background: timelineOpen ? theme.toolbar.activeBg : undefined }}
+                            aria-pressed={timelineOpen}
+                            icon={<Clapperboard className="size-4" />}
+                            onClick={onOpenTimeline}
+                        >
+                            时间线
+                        </Button>
+                    ) : null}
                     {onOpenWorkflows ? <Button type="text" className="canvas-topbar-action canvas-topbar-workflow-button !h-9 !rounded-xl !px-2.5" style={{ color: theme.node.text, background: workflowsOpen ? theme.toolbar.activeBg : undefined }} aria-pressed={workflowsOpen} icon={<Workflow className="size-4" />} onClick={onOpenWorkflows}>工作流</Button> : null}
                     {onToggleAssistant ? (
                         <CanvasTopBarTooltip label="Agent（Ctrl/Cmd + J）">
@@ -425,6 +441,19 @@ export function CanvasTopBar({
                 </div>
 
                 <div className="canvas-topbar-cluster canvas-topbar-tools-cluster pointer-events-auto flex items-center gap-1.5 lg:hidden" style={dockStyle}>
+                    {onOpenTimeline ? (
+                        <CanvasTopBarTooltip label="时间线">
+                            <Button
+                                type="text"
+                                className="canvas-topbar-action canvas-topbar-timeline-button w-10 min-w-10 rounded-xl p-0"
+                                style={{ color: theme.node.text, background: timelineOpen ? theme.toolbar.activeBg : undefined }}
+                                aria-pressed={timelineOpen}
+                                aria-label="时间线"
+                                icon={<Clapperboard className="size-4" />}
+                                onClick={onOpenTimeline}
+                            />
+                        </CanvasTopBarTooltip>
+                    ) : null}
                     {onOpenWorkflows ? <CanvasTopBarTooltip label="工作流"><Button type="text" className="canvas-topbar-action canvas-topbar-workflow-button !h-10 !w-10 !min-w-10 !rounded-xl !p-0" style={{ color: theme.node.text, background: workflowsOpen ? theme.toolbar.activeBg : undefined }} aria-pressed={workflowsOpen} icon={<Workflow className="size-4" />} aria-label="工作流" onClick={onOpenWorkflows} /></CanvasTopBarTooltip> : null}
                     <CanvasTopBarTooltip label="搜索画布节点">
                         <Button

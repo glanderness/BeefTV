@@ -28,6 +28,8 @@ mock.module("antd", () => ({
 mock.module("@/components/canvas/canvas-timeline-tracks", () => ({
     CanvasTimelineToolbar: () => null,
     CanvasTimelineTrackArea: () => null,
+}));
+mock.module("@/components/canvas/canvas-timeline-inspector", () => ({
     CanvasTimelineInspector: (props: Record<string, unknown>) => {
         inspectorCalls.push(props);
         return null;

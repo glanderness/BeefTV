@@ -1,7 +1,8 @@
 import { createClientId } from "@/lib/client-id";
+import type { CanonicalPlanOptions } from "@/lib/timeline/timeline-canonical-plan";
 import { createDepthCaptureTask, type DepthCaptureResult } from "@/services/api/depth-capture";
 import { getResource, type RemoteResource } from "@/services/api/resources";
-import { waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { cancelGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import {
     createTimelineRenderTask,
     createTimelineTranscriptionTask,
@@ -135,6 +136,7 @@ export async function runOwnedTimelineRender(input: {
     session: LocalExecutorSession;
     projectId: string;
     timeline: TimelineProject;
+    options?: CanonicalPlanOptions;
     clientOperationId: string;
     onCreated?: (task: GenerationTask) => void;
     onTaskUpdate?: (task: GenerationTask) => void;
@@ -143,10 +145,20 @@ export async function runOwnedTimelineRender(input: {
 }): Promise<{ task: GenerationTask; result: TimelineRenderResult }> {
     assertLocalExecutorSession(input.session);
     const created = await createTimelineRenderTask(
-        { projectId: input.projectId, timeline: input.timeline, clientOperationId: input.clientOperationId },
+        {
+            projectId: input.projectId,
+            timeline: input.timeline,
+            ...(input.options ? { options: input.options } : {}),
+            clientOperationId: input.clientOperationId,
+        },
         { signal: input.session.controller.signal },
     );
-    assertLocalExecutorSession(input.session);
+    try {
+        assertLocalExecutorSession(input.session);
+    } catch (error) {
+        if (created.id) void cancelGenerationTask(created.id).catch(() => undefined);
+        throw error;
+    }
     input.onCreated?.(created);
     const task = await observeLocalExecutorTask(created.id, input.session, {
         initialTask: created,
@@ -154,8 +166,11 @@ export async function runOwnedTimelineRender(input: {
         intervalMs: input.intervalMs ?? 3000,
         onTaskUpdate: input.onTaskUpdate,
     });
-    const result = JSON.parse(task.resultJson ?? "{}") as TimelineRenderResult;
-    if (!result.resourceId) throw new Error("渲染任务未返回产物");
+    const parsed = JSON.parse(task.resultJson ?? "{}") as TimelineRenderResult;
+    const outputResourceId = task.outputs?.find((item) => item.resourceId)?.resourceId;
+    const resourceId = parsed.resourceId || outputResourceId || "";
+    if (!resourceId) throw new Error("渲染任务未返回产物");
+    const result: TimelineRenderResult = { ...parsed, resourceId };
     assertLocalExecutorSession(input.session);
     return { task, result };
 }
