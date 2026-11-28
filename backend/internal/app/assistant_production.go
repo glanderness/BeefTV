@@ -86,21 +86,9 @@ func (s *Service) confirmAssistantProductionWithApprover(userID, turnID string, 
 		if err = operations.ValidateTurnOrderConflictInTx(tx, userID, input.CanvasID, turnID, plan); err != nil {
 			return err
 		}
-		batch := []operations.GenerationTarget{}
-		wanted := map[string]bool{}
-		for _, id := range input.NodeIDs {
-			wanted[id] = true
-		}
-		for _, target := range current {
-			if wanted[target.NodeID] {
-				if input.Kind != "" && input.Kind != "mixed" && target.Kind != input.Kind {
-					return operations.InvalidArg("invalid_kind", "首批素材类型不一致")
-				}
-				batch = append(batch, target)
-			}
-		}
-		if len(batch) == 0 || len(batch) != len(wanted) {
-			return operations.InvalidArg("invalid_batch", "首批素材不在制作计划内")
+		batch, err := operations.SelectProductionBatchTargets(current, input.NodeIDs, input.Kind)
+		if err != nil {
+			return err
 		}
 		if shouldRegenerate {
 			if err = domain.releaseUnadmittedEndedTargets(userID, input.CanvasID, plan, batch); err != nil {

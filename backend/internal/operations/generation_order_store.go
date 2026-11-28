@@ -533,3 +533,25 @@ func ValidateProductionTask(task *model.Task, canvasID string, target Generation
 	}
 	return nil
 }
+
+// SelectProductionBatchTargets filters the canonical target plan down to the requested first-batch node IDs.
+func SelectProductionBatchTargets(current []GenerationTarget, nodeIDs []string, kind string) ([]GenerationTarget, error) {
+	wanted := make(map[string]bool, len(nodeIDs))
+	for _, id := range nodeIDs {
+		wanted[id] = true
+	}
+	batch := make([]GenerationTarget, 0, len(wanted))
+	for _, target := range current {
+		if !wanted[target.NodeID] {
+			continue
+		}
+		if kind != "" && kind != "mixed" && target.Kind != kind {
+			return nil, InvalidArg("invalid_kind", "首批素材类型不一致")
+		}
+		batch = append(batch, target)
+	}
+	if len(batch) == 0 || len(batch) != len(wanted) {
+		return nil, InvalidArg("invalid_batch", "首批素材不在制作计划内")
+	}
+	return batch, nil
+}

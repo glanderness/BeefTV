@@ -261,12 +261,18 @@ export function createDurableApprovalExtension({
         beforeTool: async (call, runtime, context) => {
           // 关键安全规则：Pi scheduler 会吞掉钩子抛错；所有权限校验与 Go 预检必须包在 try/catch 内，
           // 任何异常、拒绝或不确定状态一律显式返回 { block: reason }（fail-closed）。
+          const blockCall = (reason) => {
+            if (Array.isArray(entry?.log)) {
+              entry.log.push({ tool: call.name, args: call.arguments, isError: true, error: reason });
+            }
+            return { block: reason };
+          };
           try {
             if (entry?.generation?.aborted || context?.abortSignal?.aborted) {
-              return { block: 'aborted' };
+              return blockCall('aborted');
             }
             if (entry?.generation?.pendingInputError) {
-              return { block: entry.generation.pendingInputError.reason || 'turn_intent_changed' };
+              return blockCall(entry.generation.pendingInputError.reason || 'turn_intent_changed');
             }
             const turnId = String(entry?.turn?.turnId || '').trim();
             const memoKey = `beeftv.approval:${turnId}:${call.id}`;
@@ -274,7 +280,7 @@ export function createDurableApprovalExtension({
               ? await runtime.memo(memoKey, context)
               : undefined;
             if (entry?.generation?.pendingInput?.state === 'pending' && !existingMemo?.proposalId) {
-              return { block: 'supplement_preparation_pending' };
+              return blockCall('supplement_preparation_pending');
             }
 
             // 必须先执行回合授权检查，再做 permissionMode 与 canvasId 门控，防止授权撤销后凭旧模式放行。
@@ -284,7 +290,7 @@ export function createDurableApprovalExtension({
 
             const currentMode = entry?.permissionMode || entry?.generation?.permissionMode || 'canvas';
             if (currentMode === 'read-only' && !isAllowedInReadOnlyMode(entry, call.name)) {
-              return { block: `scope_denied: 本轮助手只能读取（禁止调用 ${call.name}）` };
+              return blockCall(`scope_denied: 本轮助手只能读取（禁止调用 ${call.name}）`);
             }
 
             if (
@@ -297,7 +303,7 @@ export function createDurableApprovalExtension({
               entry?.canvasId &&
               call.arguments.canvasId !== entry.canvasId
             ) {
-              return { block: `scope_denied: 画布参数与当前会话不一致（${call.arguments.canvasId} ≠ ${entry.canvasId}）` };
+              return blockCall(`scope_denied: 画布参数与当前会话不一致（${call.arguments.canvasId} ≠ ${entry.canvasId}）`);
             }
 
             const paidOp = resolvePaidOpForTool(call);
@@ -306,7 +312,7 @@ export function createDurableApprovalExtension({
             }
             // 付费工具缺少预检通道时必须 fail-closed，严禁静默放行。
             if (!runPrecheck) {
-              return { block: 'tool_precheck_unavailable' };
+              return blockCall('tool_precheck_unavailable');
             }
 
           const effectiveCallId = entry?.sessionId && runtime?.taskId
