@@ -2,7 +2,7 @@
 // Verifies end-to-end contracts across Go backend ops, Pi 1.6.0 Durable Harness,
 // pi-creative-media extensions, native media retention/eviction, #362 stream guard,
 // PR-4 ToolPark cold signal wake, PR-5 ProductionMandate, and creative compaction.
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -38,15 +38,23 @@ const EVAL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(EVAL_DIR, '../..');
 const BACKEND_DIR = path.join(REPO_ROOT, 'backend');
 
+const OPS_PKG_DIR = path.join(BACKEND_DIR, 'internal/operations');
+
+let opsTestBinDir = '';
+let opsTestBin = '';
+
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `beeftv-eval-${prefix}-`));
 }
 
 function runGoTests(runRegex, expectedTests = []) {
+  if (!opsTestBin) {
+    throw new Error('operations test binary was not compiled in beforeAll');
+  }
   const output = execFileSync(
-    'go',
-    ['test', '-race', '-count=1', '-v', './internal/operations', '-run', runRegex],
-    { cwd: BACKEND_DIR, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 },
+    opsTestBin,
+    ['-test.count=1', '-test.v', '-test.run', runRegex],
+    { cwd: OPS_PKG_DIR, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 },
   );
   expect(output).toContain('PASS');
   expect(output).not.toContain('testing: warning: no tests to run');
@@ -97,6 +105,24 @@ async function createStubModels(dir, baseUrl) {
 }
 
 describe('7-Scenario Offline Creative Harness Regression Eval Suite ($0 spend)', () => {
+  beforeAll(() => {
+    opsTestBinDir = makeTempDir('ops-bin');
+    opsTestBin = path.join(opsTestBinDir, process.platform === 'win32' ? 'operations.test.exe' : 'operations.test');
+    execFileSync(
+      'go',
+      ['test', '-race', '-c', '-o', opsTestBin, './internal/operations'],
+      { cwd: BACKEND_DIR, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 },
+    );
+  }, 180000);
+
+  afterAll(() => {
+    if (opsTestBinDir) {
+      fs.rmSync(opsTestBinDir, { recursive: true, force: true });
+      opsTestBinDir = '';
+      opsTestBin = '';
+    }
+  });
+
   // -------------------------------------------------------------------------
   // Scenario 1: First/mid/tail video frame extraction + short/VFR fallback + Source.StartMs
   // -------------------------------------------------------------------------
