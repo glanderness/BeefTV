@@ -36,18 +36,15 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(len(payload["runtimes"]["windows-amd64/cuda"]["parts"]), 2)
             cpu_name = "beeftv-depth-runtime-v1-windows-amd64-cpu.zip"
             self.assertEqual(payload["runtimes"]["windows-amd64/cpu"]["urls"], [
-                module.COS_BASE + cpu_name,
                 module.R2_BASE + cpu_name,
                 module.GITHUB_BASE + cpu_name,
             ])
             part1_name = "beeftv-depth-runtime-v1-windows-amd64-cuda.zip.part-001"
             self.assertEqual(payload["runtimes"]["windows-amd64/cuda"]["parts"][0]["urls"], [
-                module.COS_BASE + part1_name,
                 module.R2_BASE + part1_name,
                 module.GITHUB_BASE + part1_name,
             ])
             self.assertEqual(payload["model"]["urls"], [
-                module.COS_BASE + module.MODEL_NAME,
                 module.R2_BASE + module.MODEL_NAME,
                 module.MODEL_GITHUB_URL,
             ])

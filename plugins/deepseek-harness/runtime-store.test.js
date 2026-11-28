@@ -152,7 +152,7 @@ test('verifyFeedEnvelope validates Ed25519 signature, schema, and trusted artifa
       'darwin-arm64': {
         urls: [
           'https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.4.2/BeefTV-v2.4.2-darwin-arm64.zip',
-          'https://updates.beefapi.com/beeftv/v2.4.2/BeefTV-v2.4.2-darwin-arm64.zip',
+          'https://updates.beeftv.app/beeftv/v2.4.2/BeefTV-v2.4.2-darwin-arm64.zip',
         ],
         sha256: 'a'.repeat(64),
         size: 1024,
@@ -198,12 +198,12 @@ test('verifyFeedEnvelope validates Ed25519 signature, schema, and trusted artifa
   }, privateKey)
   assert.throws(() => verifyFeedEnvelope(evilPath, rawPublic), /不受信任的下载来源/)
 
-  // 禁止带 query 参数和 COS 越界路径
+  // 禁止带 query 参数和越界路径
   const withQuery = signFeed({
     ...basePayload,
     platforms: {
       'darwin-arm64': {
-        urls: ['https://updates.beefapi.com/beeftv/v2.4.2/a.zip?token=1'],
+        urls: ['https://updates.beeftv.app/beeftv/v2.4.2/a.zip?token=1'],
         sha256: 'a'.repeat(64),
         size: 1024,
       },
@@ -211,22 +211,22 @@ test('verifyFeedEnvelope validates Ed25519 signature, schema, and trusted artifa
   }, privateKey)
   assert.throws(() => verifyFeedEnvelope(withQuery, rawPublic), /查询参数/)
 
-  const badCosPath = signFeed({
+  const badPath = signFeed({
     ...basePayload,
     platforms: {
       'darwin-arm64': {
-        urls: ['https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/other/a.zip'],
+        urls: ['https://updates.beeftv.app/other/a.zip'],
         sha256: 'a'.repeat(64),
         size: 1024,
       },
     },
   }, privateKey)
-  assert.throws(() => verifyFeedEnvelope(badCosPath, rawPublic), /不受信任的下载来源/)
+  assert.throws(() => verifyFeedEnvelope(badPath, rawPublic), /不受信任的下载来源/)
 })
 
 test('orderCandidateURLs prioritizes domestic mirror in mainland China and official mirror overseas', () => {
   const urls = [
-    'https://updates.beefapi.com/beeftv/v2.4.2/a.zip',
+    'https://updates.beeftv.app/beeftv/v2.4.2/a.zip',
     'https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.4.2/a.zip',
   ]
   assert.equal(orderCandidateURLs(urls, true)[0], urls[1])

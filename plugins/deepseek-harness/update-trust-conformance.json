@@ -25,25 +25,23 @@
     "latest"
   ],
   "allowedDownloadURLs": [
-    "https://updates.beefapi.com/beeftv/releases/v2.4.2/BeefTV-v2.4.2-darwin-arm64.zip",
-    "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.4.2/BeefTV-v2.4.2-darwin-arm64.zip",
-    "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv/releases/v2.4.2/BeefTV-v2.4.2-windows-amd64.zip"
+    "https://updates.beeftv.app/beeftv/releases/v2.4.2/BeefTV-v2.4.2-darwin-arm64.zip",
+    "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.4.2/BeefTV-v2.4.2-darwin-arm64.zip"
   ],
   "rejectedDownloadURLs": [
-    "http://updates.beefapi.com/beeftv/releases/v2.4.2/BeefTV.zip",
-    "https://updates.beefapi.com/other/BeefTV.zip",
+    "http://updates.beeftv.app/beeftv/releases/v2.4.2/BeefTV.zip",
+    "https://updates.beeftv.app/other/BeefTV.zip",
     "https://cnb.cool/other-org/repo/-/releases/download/v2.4.2/BeefTV.zip",
     "https://attacker.cos.ap-guangzhou.myqcloud.com/beeftv/BeefTV.zip",
-    "https://updates.beefapi.com/beeftv/BeefTV.zip?token=1",
-    "https://updates.beefapi.com/beeftv/BeefTV.zip#frag",
-    "https://user:pass@updates.beefapi.com/beeftv/BeefTV.zip",
+    "https://updates.beeftv.app/beeftv/BeefTV.zip?token=1",
+    "https://updates.beeftv.app/beeftv/BeefTV.zip#frag",
+    "https://user:pass@updates.beeftv.app/beeftv/BeefTV.zip",
     "https://evil.example.com/beeftv/BeefTV.zip"
   ],
   "allowedRedirectURLs": [
-    "https://updates.beefapi.com/beeftv/releases/v2.4.2/BeefTV.zip",
+    "https://updates.beeftv.app/beeftv/releases/v2.4.2/BeefTV.zip",
     "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.4.2/BeefTV.zip",
-    "https://asset.cnb.cool/signed/file.zip?sign=abc",
-    "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv/BeefTV.zip"
+    "https://asset.cnb.cool/signed/file.zip?sign=abc"
   ],
   "rejectedRedirectURLs": [
     "http://asset.cnb.cool/file.zip",

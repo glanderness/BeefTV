@@ -78,7 +78,7 @@ class PackageDesktopReleaseScriptTests(unittest.TestCase):
                 "TEST_CALL_LOG": str(log_file),
                 "RUNNER_TEMP": str(runner_temp),
                 "VERSION": "v2.4.0",
-                "UPDATER_DOWNLOAD_BASE": "https://updates.beefapi.com/beeftv",
+                "UPDATER_DOWNLOAD_BASE": "https://updates.beeftv.app/beeftv",
                 "BEEFTV_UPDATER_PUBLIC_KEY": "fixture-pub-key",
                 **extra_env,
             }

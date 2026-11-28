@@ -109,7 +109,7 @@ class PublicationTests(unittest.TestCase):
         self.verify_command = self.verifier.start()
         self.addCleanup(self.verifier.stop)
         self.publisher = release.Publisher(self.store, release.PublicHTTP(opener), "/tmp/update-release",
-                                           "https://updates.beefapi.com/beeftv", lambda *args: None)
+                                           "https://updates.beeftv.app/beeftv", lambda *args: None)
 
     def manifest(self, version="v1.5.7", omit=None, copies=32):
         platforms = {}
@@ -119,7 +119,7 @@ class PublicationTests(unittest.TestCase):
             name = f"BeefTV-{version}-{platform}.zip"
             data = (version + platform).encode() * copies
             (self.root / name).write_bytes(data)
-            platforms[platform] = {"url": f"https://updates.beefapi.com/beeftv/{version}/{name}",
+            platforms[platform] = {"url": f"https://updates.beeftv.app/beeftv/{version}/{name}",
                                    "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
         payload = {"schema": 1, "version": version, "commit": "a" * 40, "notes": "test release", "platforms": platforms}
         path = self.root / f"{version}.json"
@@ -132,7 +132,7 @@ class PublicationTests(unittest.TestCase):
             name = f"BeefTV-{version}-{platform}.zip"
             data = (version + platform).encode() * copies
             (self.root / name).write_bytes(data)
-            r2_url = f"https://updates.beefapi.com/beeftv/{version}/{name}"
+            r2_url = f"https://updates.beeftv.app/beeftv/{version}/{name}"
             cnb_url = f"{release.CNB_PUBLIC_BASE}/{version}/{name}"
             urls = [cnb_url, r2_url] if with_domestic else [r2_url]
             entry = {"urls": urls, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
@@ -140,7 +140,7 @@ class PublicationTests(unittest.TestCase):
                 d_name = f"BeefTV-{version}-{platform}-from-{from_version}.delta.zip"
                 d_data = (f"delta-{from_version}-{version}-{platform}").encode() * 8
                 (self.root / d_name).write_bytes(d_data)
-                d_r2_url = f"https://updates.beefapi.com/beeftv/{version}/{d_name}"
+                d_r2_url = f"https://updates.beeftv.app/beeftv/{version}/{d_name}"
                 d_cnb_url = f"{release.CNB_PUBLIC_BASE}/{version}/{d_name}"
                 d_urls = [d_cnb_url, d_r2_url] if with_domestic else [d_r2_url]
                 entry["deltas"] = {from_version: {"urls": d_urls, "size": len(d_data), "sha256": hashlib.sha256(d_data).hexdigest()}}
@@ -379,14 +379,14 @@ class PublicationTests(unittest.TestCase):
 class S3AdapterTests(unittest.TestCase):
     def test_r2_configuration_requires_account_endpoint_and_auto_region(self):
         store = release.storage_config("r2", "https://" + "a" * 32 + ".r2.cloudflarestorage.com",
-                                       "auto", "beeftv-releases", "https://updates.beefapi.com/beeftv")
+                                       "auto", "beeftv-releases", "https://updates.beeftv.app/beeftv")
         self.assertEqual(store.provider, "r2")
         with self.assertRaises(release.PublishError):
             release.storage_config("r2", "https://" + "a" * 32 + ".r2.cloudflarestorage.com",
-                                   "ap-guangzhou", "beeftv-releases", "https://updates.beefapi.com/beeftv")
+                                   "ap-guangzhou", "beeftv-releases", "https://updates.beeftv.app/beeftv")
         with self.assertRaises(release.PublishError):
             release.storage_config("cos", "https://" + "a" * 32 + ".r2.cloudflarestorage.com",
-                                   "auto", "beeftv-releases", "https://updates.beefapi.com/beeftv")
+                                   "auto", "beeftv-releases", "https://updates.beeftv.app/beeftv")
 
     def test_cli_rejects_credential_destination_before_any_command(self):
         for endpoint in ["https://attacker.example", "https://" + "a" * 32 + ".r2.cloudflarestorage.com.evil.example", "https://user@" + "a" * 32 + ".r2.cloudflarestorage.com"]:

@@ -38,11 +38,11 @@ func TestComponentManifestMirrorsRespectExplicitOverride(t *testing.T) {
 			if platform == "windows-amd64" {
 				name = "depth-runtime-manifest.v2.json"
 			}
-			if options.ManifestURL != componentCOSBase+name || !reflect.DeepEqual(options.ManifestMirrors, []string{componentR2Base + name, componentGHBase + name}) {
+			if options.ManifestURL != componentR2Base+name || !reflect.DeepEqual(options.ManifestMirrors, []string{componentGHBase + name}) {
 				t.Fatalf("default sources: %+v", options)
 			}
-			if platform == "darwin-arm64" && (options.FallbackManifest == nil || !strings.HasPrefix(options.FallbackManifest.Runtime.URLs[0], componentCOSBase) || !strings.HasPrefix(options.FallbackManifest.Model.URLs[0], componentCOSBase)) {
-				t.Fatalf("fallback domestic order: %+v", options.FallbackManifest)
+			if platform == "darwin-arm64" && (options.FallbackManifest == nil || !strings.HasPrefix(options.FallbackManifest.Runtime.URLs[0], componentR2Base) || !strings.HasPrefix(options.FallbackManifest.Model.URLs[0], componentR2Base)) {
+				t.Fatalf("fallback order: %+v", options.FallbackManifest)
 			}
 		}
 	}

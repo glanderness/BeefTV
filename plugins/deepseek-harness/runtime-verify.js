@@ -4,7 +4,7 @@
 import { createPublicKey, verify as verifySignature } from 'node:crypto'
 import { open } from 'node:fs/promises'
 
-export const DEFAULT_FEED_URL = 'https://updates.beefapi.com/beeftv/desktop-update-v2.json'
+export const DEFAULT_FEED_URL = 'https://updates.beeftv.app/beeftv/desktop-update-v2.json'
 // 与 BeefTV 正式发布更新源（desktop-update-v2.json）一致的公开 Ed25519 验签公钥。
 export const DEFAULT_PUBLIC_KEY = 'Ehxax+TpPBDNNomS33+w1YiSemc0+GyaW+ePj9v+15Q='
 
@@ -21,9 +21,8 @@ export const KNOWN_PLATFORMS = new Set(['darwin-arm64', 'darwin-amd64', 'windows
 
 // 与 backend/internal/desktopupdate/envelope.go 的 isKnownArtifactURL 保持严格一致。
 const TRUSTED_DOWNLOAD_PATHS = new Map([
-  ['updates.beefapi.com', '/beeftv/'],
+  ['updates.beeftv.app', '/beeftv/'],
   ['cnb.cool', '/beeftv-downloads/desktop/-/releases/download/'],
-  ['beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com', '/beeftv/'],
 ])
 const TRUSTED_REDIRECT_HOSTS = new Set([...TRUSTED_DOWNLOAD_PATHS.keys(), 'asset.cnb.cool'])
 
@@ -37,7 +36,6 @@ export function isDomesticURL(rawURL) {
     const host = new URL(rawURL).hostname.toLowerCase()
     return host === 'cnb.cool'
       || host === 'asset.cnb.cool'
-      || host === 'beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com'
   } catch {
     return false
   }

@@ -72,8 +72,8 @@ func newMultiSourceFixture(t *testing.T, cfg multiSourceConfig) *multiSourceFixt
 
 	const (
 		cnbZipURL = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip"
-		r2ZipURL  = "https://updates.beefapi.com/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip"
-		feedURL   = "https://updates.beefapi.com/beeftv/desktop-update-v2.json"
+		r2ZipURL  = "https://updates.beeftv.app/beeftv/v2.1.0/BeefTV-v2.1.0-darwin-arm64.zip"
+		feedURL   = "https://updates.beeftv.app/beeftv/desktop-update-v2.json"
 	)
 
 	var cnbCalls, assetCalls, r2Calls int
@@ -136,7 +136,7 @@ func newMultiSourceFixture(t *testing.T, cfg multiSourceConfig) *multiSourceFixt
 		r2Calls++
 		call := r2Calls
 		f.r2Ranges = append(f.r2Ranges, r.Header.Get("Range"))
-		f.requestOrder = append(f.requestOrder, "updates.beefapi.com")
+		f.requestOrder = append(f.requestOrder, "updates.beeftv.app")
 		f.mu.Unlock()
 		if cfg.serveR2 != nil {
 			cfg.serveR2(w, r, zipBytes, call)
@@ -154,7 +154,7 @@ func newMultiSourceFixture(t *testing.T, cfg multiSourceConfig) *multiSourceFixt
 	hostAddrs := map[string]string{
 		"cnb.cool":            cnbServer.Listener.Addr().String(),
 		"asset.cnb.cool":      assetServer.Listener.Addr().String(),
-		"updates.beefapi.com": r2Server.Listener.Addr().String(),
+		"updates.beeftv.app":  r2Server.Listener.Addr().String(),
 	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{

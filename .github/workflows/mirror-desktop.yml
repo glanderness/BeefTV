@@ -31,7 +31,7 @@ concurrency:
 
 env:
   GOTOOLCHAIN: local
-  UPDATER_DOWNLOAD_BASE: https://updates.beefapi.com/beeftv
+  UPDATER_DOWNLOAD_BASE: https://updates.beeftv.app/beeftv
   DOMESTIC_DOWNLOAD_BASE: https://cnb.cool/beeftv-downloads/desktop/-/releases/download
   RELEASE_ENDPOINT: ${{ vars.BEEFTV_R2_ENDPOINT }}
   RELEASE_REGION: auto

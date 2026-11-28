@@ -16,8 +16,8 @@ import (
 const (
 	payloadSchema       = 1
 	payloadSchemaV2     = 2
-	defaultFeedURL      = "https://updates.beefapi.com/beeftv/desktop-update-v2.json"
-	defaultDownloadHost = "https://updates.beefapi.com/beeftv"
+	defaultFeedURL      = "https://updates.beeftv.app/beeftv/desktop-update-v2.json"
+	defaultDownloadHost = "https://updates.beeftv.app/beeftv"
 	defaultDomesticHost = "https://cnb.cool/beeftv-downloads/desktop/-/releases/download"
 	updaterImportPath   = "infinite-canvas/backend/internal/desktopupdate"
 )
@@ -368,17 +368,13 @@ func validateSchema2URL(raw string) error {
 		return fmt.Errorf("url %q must be clean HTTPS", raw)
 	}
 	switch strings.ToLower(parsed.Hostname()) {
-	case "updates.beefapi.com":
+	case "updates.beeftv.app":
 		if !strings.HasPrefix(parsed.Path, "/beeftv/") {
-			return fmt.Errorf("untrusted path on updates.beefapi.com: %s", parsed.Path)
+			return fmt.Errorf("untrusted path on updates.beeftv.app: %s", parsed.Path)
 		}
 	case "cnb.cool":
 		if !strings.HasPrefix(parsed.Path, "/beeftv-downloads/desktop/-/releases/download/") {
 			return fmt.Errorf("untrusted path on cnb.cool: %s", parsed.Path)
-		}
-	case "beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com":
-		if !strings.HasPrefix(parsed.Path, "/beeftv/") {
-			return fmt.Errorf("untrusted path on cos: %s", parsed.Path)
 		}
 	default:
 		return fmt.Errorf("untrusted download domain %s", parsed.Hostname())
